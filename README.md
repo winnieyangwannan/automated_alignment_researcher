@@ -3,6 +3,8 @@
 **Official code: the Automated Alignment Researcher (AAR) harness, its 10-alignment-failure benchmark
 suite, and a template to run it on any measurable task of your own.**
 
+📄 **Paper:** https://arxiv.org/abs/2608.28945
+
 By Chen Yueh-Han, Jiaxin Wen, and Jan Hendrik Kirchner. It lets you:
 
 - **(A) Reproduce the evaluation** for any of the ten alignment failures — score a model (the untrained
