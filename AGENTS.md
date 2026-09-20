@@ -71,5 +71,9 @@ Copy `.env.example` to `.env`; never commit credentials. Preserve the research/e
   `BENCHMARK_DOCS_DIR="$PWD/benchmark_docs"`.
 - The ARM64 `uv` executable is `/storage/home/winnieyangwn/envs/aar-uv-bootstrap/bin/uv`. Run locked environment
   updates from the worktree with that executable and `uv sync --frozen`.
+- Known ARM64 packaging issue: `nvidia-cusparselt-cu13==0.8.1` contains an ARM64 library but declares the internal
+  wheel tag `manylinux2014_sbsa`, so `uv pip check` and `uv sync --check` report it as incompatible. Pending an
+  upstream or reproducibly repacked wheel, tolerate only this exact warning and require successful imports, CUDA
+  computation, and representative target-model generation before a full evaluation. Stop on any additional error.
 - Keep the HPC `.venv` and `.env` local to the HPC worktree. Sync source files and documentation through Git; never
   copy an installed environment between the devserver and HPC.
