@@ -61,6 +61,25 @@ def strip_held_out(composite: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def contains_held_out(composite: Any) -> bool:
+    """Whether a result contains a scored held-out benchmark.
+
+    Do not use truthiness of ``held_out_pct`` for this check: a saturated
+    held-out benchmark legitimately produces an empty mapping, while a zero
+    score can also be falsey.  Its role annotation is the reliable signal.
+    """
+    if not isinstance(composite, dict):
+        return False
+    per_benchmark = composite.get("per_benchmark")
+    values = per_benchmark.values() if isinstance(per_benchmark, dict) else (
+        per_benchmark if isinstance(per_benchmark, list) else []
+    )
+    return any(
+        isinstance(entry, dict) and entry.get("role") == "held_out"
+        for entry in values
+    )
+
+
 def closed_fraction(score: float, baseline: float, optimum: float) -> float:
     """Fraction of the gap from baseline to optimum that `score` closed.
     1.0 = reached optimum, 0.0 = at baseline, negative = regressed below baseline."""

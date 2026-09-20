@@ -26,8 +26,11 @@ def _spawn_fs(run_id: str, suite: str) -> str:
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, check=True)
         return f"slurm:{out.stdout.strip()}"
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        # No Slurm (e.g. local dev) — run the eval inline as a subprocess.
+    except FileNotFoundError as e:
+        # No Slurm executable (e.g. a local dev machine) — run the eval inline
+        # as a subprocess.  A real `sbatch` rejection must propagate: silently
+        # evaluating on the training allocation violates the separate-job
+        # contract and can turn a scheduler/configuration failure into OOM.
         subprocess.Popen(
             ["python", "-m", "aar.eval_pod.entrypoint", "--run-id", run_id, "--suite", suite]
         )

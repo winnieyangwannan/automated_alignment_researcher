@@ -36,6 +36,13 @@ def cmd_agent(args, remaining):
 
     local_mode = getattr(args, 'local', False)
 
+    # The MCP tools run in-process and use these variables to namespace proposal
+    # markers, evaluation run ids, and findings.  Keep their environment view in
+    # sync with the CLI values before importing/constructing the agent loop.
+    os.environ["IDEA_UID"] = args.idea_uid
+    if args.idea_name:
+        os.environ["IDEA_NAME"] = args.idea_name
+
     if local_mode:
         # Local mode: server runs on localhost, no S3, no findings sync
         os.environ.setdefault("ORCHESTRATOR_API_URL", "http://localhost:8000")

@@ -405,6 +405,7 @@ class AutonomousAgentLoop:
         self.idea_name = idea_name
         self.local_mode = local_mode
         self.run_id = os.getenv("RUN_ID") or str(uuid.uuid4())
+        os.environ.setdefault("RUN_ID", self.run_id)
 
         self.workspace = Path(workspace) if workspace else Path(WORKSPACE_DIR)
         self.logs_dir = Path(logs_dir) if logs_dir else Path(LOGS_DIR)
@@ -489,7 +490,7 @@ class AutonomousAgentLoop:
         print(f"  Run ID: {self.run_id}")
         print(f"  Idea: {self.idea_name} ({self.idea_uid})")
         print(f"  Max Runtime: {self.max_runtime_seconds/3600:.1f}h")
-        print(f"  Max Iterations: {self.max_iterations if self.max_iterations else 'unbounded'}")
+        print(f"  Max Iterations: {self.max_iterations if self.max_iterations is not None else 'unbounded'}")
         print(f"{'='*60}\n")
 
         # Initial findings sync (disabled in local mode)
@@ -508,7 +509,7 @@ class AutonomousAgentLoop:
         stop_reason = None
 
         while True:
-            if self.max_iterations and self.session_count >= self.max_iterations:
+            if self.max_iterations is not None and self.session_count >= self.max_iterations:
                 print(f"\n[Loop] Stopping: reached max iterations ({self.max_iterations})")
                 break
             stop_reason = self.stop_checker.check()
@@ -518,7 +519,6 @@ class AutonomousAgentLoop:
 
             try:
                 await self._run_session()
-                self.session_count += 1
                 self.stop_checker.record_success()
                 if not self.local_mode:
                     await self._sync_to_s3()
@@ -537,6 +537,13 @@ class AutonomousAgentLoop:
                 # don't hammer an overloaded API and burn sessions.
                 backoff = OVERLOADED_WAIT_SECONDS if _is_overloaded(e) else 30
                 await asyncio.sleep(backoff)
+            finally:
+                # `--max-iterations` caps sessions that BEGIN, not only sessions
+                # that finish successfully.  A failed first session may already
+                # have trained/submitted a method; silently opening a retry
+                # session would violate the one-iteration smoke contract and can
+                # produce a second method/submission.
+                self.session_count += 1
 
         if self.findings_sync:
             try:

@@ -172,6 +172,7 @@ def _strip_held_out(obj: Any) -> Any:
         "properties": {
             "model_path": {"type": "string", "description": "local dir of the trained model to submit"},
             "suite": {"type": "string", "description": "benchmark suite name (optional; server default if omitted)"},
+            "run_id": {"type": "string", "description": "approved run id to reuse (optional)"},
         },
         "required": ["model_path"],
     },
@@ -221,7 +222,15 @@ async def evaluate_model(args: Dict[str, Any]) -> Dict[str, Any]:
         # proposal marker gets overwritten by the next proposal). share_finding reads the forecaster-
         # facing fields from this snapshot, so the paper a forecaster sees is EXACTLY the one registered
         # before the run ran — writing can't be tuned after seeing results. No-op if no proposal marker.
-        _stamp_run_proposal(run_id)
+        if not _stamp_run_proposal(run_id):
+            return {"content": [{"type": "text", "text": json.dumps({
+                "success": False,
+                "run_id": run_id,
+                "error": (
+                    "Refused: the approved proposal could not be frozen to this run_id. "
+                    "No model was staged and no evaluation was launched."
+                ),
+            }, indent=2)}]}
 
         # Publish the trained model for this run (fs: copy to SUBMISSIONS_DIR;
         # s3: upload). The eval side reads it; we never see the benchmark.
@@ -246,7 +255,9 @@ async def evaluate_model(args: Dict[str, Any]) -> Dict[str, Any]:
             _LAST_EVAL_RUN_ID = run_id      # bind a subsequent share_finding to THIS exact run
         # Return run_id so the agent passes it VERBATIM to share_finding(run_id=...) — the only
         # collision-proof way to bind the finding to THIS run's scores.
-        response_data = {"success": "error" not in result, "run_id": run_id, **result}
+        # The transport key is authoritative even if an evaluator payload
+        # happens to contain its own run_id field.
+        response_data = {**result, "success": "error" not in result, "run_id": run_id}
         return {"content": [{"type": "text", "text": json.dumps(response_data, indent=2)}]}
     except Exception as e:
         return {"content": [{"type": "text", "text": json.dumps({"success": False, "error": str(e)}, indent=2)}]}
@@ -897,7 +908,10 @@ async def share_finding(args: Dict[str, Any]) -> Dict[str, Any]:
         payload = {
             "summary": summary,
             "idea_uid": os.environ.get("IDEA_UID"),
-            "run_id": os.environ.get("RUN_ID"),
+            # For results, `_rid` is the exact evaluated id already validated
+            # against SCORES_DIR above.  The process-level RUN_ID identifies the
+            # long-lived agent and is not necessarily the per-method eval id.
+            "run_id": _rid if finding_type == "result" else os.environ.get("RUN_ID"),
             "dataset": os.environ.get("DATASET_NAME"),
             "weak_model": os.environ.get("WEAK_MODEL"),
             "strong_model": os.environ.get("STRONG_MODEL"),

@@ -359,8 +359,8 @@ def run(suite_path: str, model_ref: str, secret_dir: str = "", out: str = "score
     # held-out) is written ONLY to the eval-private held-out dir (the eval worker runs
     # as the secret eval user; we chmod 700 so the research user can't read it). The
     # human reads the generalization score from there, with eval credentials.
-    from aar.benchmarks.composite import strip_held_out
-    if composite.held_out:
+    from aar.benchmarks.composite import contains_held_out, strip_held_out
+    if contains_held_out(result):
         Path(out).write_text(json.dumps(strip_held_out(result), indent=2))
         hdir = heldout_dir or os.getenv("HELDOUT_SCORES_DIR", "")
         if hdir:
@@ -369,8 +369,13 @@ def run(suite_path: str, model_ref: str, secret_dir: str = "", out: str = "score
                 os.chmod(hdir, 0o700)
             except OSError:
                 pass
-            (Path(hdir) / Path(out).name).write_text(json.dumps(result, indent=2))
-            print(f"  wrote FULL incl held-out -> {Path(hdir) / Path(out).name} (eval-private, mode-700)")
+            private_path = Path(hdir) / Path(out).name
+            private_path.write_text(json.dumps(result, indent=2))
+            try:
+                os.chmod(private_path, 0o600)
+            except OSError:
+                pass
+            print(f"  wrote FULL incl held-out -> {private_path} (eval-private, mode-700)")
         else:
             print("  WARN: held-out present but no --heldout-dir / HELDOUT_SCORES_DIR — full "
                   "held-out NOT persisted (research handoff IS stripped, so the AAR stays safe)",

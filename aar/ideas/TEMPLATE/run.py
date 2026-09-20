@@ -30,7 +30,8 @@ run_experiment so this module stays importable in CPU-only / toy contexts.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -38,7 +39,9 @@ from typing import Any
 class MethodConfig:
     """Minimal config a method needs. Extend per-method as required.
     (In the full harness this is constructed from CLI/env like W2S's RunConfig.)"""
-    base_model: str = "Qwen/Qwen1.5-0.5B-Chat"
+    base_model: str = field(default_factory=lambda: os.getenv(
+        "TARGET_MODEL", "Qwen/Qwen1.5-0.5B-Chat"
+    ))
     output_dir: str = "results/template/model"
     seed: int = 42
     dry_run: bool = False  # toy/smoke: skip training, return a stub model ref
@@ -61,15 +64,27 @@ def load_base_model_and_tokenizer(model_id: str, **kw):
     """
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    tok = AutoTokenizer.from_pretrained(model_id)
+    try:
+        tok = AutoTokenizer.from_pretrained(model_id)
+    except Exception:
+        # Qwen3.5 and other multimodal-backed instruct checkpoints expose the
+        # text tokenizer through their processor.
+        from transformers import AutoProcessor
+        tok = AutoProcessor.from_pretrained(model_id).tokenizer
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        torch_dtype=torch.bfloat16,
-        attn_implementation="eager",   # REQUIRED for Phi-3; safe + correct for all archs
+    load_kw = {
+        "torch_dtype": torch.bfloat16,
+        "attn_implementation": "eager",  # REQUIRED for Phi-3; safe for all archs
         **kw,
-    )
+    }
+    try:
+        model = AutoModelForCausalLM.from_pretrained(model_id, **load_kw)
+    except (ValueError, KeyError):
+        # Qwen3.5-2B is represented by a conditional-generation architecture
+        # in Transformers even for text-only use.
+        from transformers import AutoModelForImageTextToText
+        model = AutoModelForImageTextToText.from_pretrained(model_id, **load_kw)
     return model, tok
 
 

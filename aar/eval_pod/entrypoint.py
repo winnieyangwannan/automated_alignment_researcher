@@ -69,9 +69,9 @@ def main() -> None:
     # The FULL composite (incl held-out) is persisted to the eval-private, mode-700
     # HELDOUT_SCORES_DIR (eval-user-owned — the AAR cannot read it); the human reads
     # the generalization score from there with eval credentials.
-    from aar.benchmarks.composite import strip_held_out
+    from aar.benchmarks.composite import contains_held_out, strip_held_out
     research_result = strip_held_out(result) if isinstance(result, dict) else result
-    if isinstance(result, dict) and result.get("held_out_pct"):   # a held-out was scored
+    if contains_held_out(result):
         try:
             hdir = Path(config.HELDOUT_SCORES_DIR)
             hdir.mkdir(parents=True, exist_ok=True)
@@ -79,10 +79,18 @@ def main() -> None:
                 os.chmod(hdir, 0o700)
             except OSError:
                 pass
-            (hdir / f"{args.run_id}.json").write_text(json.dumps(result, indent=2))
-            print(f"[eval] FULL incl held-out -> {hdir / (args.run_id + '.json')} (eval-private, mode-700)")
+            private_path = hdir / f"{args.run_id}.json"
+            private_path.write_text(json.dumps(result, indent=2))
+            try:
+                os.chmod(private_path, 0o600)
+            except OSError:
+                pass
+            print(f"[eval] FULL incl held-out -> {private_path} (eval-private, mode-700)")
         except Exception as e:
             print(f"[eval] WARN: failed to persist eval-private held-out scores: {e}", file=sys.stderr)
+            research_result = {
+                "error": "held-out evaluation completed but private result storage failed"
+            }
     ref = transport.put_scores(args.run_id, research_result)
     print(f"[eval] published scores (held-out stripped) -> {ref}")
 

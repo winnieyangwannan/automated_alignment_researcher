@@ -48,22 +48,84 @@ def _copytree_retry(src, dst, attempts: int = 4):
     raise last
 
 
+def validate_model_submission(model_path: str) -> Path:
+    """Fail fast unless *model_path* is a self-contained HF submission.
+
+    The evaluator loads the staged directory with ``from_pretrained``.  In
+    particular, Qwen submissions need both their tokenizer assets and either a
+    full set of model weights or a PEFT adapter.  Catching an incomplete
+    ``save_pretrained`` output before creating ``.submitted`` avoids spending a
+    queued GPU evaluation on a checkpoint that cannot possibly load.
+
+    This is deliberately a structural check: loading multi-GB weights here
+    would duplicate the model in memory at the end of training.  The evaluator
+    remains the authoritative runtime load check.
+    """
+    path = Path(model_path)
+    if not path.is_dir():
+        raise ValueError(f"model submission must be a directory: {model_path!r}")
+
+    is_full_model = (path / "config.json").is_file()
+    is_adapter = (path / "adapter_config.json").is_file()
+    if not (is_full_model or is_adapter):
+        raise ValueError(
+            "model submission is missing config.json or adapter_config.json; "
+            "save the model with save_pretrained(output_dir)"
+        )
+
+    weight_files = (
+        list(path.glob("model*.safetensors"))
+        + list(path.glob("pytorch_model*.bin"))
+        + list(path.glob("adapter_model*.safetensors"))
+        + list(path.glob("adapter_model*.bin"))
+    )
+    if not any(p.is_file() for p in weight_files):
+        raise ValueError(
+            "model submission has no model/adapter weights; save the model "
+            "with save_pretrained(output_dir)"
+        )
+
+    if not (path / "tokenizer_config.json").is_file():
+        raise ValueError(
+            "model submission is missing tokenizer_config.json; save the "
+            "tokenizer next to the model with tokenizer.save_pretrained(output_dir)"
+        )
+    tokenizer_assets = (
+        "tokenizer.json",
+        "tokenizer.model",
+        "spiece.model",
+        "sentencepiece.bpe.model",
+        "vocab.json",
+        "vocab.txt",
+    )
+    if not any((path / name).is_file() for name in tokenizer_assets):
+        raise ValueError(
+            "model submission has tokenizer_config.json but no tokenizer "
+            "vocabulary/model asset"
+        )
+    return path
+
+
 # --- model handoff (research -> eval) --------------------------------------
 def put_model(model_path: str, run_id: str) -> str:
     """Research side: publish the trained model for run_id. Returns its ref."""
+    source = validate_model_submission(model_path)
     if _fs():
         dest = Path(config.SUBMISSIONS_DIR) / run_id / "model"
         dest.parent.mkdir(parents=True, exist_ok=True)
         if dest.exists():
             shutil.rmtree(dest)
-        _copytree_retry(model_path, dest)
+        _copytree_retry(source, dest)
+        # Check the actual staged tree, rather than assuming every shared-FS
+        # copy retained all files, before advertising it to a worker.
+        validate_model_submission(str(dest))
         # Atomicity marker: the eval worker only picks up run_ids once this exists
         # (so it never scores a half-copied model).
         (dest.parent / ".submitted").touch()
         return str(dest)
     from aar.infrastructure import s3_utils
     prefix = f"{config.SUBMISSION_PREFIX}{run_id}/model"
-    s3_utils.upload_directory_to_s3(Path(model_path), prefix, config.S3_BUCKET)
+    s3_utils.upload_directory_to_s3(source, prefix, config.S3_BUCKET)
     return f"s3://{config.S3_BUCKET}/{prefix}"
 
 
