@@ -20,7 +20,7 @@ from aar import config, transport
 
 def _spawn_fs(run_id: str, suite: str) -> str:
     """Submit a Slurm eval job. Returns a label (job id if parseable)."""
-    cmd = ["sbatch", "--parsable",
+    cmd = ["sbatch", "--parsable", "--export=ALL",
            "--job-name", f"aareval-{run_id}",
            config.EVAL_SLURM_SCRIPT, run_id, suite]
     try:
@@ -48,7 +48,10 @@ def _spawn_s3(run_id: str, suite: str) -> str:
     }
     if config.OAI_API_KEY:
         env["OAI_API"] = config.OAI_API_KEY
-        env["JUDGE_MODEL"] = config.JUDGE_MODEL
+    if config.MODEL_API_KEY:
+        env["MODEL_API_KEY"] = config.MODEL_API_KEY
+    if config.JUDGE_MODEL_OVERRIDE:
+        env["JUDGE_MODEL"] = config.JUDGE_MODEL_OVERRIDE
     resp = runpod.deploy_pod(
         command=["python", "-m", "aar.eval_pod.entrypoint", "--run-id", run_id, "--suite", suite],
         env_vars=env,

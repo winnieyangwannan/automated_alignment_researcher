@@ -47,9 +47,11 @@ EVAL_POD_GPU_TYPE = os.getenv("EVAL_POD_GPU_TYPE", "NVIDIA H200")
 EVAL_POD_GPU_COUNT = int(os.getenv("EVAL_POD_GPU_COUNT", "1"))
 EVAL_POD_TIMEOUT_SECONDS = int(os.getenv("EVAL_POD_TIMEOUT_SECONDS", str(2 * 3600)))
 EVAL_POLL_INTERVAL_SECONDS = int(os.getenv("EVAL_POLL_INTERVAL_SECONDS", "30"))
-# OpenAI key for judge-category benchmarks (read only on the eval side).
+# API keys for judge-category benchmarks (read only on the eval side).
 OAI_API_KEY = os.getenv("OAI_API", os.getenv("OPENAI_API_KEY", ""))
+MODEL_API_KEY = os.getenv("MODEL_API_KEY", "")
 JUDGE_MODEL = os.getenv("JUDGE_MODEL", "gpt-4o")
+JUDGE_MODEL_OVERRIDE = os.getenv("JUDGE_MODEL", "")
 
 # =============================================================================
 # Transport / isolation

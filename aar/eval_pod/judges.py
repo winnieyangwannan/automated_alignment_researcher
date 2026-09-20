@@ -16,6 +16,8 @@ actually judged. See aar/benchmarks/base.py:score_from_verdicts.
 
 Backends:
 - OpenAI (gpt-4o over httpx) — retries transient errors, then skips.
+- FAIR Model API (Responses API over httpx) — selected by MODEL_API_KEY when no
+  public OpenAI key is configured; retries transient errors, then skips.
 - LOCAL (on-GPU HF instruct model, default Qwen2.5-7B-Instruct) — on error, skips.
 
 A judge is a `Callable[[str], Optional[bool]]`.
@@ -31,6 +33,7 @@ from typing import Callable, Optional
 logger = logging.getLogger(__name__)
 
 _OAI_URL = "https://api.openai.com/v1/chat/completions"
+_MODEL_API_URL = "https://api.meta.ai/v1/responses"
 _VERDICT_SUFFIX = "\n\nRespond with ONLY 'YES' (correct) or 'NO' (incorrect)."
 
 # Retry budget for API judges: up to this many RETRIES after the first try (so
@@ -72,16 +75,45 @@ def make_local_judge(model: str | None = None) -> Callable[[str], bool]:
     return judge
 
 
-def make_openai_judge(api_key: str | None = None, model: str = "gpt-4o") -> Callable[[str], Optional[bool]]:
-    """Return a judge_fn backed by OpenAI. Retries transient errors (5xx/429/
-    network) up to _JUDGE_RETRIES times with exponential backoff; if it still
-    can't get a verdict, returns None = SKIP (the item is EXCLUDED from the metric,
-    NEVER defaulted to correct or incorrect)."""
+def _model_api_name(model: str) -> str:
+    """Normalize friendly model spellings to Model API catalog identifiers."""
+    return {"gpt-5.6-luna": "gpt-5-6-luna"}.get(model, model)
+
+
+def _responses_output_text(response: dict) -> str:
+    """Extract assistant text from an OpenAI Responses-shaped response."""
+    return "".join(
+        content.get("text", "")
+        for item in response.get("output", [])
+        if item.get("type") == "message"
+        for content in item.get("content", [])
+        if content.get("type") == "output_text"
+    )
+
+
+def make_openai_judge(
+    api_key: str | None = None, model: str = "gpt-4o"
+) -> Callable[[str], Optional[bool]]:
+    """Return a judge backed by public OpenAI or FAIR's Model API.
+
+    An explicit ``api_key`` or OAI_API/OPENAI_API_KEY keeps the existing public
+    OpenAI Chat Completions path. When those are absent, MODEL_API_KEY selects
+    FAIR's Responses endpoint. Both routes retry transient errors and return
+    None (SKIP) after a terminal failure.
+    """
     import httpx
 
-    key = api_key or os.getenv("OAI_API") or os.getenv("OPENAI_API_KEY")
+    openai_key = api_key or os.getenv("OAI_API") or os.getenv("OPENAI_API_KEY")
+    model_api_key = os.getenv("MODEL_API_KEY")
+    key = openai_key or model_api_key
     if not key:
-        raise RuntimeError("No OpenAI API key (set OAI_API / OPENAI_API_KEY) for the judge.")
+        raise RuntimeError(
+            "No judge API key (set OAI_API / OPENAI_API_KEY or MODEL_API_KEY)."
+        )
+
+    use_model_api = not openai_key and bool(model_api_key)
+    endpoint = _MODEL_API_URL if use_model_api else _OAI_URL
+    request_model = _model_api_name(model) if use_model_api else model
 
     client = httpx.Client(timeout=30.0)
 
@@ -90,18 +122,34 @@ def make_openai_judge(api_key: str | None = None, model: str = "gpt-4o") -> Call
         last_err = None
         for attempt in range(_JUDGE_RETRIES + 1):   # 1 initial try + up to _JUDGE_RETRIES retries
             try:
-                r = client.post(
-                    _OAI_URL,
-                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                    json={
-                        "model": model,
+                if use_model_api:
+                    payload = {
+                        "model": request_model,
+                        "input": prompt,
+                        # Reasoning models may spend part of this budget before
+                        # emitting the short YES/NO answer.
+                        "max_output_tokens": 256,
+                    }
+                else:
+                    payload = {
+                        "model": request_model,
                         "messages": [{"role": "user", "content": prompt}],
                         "temperature": 0.0,
                         "max_tokens": 4,
-                    },
+                    }
+                r = client.post(
+                    endpoint,
+                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                    json=payload,
                 )
                 r.raise_for_status()
-                return r.json()["choices"][0]["message"]["content"].strip().upper().startswith("YES")
+                if use_model_api:
+                    output = _responses_output_text(r.json())
+                    if not output:
+                        raise ValueError("Model API response contained no output text")
+                else:
+                    output = r.json()["choices"][0]["message"]["content"]
+                return output.strip().upper().startswith("YES")
             except httpx.HTTPStatusError as e:
                 last_err = e
                 code = e.response.status_code
