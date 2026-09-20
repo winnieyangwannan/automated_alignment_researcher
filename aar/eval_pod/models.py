@@ -129,9 +129,19 @@ class HFModel:
 
     def __init__(self, model_path: str, max_new_tokens: int | None = None):
         import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+
+        from aar.utils.attention import select_attention_implementation
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        config = AutoConfig.from_pretrained(model_path)
+        attn_implementation = select_attention_implementation(model_path, config=config)
+        load_kwargs = {
+            "config": config,
+            "torch_dtype": torch.bfloat16 if self.device == "cuda" else torch.float32,
+        }
+        if attn_implementation is not None:
+            load_kwargs["attn_implementation"] = attn_implementation
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(model_path)
         except Exception:
@@ -144,9 +154,8 @@ class HFModel:
         self.tokenizer.padding_side = "left"
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        _dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
         try:
-            self.model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=_dtype).to(self.device)
+            self.model = AutoModelForCausalLM.from_pretrained(model_path, **load_kwargs).to(self.device)
         except (ValueError, KeyError):
             # A multimodal-architecture LLM (e.g. Mistral3ForConditionalGeneration — a strong
             # text LLM that also takes images) is NOT an AutoModelForCausalLM. Load it via the
@@ -154,8 +163,12 @@ class HFModel:
             # judge benches (pure-text prompts) the generation path is identical. Only triggers
             # when the causal-LM load fails, so text-only models are unaffected.
             from transformers import AutoModelForImageTextToText
-            self.model = AutoModelForImageTextToText.from_pretrained(model_path, torch_dtype=_dtype).to(self.device)
+            self.model = AutoModelForImageTextToText.from_pretrained(model_path, **load_kwargs).to(self.device)
         self.model.eval()
+        print(
+            f"[eval] attention implementation = {attn_implementation or 'transformers default'}",
+            flush=True,
+        )
         # Generation budget. Priority: explicit arg > EVAL_MAX_NEW_TOKENS env >
         # AUTO. AUTO (the default) = the model's FULL remaining context per prompt,
         # i.e. the max this model can produce — so a fixed cap can never silently

@@ -49,9 +49,9 @@ class MethodConfig:
 
 def load_base_model_and_tokenizer(model_id: str, **kw):
     """Load a base model + tokenizer for training. Loads with
-    ``attn_implementation="eager"`` — ALWAYS use this (or pass it yourself).
+    PyTorch SDPA for Qwen3.5 and ``eager`` for other architectures by default.
 
-    WHY EAGER (do not remove): some target architectures — notably Phi-3
+    WHY EAGER FOR THE FALLBACK (do not remove): some target architectures — notably Phi-3
     (``Phi3ForCausalLM``) — do NOT support the default SDPA / FlashAttention-2
     backends in the installed transformers and CRASH during any generation-in-the-loop
     training (self-play, on-policy DPO, rejection sampling) with errors like
@@ -63,7 +63,11 @@ def load_base_model_and_tokenizer(model_id: str, **kw):
     so the eval pod can load your submission.)
     """
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+
+    from aar.utils.attention import select_attention_implementation
+
+    model_config = AutoConfig.from_pretrained(model_id)
     try:
         tok = AutoTokenizer.from_pretrained(model_id)
     except Exception:
@@ -74,8 +78,11 @@ def load_base_model_and_tokenizer(model_id: str, **kw):
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     load_kw = {
+        "config": model_config,
         "torch_dtype": torch.bfloat16,
-        "attn_implementation": "eager",  # REQUIRED for Phi-3; safe for all archs
+        "attn_implementation": select_attention_implementation(
+            model_id, config=model_config, default="eager"
+        ),
         **kw,
     }
     try:
@@ -96,13 +103,13 @@ def run_experiment(config: MethodConfig) -> dict[str, Any]:
 
     # ----------------------------------------------------------------------
     # YOUR METHOD HERE. Typical shape:
-    #   model, tok = load_base_model_and_tokenizer(config.base_model)  # eager attn — Phi-3 safe
+    #   model, tok = load_base_model_and_tokenizer(config.base_model)
     #   train_data = load_allowed_corpus(...)        # NOT benchmark items
     #   model = your_training_procedure(model, tok, train_data)   # LoRA SFT, DPO,
     #                                                             # steering, on-policy, ...
     #   model.save_pretrained(config.output_dir); tok.save_pretrained(config.output_dir)
-    # ALWAYS load via load_base_model_and_tokenizer (or pass attn_implementation="eager"):
-    # the default SDPA/FlashAttn backend CRASHES Phi-3 during on-policy/generation training.
+    # ALWAYS load via load_base_model_and_tokenizer: it selects SDPA for Qwen3.5
+    # and eager for architectures such as Phi-3 that need the conservative path.
     # And SAVE THE TOKENIZER next to the model — the eval pod must load it to score you.
     # ----------------------------------------------------------------------
     raise NotImplementedError(

@@ -79,6 +79,18 @@ The same Linux x86_64 marker applies to the optional Triton, Unsloth, Liger, cut
 and SGLang optimization stack. Linux aarch64 keeps the base PyTorch, Transformers, PEFT, and
 vLLM path, and requires Transformers 4.57.0 or newer for Qwen3.5 model metadata support.
 
+Qwen3.5 uses `flash_attention_4` only when both the `flash-attn-4` distribution and a
+Transformers build that registers that backend are installed. The repository's pinned
+Transformers 4.57 environment does not provide that integration, so it safely uses PyTorch
+SDPA (`attn_implementation="sdpa"`) on both ARM64 and x86_64. On CUDA, PyTorch dispatches
+SDPA to the best kernel supported by the installed PyTorch/CUDA build. Installing the
+standalone FA4 beta is therefore not enough by itself. `AAR_ATTN_IMPLEMENTATION` can
+explicitly select another Transformers backend (for example `eager` or
+`flash_attention_2` on a compatible x86_64 environment). An explicitly requested but
+unsupported `flash_attention_4` falls back to SDPA for Qwen3.5 with a warning. FlashInfer
+remains available to inference engines such as vLLM; it is not a direct
+`AutoModel.from_pretrained` attention implementation.
+
 ## 3. Smoke test (no GPU, no API keys)
 
 Once installed, verify the harness wiring with the bundled **toy** suite — deterministic stub benchmarks
