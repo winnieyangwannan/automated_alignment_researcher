@@ -7,7 +7,12 @@ Follow the first four goals in README order by SSH into the HPC cluster `fair-cw
 ## Preparation
 
 - Clone the repository into `/home/winnieyangwn/automated_alignment_researcher`.
-- Create the Python 3.12 environment with `uv venv && uv sync`.
+- Inside a `g3` GB300 Slurm allocation, replace the Python 3.12 environment with
+  `uv venv --python 3.12 --clear && uv sync --locked`. Linux aarch64 must resolve the
+  published CUDA-enabled torch 2.14.0 wheel, Transformers 5.17.0, and tokenizers 0.23.x;
+  do not install the legacy torch 2.8 vLLM/SGLang/FlashAttention 2 optimization stack.
+- Before leaving the allocation, require `torch.cuda.is_available()` to be true, verify the
+  device name/capability, verify Qwen3.5 config recognition, and run one minimal inference.
 - Set `HF_HOME=/checkpoint/ram/winnieyangwn/hf-cache` so downloaded base models and datasets are cached once and can be reused by other projects. Keep AAR-generated checkpoints and run artifacts in a separate project-specific directory under `/checkpoint/ram/winnieyangwn/automated_alignment_researcher/`.
 - Test if inference can be run with a simple test.
 - Use `gpt-5.6-luna` for lightweight model-backed tests unless a task explicitly requires another model.

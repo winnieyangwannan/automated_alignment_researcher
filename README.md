@@ -45,8 +45,9 @@ per-benchmark judge + decoding is in [`REPRODUCE.md`](REPRODUCE.md). Deeper inte
 ## 1. Requirements
 
 - **OS / GPU:** Linux with an NVIDIA GPU and CUDA for real evaluation and training (target-model
-  generation + local judges run on GPU). The dependency set (`torch`, `vllm`, `flash-attn`) targets
-  Linux + CUDA 12. A CPU-only/macOS box can hold the repo and read the docs but cannot run real evals.
+  generation + local judges run on GPU). Linux x86_64 retains the CUDA 12 / torch 2.8 stack;
+  Linux aarch64 uses the published CUDA 13 / torch 2.14 wheel for Blackwell GPUs such as GB300.
+  A CPU-only/macOS box can hold the repo and read the docs but cannot run real evals.
 - **Python:** 3.12+ (`pyproject.toml` pins `requires-python = ">=3.12"`).
 - **Disk / network:** benchmark items are downloaded from public sources on first use (Hugging Face,
   a couple of GitHub repos). Budget a few GB for datasets + model weights.
@@ -75,14 +76,21 @@ pip install -e .
 (see `pyproject.toml` `[tool.uv.sources]`). It is automatically omitted on non-matching
 platforms, including Linux aarch64; those installations use the attention implementations
 provided by PyTorch/vLLM. Install a compatible `flash-attn` build separately if desired.
-The same Linux x86_64 marker applies to the optional Triton, Unsloth, Liger, cut-cross-entropy,
-and SGLang optimization stack. Linux aarch64 keeps the base PyTorch, Transformers, PEFT, and
-vLLM path, and requires Transformers 4.57.0 or newer for Qwen3.5 model metadata support.
+The optional Triton, Unsloth, Liger, cut-cross-entropy, and SGLang optimization stack remains
+Linux x86_64-only. The old vLLM, FlashInfer, torch-memory-saver, and sentence-transformers
+pins are also omitted on Linux aarch64 because they constrain the environment to the torch 2.8
+or Transformers 4 generation and are not used by the direct Hugging Face evaluator in
+`experiments/20260919/plan.md`. Linux aarch64 uses
+torch 2.14.0, Transformers 5.17.0, tokenizers 0.23.x, a compatible safetensors release,
+PEFT, and PyTorch SDPA instead.
+
+Create or replace `.venv` on the architecture that will execute the workload. On the ARM64
+FAIR cluster, run `uv venv --python 3.12 --clear && uv sync --locked` inside a `g3` Slurm
+allocation, then require `torch.cuda.is_available()` before attempting a real evaluation.
 
 Qwen3.5 uses `flash_attention_4` only when both the `flash-attn-4` distribution and a
-Transformers build that registers that backend are installed. The repository's pinned
-Transformers 4.57 environment does not provide that integration, so it safely uses PyTorch
-SDPA (`attn_implementation="sdpa"`) on both ARM64 and x86_64. On CUDA, PyTorch dispatches
+Transformers build that registers that backend are installed. The repository defaults to
+PyTorch SDPA (`attn_implementation="sdpa"`) on both ARM64 and x86_64. On CUDA, PyTorch dispatches
 SDPA to the best kernel supported by the installed PyTorch/CUDA build. Installing the
 standalone FA4 beta is therefore not enough by itself. `AAR_ATTN_IMPLEMENTATION` can
 explicitly select another Transformers backend (for example `eager` or
