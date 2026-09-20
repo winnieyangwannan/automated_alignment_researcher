@@ -71,8 +71,10 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-`flash-attn` installs from a prebuilt CUDA 12 / torch 2.8 / cp312 wheel (see `pyproject.toml`
-`[tool.uv.sources]`); on a non-matching platform, remove it from the deps or install a compatible build.
+`flash-attn` installs from a prebuilt CUDA 12 / torch 2.8 / cp312 wheel on Linux x86_64
+(see `pyproject.toml` `[tool.uv.sources]`). It is automatically omitted on non-matching
+platforms, including Linux aarch64; those installations use the attention implementations
+provided by PyTorch/vLLM. Install a compatible `flash-attn` build separately if desired.
 
 ## 3. Smoke test (no GPU, no API keys)
 

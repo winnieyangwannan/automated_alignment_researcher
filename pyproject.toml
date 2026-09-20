@@ -24,7 +24,9 @@ dependencies = [
     "cut-cross-entropy==25.1.1",
     # Fast inference
     "vllm==0.11.0",
-    "flash-attn",
+    # The pinned wheel below is Linux x86_64 + CPython 3.12 only. Other
+    # architectures use the attention implementations provided by PyTorch/vLLM.
+    "flash-attn; platform_machine == 'x86_64' and sys_platform == 'linux'",
     # Scientific computing
     "scipy==1.16.3",
     "numpy<2.0.0",
@@ -111,5 +113,7 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
-# flash-attn from pre-built wheel (cu12, torch2.8, cxx11abi=False, cp312)
+# flash-attn from pre-built wheel (Linux x86_64, CUDA 12, torch2.8,
+# cxx11abi=False, CPython 3.12). The project dependency marker excludes this
+# source on non-matching platforms such as Linux aarch64.
 flash-attn = { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.1/flash_attn-2.8.1+cu12torch2.8cxx11abiFALSE-cp312-cp312-linux_x86_64.whl" }
