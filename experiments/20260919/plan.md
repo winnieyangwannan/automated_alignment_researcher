@@ -8,9 +8,12 @@ Follow the first four goals in README order by SSH into the HPC cluster `fair-cw
 
 - Clone the repository into `/home/winnieyangwn/automated_alignment_researcher`.
 - Inside a `g3` GB300 Slurm allocation, replace the Python 3.12 environment with
-  `uv venv --python 3.12 --clear && uv sync --locked`. Linux aarch64 must resolve the
-  published CUDA-enabled torch 2.14.0 wheel, Transformers 5.17.0, and tokenizers 0.23.x;
-  do not install the legacy torch 2.8 vLLM/SGLang/FlashAttention 2 optimization stack.
+  `/usr/local/bin/micromamba create -y -p "$PWD/.venv" python=3.12 pip`, confirm
+  `.venv/include/python3.12/Python.h` exists, and run `uv sync --locked`. Micromamba provides
+  matching Python development headers for torch's Triton JIT, while `uv.lock` remains the
+  project-package authority. Linux aarch64 must resolve the published CUDA-enabled torch 2.14.0
+  wheel, Transformers 5.17.0, and tokenizers 0.23.x; do not install the legacy torch 2.8
+  vLLM/SGLang/FlashAttention 2 optimization stack.
 - Before leaving the allocation, require `torch.cuda.is_available()` to be true, verify the
   device name/capability, verify Qwen3.5 config recognition, and run one minimal inference.
 - Set `HF_HOME=/checkpoint/ram/winnieyangwn/hf-cache` so downloaded base models and datasets are cached once and can be reused by other projects. Keep AAR-generated checkpoints and run artifacts in a separate project-specific directory under `/checkpoint/ram/winnieyangwn/automated_alignment_researcher/`.

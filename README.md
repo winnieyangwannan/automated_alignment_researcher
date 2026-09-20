@@ -85,8 +85,12 @@ torch 2.14.0, Transformers 5.17.0, tokenizers 0.23.x, a compatible safetensors r
 PEFT, and PyTorch SDPA instead.
 
 Create or replace `.venv` on the architecture that will execute the workload. On the ARM64
-FAIR cluster, run `uv venv --python 3.12 --clear && uv sync --locked` inside a `g3` Slurm
-allocation, then require `torch.cuda.is_available()` before attempting a real evaluation.
+FAIR cluster, create it inside a `g3` Slurm allocation with
+`/usr/local/bin/micromamba create -y -p "$PWD/.venv" python=3.12 pip`, verify that
+`.venv/include/python3.12/Python.h` exists, and then run `uv sync --locked`. Micromamba supplies
+the matching Python development headers needed when torch invokes Triton JIT; `uv.lock` remains
+the authority for all project packages. Require `torch.cuda.is_available()` before attempting
+a real evaluation.
 
 Qwen3.5 uses `flash_attention_4` only when both the `flash-attn-4` distribution and a
 Transformers build that registers that backend are installed. The repository defaults to

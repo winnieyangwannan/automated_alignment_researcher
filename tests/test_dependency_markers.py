@@ -29,6 +29,14 @@ NON_ARM_LEGACY_RUNTIME = {
 
 
 class DependencyMarkerTest(unittest.TestCase):
+    def test_arm_hpc_instructions_create_header_complete_locked_environment(self) -> None:
+        expected = '/usr/local/bin/micromamba create -y -p "$PWD/.venv" python=3.12 pip'
+        for path in (ROOT / "README.md", ROOT / "experiments/20260919/plan.md"):
+            instructions = path.read_text()
+            self.assertIn(expected, instructions)
+            self.assertIn(".venv/include/python3.12/Python.h", instructions)
+            self.assertIn("uv sync --locked", instructions)
+
     def test_flash_attention_is_x86_64_linux_only(self) -> None:
         with (ROOT / "pyproject.toml").open("rb") as stream:
             project = tomllib.load(stream)
