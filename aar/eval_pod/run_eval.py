@@ -28,7 +28,7 @@ import yaml
 # job's --gres gpu count (eval_worker.sh / baseline_*.sh do this).
 
 from aar.benchmarks import registry
-from aar.benchmarks.base import BenchmarkSpec, JudgeBenchmark
+from aar.benchmarks.base import BenchmarkSpec
 from aar.benchmarks.composite import compute_composite
 from aar.eval_pod.models import load_model
 
@@ -58,11 +58,9 @@ def build_benchmark(spec: BenchmarkSpec, secret_dir: str, real_judge_fn=None):
     import inspect
     cls = registry.get(spec.name)
     if "judge_fn" in inspect.signature(cls.__init__).parameters:
-        # Per-paper judge (rule: use the judge model the benchmark's source paper used).
-        # Each judge benchmark declares `judge_model` (e.g. sycophancy_eval/feedback ->
-        # "gpt-4" per Sharma 2023; sycon_fp -> "gpt-4o" per SYCON). build_benchmark is
-        # authoritative: it resolves the judge from that model, overriding any global
-        # judge a caller passed, so a mixed-suite run uses the right judge per benchmark.
+        # Each judge benchmark declares its historical/default `judge_model` (e.g.
+        # sycophancy_eval/feedback -> "gpt-4"; sycon_fp -> "gpt-4o"). The resolver
+        # retains that per-benchmark default unless JUDGE_MODEL explicitly overrides it.
         jm = getattr(cls, "judge_model", None)
         judge_fn = _resolve_judge_fn(jm) or real_judge_fn or getattr(cls, "default_judge_fn", None)
         return cls(spec, secret_dir, judge_fn=judge_fn)
@@ -72,10 +70,11 @@ def build_benchmark(spec: BenchmarkSpec, secret_dir: str, real_judge_fn=None):
 def _resolve_judge_fn(model: str | None = None):
     """Pick the judge backend for judge-category benchmarks.
 
-    `model` = the benchmark's declared `judge_model` (per-paper). JUDGE_BACKEND =
-    "local" -> on-GPU HF judge (grid default; bounds cost — but NOT paper-faithful,
-    so not used for the published baselines). "openai"/unset -> the per-paper model
-    (falls back to JUDGE_MODEL env then gpt-4o) if a key is present, else None.
+    `model` = the benchmark's declared historical/default `judge_model`.
+    JUDGE_BACKEND = "local" -> on-GPU HF judge (grid default; bounds cost — but NOT
+    paper-faithful, so not used for the published baselines). "openai"/unset uses an
+    explicitly configured JUDGE_MODEL first, then the per-benchmark model, then gpt-4o,
+    if a key is present; otherwise returns None.
     """
     import os
     backend = os.getenv("JUDGE_BACKEND", "openai").lower()
@@ -90,7 +89,7 @@ def _resolve_judge_fn(model: str | None = None):
         return None
     if os.getenv("OAI_API") or os.getenv("OPENAI_API_KEY"):
         from aar.eval_pod.judges import make_openai_judge
-        return make_openai_judge(model=(model or os.getenv("JUDGE_MODEL") or "gpt-4o"))
+        return make_openai_judge(model=(os.getenv("JUDGE_MODEL") or model or "gpt-4o"))
     return None
 
 
