@@ -75,6 +75,9 @@ pip install -e .
 (see `pyproject.toml` `[tool.uv.sources]`). It is automatically omitted on non-matching
 platforms, including Linux aarch64; those installations use the attention implementations
 provided by PyTorch/vLLM. Install a compatible `flash-attn` build separately if desired.
+The same Linux x86_64 marker applies to the optional Triton, Unsloth, Liger, cut-cross-entropy,
+and SGLang optimization stack. Linux aarch64 keeps the base PyTorch, Transformers, PEFT, and
+vLLM path, and requires Transformers 4.57.0 or newer for Qwen3.5 model metadata support.
 
 ## 3. Smoke test (no GPU, no API keys)
 

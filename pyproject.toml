@@ -7,7 +7,11 @@ requires-python = ">=3.12"
 dependencies = [
     # Core ML
     "torch==2.8.0",
-    "transformers[hf_xet]>=4.51.0",
+    # Qwen3.5 metadata requires Transformers 4.57.0. The x86-only SGLang
+    # optimization stack below pins 4.56.1, so keep that legacy constraint off
+    # the aarch64 cluster path while allowing its existing x86 resolution.
+    "transformers[hf_xet]>=4.57.0; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "transformers[hf_xet]>=4.51.0; sys_platform != 'linux' or platform_machine != 'aarch64'",
     "tokenizers==0.22.1",
     "datasets==3.6.0",
     "accelerate==1.12.0",
@@ -16,12 +20,13 @@ dependencies = [
     "bitsandbytes==0.46.1",
     "safetensors==0.7.0",
     "einops==0.8.1",
-    "triton==3.4.0",
-    # Fast training (Unsloth + LoRA)
-    "unsloth==2025.10.12",
-    "unsloth-zoo==2025.10.13",
-    "liger-kernel==0.6.4",
-    "cut-cross-entropy==25.1.1",
+    "triton==3.4.0; platform_machine == 'x86_64' and sys_platform == 'linux'",
+    # Fast training (Unsloth + LoRA). These packages depend on the x86-only
+    # Triton wheels, so PEFT is the portable training path on Linux aarch64.
+    "unsloth==2025.10.12; platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "unsloth-zoo==2025.10.13; platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "liger-kernel==0.6.4; platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "cut-cross-entropy==25.1.1; platform_machine == 'x86_64' and sys_platform == 'linux'",
     # Fast inference
     "vllm==0.11.0",
     # The pinned wheel below is Linux x86_64 + CPython 3.12 only. Other
@@ -58,7 +63,8 @@ dependencies = [
     "pytest",
     "ruff",
     # Extra inference
-    "sglang[all]==0.5.2",
+    # `all` pulls x86-only sgl-kernel and decord wheels.
+    "sglang[all]==0.5.2; platform_machine == 'x86_64' and sys_platform == 'linux'",
     "flashinfer-python==0.3.1",
     "torch-memory-saver",
     # VERL
