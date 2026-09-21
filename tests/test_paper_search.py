@@ -119,6 +119,18 @@ class PaperSearchTest(unittest.TestCase):
                     paper_search.fetch(value)
         run.assert_not_called()
 
+    def test_html_text_is_truncated_at_session_safe_cap(self) -> None:
+        oversized_html = (
+            b"<html><body><article>"
+            + b"x" * (paper_search.MAX_TEXT_CHARS + 1_000)
+            + b"</article></body></html>"
+        )
+        with patch.object(paper_search, "_curl", return_value=oversized_html):
+            text, truncated = paper_search._fetch_html_text("2310.13548")
+
+        self.assertTrue(truncated)
+        self.assertLessEqual(len(text), paper_search.MAX_TEXT_CHARS)
+
     def test_fetch_accepts_modern_and_legacy_ids(self) -> None:
         self.assertEqual(
             paper_search.normalize_arxiv_id("arXiv:2310.13548v2"), "2310.13548v2"
