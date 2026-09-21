@@ -32,13 +32,19 @@ Copy `.env.example` to `.env`; never commit credentials. Preserve the research/e
 
 ### Devserver and FAIR HPC workflow
 
-- You are currently on my devserver. Treat the devserver checkout as the primary place for editing and source-control work.
+- Work on branch `uv` in both environments. The authoritative editing and source-control worktree is
+  `/home/winnieyangwn/aar-worktrees/uv` on the devserver. The execution worktree is
+  `/storage/home/winnieyangwn/aar-worktrees/uv` on FAIR HPC.
 - Use `fair-cw-use2-1` as the default HPC cluster for this project unless the user specifies another cluster.
-- Unless the user specifies another branch, make changes and commits on the `Winnie` branch; do not commit directly
-  to `main`. Do not push repository changes unless the user explicitly asks the agent to do so; Winnie normally
-  handles pushes, after which cluster checkouts can be synchronized.
-- Keep a separate checkout on each cluster under `~/src/automated_alignment_researcher`; update it with
-  `git pull --ff-only`. Do not assume devserver and cluster filesystems are shared.
+- Before editing or running, verify the checkout path and confirm `git branch --show-current` prints `uv`. Do not
+  edit, stage, or commit repository work in the `main` worktree unless the user explicitly requests it; it may contain
+  unrelated work in progress.
+- Make focused changes and commits in the devserver `uv` worktree, then synchronize the exact commit to the HPC `uv`
+  worktree through direct Git-over-SSH using the `git-sync-from-dev-to-hpc` skill. Require a fast-forward and preserve
+  all HPC-local ignored state. Do not assume the filesystems are shared, copy working-tree files directly, or push to
+  GitHub unless the user explicitly requests it.
+- Record experiment decisions and conversation notes under `experiments/<YYYYMMDD>/` in the devserver `uv` worktree,
+  commit them on `uv`, and synchronize them to the HPC `uv` worktree. Do not maintain the canonical log on `main`.
 - Maintain a separate Python environment on each cluster architecture. Do not copy environments between the
   x86_64 devserver and ARM64 GB300 clusters.
 - When a project's environment includes GPU or CUDA dependencies, first obtain a Slurm allocation on the intended
@@ -61,11 +67,9 @@ Copy `.env.example` to `.env`; never commit credentials. Preserve the research/e
   appropriate to the data classification.
 - Do not delete or overwrite retained datasets, checkpoints, logs, or run results without explicit user approval.
 
-### Current HPC `uv` worktree
+### HPC `uv` execution worktree
 
-- For the README verification work, the user-selected HPC branch is `uv`, checked out at
-  `/storage/home/winnieyangwn/aar-worktrees/uv` on `fair-cw-use2-1`. This is an explicit project-specific exception to
-  the default branch and checkout location above.
+- The HPC branch is `uv`, checked out at `/storage/home/winnieyangwn/aar-worktrees/uv` on `fair-cw-use2-1`.
 - Before working there, run `git branch --show-current` and confirm it prints `uv`, then run
   `source .venv/bin/activate` and export `PYTHONPATH="$PWD"`, `AAR_BENCHMARK_DOCS="$PWD/benchmark_docs"`, and
   `BENCHMARK_DOCS_DIR="$PWD/benchmark_docs"`.
