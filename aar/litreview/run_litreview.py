@@ -159,11 +159,15 @@ async def _survey(cat: str, desc: str, axis: str, per: int, model: str, ws: Path
     from aar.research_loop.tools.lit_forum import count
     os.environ["LITREVIEW_AREA"] = cat
     allowed, permission_mode, web_process, system_prompt = _web_config()
+    meta_secure = os.getenv("LITREVIEW_WEB_MODE", NATIVE_WEB_MODE) == META_SECURE_WEB_MODE
     agent = BaseAgent(
         name=f"lit-{cat}", allowed_tools=allowed, workspace=ws, mcp_servers=mcp, model=model,
         cli_path=_resolve_cli_path(),
         permission_mode=permission_mode,
         system_prompt=system_prompt,
+        tools=["Bash"] if meta_secure else None,
+        setting_sources=[] if meta_secure else ["project"],
+        strict_mcp_config=True if meta_secure else None,
     )
     task = TASK_TMPL.format(
         axis=axis,

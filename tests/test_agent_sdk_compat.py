@@ -52,6 +52,40 @@ def _load_agent_module(options_class: type) -> types.ModuleType:
 
 
 class AgentSdkCompatibilityTest(unittest.TestCase):
+    def test_restrictive_options_are_forwarded_only_when_explicit(self) -> None:
+        class Options:
+            def __init__(self) -> None:
+                pass
+
+        agent_module = _load_agent_module(Options)
+        base = agent_module.BaseAgent(
+            name="restricted",
+            allowed_tools=["Bash(/repo/scripts/aar-paper-search *)", "mcp__lit__get"],
+            workspace=Path("/tmp/workspace"),
+            mcp_servers={"lit": {"type": "sdk"}},
+            tools=["Bash"],
+            setting_sources=[],
+            strict_mcp_config=True,
+        )
+
+        options = base._build_options_dict()
+
+        self.assertEqual(options["tools"], ["Bash"])
+        self.assertEqual(options["setting_sources"], [])
+        self.assertIs(options["strict_mcp_config"], True)
+        self.assertEqual(options["mcp_servers"], {"lit": {"type": "sdk"}})
+        self.assertIn("mcp__lit__get", options["allowed_tools"])
+
+        ordinary = agent_module.BaseAgent(
+            name="ordinary",
+            allowed_tools=[],
+            workspace=Path("/tmp/workspace"),
+            mcp_servers={},
+        )._build_options_dict()
+        self.assertNotIn("tools", ordinary)
+        self.assertNotIn("setting_sources", ordinary)
+        self.assertNotIn("strict_mcp_config", ordinary)
+
     def test_older_sdk_omits_unsupported_reasoning_options(self) -> None:
         class OldOptions:
             def __init__(self, *, model: str | None = None) -> None:

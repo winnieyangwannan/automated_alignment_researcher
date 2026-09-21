@@ -203,7 +203,13 @@ class LitreviewLaunchTest(unittest.TestCase):
             )
             fake_python.chmod(0o755)
             fake_cli = tmp_path / "claude"
-            fake_cli.write_text("#!/bin/bash\nexit 0\n")
+            fake_cli.write_text(
+                "#!/bin/bash\n"
+                "if [ \"${1:-}\" = '--help' ]; then\n"
+                "  printf '%s\\n' '--secure-internet-mode'\n"
+                "fi\n"
+                "exit 0\n"
+            )
             fake_cli.chmod(0o755)
             env = os.environ.copy()
             env.update(
@@ -212,7 +218,6 @@ class LitreviewLaunchTest(unittest.TestCase):
                     "HARNESS_PY": str(fake_python),
                     "HARNESS_ENV": str(tmp_path / "missing.env"),
                     "CLAUDE_CLI_PATH": str(fake_cli),
-                    "AAR_FAIR_CLAUDE_CLI_PATH": str(fake_cli),
                     "ANTHROPIC_API_KEY": "must-not-reach-child",
                     "MODEL_API_KEY": "must-not-reach-child",
                     "HF_TOKEN": "must-not-reach-child",
@@ -294,7 +299,6 @@ class LitreviewLaunchTest(unittest.TestCase):
                 "HARNESS_ENV",
                 "ANTHROPIC_API_KEY",
                 "CLAUDE_CLI_PATH",
-                "AAR_FAIR_CLAUDE_CLI_PATH",
             ):
                 env.pop(name, None)
             env["SLURM_SUBMIT_DIR"] = str(repo)
@@ -364,6 +368,10 @@ class LitreviewLaunchTest(unittest.TestCase):
             ],
         )
         self.assertEqual(captured["permission_mode"], "dontAsk")
+        self.assertEqual(captured["tools"], ["Bash"])
+        self.assertEqual(captured["setting_sources"], [])
+        self.assertIs(captured["strict_mcp_config"], True)
+        self.assertEqual(captured["mcp_servers"], {})
         self.assertIn(f"`{helper} search", captured["task"])
         self.assertNotIn("WebSearch", captured["allowed_tools"])
         self.assertNotIn("Read", captured["allowed_tools"])

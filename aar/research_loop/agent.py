@@ -222,10 +222,9 @@ OVERLOADED_MAX_RETRIES = int(os.getenv("OVERLOADED_MAX_RETRIES", "6"))
 def _agent_sdk_supports_option(name: str) -> bool:
     """Return whether this installed Agent SDK accepts an option keyword.
 
-    FAIR currently provides claude-agent-sdk 0.1.30, whose options class does
-    not yet accept the newer ``thinking`` and ``effort`` keywords. Inspecting
-    the constructor lets the same checkout retain those settings when run with
-    a newer SDK while remaining compatible with the cluster installation.
+    Older Agent SDK releases did not accept the newer ``thinking`` and
+    ``effort`` keywords. Inspecting the constructor keeps this helper usable in
+    portable environments even though this project pins a newer SDK.
     """
     try:
         parameters = inspect.signature(ClaudeAgentOptions).parameters
@@ -264,6 +263,9 @@ class BaseAgent:
         cli_path: Optional[str] = None,
         message_callback: Optional[Callable] = None,
         system_prompt: Optional[str] = None,
+        tools: Optional[List[str]] = None,
+        setting_sources: Optional[List[str]] = None,
+        strict_mcp_config: Optional[bool] = None,
     ):
         self.name = name
         self.allowed_tools = allowed_tools
@@ -274,6 +276,31 @@ class BaseAgent:
         self.cli_path = cli_path
         self.message_callback = message_callback
         self.system_prompt = system_prompt
+        self.tools = tools
+        self.setting_sources = setting_sources
+        self.strict_mcp_config = strict_mcp_config
+
+    def _build_options_dict(self) -> Dict[str, Any]:
+        """Build SDK options, including restrictive knobs only when requested."""
+        options: Dict[str, Any] = {
+            "allowed_tools": self.allowed_tools,
+            "system_prompt": self.system_prompt,
+            "permission_mode": self.permission_mode,
+            "cwd": str(self.workspace),
+            "model": self.model,
+            "mcp_servers": self.mcp_servers,
+            "betas": ["context-1m-2025-08-07"],
+        }
+        if self.tools is not None:
+            options["tools"] = self.tools
+        if self.setting_sources is not None:
+            options["setting_sources"] = self.setting_sources
+        if self.strict_mcp_config is not None:
+            options["strict_mcp_config"] = self.strict_mcp_config
+        _add_supported_reasoning_options(options)
+        if self.cli_path:
+            options["cli_path"] = self.cli_path
+        return options
 
     async def execute(self, task: str) -> AgentResult:
         """Execute agent task. Returns AgentResult.
@@ -315,23 +342,7 @@ class BaseAgent:
         messages = []
 
         if True:
-            options_dict = {
-                "allowed_tools": self.allowed_tools,
-                "system_prompt": self.system_prompt,
-                "permission_mode": self.permission_mode,
-                "cwd": str(self.workspace),
-                "model": self.model,
-                "mcp_servers": self.mcp_servers,
-                "setting_sources": ["project"],
-                "betas": ["context-1m-2025-08-07"],
-            }
-            # Newer SDKs expose adaptive thinking and effort. Older releases
-            # (including FAIR's current 0.1.30) reject these constructor kwargs.
-            _add_supported_reasoning_options(options_dict)
-            if self.cli_path:
-                options_dict["cli_path"] = self.cli_path
-
-            options = ClaudeAgentOptions(**options_dict)
+            options = ClaudeAgentOptions(**self._build_options_dict())
 
             async with ClaudeSDKClient(options=options) as client:
                 await client.query(task)
@@ -502,6 +513,7 @@ class AutonomousAgentLoop:
             model=self.model,
             cli_path=shutil.which("claude"),
             message_callback=message_callback,
+            setting_sources=["project"],
         )
 
     async def run(self) -> Dict[str, Any]:

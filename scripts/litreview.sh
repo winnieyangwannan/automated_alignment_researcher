@@ -53,37 +53,59 @@ if [ -n "${_INHERITED_CLAUDE_CLI_PATH}" ]; then
 fi
 unset _INHERITED_ANTHROPIC_API_KEY _INHERITED_CLAUDE_CLI_PATH
 
-# FAIR's /usr/local/bin/claude authenticates through Meta's AI Gateway, so it
-# does not require a direct Anthropic key. Secure-internet mode is enabled only
-# for that known path. A direct key or another authenticated CLI retains the
-# portable native-WebSearch path.
+# Auto-detect Meta's authenticated launcher by its documented secure-internet
+# flag. Operators can force either backend with LITREVIEW_WEB_MODE=meta_secure
+# or LITREVIEW_WEB_MODE=native_web.
 if [ -z "${CLAUDE_CLI_PATH:-}" ]; then
   CLAUDE_CLI_PATH="$(command -v claude || true)"
 fi
-_FAIR_CLAUDE_CLI_PATH="${AAR_FAIR_CLAUDE_CLI_PATH:-/usr/local/bin/claude}"
+_REQUESTED_WEB_MODE="${LITREVIEW_WEB_MODE:-auto}"
+case "${_REQUESTED_WEB_MODE}" in
+  auto|meta_secure|native_web) ;;
+  *)
+    echo "[litreview] ERROR: LITREVIEW_WEB_MODE must be auto, meta_secure, or native_web" >&2
+    exit 2
+    ;;
+esac
+_DETECTED_WEB_MODE=native_web
+if [ -n "${CLAUDE_CLI_PATH:-}" ] && [ -x "${CLAUDE_CLI_PATH}" ]; then
+  _CLI_HELP="$("${CLAUDE_CLI_PATH}" --help 2>&1 || true)"
+  case "${_CLI_HELP}" in
+    *--secure-internet-mode*) _DETECTED_WEB_MODE=meta_secure ;;
+  esac
+  unset _CLI_HELP
+fi
+if [ "${_REQUESTED_WEB_MODE}" = "auto" ]; then
+  LITREVIEW_WEB_MODE="${_DETECTED_WEB_MODE}"
+else
+  LITREVIEW_WEB_MODE="${_REQUESTED_WEB_MODE}"
+fi
+export LITREVIEW_WEB_MODE
 unset META_CLAUDE_SECURE_INTERNET_MODE
-if [ -n "${CLAUDE_CLI_PATH:-}" ] && [ -x "${CLAUDE_CLI_PATH}" ] && \
-   [ "${CLAUDE_CLI_PATH}" = "${_FAIR_CLAUDE_CLI_PATH}" ]; then
+if [ "${LITREVIEW_WEB_MODE}" = "meta_secure" ]; then
+  if [ -z "${CLAUDE_CLI_PATH:-}" ] || [ ! -x "${CLAUDE_CLI_PATH}" ]; then
+    echo "[litreview] ERROR: meta_secure mode requires an executable Claude CLI" >&2
+    exit 2
+  fi
   export CLAUDE_CLI_PATH
   unset ANTHROPIC_API_KEY
   export META_CLAUDE_SECURE_INTERNET_MODE=1
-  export LITREVIEW_WEB_MODE=meta_secure
 elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   unset CLAUDE_CLI_PATH
-  export LITREVIEW_WEB_MODE=native_web
 elif [ -n "${CLAUDE_CLI_PATH:-}" ] && [ -x "${CLAUDE_CLI_PATH}" ]; then
   export CLAUDE_CLI_PATH
-  export LITREVIEW_WEB_MODE=native_web
 else
   echo "[litreview] ERROR: neither ANTHROPIC_API_KEY nor an executable Claude CLI is available" >&2
   echo "[litreview] Set ANTHROPIC_API_KEY or CLAUDE_CLI_PATH (or put claude on PATH)." >&2
   exit 2
 fi
-unset _FAIR_CLAUDE_CLI_PATH
+unset _REQUESTED_WEB_MODE _DETECTED_WEB_MODE
 
 # These credentials are not needed by either librarian route. Keeping them out
 # of the child limits the impact of a malicious or prompt-injected paper.
-unset MODEL_API_KEY LLAMA_API_KEY HF_TOKEN HUGGING_FACE_HUB_TOKEN
+unset MODEL_API_KEY LLAMA_API_KEY HF_TOKEN HUGGING_FACE_HUB_TOKEN OAI_API
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN RUNPOD_API_KEY
+unset OPENAI_API_KEY WANDB_API_KEY
 
 if [ "${LITREVIEW_WEB_MODE}" = "meta_secure" ]; then
   for _required in "${REPO}/scripts/aar-paper-search" /usr/bin/curl; do

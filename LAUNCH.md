@@ -22,14 +22,19 @@ the repository from the script location, uses `<repo>/.venv/bin/python`, sources
 `SLURM_SUBMIT_DIR`; override these choices with `AAR_REPO`, `HARNESS_PY`,
 `HARNESS_ENV`, `LIT_AXIS_DIR`, or `LITREVIEW_WORKSPACE`.
 Authentication can use either an executable Claude CLI (resolved from
-`CLAUDE_CLI_PATH` or `PATH`) or a direct `ANTHROPIC_API_KEY`. The FAIR-specific
-route is selected only when the executable is `/usr/local/bin/claude`: the
-launcher enables `META_CLAUDE_SECURE_INTERNET_MODE=1`, removes the direct
-Anthropic key, and runs the librarian with `permission_mode="dontAsk"`. Its only
-allowed tools are the exact repository-local `scripts/aar-paper-search` command
-and the `get_literature`/`share_literature` MCP tools. General Bash, file tools,
-and native `WebSearch`/`WebFetch` are not allowed on this route. `MODEL_API_KEY`,
-`LLAMA_API_KEY`, `HF_TOKEN`, and `HUGGING_FACE_HUB_TOKEN` are removed from every
+`CLAUDE_CLI_PATH` or `PATH`) or a direct `ANTHROPIC_API_KEY`. With the default
+`LITREVIEW_WEB_MODE=auto`, the FAIR route is selected only when the CLI's help
+advertises `--secure-internet-mode`; operators may explicitly select
+`meta_secure` or `native_web`. The Meta route enables
+`META_CLAUDE_SECURE_INTERNET_MODE=1`, removes the direct Anthropic key, and runs
+the librarian with `permission_mode="dontAsk"`, built-in `tools=["Bash"]`, no
+settings sources, and strict MCP configuration. Its only preapproved calls are
+the exact repository-local `scripts/aar-paper-search` command and the explicit
+`get_literature`/`share_literature` MCP tools. General Bash, file tools, and
+native `WebSearch`/`WebFetch` are not available on this route.
+
+Unrelated model, cloud, and tracking credentials—including `MODEL_API_KEY`,
+Hugging Face, OpenAI, AWS, Runpod, and W&B variables—are removed from every
 librarian child because they are unrelated to librarian authentication.
 
 The helper accepts only `search <query> [--limit 1..10]` and `fetch <arxiv-id>`.
