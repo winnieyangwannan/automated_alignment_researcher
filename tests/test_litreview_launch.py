@@ -35,6 +35,7 @@ _LIT_FORUM_SPEC.loader.exec_module(lit_forum)
 class LitreviewLaunchTest(unittest.TestCase):
     def test_hpc_resources_are_cpu_only_on_requested_partition(self) -> None:
         source = SCRIPT.read_text()
+        self.assertIn("#SBATCH --account=ram", source)
         self.assertIn("#SBATCH --partition=g3", source)
         self.assertIn("#SBATCH --qos=g3_ram_high", source)
         self.assertNotIn("#SBATCH --gres=", source)
@@ -55,6 +56,7 @@ class LitreviewLaunchTest(unittest.TestCase):
 
     def test_team_launcher_gates_chains_on_valid_literature(self) -> None:
         source = TEAM_SCRIPT.read_text()
+        self.assertIn('--account="${AAR_SLURM_ACCOUNT:-ram}"', source)
         self.assertIn("--partition=g3 --qos=g3_ram_high", source)
         self.assertIn('--output="${TEAM_DIR}/logs/%x_%j.out"', source)
         self.assertIn("literature survey failed; refusing to launch AAR chains", source)

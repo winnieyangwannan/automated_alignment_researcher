@@ -1,5 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=aar-litreview
+#SBATCH --account=ram
 #SBATCH --partition=g3
 #SBATCH --qos=g3_ram_high
 #SBATCH --cpus-per-task=4

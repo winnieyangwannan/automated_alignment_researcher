@@ -13,7 +13,9 @@ To populate the literature baseline without launching an AAR chain:
 sbatch scripts/litreview.sh sycophancy <team-id> 30
 ```
 
-The job is CPU-only and requests partition `g3` with QoS `g3_ram_high`. It resolves
+The job is CPU-only and requests account `ram`, partition `g3`, and QoS
+`g3_ram_high`. The team launcher allows an account override through
+`AAR_SLURM_ACCOUNT`. The job resolves
 the repository from the script location, uses `<repo>/.venv/bin/python`, sources
 `<repo>/.env`, and writes the default baseline and workspace beneath the ignored
 `<repo>/_runs/litreview/` directory. Under Slurm it resolves the checkout from

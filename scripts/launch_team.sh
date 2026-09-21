@@ -230,7 +230,8 @@ elif [ "${LITREVIEW_REFRESH:-0}" != "1" ] && [ "${_lit_n}" -ge "${LITREVIEW_MIN:
 else
   [ "${LITREVIEW_REFRESH:-0}" = "1" ] && { echo "[team] LITREVIEW_REFRESH=1 — re-surveying axis '${SUITE}'"; rm -f "${LIT_AXIS}"/*.json 2>/dev/null || true; }
   echo "[team] literature survey (fresh, >=${LITREVIEW_MIN:-30} entries) — blocking until done..."
-  if ! sbatch --wait --partition=g3 --qos=g3_ram_high \
+  if ! sbatch --wait --account="${AAR_SLURM_ACCOUNT:-ram}" \
+       --partition=g3 --qos=g3_ram_high \
        --output="${TEAM_DIR}/logs/%x_%j.out" --job-name="aar-litreview-${SUITE}" \
        "${REPO}/scripts/litreview.sh" "${SUITE}" "${TEAM_ID}" "${LITREVIEW_MIN:-30}"; then
     echo "[team] FATAL: literature survey failed; refusing to launch AAR chains" >&2
