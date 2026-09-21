@@ -74,6 +74,9 @@ model). Both are plain Python; set the env vars above. This is the portable path
   commands under your own job wrapper.
 - The evaluator is a simple drain loop: it watches `SUBMISSIONS_DIR` for staged models and scores each.
   Point `SUBMISSIONS_DIR` / `SCORES_DIR` / `HOLDOUT_DIR` at your shared and eval-only storage.
+- `scripts/litreview.sh` and the librarian pre-phase in `scripts/launch_team.sh` are portable to the
+  FAIR `g3` partition. This does not port the complete team/evaluator workflow: other reference
+  wrappers still contain deployment-specific scheduler, credential, cache, or `/opt/aar/...` defaults.
 
 ## Training backend
 

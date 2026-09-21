@@ -23,6 +23,12 @@ the repository from the script location, uses `<repo>/.venv/bin/python`, sources
 `claude-sonnet-4-6`. The job exits nonzero if it cannot reach the requested entry
 count, so callers can safely gate AAR launch on its completion.
 
+This portability work covers the standalone librarian and the librarian pre-phase
+inside `launch_team.sh`. It also repairs the known shell parse errors in the chain,
+training, and evaluator wrappers. It does **not** make the complete AAR/evaluator
+deployment portable: remaining site-specific scheduler, credential, cache, and
+evaluator paths must be configured or ported before an end-to-end launch.
+
 ## One chain
 ```bash
 sbatch --job-name=aar-syco-v1 scripts/slurm_aar_chain.sh explore 10

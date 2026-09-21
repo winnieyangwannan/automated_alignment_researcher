@@ -15,6 +15,7 @@ from aar.litreview import run_litreview
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "litreview.sh"
+TEAM_SCRIPT = ROOT / "scripts" / "launch_team.sh"
 PARSE_CHECKED_SCRIPTS = (
     SCRIPT,
     ROOT / "scripts" / "slurm_aar_chain.sh",
@@ -52,6 +53,15 @@ class LitreviewLaunchTest(unittest.TestCase):
                 self.assertIn('SLURM_SUBMIT_DIR:-}', source)
                 self.assertIn('${SLURM_SUBMIT_DIR}/aar', source)
 
+    def test_team_launcher_gates_chains_on_valid_literature(self) -> None:
+        source = TEAM_SCRIPT.read_text()
+        self.assertIn("--partition=g3 --qos=g3_ram_high", source)
+        self.assertIn('--output="${TEAM_DIR}/logs/%x_%j.out"', source)
+        self.assertIn("literature survey failed; refusing to launch AAR chains", source)
+        self.assertIn("literature baseline has ${n_lit} valid unique entries", source)
+        self.assertNotIn("litreview job returned non-zero (continuing)", source)
+        self.assertIn('RUNTIME_ROOT="${AAR_RUNTIME_ROOT:-${REPO}/_runs}"', source)
+
     def test_launcher_uses_configurable_repo_python_and_env(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             tmp_path = Path(directory)
@@ -60,6 +70,7 @@ class LitreviewLaunchTest(unittest.TestCase):
             fake_python = tmp_path / "python"
             fake_python.write_text(
                 "#!/bin/bash\n"
+                "if [ \"${1:-}\" = '-c' ]; then printf '0\\n'; exit 0; fi\n"
                 "printf 'cwd=%s\\n' \"$PWD\"\n"
                 "printf 'args=%s\\n' \"$*\"\n"
                 "printf 'pythonpath=%s\\n' \"$PYTHONPATH\"\n"
@@ -145,7 +156,11 @@ class LitreviewLaunchTest(unittest.TestCase):
             (repo / "aar").mkdir(parents=True)
             python = repo / ".venv" / "bin" / "python"
             python.parent.mkdir(parents=True)
-            python.write_text("#!/bin/bash\nprintf 'cwd=%s\\n' \"$PWD\"\n")
+            python.write_text(
+                "#!/bin/bash\n"
+                "if [ \"${1:-}\" = '-c' ]; then printf '0\\n'; exit 0; fi\n"
+                "printf 'cwd=%s\\n' \"$PWD\"\n"
+            )
             python.chmod(0o755)
             (repo / ".env").write_text("ANTHROPIC_API_KEY='test-placeholder'\n")
             spool = tmp_path / "slurm-spool"
@@ -174,10 +189,39 @@ class LitreviewCompletionTest(unittest.TestCase):
     def test_count_deduplicates_same_axis_and_forum_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             lit_dir = Path(directory)
-            (lit_dir / "one.json").write_text("{}")
+            (lit_dir / "one.json").write_text('{"id": "one"}')
             with patch.dict(
                 os.environ,
                 {"LIT_AXIS_DIR": str(lit_dir), "LIT_FORUM_DIR": str(lit_dir / ".")},
+                clear=False,
+            ):
+                self.assertEqual(lit_forum.count(), 1)
+
+    def test_count_deduplicates_ids_across_distinct_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            axis_dir = root / "axis"
+            forum_dir = root / "forum"
+            axis_dir.mkdir()
+            forum_dir.mkdir()
+            (axis_dir / "axis-copy.json").write_text('{"id": "same", "method": "axis"}')
+            (forum_dir / "forum-copy.json").write_text('{"id": "same", "method": "forum"}')
+            with patch.dict(
+                os.environ,
+                {"LIT_AXIS_DIR": str(axis_dir), "LIT_FORUM_DIR": str(forum_dir)},
+                clear=False,
+            ):
+                self.assertEqual(lit_forum.count(), 1)
+                self.assertEqual(len(lit_forum.read_lit_entries()), 1)
+
+    def test_count_ignores_malformed_json(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            lit_dir = Path(directory)
+            (lit_dir / "valid.json").write_text('{"id": "valid"}')
+            (lit_dir / "broken.json").write_text("not-json")
+            with patch.dict(
+                os.environ,
+                {"LIT_AXIS_DIR": str(lit_dir), "LIT_FORUM_DIR": ""},
                 clear=False,
             ):
                 self.assertEqual(lit_forum.count(), 1)

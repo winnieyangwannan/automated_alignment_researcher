@@ -89,19 +89,5 @@ def read_lit_entries() -> list[dict[str, Any]]:
 
 
 def count() -> int:
-    """Count visible JSON entries without counting the same directory twice."""
-    n = 0
-    seen_dirs: set[Path] = set()
-    for d in (_axis_lit_dir(), _lit_dir()):
-        if d is None:
-            continue
-        # ``litreview.sh`` deliberately writes the axis baseline by pointing the
-        # forum at the axis directory. Resolve non-strictly so equivalent spellings
-        # of that directory are counted only once.
-        resolved = d.expanduser().resolve(strict=False)
-        if resolved in seen_dirs:
-            continue
-        seen_dirs.add(resolved)
-        if d.exists():
-            n += len(list(d.glob("*.json")))
-    return n
+    """Count entries with the same validation and ID de-duplication as reads."""
+    return len(read_lit_entries())

@@ -11,9 +11,10 @@
 #
 # Idempotent. Run as the research user.  Usage: scripts/purge_heldout_research.sh
 set -uo pipefail
-R=/opt/aar/work
-REPO=/opt/aar/work
-PY=/opt/aar/work
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO="${AAR_REPO:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
+R="${AAR_RUNTIME_ROOT:-${REPO}/_runs}"
+PY="${HARNESS_PY:-${REPO}/.venv/bin/python}"
 
 # Held-out benchmark names from the SINGLE SOURCE OF TRUTH (_HELD_OUT in publish_suite); fall back to
 # the known set if the import is unavailable (kept in sync with scripts/publish_suite.py:_HELD_OUT).

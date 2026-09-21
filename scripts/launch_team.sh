@@ -19,7 +19,7 @@
 #   SEED_FORUM_FROM=<TEAM_ID>  scripts/launch_team.sh sycophancy
 #   SEED_FORUM_FROM=latest     scripts/launch_team.sh sycophancy   # most recent prior team
 # List prior teams to pick from:
-#   ls -1dt /opt/aar/work
+#   ls -1dt _runs/aar_teams/*
 #
 # Run the eval worker once as the EVAL user (it serves all teams):
 #   scripts/launch_eval_worker.sh <suite>
@@ -27,7 +27,23 @@ set -euo pipefail
 AXIS="${AXIS:-sycophancy}"     # safety axis  -> scripts/axis/<AXIS>.env ('sycophancy' = built-in default)
 MODEL="${MODEL:-qwen}"         # target model -> one of the 6 (scripts/models.sh); independent of AXIS
 export AXIS MODEL
-REPO=/opt/aar/work
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [ -n "${AAR_REPO:-}" ] && [ -d "${AAR_REPO}/aar" ]; then
+  REPO="$(cd -- "${AAR_REPO}" && pwd)"
+else
+  REPO="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+fi
+if [ ! -d "${REPO}/aar" ]; then
+  echo "[team] FATAL: repository not found at ${REPO}; set AAR_REPO" >&2
+  exit 2
+fi
+export PYTHONPATH="${REPO}${PYTHONPATH:+:${PYTHONPATH}}"
+PY="${HARNESS_PY:-${REPO}/.venv/bin/python}"
+if [ ! -x "${PY}" ]; then
+  echo "[team] FATAL: Python is not executable at ${PY}; set HARNESS_PY" >&2
+  exit 2
+fi
+RUNTIME_ROOT="${AAR_RUNTIME_ROOT:-${REPO}/_runs}"
 # SINGLE SOURCE OF TRUTH for axis + model — the same file slurm_aar_chain.sh sources, so the
 # team launcher and its chains can never disagree (the old positional SUITE arg did).
 source "${REPO}/scripts/axis_env.sh"   # sets SUITE_NAME, HELD_OUT_BENCH, SAFETY_*, SEED_METHOD, TARGET_MODEL
@@ -49,7 +65,7 @@ TEAM_ID="$(printf '%s' "${SUITE}-${MODEL}-${_AGENT_TAG}-$(date +%Y%m%d-%H%M%S)" 
 # ATOMICALLY with `mkdir` (no -p): it fails if the dir already exists, so even two
 # truly concurrent launches each get a distinct id (no check-then-create race). The
 # folder is the authoritative claim. [[per-team folder layout]]
-_AAR_TEAMS=/opt/aar/work
+_AAR_TEAMS="${AAR_TEAMS_DIR:-${RUNTIME_ROOT}/aar_teams}"
 mkdir -p "${_AAR_TEAMS}"
 _base="${TEAM_ID}"; _n=1
 until mkdir "${_AAR_TEAMS}/${TEAM_ID}" 2>/dev/null; do
@@ -66,12 +82,12 @@ done
 # ===========================================================================
 export TEAM_DIR="${_AAR_TEAMS}/${TEAM_ID}"
 FORUM="${TEAM_DIR}/forum"
-mkdir -p /opt/aar/work "${TEAM_DIR}"/{forum,submissions,scores,methods,logs,litreview,_train}
+mkdir -p "${RUNTIME_ROOT}" "${TEAM_DIR}"/{forum,submissions,scores,methods,logs,litreview,_train}
 # Cross-user channel perms: the eval user (also in group `shared`) must TRAVERSE
 # TEAM_DIR and READ submissions / WRITE scores. Mirror the legacy 2770-setgid queue
 # dirs; keep the team's other subdirs group-traversable-only.
-chgrp shared /opt/aar/work "${TEAM_DIR}" "${TEAM_DIR}/submissions" "${TEAM_DIR}/scores" 2>/dev/null || true
-chmod 2750 /opt/aar/work "${TEAM_DIR}" 2>/dev/null || true
+chgrp "${AAR_SHARED_GROUP:-shared}" "${RUNTIME_ROOT}" "${TEAM_DIR}" "${TEAM_DIR}/submissions" "${TEAM_DIR}/scores" 2>/dev/null || true
+chmod 2750 "${RUNTIME_ROOT}" "${TEAM_DIR}" 2>/dev/null || true
 chmod 2770 "${TEAM_DIR}/submissions" "${TEAM_DIR}/scores" 2>/dev/null || true
 # Export the per-team dirs so chains, the train jobs they spawn, and the dashboard
 # all agree (config.py also derives these from TEAM_DIR — belt and suspenders).
@@ -81,7 +97,7 @@ export SCORES_DIR="${TEAM_DIR}/scores"
 export AAR_IDEAS_DIR="${TEAM_DIR}/methods"
 export SESSION_LOGS_DIR="${TEAM_DIR}/logs"
 export LIT_FORUM_DIR="${TEAM_DIR}/litreview"                          # team's OWN in-run lit (private)
-export LIT_AXIS_DIR=/opt/aar/work    # axis baseline (shared, read-only)
+export LIT_AXIS_DIR="${LIT_AXIS_DIR:-${RUNTIME_ROOT}/litreview/${SUITE}}"    # axis baseline (shared, read-only)
 cd "${REPO}"
 echo "[team] TEAM_ID=${TEAM_ID}"
 echo "[team] axis=${SUITE}  model=${MODEL} (${TARGET_MODEL})"
@@ -115,7 +131,7 @@ if [ -n "${TEAM_DIR:-}" ]; then
   # which we deliberately do NOT give — methods are derived from the lit review).
   # Sweep any stray dirs/files out to the archive. Idempotent; safe in parallel-team
   # mode because no live team's methods are ever in aar/ideas/ (they're in TEAM_DIR).
-  ARCHIVE=/opt/aar/work
+  ARCHIVE="${RUNTIME_ROOT}/archive/${TEAM_ID}"
   mkdir -p "${ARCHIVE}/ideas"
   find "${REPO}/aar/ideas" -mindepth 1 -maxdepth 1 \
        ! -name TEMPLATE ! -name __init__.py ! -name __pycache__ \
@@ -124,7 +140,7 @@ if [ -n "${TEAM_DIR:-}" ]; then
 elif [ "${SKIP_ISOLATION:-0}" = "1" ]; then
   echo "[team] SKIP_ISOLATION=1 — parallel-team mode: NOT archiving (sharing the live workspace with another running team; model-namespacing keeps them separate)"
 else
-  ARCHIVE=/opt/aar/work
+  ARCHIVE="${RUNTIME_ROOT}/archive/${TEAM_ID}"
   mkdir -p "${ARCHIVE}/ideas" "${ARCHIVE}/session_logs" "${ARCHIVE}/job_logs"
   # archive EVERYTHING in aar/ideas/ (method dirs AND stray files like a top-level
   # AGENT_LOG.md) except the provided seed library + package init. The axis's seed
@@ -136,7 +152,7 @@ else
   find "${REPO}/aar/research_loop/logs" -maxdepth 1 \
        \( -name "session_*.log" -o -name "AGENT_LOG_*.md" \) \
        -exec mv {} "${ARCHIVE}/session_logs/" \; 2>/dev/null || true
-  find /opt/aar/work -maxdepth 1 -name "aar-${SUITE}-*.out" \
+  find "${RUNTIME_ROOT}" -maxdepth 1 -name "aar-${SUITE}-*.out" \
        -exec mv {} "${ARCHIVE}/job_logs/" \; 2>/dev/null || true
   echo "[team] isolated: archived prior methods+transcripts -> ${ARCHIVE}"
   echo "[team] aar/ideas now: $(find "${REPO}/aar/ideas" -mindepth 1 -maxdepth 1 ! -name __pycache__ -printf '%f ' 2>/dev/null)"
@@ -149,13 +165,13 @@ if [ -n "${SEED_FORUM_FROM:-}" ]; then
   SRC_TEAM="${SEED_FORUM_FROM}"
   if [ "${SRC_TEAM}" = "latest" ]; then
     # newest prior team's forum (aar_teams/<team>/forum), excluding the one we just made
-    SRC_TEAM=$(ls -1dt /opt/aar/work 2>/dev/null \
+    SRC_TEAM=$(ls -1dt "${_AAR_TEAMS}"/*/forum/ 2>/dev/null \
                | grep -v "/${TEAM_ID}/" | head -1 | sed 's#/forum/$##' | xargs -n1 basename 2>/dev/null || true)
   fi
   # findings now live under aar_teams/<team>/forum (new layout); fall back to the legacy
   # aar_forum/<team> for teams created before the consolidation.
-  SRC="/opt/aar/work"
-  [ -d "${SRC}" ] || SRC="/opt/aar/work"
+  SRC="${_AAR_TEAMS}/${SRC_TEAM}/forum"
+  [ -d "${SRC}" ] || SRC="${RUNTIME_ROOT}/aar_forum/${SRC_TEAM}"
   if [ -n "${SRC_TEAM}" ] && [ -d "${SRC}" ]; then
     n=$(find "${SRC}" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
     # findings (JSON) + their code snapshots (<id>_<idea>_code/ dirs)
@@ -165,7 +181,7 @@ if [ -n "${SEED_FORUM_FROM:-}" ]; then
     echo "[team] SEEDED forum from prior team '${SRC_TEAM}': ${n} finding(s) + ${c} code snapshot(s) copied (source untouched)"
   else
     echo "[team] WARNING: SEED_FORUM_FROM='${SEED_FORUM_FROM}' not found — starting with an EMPTY forum."
-    echo "[team] available teams: $(ls -1dt /opt/aar/work 2>/dev/null | sed 's#/forum/$##' | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
+    echo "[team] available teams: $(ls -1dt "${_AAR_TEAMS}"/*/forum/ 2>/dev/null | sed 's#/forum/$##' | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
   fi
 fi
 
@@ -179,24 +195,29 @@ fi
 #   LITREVIEW_MIN=<n>    target entry count (default 30)
 LIT_AXIS="${LIT_AXIS_DIR}"
 mkdir -p "${LIT_AXIS}"
-_lit_n=$(find "${LIT_AXIS}" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+_lit_count_dir() {
+  LIT_AXIS_DIR="$1" LIT_FORUM_DIR='' PYTHONPATH="${PYTHONPATH}" "${PY}" -c \
+    'from aar.research_loop.tools.lit_forum import count; print(count())'
+}
+_lit_n="$(_lit_count_dir "${LIT_AXIS}")"
 # RECOVERY: a prior run may have surveyed this axis under a legacy location (the old per-axis
 # _cache/<axis>/, an old per-team aar_litreview/<axis>-*/ forum, or a prior team's
 # aar_teams/<axis>-*/litreview/). Reuse it rather than re-survey — a survey is ~40 min and is
 # identical per axis. [[lit-cache-vs-forum]]
 if [ "${LITREVIEW_SKIP:-0}" != "1" ] && [ "${LITREVIEW_REFRESH:-0}" != "1" ] && [ "${_lit_n}" -lt "${LITREVIEW_MIN:-30}" ]; then
-  for _src in /opt/aar/work \
-              $(ls -1dt /opt/aar/work 2>/dev/null) \
-              $(ls -1dt /opt/aar/work 2>/dev/null); do
+  shopt -s nullglob
+  _lit_candidates=(
+    "${RUNTIME_ROOT}/litreview/_cache/${SUITE}"
+    "${RUNTIME_ROOT}"/aar_litreview/"${SUITE}"-*
+    "${_AAR_TEAMS}"/"${SUITE}"-*/litreview
+  )
+  for _src in "${_lit_candidates[@]}"; do
     case "${_src%/}" in "${LIT_AXIS%/}") continue;; esac
-    [ -d "${_src%/}" ] || continue   # FRESH AXIS: _cache/<axis> (first candidate) won't exist; find on a
-                                     # missing path exits 1, and under `set -euo pipefail` (line 26) the
-                                     # `_pn=$(... | ...)` command-sub failure kills the whole launch SILENTLY
-                                     # before the survey is ever submitted. Skip non-existent candidates.
-    _pn=$({ find "${_src}" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l | tr -d ' '; } || true)
+    [ -d "${_src%/}" ] || continue
+    _pn="$(_lit_count_dir "${_src%/}")"
     if [ "${_pn:-0}" -ge "${LITREVIEW_MIN:-30}" ]; then
       cp "${_src%/}"/*.json "${LIT_AXIS}/" 2>/dev/null || true
-      _lit_n=$(find "${LIT_AXIS}" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+      _lit_n="$(_lit_count_dir "${LIT_AXIS}")"
       echo "[team] RECOVERED ${_lit_n} axis-baseline lit entries from ${_src%/} (no re-survey)"
       break
     fi
@@ -209,11 +230,18 @@ elif [ "${LITREVIEW_REFRESH:-0}" != "1" ] && [ "${_lit_n}" -ge "${LITREVIEW_MIN:
 else
   [ "${LITREVIEW_REFRESH:-0}" = "1" ] && { echo "[team] LITREVIEW_REFRESH=1 — re-surveying axis '${SUITE}'"; rm -f "${LIT_AXIS}"/*.json 2>/dev/null || true; }
   echo "[team] literature survey (fresh, >=${LITREVIEW_MIN:-30} entries) — blocking until done..."
-  sbatch --wait --job-name="aar-litreview-${SUITE}" \
-         scripts/litreview.sh "${SUITE}" "${TEAM_ID}" "${LITREVIEW_MIN:-30}" || \
-    echo "[team] WARNING: litreview job returned non-zero (continuing)"
+  if ! sbatch --wait --partition=g3 --qos=g3_ram_high \
+       --output="${TEAM_DIR}/logs/%x_%j.out" --job-name="aar-litreview-${SUITE}" \
+       "${REPO}/scripts/litreview.sh" "${SUITE}" "${TEAM_ID}" "${LITREVIEW_MIN:-30}"; then
+    echo "[team] FATAL: literature survey failed; refusing to launch AAR chains" >&2
+    exit 1
+  fi
 fi
-n_lit=$(find "${LIT_AXIS}" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+n_lit="$(_lit_count_dir "${LIT_AXIS}")"
+if [ "${LITREVIEW_SKIP:-0}" != "1" ] && [ "${n_lit}" -lt "${LITREVIEW_MIN:-30}" ]; then
+  echo "[team] FATAL: literature baseline has ${n_lit} valid unique entries; need ${LITREVIEW_MIN:-30}" >&2
+  exit 1
+fi
 echo "[team] axis literature baseline ready: ${n_lit} entries at ${LIT_AXIS}  (team adds its own to ${LIT_FORUM_DIR})"
 
 # DECOUPLED (DEFAULT = 1 — gpu:0 GPU-LESS agents): the chain holds NO GPU (--gres=gpu:0) and trains

@@ -69,7 +69,6 @@ fi
 cd "${REPO}"
 echo "[litreview] axis=${SUITE} team=${TEAM_ID} model=${LITREVIEW_MODEL} -> ${LIT_FORUM_DIR} (min ${MIN})"
 PYTHONUNBUFFERED=1 "${PY}" -u -m aar.litreview.run_litreview --suite "${SUITE}" --min-entries "${MIN}"
-shopt -s nullglob
-_entries=("${LIT_FORUM_DIR}"/*.json)
-echo "[litreview] entries written: ${#_entries[@]}"
+_ENTRY_COUNT="$("${PY}" -c 'from aar.research_loop.tools.lit_forum import count; print(count())')"
+echo "[litreview] valid unique entries: ${_ENTRY_COUNT}"
 echo "=== DONE ==="
