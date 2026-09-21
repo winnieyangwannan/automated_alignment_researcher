@@ -83,6 +83,8 @@ class LitreviewLaunchTest(unittest.TestCase):
                 "printf 'workspace=%s\\n' \"$LITREVIEW_WORKSPACE\"\n"
                 "printf 'model=%s\\n' \"$LITREVIEW_MODEL\"\n"
                 "printf 'cli=%s\\n' \"${CLAUDE_CLI_PATH:-}\"\n"
+                "printf 'web=%s\\n' \"${LITREVIEW_WEB_MODE:-}\"\n"
+                "printf 'secure=%s\\n' \"${META_CLAUDE_SECURE_INTERNET_MODE:-}\"\n"
             )
             fake_python.chmod(0o755)
             env_file = tmp_path / "research.env"
@@ -128,6 +130,8 @@ class LitreviewLaunchTest(unittest.TestCase):
             self.assertIn(f"workspace={workspace}", completed.stdout)
             self.assertIn("model=claude-sonnet-4-6", completed.stdout)
             self.assertIn("cli=\n", completed.stdout)
+            self.assertIn("web=native_web", completed.stdout)
+            self.assertIn("secure=\n", completed.stdout)
             self.assertNotIn("test-placeholder", completed.stdout)
 
     def test_launcher_accepts_authenticated_cli_without_direct_key(self) -> None:
@@ -140,6 +144,8 @@ class LitreviewLaunchTest(unittest.TestCase):
                 "#!/bin/bash\n"
                 "if [ \"${1:-}\" = '-c' ]; then printf '0\\n'; exit 0; fi\n"
                 "printf 'cli=%s\\n' \"${CLAUDE_CLI_PATH:-}\"\n"
+                "printf 'web=%s\\n' \"${LITREVIEW_WEB_MODE:-}\"\n"
+                "printf 'secure=%s\\n' \"${META_CLAUDE_SECURE_INTERNET_MODE:-}\"\n"
             )
             fake_python.chmod(0o755)
             fake_cli = tmp_path / "claude"
@@ -155,6 +161,7 @@ class LitreviewLaunchTest(unittest.TestCase):
                     "HARNESS_PY": str(fake_python),
                     "HARNESS_ENV": str(env_file),
                     "CLAUDE_CLI_PATH": str(fake_cli),
+                    "META_CLAUDE_SECURE_INTERNET_MODE": "1",
                 }
             )
 
@@ -167,12 +174,18 @@ class LitreviewLaunchTest(unittest.TestCase):
             )
 
             self.assertIn(f"cli={fake_cli}", completed.stdout)
+            self.assertIn("web=native_web", completed.stdout)
+            self.assertIn("secure=\n", completed.stdout)
 
     def test_launcher_prefers_cli_and_removes_direct_key_from_child(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             tmp_path = Path(directory)
             repo = tmp_path / "repo"
             (repo / "aar").mkdir(parents=True)
+            helper = repo / "scripts" / "aar-paper-search"
+            helper.parent.mkdir()
+            helper.write_text("#!/bin/bash\nexit 0\n")
+            helper.chmod(0o755)
             fake_python = tmp_path / "python"
             fake_python.write_text(
                 "#!/bin/bash\n"
@@ -183,6 +196,10 @@ class LitreviewLaunchTest(unittest.TestCase):
                 "else\n"
                 "  printf 'key=unset\\n'\n"
                 "fi\n"
+                "printf 'web=%s\\n' \"${LITREVIEW_WEB_MODE:-}\"\n"
+                "printf 'secure=%s\\n' \"${META_CLAUDE_SECURE_INTERNET_MODE:-}\"\n"
+                "printf 'model_api=%s\\n' \"${MODEL_API_KEY:+set}\"\n"
+                "printf 'hf=%s\\n' \"${HF_TOKEN:+set}\"\n"
             )
             fake_python.chmod(0o755)
             fake_cli = tmp_path / "claude"
@@ -195,7 +212,10 @@ class LitreviewLaunchTest(unittest.TestCase):
                     "HARNESS_PY": str(fake_python),
                     "HARNESS_ENV": str(tmp_path / "missing.env"),
                     "CLAUDE_CLI_PATH": str(fake_cli),
+                    "AAR_FAIR_CLAUDE_CLI_PATH": str(fake_cli),
                     "ANTHROPIC_API_KEY": "must-not-reach-child",
+                    "MODEL_API_KEY": "must-not-reach-child",
+                    "HF_TOKEN": "must-not-reach-child",
                 }
             )
 
@@ -209,6 +229,10 @@ class LitreviewLaunchTest(unittest.TestCase):
 
             self.assertIn(f"cli={fake_cli}", completed.stdout)
             self.assertIn("key=unset", completed.stdout)
+            self.assertIn("web=meta_secure", completed.stdout)
+            self.assertIn("secure=1", completed.stdout)
+            self.assertIn("model_api=", completed.stdout)
+            self.assertIn("hf=", completed.stdout)
             self.assertNotIn("must-not-reach-child", completed.stdout)
 
     def test_launcher_rejects_missing_credential_without_running_python(self) -> None:
@@ -264,9 +288,17 @@ class LitreviewLaunchTest(unittest.TestCase):
             spooled_script.write_text(SCRIPT.read_text())
 
             env = os.environ.copy()
-            for name in ("AAR_REPO", "HARNESS_PY", "HARNESS_ENV", "ANTHROPIC_API_KEY"):
+            for name in (
+                "AAR_REPO",
+                "HARNESS_PY",
+                "HARNESS_ENV",
+                "ANTHROPIC_API_KEY",
+                "CLAUDE_CLI_PATH",
+                "AAR_FAIR_CLAUDE_CLI_PATH",
+            ):
                 env.pop(name, None)
             env["SLURM_SUBMIT_DIR"] = str(repo)
+            env["PATH"] = "/usr/bin:/bin"
 
             completed = subprocess.run(
                 ["bash", str(spooled_script), "sycophancy", "slurm-team", "0"],
@@ -298,7 +330,14 @@ class LitreviewLaunchTest(unittest.TestCase):
             lit_forum_module = types.ModuleType("aar.research_loop.tools.lit_forum")
             lit_forum_module.count = lambda: 0
             with (
-                patch.dict(os.environ, {"CLAUDE_CLI_PATH": str(cli)}, clear=False),
+                patch.dict(
+                    os.environ,
+                    {
+                        "CLAUDE_CLI_PATH": str(cli),
+                        "LITREVIEW_WEB_MODE": "meta_secure",
+                    },
+                    clear=False,
+                ),
                 patch.dict(
                     sys.modules,
                     {
@@ -315,6 +354,38 @@ class LitreviewLaunchTest(unittest.TestCase):
                 )
 
         self.assertEqual(captured["cli_path"], str(cli))
+        helper = run_litreview._paper_search_helper()
+        self.assertEqual(
+            captured["allowed_tools"],
+            [
+                f"Bash({helper} *)",
+                "mcp__server-api-tools__get_literature",
+                "mcp__server-api-tools__share_literature",
+            ],
+        )
+        self.assertEqual(captured["permission_mode"], "dontAsk")
+        self.assertIn(f"`{helper} search", captured["task"])
+        self.assertNotIn("WebSearch", captured["allowed_tools"])
+        self.assertNotIn("Read", captured["allowed_tools"])
+        self.assertNotIn("Write", captured["allowed_tools"])
+
+    def test_native_web_mode_preserves_portable_tools(self) -> None:
+        with patch.dict(
+            os.environ, {"LITREVIEW_WEB_MODE": "native_web"}, clear=False
+        ):
+            allowed, permission_mode, prompt, _ = run_litreview._web_config()
+
+        self.assertEqual(permission_mode, "bypassPermissions")
+        self.assertIn("WebSearch", allowed)
+        self.assertIn("WebFetch", allowed)
+        self.assertIn("**WebSearch**", prompt)
+
+    def test_unknown_web_mode_fails_closed(self) -> None:
+        with (
+            patch.dict(os.environ, {"LITREVIEW_WEB_MODE": "unknown"}, clear=False),
+            self.assertRaisesRegex(RuntimeError, "unsupported LITREVIEW_WEB_MODE"),
+        ):
+            run_litreview._web_config()
 
 
 class LitreviewCompletionTest(unittest.TestCase):

@@ -22,17 +22,32 @@ the repository from the script location, uses `<repo>/.venv/bin/python`, sources
 `SLURM_SUBMIT_DIR`; override these choices with `AAR_REPO`, `HARNESS_PY`,
 `HARNESS_ENV`, `LIT_AXIS_DIR`, or `LITREVIEW_WORKSPACE`.
 Authentication can use either an executable Claude CLI (resolved from
-`CLAUDE_CLI_PATH` or `PATH`) or a direct `ANTHROPIC_API_KEY`. On FAIR, the
-authenticated Meta Claude CLI is the intended path; a direct Anthropic key is
-not required. When both are present, the launcher explicitly selects the CLI and
-removes `ANTHROPIC_API_KEY` from the librarian process; the key remains a fallback
-only when no executable CLI is available. The model defaults to
-`claude-sonnet-4-6`. The job exits nonzero if neither authentication path is
-available or if it cannot reach the requested entry count, so callers can safely
-gate AAR launch on its completion. For an explicit CLI, `BaseAgent` raises the
-SDK initialize/stream-close timeout from 60 seconds to five minutes because the
-Meta launcher and managed plugins can take longer to start. Override it with
-`CLAUDE_CODE_STREAM_CLOSE_TIMEOUT` (milliseconds) when needed.
+`CLAUDE_CLI_PATH` or `PATH`) or a direct `ANTHROPIC_API_KEY`. The FAIR-specific
+route is selected only when the executable is `/usr/local/bin/claude`: the
+launcher enables `META_CLAUDE_SECURE_INTERNET_MODE=1`, removes the direct
+Anthropic key, and runs the librarian with `permission_mode="dontAsk"`. Its only
+allowed tools are the exact repository-local `scripts/aar-paper-search` command
+and the `get_literature`/`share_literature` MCP tools. General Bash, file tools,
+and native `WebSearch`/`WebFetch` are not allowed on this route. `MODEL_API_KEY`,
+`LLAMA_API_KEY`, `HF_TOKEN`, and `HUGGING_FACE_HUB_TOKEN` are removed from every
+librarian child because they are unrelated to librarian authentication.
+
+The helper accepts only `search <query> [--limit 1..10]` and `fetch <arxiv-id>`.
+It uses `/usr/bin/curl` with a fixed argument vector, response/time bounds, and
+the fixed arXiv API endpoint; it never accepts a URL or invokes a shell. Fetch
+returns metadata and the abstract, and the prompt prohibits unsupported
+full-paper details. `/usr/bin/curl` and the tracked helper are checked before a
+FAIR job starts. This is a Claude tool-policy boundary, not kernel isolation, so
+continue to use the disposable librarian workspace and do not place secrets
+there.
+
+A direct Anthropic key or any other executable Claude CLI keeps the portable
+native-`WebSearch`/`WebFetch` behavior and does not enable Meta secure-internet
+mode. The model defaults to `claude-sonnet-4-6`. The job exits nonzero if neither
+authentication path is available or if it cannot reach the requested entry
+count, so callers can safely gate AAR launch on its completion. The project pins
+`claude-agent-sdk==0.2.157`; the older 0.1.30 release cannot complete the FAIR
+CLI control handshake.
 
 This portability work covers the standalone librarian and the librarian pre-phase
 inside `launch_team.sh`. It also repairs the known shell parse errors in the chain,

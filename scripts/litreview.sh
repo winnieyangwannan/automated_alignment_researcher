@@ -10,7 +10,7 @@
 #
 # Literature-review pre-phase: populate the team's SHARED lit forum with >=MIN
 # method/paper entries before the AARs start. CPU-only — uses Claude through the
-# Agent SDK + WebSearch/WebFetch, no GPU.
+# Agent SDK and either native web tools or FAIR secure internet, no GPU.
 # Usage: sbatch scripts/litreview.sh <suite> <team_id> [min]
 set -euo pipefail
 SUITE="${1:?usage: litreview.sh <suite> <team_id> [min]}"
@@ -53,23 +53,46 @@ if [ -n "${_INHERITED_CLAUDE_CLI_PATH}" ]; then
 fi
 unset _INHERITED_ANTHROPIC_API_KEY _INHERITED_CLAUDE_CLI_PATH
 
-# FAIR's Claude CLI authenticates through Meta's AI Gateway, so it does not
-# require a direct Anthropic key. Preserve the direct-key path for portable
-# deployments where the Agent SDK supplies or finds its own CLI.
+# FAIR's /usr/local/bin/claude authenticates through Meta's AI Gateway, so it
+# does not require a direct Anthropic key. Secure-internet mode is enabled only
+# for that known path. A direct key or another authenticated CLI retains the
+# portable native-WebSearch path.
 if [ -z "${CLAUDE_CLI_PATH:-}" ]; then
   CLAUDE_CLI_PATH="$(command -v claude || true)"
 fi
-if [ -n "${CLAUDE_CLI_PATH:-}" ] && [ -x "${CLAUDE_CLI_PATH}" ]; then
+_FAIR_CLAUDE_CLI_PATH="${AAR_FAIR_CLAUDE_CLI_PATH:-/usr/local/bin/claude}"
+unset META_CLAUDE_SECURE_INTERNET_MODE
+if [ -n "${CLAUDE_CLI_PATH:-}" ] && [ -x "${CLAUDE_CLI_PATH}" ] && \
+   [ "${CLAUDE_CLI_PATH}" = "${_FAIR_CLAUDE_CLI_PATH}" ]; then
   export CLAUDE_CLI_PATH
-  # Make the transport choice unambiguous: the authenticated CLI must not be
-  # bypassed by a stale or unrelated direct Anthropic credential in .env.
   unset ANTHROPIC_API_KEY
+  export META_CLAUDE_SECURE_INTERNET_MODE=1
+  export LITREVIEW_WEB_MODE=meta_secure
 elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   unset CLAUDE_CLI_PATH
+  export LITREVIEW_WEB_MODE=native_web
+elif [ -n "${CLAUDE_CLI_PATH:-}" ] && [ -x "${CLAUDE_CLI_PATH}" ]; then
+  export CLAUDE_CLI_PATH
+  export LITREVIEW_WEB_MODE=native_web
 else
   echo "[litreview] ERROR: neither ANTHROPIC_API_KEY nor an executable Claude CLI is available" >&2
   echo "[litreview] Set ANTHROPIC_API_KEY or CLAUDE_CLI_PATH (or put claude on PATH)." >&2
   exit 2
+fi
+unset _FAIR_CLAUDE_CLI_PATH
+
+# These credentials are not needed by either librarian route. Keeping them out
+# of the child limits the impact of a malicious or prompt-injected paper.
+unset MODEL_API_KEY LLAMA_API_KEY HF_TOKEN HUGGING_FACE_HUB_TOKEN
+
+if [ "${LITREVIEW_WEB_MODE}" = "meta_secure" ]; then
+  for _required in "${REPO}/scripts/aar-paper-search" /usr/bin/curl; do
+    if [ ! -x "${_required}" ]; then
+      echo "[litreview] ERROR: Meta secure mode requires executable ${_required}" >&2
+      exit 2
+    fi
+  done
+  unset _required
 fi
 
 # The survey populates the AXIS-WISE literature baseline (one per safety axis), shared
@@ -88,7 +111,7 @@ if [ ! -x "${PY}" ]; then
   exit 2
 fi
 cd "${REPO}"
-echo "[litreview] axis=${SUITE} team=${TEAM_ID} model=${LITREVIEW_MODEL} -> ${LIT_FORUM_DIR} (min ${MIN})"
+echo "[litreview] axis=${SUITE} team=${TEAM_ID} model=${LITREVIEW_MODEL} web=${LITREVIEW_WEB_MODE} -> ${LIT_FORUM_DIR} (min ${MIN})"
 PYTHONUNBUFFERED=1 "${PY}" -u -m aar.litreview.run_litreview --suite "${SUITE}" --min-entries "${MIN}"
 _ENTRY_COUNT="$("${PY}" -c 'from aar.research_loop.tools.lit_forum import count; print(count())')"
 echo "[litreview] valid unique entries: ${_ENTRY_COUNT}"

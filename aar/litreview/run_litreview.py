@@ -1,10 +1,12 @@
 """Literature-review pre-phase.
 
 Before a team's AARs start, a few research-librarian agents survey the literature
-(via WebSearch/WebFetch) and populate the team's **shared lit forum** with >=N
-structured method/paper entries — general safety-training methods AND ones
-specific to the safety axis being optimized. The AARs then read this forum
-(``get_literature``) to ground their designs, and may append to it.
+and populate the team's **shared lit forum** with >=N structured method/paper
+entries — general safety-training methods AND ones specific to the safety axis
+being optimized. Portable direct-key deployments use native WebSearch/WebFetch;
+FAIR's authenticated CLI uses the repository's constrained arXiv helper. The
+AARs then read this forum (``get_literature``) to ground their designs, and may
+append to it.
 
 Run (usually via scripts/litreview.sh, which sets LIT_FORUM_DIR and resolves
 either a direct API key or an authenticated Claude CLI):
@@ -17,6 +19,10 @@ import asyncio
 import os
 import shutil
 from pathlib import Path
+
+
+META_SECURE_WEB_MODE = "meta_secure"
+NATIVE_WEB_MODE = "native_web"
 
 # Sub-areas surveyed in parallel; each agent writes >= `per` entries. The {axis}
 # placeholder is filled with the suite name (the safety property being optimized).
@@ -46,10 +52,9 @@ TASK_TMPL = (
     "Survey the literature for this sub-area:\n{desc}\n\n"
     "Process:\n"
     "1. Call `get_literature` first to see what's already covered (avoid duplicates).\n"
-    "2. Use **WebSearch** and **WebFetch** to find REAL papers — real titles, authors, years, "
-    "arXiv/links. Read enough to summarize each correctly.\n"
-    "3. For EACH distinct method or key paper (aim for **at least {per}**), read the paper "
-    "properly (abstract + method + results), then call `share_literature` writing the entry as a "
+    "2. {web_process}\n"
+    "3. For EACH distinct method or key paper (aim for **at least {per}**), read the available "
+    "source material carefully, then call `share_literature` writing the entry as a "
     "MINI REPRODUCTION GUIDE — a researcher who never read the paper should be able to REPLICATE "
     "its main idea from your entry alone (the algorithm, the data, the objective, the key choices):\n"
     "   - method (name), category ('{cat}'), relevance (low/medium/high to {axis})\n"
@@ -85,6 +90,57 @@ TASK_TMPL = (
 )
 
 
+def _paper_search_helper() -> Path:
+    """Return the tracked helper path used in the exact Bash permission rule."""
+    return (Path(__file__).resolve().parents[2] / "scripts" / "aar-paper-search").resolve()
+
+
+def _web_config() -> tuple[list[str], str, str, str]:
+    """Select tools, permission mode, prompt instructions, and system prompt."""
+    mode = os.getenv("LITREVIEW_WEB_MODE", NATIVE_WEB_MODE)
+    forum_tools = [
+        "mcp__server-api-tools__get_literature",
+        "mcp__server-api-tools__share_literature",
+    ]
+    if mode == META_SECURE_WEB_MODE:
+        helper = _paper_search_helper()
+        if not helper.is_file() or not os.access(helper, os.X_OK):
+            raise RuntimeError(f"restricted paper-search helper is not executable: {helper}")
+        return (
+            [f"Bash({helper} *)", *forum_tools],
+            "dontAsk",
+            (
+                f"Use only `{helper} search \"<query>\" --limit <1-10>` to discover real "
+                f"arXiv papers and `{helper} fetch <arxiv-id>` to retrieve metadata and "
+                "the abstract. Fetch every paper you cite. Because this constrained helper "
+                "does not return the full paper, omit any method detail, hyperparameter, or "
+                "result that the returned metadata and abstract do not directly support, "
+                "and omit the paper when those sources are insufficient rather than guessing"
+            ),
+            (
+                "You are a careful research librarian. Cite only real arXiv papers returned "
+                "by the restricted paper helper, with accurate titles/authors/years/links."
+            ),
+        )
+    if mode == NATIVE_WEB_MODE:
+        return (
+            ["WebSearch", "WebFetch", "Read", "Write", *forum_tools],
+            "bypassPermissions",
+            (
+                "Use **WebSearch** and **WebFetch** to find REAL papers — real titles, "
+                "authors, years, and links. Read enough to summarize each correctly"
+            ),
+            (
+                "You are a careful research librarian. You cite ONLY real papers you "
+                "found via web search, with accurate titles/authors/years/links."
+            ),
+        )
+    raise RuntimeError(
+        f"unsupported LITREVIEW_WEB_MODE={mode!r}; expected "
+        f"{NATIVE_WEB_MODE!r} or {META_SECURE_WEB_MODE!r}"
+    )
+
+
 def _require_minimum(final_count: int, min_entries: int) -> None:
     """Fail the job when agent errors/retries leave the survey incomplete."""
     if final_count < min_entries:
@@ -102,16 +158,20 @@ async def _survey(cat: str, desc: str, axis: str, per: int, model: str, ws: Path
     from aar.research_loop.agent import BaseAgent
     from aar.research_loop.tools.lit_forum import count
     os.environ["LITREVIEW_AREA"] = cat
-    allowed = ["WebSearch", "WebFetch", "Read", "Write",
-               "mcp__server-api-tools__get_literature",
-               "mcp__server-api-tools__share_literature"]
+    allowed, permission_mode, web_process, system_prompt = _web_config()
     agent = BaseAgent(
         name=f"lit-{cat}", allowed_tools=allowed, workspace=ws, mcp_servers=mcp, model=model,
         cli_path=_resolve_cli_path(),
-        system_prompt="You are a careful research librarian. You cite ONLY real papers you "
-                      "found via web search, with accurate titles/authors/years/links.",
+        permission_mode=permission_mode,
+        system_prompt=system_prompt,
     )
-    task = TASK_TMPL.format(axis=axis, desc=desc.format(axis=axis), per=per, cat=cat)
+    task = TASK_TMPL.format(
+        axis=axis,
+        desc=desc.format(axis=axis),
+        per=per,
+        cat=cat,
+        web_process=web_process,
+    )
     print(f"[litreview] surveying '{cat}' ...", flush=True)
     try:
         await agent.execute(task=task)

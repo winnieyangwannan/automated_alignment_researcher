@@ -217,7 +217,6 @@ def _is_overloaded(err: object) -> bool:
 # giving up on the session. Override via env for tests / different SLAs.
 OVERLOADED_WAIT_SECONDS = int(os.getenv("OVERLOADED_WAIT_SECONDS", "600"))
 OVERLOADED_MAX_RETRIES = int(os.getenv("OVERLOADED_MAX_RETRIES", "6"))
-CLAUDE_CLI_INITIALIZE_TIMEOUT_MS = "300000"
 
 
 def _agent_sdk_supports_option(name: str) -> bool:
@@ -245,21 +244,6 @@ def _add_supported_reasoning_options(options: Dict[str, Any]) -> None:
         options["thinking"] = {"type": "adaptive", "display": "summarized"}
     if _agent_sdk_supports_option("effort"):
         options["effort"] = os.getenv("AAR_EFFORT", "max")
-
-
-def _configure_cli_initialize_timeout(cli_path: Optional[str]) -> None:
-    """Allow Meta's launcher enough time to complete the SDK handshake.
-
-    claude-agent-sdk 0.1.30 uses ``CLAUDE_CODE_STREAM_CLOSE_TIMEOUT`` for its
-    initialize request as well as stream shutdown, with a 60-second default.
-    Meta's launcher and managed plugin setup can take longer before the native
-    CLI answers that request. Keep an operator-provided value, otherwise allow
-    five minutes whenever BaseAgent was given an explicit CLI.
-    """
-    if cli_path:
-        os.environ.setdefault(
-            "CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", CLAUDE_CLI_INITIALIZE_TIMEOUT_MS
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +315,6 @@ class BaseAgent:
         messages = []
 
         if True:
-            _configure_cli_initialize_timeout(self.cli_path)
             options_dict = {
                 "allowed_tools": self.allowed_tools,
                 "system_prompt": self.system_prompt,
