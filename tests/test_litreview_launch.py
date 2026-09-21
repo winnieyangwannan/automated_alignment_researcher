@@ -45,6 +45,13 @@ class LitreviewLaunchTest(unittest.TestCase):
             with self.subTest(script=script.name):
                 subprocess.run(["bash", "-n", str(script)], check=True)
 
+    def test_sbatch_entrypoints_use_submit_directory_fallback(self) -> None:
+        for name in ("litreview.sh", "slurm_aar_chain.sh", "slurm_train_submit.sh"):
+            with self.subTest(script=name):
+                source = (ROOT / "scripts" / name).read_text()
+                self.assertIn('SLURM_SUBMIT_DIR:-}', source)
+                self.assertIn('${SLURM_SUBMIT_DIR}/aar', source)
+
     def test_launcher_uses_configurable_repo_python_and_env(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             tmp_path = Path(directory)
@@ -55,6 +62,7 @@ class LitreviewLaunchTest(unittest.TestCase):
                 "#!/bin/bash\n"
                 "printf 'cwd=%s\\n' \"$PWD\"\n"
                 "printf 'args=%s\\n' \"$*\"\n"
+                "printf 'pythonpath=%s\\n' \"$PYTHONPATH\"\n"
                 "printf 'forum=%s\\n' \"$LIT_FORUM_DIR\"\n"
                 "printf 'workspace=%s\\n' \"$LITREVIEW_WORKSPACE\"\n"
                 "printf 'model=%s\\n' \"$LITREVIEW_MODEL\"\n"
@@ -75,8 +83,9 @@ class LitreviewLaunchTest(unittest.TestCase):
             env.update(
                 {
                     "AAR_REPO": str(repo),
-                    "AAR_PYTHON": str(fake_python),
-                    "AAR_ENV_FILE": str(env_file),
+                    "HARNESS_PY": str(fake_python),
+                    "HARNESS_ENV": str(env_file),
+                    "PYTHONPATH": "inherited-pythonpath",
                 }
             )
 
@@ -91,6 +100,7 @@ class LitreviewLaunchTest(unittest.TestCase):
             axis_dir = repo / "_runs" / "litreview" / "sycophancy"
             workspace = repo / "_runs" / "litreview" / "workspaces" / "smoke-team"
             self.assertIn(f"cwd={repo}", completed.stdout)
+            self.assertIn(f"pythonpath={repo}:inherited-pythonpath", completed.stdout)
             self.assertIn(
                 "args=-u -m aar.litreview.run_litreview --suite sycophancy --min-entries 0",
                 completed.stdout,
@@ -113,8 +123,8 @@ class LitreviewLaunchTest(unittest.TestCase):
             env.update(
                 {
                     "AAR_REPO": str(repo),
-                    "AAR_PYTHON": str(fake_python),
-                    "AAR_ENV_FILE": str(tmp_path / "missing.env"),
+                    "HARNESS_PY": str(fake_python),
+                    "HARNESS_ENV": str(tmp_path / "missing.env"),
                 }
             )
 
@@ -127,6 +137,37 @@ class LitreviewLaunchTest(unittest.TestCase):
 
             self.assertEqual(completed.returncode, 2)
             self.assertIn("ANTHROPIC_API_KEY is required", completed.stderr)
+
+    def test_slurm_spool_copy_resolves_submit_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            repo = tmp_path / "repo"
+            (repo / "aar").mkdir(parents=True)
+            python = repo / ".venv" / "bin" / "python"
+            python.parent.mkdir(parents=True)
+            python.write_text("#!/bin/bash\nprintf 'cwd=%s\\n' \"$PWD\"\n")
+            python.chmod(0o755)
+            (repo / ".env").write_text("ANTHROPIC_API_KEY='test-placeholder'\n")
+            spool = tmp_path / "slurm-spool"
+            spool.mkdir()
+            spooled_script = spool / "slurm_script"
+            spooled_script.write_text(SCRIPT.read_text())
+
+            env = os.environ.copy()
+            for name in ("AAR_REPO", "HARNESS_PY", "HARNESS_ENV", "ANTHROPIC_API_KEY"):
+                env.pop(name, None)
+            env["SLURM_SUBMIT_DIR"] = str(repo)
+
+            completed = subprocess.run(
+                ["bash", str(spooled_script), "sycophancy", "slurm-team", "0"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertIn(f"cwd={repo}", completed.stdout)
+            self.assertNotIn("test-placeholder", completed.stdout)
 
 
 class LitreviewCompletionTest(unittest.TestCase):

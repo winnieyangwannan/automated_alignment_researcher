@@ -16,8 +16,9 @@ sbatch scripts/litreview.sh sycophancy <team-id> 30
 The job is CPU-only and requests partition `g3` with QoS `g3_ram_high`. It resolves
 the repository from the script location, uses `<repo>/.venv/bin/python`, sources
 `<repo>/.env`, and writes the default baseline and workspace beneath the ignored
-`<repo>/_runs/litreview/` directory. Override those choices with `AAR_REPO`,
-`AAR_PYTHON`, `AAR_ENV_FILE`, `LIT_AXIS_DIR`, or `LITREVIEW_WORKSPACE`.
+`<repo>/_runs/litreview/` directory. Under Slurm it resolves the checkout from
+`SLURM_SUBMIT_DIR`; override these choices with `AAR_REPO`, `HARNESS_PY`,
+`HARNESS_ENV`, `LIT_AXIS_DIR`, or `LITREVIEW_WORKSPACE`.
 `ANTHROPIC_API_KEY` must be present and the model defaults to
 `claude-sonnet-4-6`. The job exits nonzero if it cannot reach the requested entry
 count, so callers can safely gate AAR launch on its completion.

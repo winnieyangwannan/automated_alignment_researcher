@@ -40,8 +40,17 @@ MAX_ITERS="${3:-500}"         # hard cap on iterations (= sessions) per chain (d
 # every chain. Fallback below is only for a one-off single-chain run.
 TEAM_ID="${4:-${TEAM_ID:-team-$(date +%Y%m%d-%H%M%S)}}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO="${AAR_REPO:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
-export PYTHONPATH="${REPO}"
+if [ -n "${AAR_REPO:-}" ] && [ -d "${AAR_REPO}/aar" ]; then
+  REPO="$(cd -- "${AAR_REPO}" && pwd)"
+elif [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -d "${SLURM_SUBMIT_DIR}/aar" ]; then
+  REPO="$(cd -- "${SLURM_SUBMIT_DIR}" && pwd)"
+elif [ -d "${SCRIPT_DIR}/../aar" ]; then
+  REPO="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+else
+  echo "[aar] ERROR: repository not found; set AAR_REPO or submit from the repository root" >&2
+  exit 2
+fi
+export PYTHONPATH="${REPO}${PYTHONPATH:+:${PYTHONPATH}}"
 export HF_HOME=/opt/aar/work
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 

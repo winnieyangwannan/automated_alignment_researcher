@@ -29,13 +29,22 @@ else
 fi
 echo "[train] canonical run_id=${RUN_ID}  (poll \$SCORES_DIR/${RUN_ID}.json and share_finding run_id=${RUN_ID})"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO="${AAR_REPO:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
+if [ -n "${AAR_REPO:-}" ] && [ -d "${AAR_REPO}/aar" ]; then
+  REPO="$(cd -- "${AAR_REPO}" && pwd)"
+elif [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -d "${SLURM_SUBMIT_DIR}/aar" ]; then
+  REPO="$(cd -- "${SLURM_SUBMIT_DIR}" && pwd)"
+elif [ -d "${SCRIPT_DIR}/../aar" ]; then
+  REPO="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+else
+  echo "[train] ERROR: repository not found; set AAR_REPO or submit from the repository root" >&2
+  exit 2
+fi
 # Generated methods live in the team's IDEAS_DIR (TEAM_DIR/methods); put it on the
 # path so `import <idea>` resolves there, with REPO for the `aar` package + seed
 # library (aar.ideas.<seed>). The heredoc tries the team top-level import first,
 # then the repo seed package.
 export AAR_IDEAS_DIR="${AAR_IDEAS_DIR:-${TEAM_DIR:+${TEAM_DIR}/methods}}"
-export PYTHONPATH="${REPO}${AAR_IDEAS_DIR:+:${AAR_IDEAS_DIR}}"
+export PYTHONPATH="${REPO}${AAR_IDEAS_DIR:+:${AAR_IDEAS_DIR}}${PYTHONPATH:+:${PYTHONPATH}}"
 export HF_HOME=/opt/aar/work
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 export HARNESS_TRANSPORT=fs

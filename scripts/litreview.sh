@@ -19,16 +19,22 @@ case "${MIN}" in
 esac
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO="${AAR_REPO:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
-if [ ! -d "${REPO}/aar" ]; then
-  echo "[litreview] ERROR: repository not found at ${REPO}; set AAR_REPO" >&2
+if [ -n "${AAR_REPO:-}" ] && [ -d "${AAR_REPO}/aar" ]; then
+  REPO="$(cd -- "${AAR_REPO}" && pwd)"
+elif [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -d "${SLURM_SUBMIT_DIR}/aar" ]; then
+  # Under sbatch, BASH_SOURCE may be a copy in Slurm's spool rather than this checkout.
+  REPO="$(cd -- "${SLURM_SUBMIT_DIR}" && pwd)"
+elif [ -d "${SCRIPT_DIR}/../aar" ]; then
+  REPO="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+else
+  echo "[litreview] ERROR: repository not found; set AAR_REPO or submit from the repository root" >&2
   exit 2
 fi
-export PYTHONPATH="${REPO}"
+export PYTHONPATH="${REPO}${PYTHONPATH:+:${PYTHONPATH}}"
 
 # Load the worktree-local environment without scraping or printing secrets. An
 # already-exported key wins, which makes explicit sbatch --export overrides safe.
-ENV_FILE="${AAR_ENV_FILE:-${REPO}/.env}"
+ENV_FILE="${HARNESS_ENV:-${REPO}/.env}"
 _INHERITED_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY-}"
 if [ -f "${ENV_FILE}" ]; then
   set -a
@@ -55,9 +61,9 @@ mkdir -p "${LIT_FORUM_DIR}"
 export LITREVIEW_WORKSPACE="${LITREVIEW_WORKSPACE:-${REPO}/_runs/litreview/workspaces/${TEAM_ID}}"
 mkdir -p "${LITREVIEW_WORKSPACE}"
 export LITREVIEW_MODEL="${LITREVIEW_MODEL:-claude-sonnet-4-6}"
-PY="${AAR_PYTHON:-${REPO}/.venv/bin/python}"
+PY="${HARNESS_PY:-${REPO}/.venv/bin/python}"
 if [ ! -x "${PY}" ]; then
-  echo "[litreview] ERROR: Python is not executable at ${PY}; set AAR_PYTHON" >&2
+  echo "[litreview] ERROR: Python is not executable at ${PY}; set HARNESS_PY" >&2
   exit 2
 fi
 cd "${REPO}"
