@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
+import types
 import unittest
 from unittest.mock import patch
 
@@ -79,6 +82,7 @@ class LitreviewLaunchTest(unittest.TestCase):
                 "printf 'forum=%s\\n' \"$LIT_FORUM_DIR\"\n"
                 "printf 'workspace=%s\\n' \"$LITREVIEW_WORKSPACE\"\n"
                 "printf 'model=%s\\n' \"$LITREVIEW_MODEL\"\n"
+                "printf 'cli=%s\\n' \"${CLAUDE_CLI_PATH:-}\"\n"
             )
             fake_python.chmod(0o755)
             env_file = tmp_path / "research.env"
@@ -91,6 +95,7 @@ class LitreviewLaunchTest(unittest.TestCase):
                 "LITREVIEW_OUTPUT_DIR",
                 "LITREVIEW_WORKSPACE",
                 "LITREVIEW_MODEL",
+                "CLAUDE_CLI_PATH",
             ):
                 env.pop(name, None)
             env.update(
@@ -99,6 +104,7 @@ class LitreviewLaunchTest(unittest.TestCase):
                     "HARNESS_PY": str(fake_python),
                     "HARNESS_ENV": str(env_file),
                     "PYTHONPATH": "inherited-pythonpath",
+                    "PATH": "/usr/bin:/bin",
                 }
             )
 
@@ -121,7 +127,46 @@ class LitreviewLaunchTest(unittest.TestCase):
             self.assertIn(f"forum={axis_dir}", completed.stdout)
             self.assertIn(f"workspace={workspace}", completed.stdout)
             self.assertIn("model=claude-sonnet-4-6", completed.stdout)
+            self.assertIn("cli=\n", completed.stdout)
             self.assertNotIn("test-placeholder", completed.stdout)
+
+    def test_launcher_accepts_authenticated_cli_without_direct_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            repo = tmp_path / "repo"
+            (repo / "aar").mkdir(parents=True)
+            fake_python = tmp_path / "python"
+            fake_python.write_text(
+                "#!/bin/bash\n"
+                "if [ \"${1:-}\" = '-c' ]; then printf '0\\n'; exit 0; fi\n"
+                "printf 'cli=%s\\n' \"${CLAUDE_CLI_PATH:-}\"\n"
+            )
+            fake_python.chmod(0o755)
+            fake_cli = tmp_path / "claude"
+            fake_cli.write_text("#!/bin/bash\nexit 0\n")
+            fake_cli.chmod(0o755)
+            env_file = tmp_path / "research.env"
+            env_file.write_text("# no direct Anthropic key\n")
+            env = os.environ.copy()
+            env.pop("ANTHROPIC_API_KEY", None)
+            env.update(
+                {
+                    "AAR_REPO": str(repo),
+                    "HARNESS_PY": str(fake_python),
+                    "HARNESS_ENV": str(env_file),
+                    "CLAUDE_CLI_PATH": str(fake_cli),
+                }
+            )
+
+            completed = subprocess.run(
+                ["bash", str(SCRIPT), "sycophancy", "cli-team", "0"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertIn(f"cli={fake_cli}", completed.stdout)
 
     def test_launcher_rejects_missing_credential_without_running_python(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -133,11 +178,13 @@ class LitreviewLaunchTest(unittest.TestCase):
             fake_python.chmod(0o755)
             env = os.environ.copy()
             env.pop("ANTHROPIC_API_KEY", None)
+            env.pop("CLAUDE_CLI_PATH", None)
             env.update(
                 {
                     "AAR_REPO": str(repo),
                     "HARNESS_PY": str(fake_python),
                     "HARNESS_ENV": str(tmp_path / "missing.env"),
+                    "PATH": "/usr/bin:/bin",
                 }
             )
 
@@ -149,7 +196,10 @@ class LitreviewLaunchTest(unittest.TestCase):
             )
 
             self.assertEqual(completed.returncode, 2)
-            self.assertIn("ANTHROPIC_API_KEY is required", completed.stderr)
+            self.assertIn(
+                "neither ANTHROPIC_API_KEY nor an executable Claude CLI is available",
+                completed.stderr,
+            )
 
     def test_slurm_spool_copy_resolves_submit_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -185,6 +235,43 @@ class LitreviewLaunchTest(unittest.TestCase):
 
             self.assertIn(f"cwd={repo}", completed.stdout)
             self.assertNotIn("test-placeholder", completed.stdout)
+
+    def test_survey_forwards_resolved_cli_path_to_base_agent(self) -> None:
+        captured: dict[str, object] = {}
+
+        class FakeAgent:
+            def __init__(self, **kwargs: object) -> None:
+                captured.update(kwargs)
+
+            async def execute(self, task: str) -> None:
+                captured["task"] = task
+
+        with tempfile.TemporaryDirectory() as directory:
+            cli = Path(directory) / "claude"
+            cli.write_text("#!/bin/bash\nexit 0\n")
+            cli.chmod(0o755)
+            agent_module = types.ModuleType("aar.research_loop.agent")
+            agent_module.BaseAgent = FakeAgent
+            lit_forum_module = types.ModuleType("aar.research_loop.tools.lit_forum")
+            lit_forum_module.count = lambda: 0
+            with (
+                patch.dict(os.environ, {"CLAUDE_CLI_PATH": str(cli)}, clear=False),
+                patch.dict(
+                    sys.modules,
+                    {
+                        "aar.research_loop.agent": agent_module,
+                        "aar.research_loop.tools.lit_forum": lit_forum_module,
+                    },
+                ),
+            ):
+                asyncio.run(
+                    run_litreview._survey(
+                        "general", "General {axis}", "sycophancy", 1,
+                        "claude-sonnet-4-6", Path(directory), {},
+                    )
+                )
+
+        self.assertEqual(captured["cli_path"], str(cli))
 
 
 class LitreviewCompletionTest(unittest.TestCase):

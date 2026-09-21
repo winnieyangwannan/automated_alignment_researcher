@@ -6,7 +6,8 @@ structured method/paper entries — general safety-training methods AND ones
 specific to the safety axis being optimized. The AARs then read this forum
 (``get_literature``) to ground their designs, and may append to it.
 
-Run (usually via scripts/litreview.sh, which sets LIT_FORUM_DIR + the API key):
+Run (usually via scripts/litreview.sh, which sets LIT_FORUM_DIR and resolves
+either a direct API key or an authenticated Claude CLI):
     python -m aar.litreview.run_litreview --suite sycophancy --min-entries 30
 """
 from __future__ import annotations
@@ -14,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import shutil
 from pathlib import Path
 
 # Sub-areas surveyed in parallel; each agent writes >= `per` entries. The {axis}
@@ -91,6 +93,11 @@ def _require_minimum(final_count: int, min_entries: int) -> None:
         )
 
 
+def _resolve_cli_path() -> str | None:
+    """Resolve the Claude executable selected by the launcher or current PATH."""
+    return os.getenv("CLAUDE_CLI_PATH") or shutil.which("claude")
+
+
 async def _survey(cat: str, desc: str, axis: str, per: int, model: str, ws: Path, mcp: dict) -> None:
     from aar.research_loop.agent import BaseAgent
     from aar.research_loop.tools.lit_forum import count
@@ -100,6 +107,7 @@ async def _survey(cat: str, desc: str, axis: str, per: int, model: str, ws: Path
                "mcp__server-api-tools__share_literature"]
     agent = BaseAgent(
         name=f"lit-{cat}", allowed_tools=allowed, workspace=ws, mcp_servers=mcp, model=model,
+        cli_path=_resolve_cli_path(),
         system_prompt="You are a careful research librarian. You cite ONLY real papers you "
                       "found via web search, with accurate titles/authors/years/links.",
     )

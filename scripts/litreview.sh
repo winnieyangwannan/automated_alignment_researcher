@@ -9,8 +9,9 @@
 #SBATCH --output=slurm-%x-%j.out
 #
 # Literature-review pre-phase: populate the team's SHARED lit forum with >=MIN
-# method/paper entries before the AARs start. CPU-only — uses the Claude API +
-# WebSearch/WebFetch, no GPU. Usage: sbatch scripts/litreview.sh <suite> <team_id> [min]
+# method/paper entries before the AARs start. CPU-only — uses Claude through the
+# Agent SDK + WebSearch/WebFetch, no GPU.
+# Usage: sbatch scripts/litreview.sh <suite> <team_id> [min]
 set -euo pipefail
 SUITE="${1:?usage: litreview.sh <suite> <team_id> [min]}"
 TEAM_ID="${2:?team_id}"
@@ -37,6 +38,7 @@ export PYTHONPATH="${REPO}${PYTHONPATH:+:${PYTHONPATH}}"
 # already-exported key wins, which makes explicit sbatch --export overrides safe.
 ENV_FILE="${HARNESS_ENV:-${REPO}/.env}"
 _INHERITED_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY-}"
+_INHERITED_CLAUDE_CLI_PATH="${CLAUDE_CLI_PATH-}"
 if [ -f "${ENV_FILE}" ]; then
   set -a
   # shellcheck disable=SC1090  # caller-selected, trusted environment file
@@ -46,9 +48,24 @@ fi
 if [ -n "${_INHERITED_ANTHROPIC_API_KEY}" ]; then
   export ANTHROPIC_API_KEY="${_INHERITED_ANTHROPIC_API_KEY}"
 fi
-unset _INHERITED_ANTHROPIC_API_KEY
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  echo "[litreview] ERROR: ANTHROPIC_API_KEY is required (set it in the environment or ${ENV_FILE})" >&2
+if [ -n "${_INHERITED_CLAUDE_CLI_PATH}" ]; then
+  export CLAUDE_CLI_PATH="${_INHERITED_CLAUDE_CLI_PATH}"
+fi
+unset _INHERITED_ANTHROPIC_API_KEY _INHERITED_CLAUDE_CLI_PATH
+
+# FAIR's Claude CLI authenticates through Meta's AI Gateway, so it does not
+# require a direct Anthropic key. Preserve the direct-key path for portable
+# deployments where the Agent SDK supplies or finds its own CLI.
+if [ -z "${CLAUDE_CLI_PATH:-}" ]; then
+  CLAUDE_CLI_PATH="$(command -v claude || true)"
+fi
+if [ -n "${CLAUDE_CLI_PATH:-}" ] && [ -x "${CLAUDE_CLI_PATH}" ]; then
+  export CLAUDE_CLI_PATH
+elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  unset CLAUDE_CLI_PATH
+else
+  echo "[litreview] ERROR: neither ANTHROPIC_API_KEY nor an executable Claude CLI is available" >&2
+  echo "[litreview] Set ANTHROPIC_API_KEY or CLAUDE_CLI_PATH (or put claude on PATH)." >&2
   exit 2
 fi
 

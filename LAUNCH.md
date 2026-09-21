@@ -21,9 +21,12 @@ the repository from the script location, uses `<repo>/.venv/bin/python`, sources
 `<repo>/_runs/litreview/` directory. Under Slurm it resolves the checkout from
 `SLURM_SUBMIT_DIR`; override these choices with `AAR_REPO`, `HARNESS_PY`,
 `HARNESS_ENV`, `LIT_AXIS_DIR`, or `LITREVIEW_WORKSPACE`.
-`ANTHROPIC_API_KEY` must be present and the model defaults to
-`claude-sonnet-4-6`. The job exits nonzero if it cannot reach the requested entry
-count, so callers can safely gate AAR launch on its completion.
+Authentication can use either an executable Claude CLI (resolved from
+`CLAUDE_CLI_PATH` or `PATH`) or a direct `ANTHROPIC_API_KEY`. On FAIR, the
+authenticated Meta Claude CLI is the intended path; a direct Anthropic key is
+not required. The model defaults to `claude-sonnet-4-6`. The job exits nonzero
+if neither authentication path is available or if it cannot reach the requested
+entry count, so callers can safely gate AAR launch on its completion.
 
 This portability work covers the standalone librarian and the librarian pre-phase
 inside `launch_team.sh`. It also repairs the known shell parse errors in the chain,
