@@ -89,6 +89,32 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
             },
         )
 
+    def test_explicit_cli_gets_longer_default_initialize_timeout(self) -> None:
+        class Options:
+            def __init__(self) -> None:
+                pass
+
+        agent = _load_agent_module(Options)
+        with patch.dict("os.environ", {}, clear=True):
+            agent._configure_cli_initialize_timeout("/usr/local/bin/claude")
+            self.assertEqual(
+                agent.os.environ["CLAUDE_CODE_STREAM_CLOSE_TIMEOUT"], "300000"
+            )
+
+    def test_explicit_timeout_override_is_preserved(self) -> None:
+        class Options:
+            def __init__(self) -> None:
+                pass
+
+        agent = _load_agent_module(Options)
+        with patch.dict(
+            "os.environ", {"CLAUDE_CODE_STREAM_CLOSE_TIMEOUT": "420000"}, clear=True
+        ):
+            agent._configure_cli_initialize_timeout("/usr/local/bin/claude")
+            self.assertEqual(
+                agent.os.environ["CLAUDE_CODE_STREAM_CLOSE_TIMEOUT"], "420000"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

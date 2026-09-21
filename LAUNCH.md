@@ -29,7 +29,10 @@ removes `ANTHROPIC_API_KEY` from the librarian process; the key remains a fallba
 only when no executable CLI is available. The model defaults to
 `claude-sonnet-4-6`. The job exits nonzero if neither authentication path is
 available or if it cannot reach the requested entry count, so callers can safely
-gate AAR launch on its completion.
+gate AAR launch on its completion. For an explicit CLI, `BaseAgent` raises the
+SDK initialize/stream-close timeout from 60 seconds to five minutes because the
+Meta launcher and managed plugins can take longer to start. Override it with
+`CLAUDE_CODE_STREAM_CLOSE_TIMEOUT` (milliseconds) when needed.
 
 This portability work covers the standalone librarian and the librarian pre-phase
 inside `launch_team.sh`. It also repairs the known shell parse errors in the chain,
