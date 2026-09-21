@@ -151,7 +151,7 @@ case "${SUBMISSIONS_DIR}" in
     # never a sibling's). Robust to hyphenated model ids (sed strips only the timestamp).
     _AXIS="${EVAL_TEAM_ID%%-*}"
     _MTAG="$(printf '%s' "${EVAL_TEAM_ID#${_AXIS}-}" | sed -E 's/-[0-9]{8}-[0-9]{6}(-[0-9]+)?$//')"
-    export HOLDOUT_DIR="${HOLDOUT_DIR:-/opt/aar/work"
+    export HOLDOUT_DIR="${HOLDOUT_DIR:-/opt/aar/eval-user/holdout/${_MTAG}/${_AXIS}}"
     exec >> "${EVAL_TEAM_DIR}/eval_worker_${WORKER_ID}.out" 2>&1  # route this worker's log into the team folder
     echo "[worker ${WORKER_ID}] eval-side team folder: ${EVAL_TEAM_DIR}"
     echo "[worker ${WORKER_ID}] per-model HOLDOUT_DIR=${HOLDOUT_DIR} (model_tag=${_MTAG}, axis=${_AXIS})"

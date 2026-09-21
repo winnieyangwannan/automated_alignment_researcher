@@ -14,6 +14,7 @@ _holdout/
 _heldout/
 **/_heldout/
 _runs/
+slurm-*.out
 results/
 data/
 *.safetensors

@@ -28,7 +28,8 @@ else
   RUN_ID="${_TAG}"
 fi
 echo "[train] canonical run_id=${RUN_ID}  (poll \$SCORES_DIR/${RUN_ID}.json and share_finding run_id=${RUN_ID})"
-REPO=/opt/aar/work
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO="${AAR_REPO:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
 # Generated methods live in the team's IDEAS_DIR (TEAM_DIR/methods); put it on the
 # path so `import <idea>` resolves there, with REPO for the `aar` package + seed
 # library (aar.ideas.<seed>). The heredoc tries the team top-level import first,
@@ -41,13 +42,13 @@ export HARNESS_TRANSPORT=fs
 # Env-honoring queue dirs: default under TEAM_DIR when set (per-team isolation), else
 # the legacy shared path. The chain's env normally propagates these in via sbatch.
 export SUBMISSIONS_DIR="${SUBMISSIONS_DIR:-${TEAM_DIR:+${TEAM_DIR}/submissions}}"
-export SUBMISSIONS_DIR="${SUBMISSIONS_DIR:-/opt/aar/work"
+export SUBMISSIONS_DIR="${SUBMISSIONS_DIR:-${REPO}/_runs/submissions}"
 export SCORES_DIR="${SCORES_DIR:-${TEAM_DIR:+${TEAM_DIR}/scores}}"
-export SCORES_DIR="${SCORES_DIR:-/opt/aar/work"
+export SCORES_DIR="${SCORES_DIR:-${REPO}/_runs/scores}"
 # NOTE: deliberately do NOT set/read HOLDOUT_DIR — this side can't read it.
 PY=/opt/aar/work
 STAGING="${TEAM_DIR:+${TEAM_DIR}/_train/${RUN_ID}}"
-STAGING="${STAGING:-/opt/aar/work"
+STAGING="${STAGING:-${REPO}/_runs/_train/${RUN_ID}}"
 cd "${REPO}"
 
 # FROZEN PRE-RUN PAPER — per-run audit stamp for the DECOUPLED flow. The inline flow stamps this

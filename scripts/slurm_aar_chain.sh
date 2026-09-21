@@ -39,7 +39,8 @@ MAX_ITERS="${3:-500}"         # hard cap on iterations (= sessions) per chain (d
 # team launcher (scripts/launch_team.sh) generates one TEAM_ID and passes it to
 # every chain. Fallback below is only for a one-off single-chain run.
 TEAM_ID="${4:-${TEAM_ID:-team-$(date +%Y%m%d-%H%M%S)}}"
-REPO=/opt/aar/work
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO="${AAR_REPO:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
 export PYTHONPATH="${REPO}"
 export HF_HOME=/opt/aar/work
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
@@ -70,7 +71,7 @@ export FORUM_BACKEND=fs           # default under LOCAL_MODE; explicit for clari
 # fall back to deriving from TEAM_DIR so a one-off single-chain run also consolidates.
 # (Exception: the axis-wide literature BASELINE is shared per-axis at aar_litreview/<axis>/.)
 # ===========================================================================
-export TEAM_DIR="${TEAM_DIR:-/opt/aar/work"
+export TEAM_DIR="${TEAM_DIR:-${REPO}/_runs/aar_teams/${TEAM_ID}}"
 mkdir -p "${TEAM_DIR}"/{forum,submissions,scores,methods,logs,litreview,_train}
 export LOCAL_FINDINGS_DIR="${LOCAL_FINDINGS_DIR:-${TEAM_DIR}/forum}"
 export SUBMISSIONS_DIR="${SUBMISSIONS_DIR:-${TEAM_DIR}/submissions}"
@@ -78,7 +79,7 @@ export SCORES_DIR="${SCORES_DIR:-${TEAM_DIR}/scores}"
 export AAR_IDEAS_DIR="${AAR_IDEAS_DIR:-${TEAM_DIR}/methods}"      # where the agent writes method packages
 export SESSION_LOGS_DIR="${SESSION_LOGS_DIR:-${TEAM_DIR}/logs}"   # per-session transcripts (config.LOGS_DIR)
 export LIT_FORUM_DIR="${LIT_FORUM_DIR:-${TEAM_DIR}/litreview}"    # team's OWN in-run lit (private)
-export LIT_AXIS_DIR="${LIT_AXIS_DIR:-/opt/aar/work"  # axis baseline (read-only)
+export LIT_AXIS_DIR="${LIT_AXIS_DIR:-${REPO}/_runs/litreview/${AXIS:-sycophancy}}"  # axis baseline (read-only)
 echo "[aar] team=${TEAM_ID}  TEAM_DIR=${TEAM_DIR}"
 echo "[aar] forum=${LOCAL_FINDINGS_DIR}  methods=${AAR_IDEAS_DIR}  lit(team)=${LIT_FORUM_DIR}  lit(axis)=${LIT_AXIS_DIR}"
 

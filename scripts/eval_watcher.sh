@@ -47,7 +47,7 @@ case "${SUBMISSIONS_DIR}" in
     export HARNESS_RUNS_DIR="${EVAL_TEAM_DIR}"
     _AXIS="${EVAL_TEAM_ID%%-*}"
     _MTAG="$(printf '%s' "${EVAL_TEAM_ID#${_AXIS}-}" | sed -E 's/-[0-9]{8}-[0-9]{6}(-[0-9]+)?$//')"
-    export HOLDOUT_DIR="${HOLDOUT_DIR:-/opt/aar/work"
+    export HOLDOUT_DIR="${HOLDOUT_DIR:-/opt/aar/eval-user/holdout/${_MTAG}/${_AXIS}}"
     echo "[watcher] team=${EVAL_TEAM_ID} HOLDOUT_DIR=${HOLDOUT_DIR} (model_tag=${_MTAG}, axis=${_AXIS})"
     ;;
 esac

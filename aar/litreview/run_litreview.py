@@ -83,6 +83,14 @@ TASK_TMPL = (
 )
 
 
+def _require_minimum(final_count: int, min_entries: int) -> None:
+    """Fail the job when agent errors/retries leave the survey incomplete."""
+    if final_count < min_entries:
+        raise RuntimeError(
+            f"literature survey produced {final_count} entries; target was {min_entries}"
+        )
+
+
 async def _survey(cat: str, desc: str, axis: str, per: int, model: str, ws: Path, mcp: dict) -> None:
     from aar.research_loop.agent import BaseAgent
     from aar.research_loop.tools.lit_forum import count
@@ -125,7 +133,9 @@ async def run(axis: str, min_entries: int, model: str, per: int) -> None:
         print(f"[litreview] {count()}/{min_entries} — topping up ({cat}, attempt {attempts})", flush=True)
         await _survey(cat, desc, axis, per, model, ws, mcp)
 
-    print(f"[litreview] DONE — {count()} entries (target {min_entries})", flush=True)
+    final_count = count()
+    _require_minimum(final_count, min_entries)
+    print(f"[litreview] DONE — {final_count} entries (target {min_entries})", flush=True)
 
 
 def main() -> None:

@@ -5,6 +5,23 @@ methods, trains + evaluates each via the submit-model loop, and shares findings
 on a leaderboard the other chains can read. The **safety axis is configurable**
 (default: sycophancy) — see the swap note below.
 
+## Librarian only
+
+To populate the literature baseline without launching an AAR chain:
+
+```bash
+sbatch scripts/litreview.sh sycophancy <team-id> 30
+```
+
+The job is CPU-only and requests partition `g3` with QoS `g3_ram_high`. It resolves
+the repository from the script location, uses `<repo>/.venv/bin/python`, sources
+`<repo>/.env`, and writes the default baseline and workspace beneath the ignored
+`<repo>/_runs/litreview/` directory. Override those choices with `AAR_REPO`,
+`AAR_PYTHON`, `AAR_ENV_FILE`, `LIT_AXIS_DIR`, or `LITREVIEW_WORKSPACE`.
+`ANTHROPIC_API_KEY` must be present and the model defaults to
+`claude-sonnet-4-6`. The job exits nonzero if it cannot reach the requested entry
+count, so callers can safely gate AAR launch on its completion.
+
 ## One chain
 ```bash
 sbatch --job-name=aar-syco-v1 scripts/slurm_aar_chain.sh explore 10
