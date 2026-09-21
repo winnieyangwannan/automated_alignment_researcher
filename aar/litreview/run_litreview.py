@@ -34,7 +34,7 @@ SUBAREAS = [
      "RLHF reward-model / human-annotator biases), and the benchmarks/metrics used to "
      "evaluate {axis} (and their pitfalls)."),
     ("recent",
-     "RECENT (2024-2025) and ADJACENT methods: honesty/truthfulness training, calibration, "
+     "RECENT (2024-2026) and ADJACENT methods: honesty/truthfulness training, calibration, "
      "debate, self-critique / self-refine, and the instruction-following vs {axis} tradeoff."),
 ]
 
