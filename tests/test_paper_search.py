@@ -59,7 +59,7 @@ class PaperSearchTest(unittest.TestCase):
             (parsed.scheme, parsed.netloc, parsed.path),
             ("https", "export.arxiv.org", "/api/query"),
         )
-        self.assertEqual(params["search_query"], ['all:"sycophancy language models"'])
+        self.assertEqual(params["search_query"], ["all:sycophancy language models"])
         self.assertEqual(params["max_results"], ["1"])
         self.assertEqual(result["results"][0]["arxiv_id"], "2310.13548v2")
         self.assertEqual(result["results"][0]["authors"], ["Test Author"])

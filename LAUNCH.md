@@ -30,8 +30,9 @@ advertises `--secure-internet-mode`; operators may explicitly select
 the librarian with `permission_mode="dontAsk"`, built-in `tools=["Bash"]`, no
 settings sources, and strict MCP configuration. Its only preapproved calls are
 the exact repository-local `scripts/aar-paper-search` command and the explicit
-`get_literature`/`share_literature` MCP tools. General Bash, file tools, and
-native `WebSearch`/`WebFetch` are not available on this route.
+`get_literature`/`share_literature` MCP tools; its dedicated MCP server does not
+advertise evaluation, leaderboard, or proposal tools. General Bash, file tools,
+and native `WebSearch`/`WebFetch` are not available on this route.
 
 Unrelated model, cloud, and tracking credentials—including `MODEL_API_KEY`,
 Hugging Face, OpenAI, AWS, Runpod, and W&B variables—are removed from the Meta

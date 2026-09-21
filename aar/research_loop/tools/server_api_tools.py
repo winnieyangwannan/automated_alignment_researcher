@@ -1460,3 +1460,12 @@ def create_server_api_tools_server():
             submit_idea_proposal,  # pre-training integrity monitor (Opus)
         ],
     )
+
+
+def create_literature_tools_server():
+    """Create the restricted MCP server used by the standalone librarian."""
+    return create_sdk_mcp_server(
+        name="server-api-tools",
+        version="1.0.0",
+        tools=[get_literature, share_literature],
+    )

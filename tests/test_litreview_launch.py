@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import importlib.util
 import os
@@ -19,6 +20,9 @@ from aar.litreview import run_litreview
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "litreview.sh"
 TEAM_SCRIPT = ROOT / "scripts" / "launch_team.sh"
+SERVER_TOOLS_MODULE = (
+    ROOT / "aar" / "research_loop" / "tools" / "server_api_tools.py"
+)
 PARSE_CHECKED_SCRIPTS = (
     SCRIPT,
     ROOT / "scripts" / "slurm_aar_chain.sh",
@@ -36,6 +40,32 @@ _LIT_FORUM_SPEC.loader.exec_module(lit_forum)
 
 
 class LitreviewLaunchTest(unittest.TestCase):
+    def test_literature_mcp_constructor_exposes_only_literature_tools(self) -> None:
+        tree = ast.parse(SERVER_TOOLS_MODULE.read_text())
+        function = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "create_literature_tools_server"
+        )
+        constructor = next(
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "create_sdk_mcp_server"
+        )
+        keywords = {keyword.arg: keyword.value for keyword in constructor.keywords}
+        self.assertEqual(ast.literal_eval(keywords["name"]), "server-api-tools")
+        self.assertEqual(
+            [element.id for element in keywords["tools"].elts],
+            ["get_literature", "share_literature"],
+        )
+        self.assertIn(
+            "create_literature_tools_server()",
+            (ROOT / "aar" / "litreview" / "run_litreview.py").read_text(),
+        )
+
     def test_hpc_resources_are_cpu_only_on_requested_partition(self) -> None:
         source = SCRIPT.read_text()
         self.assertIn("#SBATCH --account=ram", source)

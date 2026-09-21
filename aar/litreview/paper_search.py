@@ -255,7 +255,7 @@ def search(query: str, limit: int = 5) -> dict[str, Any]:
         raise PaperSearchError(f"limit must be between 1 and {MAX_RESULTS}")
     results = _request(
         {
-            "search_query": f'all:"{normalized}"',
+            "search_query": f"all:{normalized}",
             "start": 0,
             "max_results": limit,
             "sortBy": "relevance",

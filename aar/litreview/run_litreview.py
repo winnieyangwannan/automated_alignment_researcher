@@ -185,11 +185,11 @@ async def _survey(cat: str, desc: str, axis: str, per: int, model: str, ws: Path
 
 
 async def run(axis: str, min_entries: int, model: str, per: int) -> None:
-    from aar.research_loop.tools.server_api_tools import create_server_api_tools_server
+    from aar.research_loop.tools.server_api_tools import create_literature_tools_server
     from aar.research_loop.tools.lit_forum import count
     ws = Path(os.getenv("LITREVIEW_WORKSPACE", "/tmp/litreview"))
     ws.mkdir(parents=True, exist_ok=True)
-    mcp = {"server-api-tools": create_server_api_tools_server()}
+    mcp = {"server-api-tools": create_literature_tools_server()}
 
     # One pass over the sub-areas (sequential — keeps API/web rate sane + ordering legible).
     for cat, desc in SUBAREAS:
