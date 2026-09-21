@@ -5,6 +5,7 @@ Merges agent_loop, base_agent, and stop_conditions into a single file.
 """
 
 import asyncio
+import inspect
 import json
 import os
 import re
@@ -218,6 +219,33 @@ OVERLOADED_WAIT_SECONDS = int(os.getenv("OVERLOADED_WAIT_SECONDS", "600"))
 OVERLOADED_MAX_RETRIES = int(os.getenv("OVERLOADED_MAX_RETRIES", "6"))
 
 
+def _agent_sdk_supports_option(name: str) -> bool:
+    """Return whether this installed Agent SDK accepts an option keyword.
+
+    FAIR currently provides claude-agent-sdk 0.1.30, whose options class does
+    not yet accept the newer ``thinking`` and ``effort`` keywords. Inspecting
+    the constructor lets the same checkout retain those settings when run with
+    a newer SDK while remaining compatible with the cluster installation.
+    """
+    try:
+        parameters = inspect.signature(ClaudeAgentOptions).parameters
+    except (TypeError, ValueError):
+        annotations = getattr(ClaudeAgentOptions, "__annotations__", {})
+        return name in annotations
+    return name in parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
+
+
+def _add_supported_reasoning_options(options: Dict[str, Any]) -> None:
+    """Add optional reasoning controls understood by the installed SDK."""
+    if _agent_sdk_supports_option("thinking"):
+        options["thinking"] = {"type": "adaptive", "display": "summarized"}
+    if _agent_sdk_supports_option("effort"):
+        options["effort"] = os.getenv("AAR_EFFORT", "max")
+
+
 # ---------------------------------------------------------------------------
 # Base agent (wraps Claude Agent SDK)
 # ---------------------------------------------------------------------------
@@ -296,16 +324,10 @@ class BaseAgent:
                 "mcp_servers": self.mcp_servers,
                 "setting_sources": ["project"],
                 "betas": ["context-1m-2025-08-07"],
-                # Extended thinking. Claude 4.x+ models (fable-5, opus-4.8) use ADAPTIVE thinking and
-                # default the thinking `display` to "omitted" -> the model thinks but the summary is
-                # withheld (empty ThinkingBlock.thinking, signature only -> empty [THINKING] in logs).
-                # Set display="summarized" to surface the reasoning summary the session-log callback
-                # persists. Manual `max_thinking_tokens` (=> thinking type "enabled"/budget_tokens) is
-                # REJECTED on these models — depth is controlled by `effort` instead (default "high";
-                # bump to xhigh/max via AAR_EFFORT).
-                "thinking": {"type": "adaptive", "display": "summarized"},
-                "effort": os.getenv("AAR_EFFORT", "max"),
             }
+            # Newer SDKs expose adaptive thinking and effort. Older releases
+            # (including FAIR's current 0.1.30) reject these constructor kwargs.
+            _add_supported_reasoning_options(options_dict)
             if self.cli_path:
                 options_dict["cli_path"] = self.cli_path
 
