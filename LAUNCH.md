@@ -24,9 +24,12 @@ the repository from the script location, uses `<repo>/.venv/bin/python`, sources
 Authentication can use either an executable Claude CLI (resolved from
 `CLAUDE_CLI_PATH` or `PATH`) or a direct `ANTHROPIC_API_KEY`. On FAIR, the
 authenticated Meta Claude CLI is the intended path; a direct Anthropic key is
-not required. The model defaults to `claude-sonnet-4-6`. The job exits nonzero
-if neither authentication path is available or if it cannot reach the requested
-entry count, so callers can safely gate AAR launch on its completion.
+not required. When both are present, the launcher explicitly selects the CLI and
+removes `ANTHROPIC_API_KEY` from the librarian process; the key remains a fallback
+only when no executable CLI is available. The model defaults to
+`claude-sonnet-4-6`. The job exits nonzero if neither authentication path is
+available or if it cannot reach the requested entry count, so callers can safely
+gate AAR launch on its completion.
 
 This portability work covers the standalone librarian and the librarian pre-phase
 inside `launch_team.sh`. It also repairs the known shell parse errors in the chain,

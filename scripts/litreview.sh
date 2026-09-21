@@ -61,6 +61,9 @@ if [ -z "${CLAUDE_CLI_PATH:-}" ]; then
 fi
 if [ -n "${CLAUDE_CLI_PATH:-}" ] && [ -x "${CLAUDE_CLI_PATH}" ]; then
   export CLAUDE_CLI_PATH
+  # Make the transport choice unambiguous: the authenticated CLI must not be
+  # bypassed by a stale or unrelated direct Anthropic credential in .env.
+  unset ANTHROPIC_API_KEY
 elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   unset CLAUDE_CLI_PATH
 else

@@ -168,6 +168,49 @@ class LitreviewLaunchTest(unittest.TestCase):
 
             self.assertIn(f"cli={fake_cli}", completed.stdout)
 
+    def test_launcher_prefers_cli_and_removes_direct_key_from_child(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            repo = tmp_path / "repo"
+            (repo / "aar").mkdir(parents=True)
+            fake_python = tmp_path / "python"
+            fake_python.write_text(
+                "#!/bin/bash\n"
+                "if [ \"${1:-}\" = '-c' ]; then printf '0\\n'; exit 0; fi\n"
+                "printf 'cli=%s\\n' \"${CLAUDE_CLI_PATH:-}\"\n"
+                "if [ -n \"${ANTHROPIC_API_KEY:-}\" ]; then\n"
+                "  printf 'key=set\\n'\n"
+                "else\n"
+                "  printf 'key=unset\\n'\n"
+                "fi\n"
+            )
+            fake_python.chmod(0o755)
+            fake_cli = tmp_path / "claude"
+            fake_cli.write_text("#!/bin/bash\nexit 0\n")
+            fake_cli.chmod(0o755)
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AAR_REPO": str(repo),
+                    "HARNESS_PY": str(fake_python),
+                    "HARNESS_ENV": str(tmp_path / "missing.env"),
+                    "CLAUDE_CLI_PATH": str(fake_cli),
+                    "ANTHROPIC_API_KEY": "must-not-reach-child",
+                }
+            )
+
+            completed = subprocess.run(
+                ["bash", str(SCRIPT), "sycophancy", "precedence-team", "0"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertIn(f"cli={fake_cli}", completed.stdout)
+            self.assertIn("key=unset", completed.stdout)
+            self.assertNotIn("must-not-reach-child", completed.stdout)
+
     def test_launcher_rejects_missing_credential_without_running_python(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             tmp_path = Path(directory)
