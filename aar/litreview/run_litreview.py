@@ -112,10 +112,10 @@ def _web_config() -> tuple[list[str], str, str, str]:
             (
                 f"Use only `{helper} search \"<query>\" --limit <1-10>` to discover real "
                 f"arXiv papers and `{helper} fetch <arxiv-id>` to retrieve metadata and "
-                "the abstract. Fetch every paper you cite. Because this constrained helper "
-                "does not return the full paper, omit any method detail, hyperparameter, or "
-                "result that the returned metadata and abstract do not directly support, "
-                "and omit the paper when those sources are insufficient rather than guessing"
+                "bounded visible paper text when arXiv HTML is available, with an explicitly "
+                "labeled abstract fallback otherwise. Fetch every paper you cite. Omit any "
+                "detail or result that the returned content does not directly support rather "
+                "than guessing"
             ),
             (
                 "You are a careful research librarian. Cite only real arXiv papers returned "

@@ -101,13 +101,13 @@ else
 fi
 unset _REQUESTED_WEB_MODE _DETECTED_WEB_MODE
 
-# These credentials are not needed by either librarian route. Keeping them out
-# of the child limits the impact of a malicious or prompt-injected paper.
-unset MODEL_API_KEY LLAMA_API_KEY HF_TOKEN HUGGING_FACE_HUB_TOKEN OAI_API
-unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN RUNPOD_API_KEY
-unset OPENAI_API_KEY WANDB_API_KEY
-
 if [ "${LITREVIEW_WEB_MODE}" = "meta_secure" ]; then
+  # None of these credentials is needed by the Meta librarian. Keeping them out
+  # of this internet-enabled child limits prompt-injection impact. Portable
+  # native/direct-key deployments retain their provider configuration.
+  unset MODEL_API_KEY LLAMA_API_KEY HF_TOKEN HUGGING_FACE_HUB_TOKEN OAI_API
+  unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN RUNPOD_API_KEY
+  unset OPENAI_API_KEY WANDB_API_KEY
   for _required in "${REPO}/scripts/aar-paper-search" /usr/bin/curl; do
     if [ ! -x "${_required}" ]; then
       echo "[litreview] ERROR: Meta secure mode requires executable ${_required}" >&2

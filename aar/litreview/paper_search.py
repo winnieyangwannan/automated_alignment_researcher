@@ -9,6 +9,7 @@ fixed argument vector; no command is interpreted by a shell.
 from __future__ import annotations
 
 import argparse
+from html.parser import HTMLParser
 import json
 import os
 import re
@@ -21,10 +22,13 @@ from typing import Any, Sequence
 
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
+ARXIV_HTML_BASE_URL = "https://arxiv.org/html"
 DEFAULT_USER_AGENT = "automated-alignment-researcher/0.1 (academic-paper helper)"
 MAX_QUERY_CHARS = 500
 MAX_RESULTS = 10
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_HTML_BYTES = 8 * 1024 * 1024
+MAX_TEXT_CHARS = 1_000_000
 REQUEST_TIMEOUT_SECONDS = 30
 CURL_PATH = Path("/usr/bin/curl")
 
@@ -119,7 +123,13 @@ def _approved_url(url: str) -> bool:
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https":
         return False
-    return parsed.hostname == "export.arxiv.org" and parsed.path == "/api/query"
+    return (
+        parsed.hostname == "export.arxiv.org" and parsed.path == "/api/query"
+    ) or (
+        parsed.hostname == "arxiv.org"
+        and parsed.path.startswith("/html/")
+        and not parsed.query
+    )
 
 
 def _curl(url: str, *, max_bytes: int) -> bytes:
@@ -174,6 +184,70 @@ def _request(params: dict[str, str | int]) -> list[dict[str, Any]]:
     return parse_atom_feed(_curl(url, max_bytes=MAX_RESPONSE_BYTES))
 
 
+class _VisibleTextParser(HTMLParser):
+    """Extract visible text while discarding active/non-content elements."""
+
+    _HIDDEN = {"script", "style", "noscript", "svg"}
+    _BREAKS = {
+        "article", "blockquote", "br", "div", "figcaption", "h1", "h2", "h3",
+        "h4", "h5", "h6", "li", "p", "section", "table", "tr",
+    }
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.hidden_depth = 0
+        self.parts: list[str] = []
+        self.length = 0
+        self.truncated = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        del attrs
+        if tag in self._HIDDEN:
+            self.hidden_depth += 1
+        elif not self.hidden_depth and tag in self._BREAKS:
+            self._append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._HIDDEN:
+            self.hidden_depth = max(0, self.hidden_depth - 1)
+        elif not self.hidden_depth and tag in self._BREAKS:
+            self._append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self.hidden_depth:
+            self._append(data)
+
+    def _append(self, value: str) -> None:
+        remaining = MAX_TEXT_CHARS - self.length
+        if remaining <= 0:
+            self.truncated = True
+            return
+        self.parts.append(value[:remaining])
+        self.length += min(len(value), remaining)
+        self.truncated = self.truncated or len(value) > remaining
+
+    def text(self) -> str:
+        lines = (" ".join(line.split()) for line in "".join(self.parts).splitlines())
+        return "\n".join(line for line in lines if line)
+
+
+def _fetch_html_text(arxiv_id: str) -> tuple[str, bool]:
+    encoded_id = urllib.parse.quote(arxiv_id, safe="/")
+    payload = _curl(
+        f"{ARXIV_HTML_BASE_URL}/{encoded_id}", max_bytes=MAX_HTML_BYTES
+    )
+    parser = _VisibleTextParser()
+    try:
+        parser.feed(payload.decode("utf-8", errors="replace"))
+        parser.close()
+    except Exception as error:
+        raise PaperSearchError("arXiv HTML could not be parsed") from error
+    text = parser.text()
+    if len(text) < 500:
+        raise PaperSearchError("arXiv HTML did not contain enough visible paper text")
+    return text, parser.truncated
+
+
 def search(query: str, limit: int = 5) -> dict[str, Any]:
     """Search all arXiv fields for a plain-language query."""
     normalized = normalize_query(query)
@@ -192,18 +266,29 @@ def search(query: str, limit: int = 5) -> dict[str, Any]:
 
 
 def fetch(arxiv_id: str) -> dict[str, Any]:
-    """Fetch bounded metadata and abstract by validated arXiv identifier."""
+    """Fetch bounded paper text, explicitly falling back to its abstract."""
     normalized = normalize_arxiv_id(arxiv_id)
     results = _request({"id_list": normalized, "max_results": 1})
     if not results:
         raise PaperSearchError(f"arXiv paper not found: {normalized}")
     paper = results[0]
+    try:
+        content, truncated = _fetch_html_text(normalized)
+        content_source = "arxiv_html"
+        warning = ""
+    except PaperSearchError as error:
+        content = paper["abstract"]
+        content_source = "arxiv_abstract_fallback"
+        truncated = False
+        warning = str(error)
     return {
         "ok": True,
         "operation": "fetch",
         "paper": paper,
-        "content": paper["abstract"],
-        "content_source": "arxiv_abstract",
+        "content": content,
+        "content_source": content_source,
+        "content_truncated": truncated,
+        "warning": warning,
     }
 
 
@@ -216,7 +301,7 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("--limit", type=int, default=5)
 
     fetch_parser = subparsers.add_parser(
-        "fetch", help="fetch arXiv metadata and abstract"
+        "fetch", help="fetch bounded arXiv HTML text with abstract fallback"
     )
     fetch_parser.add_argument("arxiv_id")
     return parser

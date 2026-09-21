@@ -25,6 +25,14 @@ ATOM = b"""<?xml version="1.0" encoding="UTF-8"?>
     <link rel="related" href="https://arxiv.org/pdf/2310.13548v2" type="application/pdf" />
   </entry>
 </feed>"""
+HTML = (
+    b"<html><body><article><h1>Towards Understanding Sycophancy</h1>"
+    b"<script>hidden()</script><p>Method and results. "
+    + b"evidence " * 100
+    + b"</p></article></body></html>"
+)
+
+
 def completed(
     stdout: bytes, returncode: int = 0, stderr: bytes = b""
 ) -> subprocess.CompletedProcess:
@@ -58,22 +66,43 @@ class PaperSearchTest(unittest.TestCase):
 
     @patch.object(paper_search, "_require_executable")
     @patch("subprocess.run")
-    def test_fetch_returns_bounded_arxiv_metadata_and_abstract(
+    def test_fetch_returns_bounded_visible_arxiv_html(
         self, run, require_executable
     ) -> None:
         del require_executable
-        run.return_value = completed(ATOM)
+        run.side_effect = [completed(ATOM), completed(HTML)]
 
         result = paper_search.fetch("2310.13548v2")
 
-        self.assertEqual(result["content_source"], "arxiv_abstract")
-        self.assertEqual(result["content"], "A useful abstract.")
+        self.assertEqual(result["content_source"], "arxiv_html")
+        self.assertIn("Method and results", result["content"])
+        self.assertNotIn("hidden", result["content"])
+        self.assertFalse(result["content_truncated"])
         self.assertEqual(
             urllib.parse.parse_qs(
-                urllib.parse.urlsplit(run.call_args.args[0][-1]).query
+                urllib.parse.urlsplit(run.call_args_list[0].args[0][-1]).query
             )["id_list"],
             ["2310.13548v2"],
         )
+        self.assertEqual(
+            run.call_args_list[1].args[0][-1],
+            "https://arxiv.org/html/2310.13548v2",
+        )
+
+    @patch.object(paper_search, "_require_executable")
+    @patch("subprocess.run")
+    def test_fetch_labels_abstract_fallback(self, run, require_executable) -> None:
+        del require_executable
+        run.side_effect = [
+            completed(ATOM),
+            completed(b"", returncode=22, stderr=b"not found"),
+        ]
+
+        result = paper_search.fetch("2310.13548v2")
+
+        self.assertEqual(result["content_source"], "arxiv_abstract_fallback")
+        self.assertEqual(result["content"], "A useful abstract.")
+        self.assertIn("curl exit 22", result["warning"])
 
     def test_fetch_rejects_urls_and_shell_like_ids_before_network(self) -> None:
         bad_ids = (

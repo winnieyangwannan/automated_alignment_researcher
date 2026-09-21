@@ -85,6 +85,9 @@ class LitreviewLaunchTest(unittest.TestCase):
                 "printf 'cli=%s\\n' \"${CLAUDE_CLI_PATH:-}\"\n"
                 "printf 'web=%s\\n' \"${LITREVIEW_WEB_MODE:-}\"\n"
                 "printf 'secure=%s\\n' \"${META_CLAUDE_SECURE_INTERNET_MODE:-}\"\n"
+                "printf 'model_api=%s\\n' \"${MODEL_API_KEY:-}\"\n"
+                "printf 'hf=%s\\n' \"${HF_TOKEN:-}\"\n"
+                "printf 'aws=%s\\n' \"${AWS_ACCESS_KEY_ID:-}\"\n"
             )
             fake_python.chmod(0o755)
             env_file = tmp_path / "research.env"
@@ -107,6 +110,9 @@ class LitreviewLaunchTest(unittest.TestCase):
                     "HARNESS_ENV": str(env_file),
                     "PYTHONPATH": "inherited-pythonpath",
                     "PATH": "/usr/bin:/bin",
+                    "MODEL_API_KEY": "portable-model-key",
+                    "HF_TOKEN": "portable-hf-token",
+                    "AWS_ACCESS_KEY_ID": "portable-aws-key",
                 }
             )
 
@@ -132,6 +138,9 @@ class LitreviewLaunchTest(unittest.TestCase):
             self.assertIn("cli=\n", completed.stdout)
             self.assertIn("web=native_web", completed.stdout)
             self.assertIn("secure=\n", completed.stdout)
+            self.assertIn("model_api=portable-model-key", completed.stdout)
+            self.assertIn("hf=portable-hf-token", completed.stdout)
+            self.assertIn("aws=portable-aws-key", completed.stdout)
             self.assertNotIn("test-placeholder", completed.stdout)
 
     def test_launcher_accepts_authenticated_cli_without_direct_key(self) -> None:
@@ -200,6 +209,7 @@ class LitreviewLaunchTest(unittest.TestCase):
                 "printf 'secure=%s\\n' \"${META_CLAUDE_SECURE_INTERNET_MODE:-}\"\n"
                 "printf 'model_api=%s\\n' \"${MODEL_API_KEY:+set}\"\n"
                 "printf 'hf=%s\\n' \"${HF_TOKEN:+set}\"\n"
+                "printf 'aws=%s\\n' \"${AWS_ACCESS_KEY_ID:+set}\"\n"
             )
             fake_python.chmod(0o755)
             fake_cli = tmp_path / "claude"
@@ -221,6 +231,7 @@ class LitreviewLaunchTest(unittest.TestCase):
                     "ANTHROPIC_API_KEY": "must-not-reach-child",
                     "MODEL_API_KEY": "must-not-reach-child",
                     "HF_TOKEN": "must-not-reach-child",
+                    "AWS_ACCESS_KEY_ID": "must-not-reach-child",
                 }
             )
 
@@ -238,6 +249,7 @@ class LitreviewLaunchTest(unittest.TestCase):
             self.assertIn("secure=1", completed.stdout)
             self.assertIn("model_api=", completed.stdout)
             self.assertIn("hf=", completed.stdout)
+            self.assertIn("aws=", completed.stdout)
             self.assertNotIn("must-not-reach-child", completed.stdout)
 
     def test_launcher_rejects_missing_credential_without_running_python(self) -> None:

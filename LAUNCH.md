@@ -34,17 +34,19 @@ the exact repository-local `scripts/aar-paper-search` command and the explicit
 native `WebSearch`/`WebFetch` are not available on this route.
 
 Unrelated model, cloud, and tracking credentials—including `MODEL_API_KEY`,
-Hugging Face, OpenAI, AWS, Runpod, and W&B variables—are removed from every
-librarian child because they are unrelated to librarian authentication.
+Hugging Face, OpenAI, AWS, Runpod, and W&B variables—are removed from the Meta
+secure librarian child because they are unrelated to its authentication. The
+portable native/direct-key route retains its provider credentials.
 
 The helper accepts only `search <query> [--limit 1..10]` and `fetch <arxiv-id>`.
 It uses `/usr/bin/curl` with a fixed argument vector, response/time bounds, and
-the fixed arXiv API endpoint; it never accepts a URL or invokes a shell. Fetch
-returns metadata and the abstract, and the prompt prohibits unsupported
-full-paper details. `/usr/bin/curl` and the tracked helper are checked before a
-FAIR job starts. This is a Claude tool-policy boundary, not kernel isolation, so
-continue to use the disposable librarian workspace and do not place secrets
-there.
+fixed arXiv API and HTML endpoints; it never accepts a URL or invokes a shell.
+Fetch returns bounded visible paper text when arXiv HTML is available and an
+explicitly labeled abstract fallback otherwise. The prompt prohibits claims not
+supported by the returned content. `/usr/bin/curl` and the tracked helper are
+checked before a FAIR job starts. This is a Claude tool-policy boundary, not
+kernel isolation, so continue to use the disposable librarian workspace and do
+not place secrets there.
 
 A direct Anthropic key or any other executable Claude CLI keeps the portable
 native-`WebSearch`/`WebFetch` behavior and does not enable Meta secure-internet
