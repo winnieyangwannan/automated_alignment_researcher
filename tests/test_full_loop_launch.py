@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from aar.research_loop import monitor
@@ -140,6 +141,59 @@ class FullLoopLaunchTest(unittest.TestCase):
         self.assertIn("{% if meta_secure_web %}", source)
         self.assertIn("{{ paper_search_helper }} search", source)
         self.assertNotIn("--qos=high --gres=gpu:1", source)
+
+    def test_preflight_is_non_mutating_and_accepts_valid_cpu_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            fake_bin = tmp / "bin"
+            fake_bin.mkdir()
+            for name, body in {
+                "claude": "if [ \"${1:-}\" = --help ]; then echo --secure-internet-mode; fi\n",
+                "sbatch": "exit 0\n",
+                "sinfo": "exit 0\n",
+                "sacctmgr": "echo 'ram|g3_ram_high'\n",
+            }.items():
+                command = fake_bin / name
+                command.write_text(f"#!/bin/bash\n{body}")
+                command.chmod(0o755)
+            env_file = tmp / "aar.env"
+            env_file.write_text(
+                "ANTHROPIC_API_KEY=placeholder\n"
+                "HF_TOKEN=placeholder\n"
+            )
+            literature = tmp / "literature"
+            literature.mkdir()
+            for index in range(30):
+                (literature / f"{index}.json").write_text("{}\n")
+            before = sorted(path.relative_to(tmp) for path in tmp.rglob("*"))
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AAR_REPO": str(ROOT),
+                    "HARNESS_PY": sys.executable,
+                    "HARNESS_ENV": str(env_file),
+                    "AXIS": "honesty",
+                    "MODEL": "gemma",
+                    "LIT_AXIS_DIR": str(literature),
+                    "PATH": f"{fake_bin}:/usr/bin:/bin",
+                }
+            )
+            env.pop("SLURM_JOB_ID", None)
+            env.pop("CUDA_VISIBLE_DEVICES", None)
+
+            completed = subprocess.run(
+                ["bash", str(ROOT / "scripts" / "preflight_aar.sh")],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            after = sorted(path.relative_to(tmp) for path in tmp.rglob("*"))
+
+            self.assertEqual(before, after)
+            self.assertIn("30 valid honesty literature entries", completed.stdout)
+            self.assertIn("GPU checks require a Slurm GPU allocation", completed.stdout)
+            self.assertIn("non-mutating checks complete", completed.stdout)
 
     def test_monitor_specific_key_precedes_general_key(self) -> None:
         with mock.patch.dict(
