@@ -224,10 +224,9 @@ Every gate below must pass before moving to the next stage.
 - Start the AAR through Meta's authenticated Claude CLI with secure-internet mode,
   following the working librarian pattern. Port the bounded paper-search helper
   and matching tool policy instead of assuming native `WebSearch`/`WebFetch`.
-- Make one minimal direct Anthropic call to the configured monitor model and one
-  to `claude-haiku-4-5`; verify exact model names and response parsing. These
-  direct calls remain required by the current integrity monitor and honesty
-  evaluator even though the AAR itself uses Meta CLI authentication.
+- Make minimal FAIR Model API calls to `claude-4-8-opus` for the monitor and
+  honesty judge; verify the exact catalog name and Responses parsing. The AAR
+  itself continues to use Meta CLI authentication.
 - Run one tiny integrity-monitor fixture expected to approve and one expected to
   reject; confirm fail-closed behavior for the code monitors.
 - Start a one-turn Agent SDK probe with the exact production options and verify
@@ -265,8 +264,8 @@ eval side and score the unmodified `google/gemma-2-2b-it` on the same ARM64/GB30
 stack. Require:
 
 - all seven suite legs present and nonzero sample counts;
-- `JUDGE_BACKEND=anthropic`, with both judge model variables set to
-  `claude-haiku-4-5`;
+- `JUDGE_BACKEND=model_api`, with both judge model variables set to
+  `claude-4-8-opus`;
 - golden decoding loaded from the eval-only honesty baseline file;
 - research output contains only three MASK legs plus three capability gates;
 - eval-private output contains the DeceptionBench held-out leg;
@@ -336,8 +335,8 @@ and failure diagnosis.
   using held-out results as evidence.
 - AAR agent and paper search: Meta authenticated CLI plus secure-internet mode,
   following the successful literature-review launch.
-- Integrity monitor and honesty judge: their existing direct Anthropic route,
-  validated with minimal preflight calls.
+- Integrity monitor and honesty judge: Claude Opus 4.8 through FAIR Model API,
+  selected after the direct Anthropic credential failed its live pre-flight.
 - Slurm QoS: `g3_ram_high` for agent, training, and evaluation during the smoke,
   conditional on all three `sbatch --test-only` checks passing.
 
@@ -369,6 +368,6 @@ No jobs should be launched until the preflight gates above pass.
   to that key (HTTP 404), and no `LLAMA_API_KEY` is configured. Therefore the
   existing Haiku-4.5 baseline cannot yet be evaluated with judge parity.
 
-Do not publish or launch the full loop until the direct Anthropic credential is
-refreshed, or until an explicit decision is made to add a Model API judge backend
-and re-baseline Gemma with a model available through that gateway.
+The explicit decision is to use Claude Opus 4.8 through FAIR Model API for both
+the monitor and honesty judge. Re-baseline Gemma with that exact judge before
+launching the full loop; the prior Haiku 4.5 values are not interchangeable.

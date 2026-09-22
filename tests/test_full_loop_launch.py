@@ -158,7 +158,7 @@ class FullLoopLaunchTest(unittest.TestCase):
                 command.chmod(0o755)
             env_file = tmp / "aar.env"
             env_file.write_text(
-                "ANTHROPIC_API_KEY=placeholder\n"
+                "MODEL_API_KEY=placeholder\n"
                 "HF_TOKEN=placeholder\n"
             )
             literature = tmp / "literature"
@@ -205,6 +205,40 @@ class FullLoopLaunchTest(unittest.TestCase):
             clear=True,
         ):
             self.assertEqual(monitor._monitor_api_key(), "monitor-only")
+
+    def test_monitor_model_api_key_precedes_general_key(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AAR_MONITOR_MODEL_API_KEY": "monitor-only",
+                "MODEL_API_KEY": "general",
+            },
+            clear=True,
+        ):
+            self.assertEqual(monitor._monitor_model_api_key(), "monitor-only")
+
+    def test_monitor_uses_model_api_opus_backend(self) -> None:
+        response = '{"approved":true,"violations":[],"reasoning":"ok"}'
+        env = {
+            "AAR_MONITOR_BACKEND": "model_api",
+            "AAR_MONITOR_MODEL_API_KEY": "monitor-only",
+        }
+        with (
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch(
+                "aar.benchmarks._judge_http.model_api_chat", return_value=response
+            ) as call,
+        ):
+            result = monitor._call_monitor("check", max_tokens=80)
+
+        self.assertTrue(result["approved"])
+        self.assertEqual(result["monitor_backend"], "model_api")
+        call.assert_called_once_with(
+            [{"role": "user", "content": "check"}],
+            model="claude-4-8-opus",
+            max_tokens=80,
+            timeout=150,
+        )
 
 
 if __name__ == "__main__":

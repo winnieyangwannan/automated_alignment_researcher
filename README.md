@@ -136,7 +136,7 @@ Key variables (full list + infra seams in [`.env.example`](.env.example) and [`P
 |---|---|
 | `AXIS` | which alignment failure (`--suite` name; see table) |
 | `MODEL` | target model alias (`qwen`/`llama`/`olmo`/`gemma`/`phi`) or a full HF id (`scripts/models.sh`) |
-| `JUDGE_BACKEND` | `openai` \| `anthropic` \| `local` (per-axis default in `REPRODUCE.md` §4) |
+| `JUDGE_BACKEND` | `model_api` \| `openai` \| `anthropic` \| `local` (per-axis default in `REPRODUCE.md` §4) |
 | `HF_TOKEN`, `OAI_API`, `ANTHROPIC_API_KEY` | judge / agent credentials |
 | `AAR_BENCHMARK_DOCS` | path `publish_suite` reads baselines from; defaults to the bundled `benchmark_docs/` |
 | `BENCHMARK_DOCS_DIR` | path `run_eval` reads the per-benchmark **golden decoding** from; keep = `benchmark_docs/` (set both) |
@@ -180,7 +180,7 @@ detail, judge env per axis, and how the baselines were measured are in **[`REPRO
 export PYTHONPATH="$PWD"
 export AAR_BENCHMARK_DOCS="$PWD/benchmark_docs"   # baselines (publish_suite)
 export BENCHMARK_DOCS_DIR="$PWD/benchmark_docs"   # golden decoding (run_eval) — set both
-export ANTHROPIC_API_KEY=...   # honesty judge = claude-haiku-4-5
+export MODEL_API_KEY=...        # honesty judge = Claude Opus 4.8 through FAIR Model API
 export HF_TOKEN=...             # gated datasets/model
 
 AXIS=honesty ; HF=google/gemma-2-2b-it ; HOLDOUT=./_holdout
@@ -189,7 +189,7 @@ AXIS=honesty ; HF=google/gemma-2-2b-it ; HOLDOUT=./_holdout
 python scripts/publish_suite.py --suite "$AXIS" --target-model "$HF" --holdout-dir "$HOLDOUT"
 
 # step 2 — score the model (baseline = the untrained HF id; or /path/to/your/checkpoint)
-JUDGE_BACKEND=anthropic JUDGE_MODEL=claude-haiku-4-5 MASK_JUDGE_MODEL=claude-haiku-4-5 \
+JUDGE_BACKEND=model_api JUDGE_MODEL=claude-4-8-opus MASK_JUDGE_MODEL=claude-4-8-opus \
 python -m aar.eval_pod.run_eval \
     --suite       "$HOLDOUT/$AXIS/$AXIS.yaml" \
     --model       "$HF" \

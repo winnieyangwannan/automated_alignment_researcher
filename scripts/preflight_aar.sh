@@ -33,9 +33,27 @@ CLI="${CLAUDE_CLI_PATH:-$(command -v claude || true)}"
 [ -x "${REPO}/scripts/aar-paper-search" ] || fail "bounded paper-search helper is missing"
 pass "Meta Claude CLI and bounded paper search"
 
-[ -n "${ANTHROPIC_API_KEY:-${ANT_high_prio_API:-${ANT_API_KEY:-}}}" ] || fail "direct Anthropic key is missing for monitor/judge"
+MONITOR_BACKEND="${AAR_MONITOR_BACKEND:-model_api}"
+JUDGE_BACKEND="${JUDGE_BACKEND:-model_api}"
+case "${MONITOR_BACKEND}" in
+  model_api)
+    [ -n "${MODEL_API_KEY:-}" ] || fail "MODEL_API_KEY is missing for monitor"
+    [ "${MONITOR_MODEL:-claude-4-8-opus}" = claude-4-8-opus ] || fail "monitor must use claude-4-8-opus"
+    ;;
+  anthropic) [ -n "${ANTHROPIC_API_KEY:-${ANT_high_prio_API:-${ANT_API_KEY:-}}}" ] || fail "direct Anthropic key is missing for monitor";;
+  *) fail "unsupported AAR_MONITOR_BACKEND=${MONITOR_BACKEND}";;
+esac
+case "${JUDGE_BACKEND}" in
+  model_api)
+    [ -n "${MODEL_API_KEY:-}" ] || fail "MODEL_API_KEY is missing for judge"
+    [ "${JUDGE_MODEL:-claude-4-8-opus}" = claude-4-8-opus ] || fail "judge must use claude-4-8-opus"
+    [ "${MASK_JUDGE_MODEL:-claude-4-8-opus}" = claude-4-8-opus ] || fail "MASK judge must use claude-4-8-opus"
+    ;;
+  anthropic) [ -n "${ANTHROPIC_API_KEY:-${ANT_high_prio_API:-${ANT_API_KEY:-}}}" ] || fail "direct Anthropic key is missing for judge";;
+  *) fail "honesty preflight requires model_api or anthropic judge";;
+esac
 [ -n "${HF_TOKEN:-}" ] || fail "HF_TOKEN is missing"
-pass "required credential variables are present (values hidden)"
+pass "required credential variables are present (values hidden); monitor=${MONITOR_BACKEND} judge=${JUDGE_BACKEND}"
 
 LIT_DIR="${LIT_AXIS_DIR:-${REPO}/_runs/litreview/${SUITE_NAME}}"
 LIT_COUNT="$("${HARNESS_PY}" - "${LIT_DIR}" <<'PY'

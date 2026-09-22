@@ -50,3 +50,19 @@ class JudgeModelOverrideTest(unittest.TestCase):
         ):
             run_eval._resolve_judge_fn()
             make.assert_called_once_with(model="gpt-4o")
+
+    def test_model_api_backend_uses_explicit_opus_model(self):
+        sentinel = object()
+        env = {
+            "MODEL_API_KEY": "test-key",
+            "JUDGE_BACKEND": "model_api",
+            "JUDGE_MODEL": "claude-4-8-opus",
+        }
+        with (
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.object(
+                judges, "make_model_api_judge", return_value=sentinel
+            ) as make,
+        ):
+            self.assertIs(run_eval._resolve_judge_fn("gpt-4o"), sentinel)
+            make.assert_called_once_with(model="claude-4-8-opus")

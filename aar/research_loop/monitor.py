@@ -13,7 +13,7 @@ import os
 import re
 from typing import Any
 
-MONITOR_MODEL = os.getenv("MONITOR_MODEL", "claude-opus-4-8")
+MONITOR_MODEL = os.getenv("MONITOR_MODEL", "claude-4-8-opus")
 
 
 def _monitor_api_key() -> str:
@@ -30,6 +30,11 @@ def _monitor_api_key() -> str:
         or os.getenv("ANT_API_KEY")
         or ""
     )
+
+
+def _monitor_model_api_key() -> str:
+    """Return the FAIR Model API key reserved for monitor calls."""
+    return os.getenv("AAR_MONITOR_MODEL_API_KEY") or os.getenv("MODEL_API_KEY") or ""
 
 # The three desiderata (user-specified). D1 and D3 are the two faces of "no
 # distilling a large model's capability into the small target"; D2 is eval leakage.
@@ -274,22 +279,38 @@ def _post_retry(url: str, headers: dict, body: dict, timeout: float, tries: int 
 
 
 def _call_monitor(content: str, max_tokens: int = 1024) -> dict[str, Any]:
-    """One Opus monitor call -> parsed JSON dict. Fail-CLOSED (approved:false) on any infra error.
-    Transient API errors are retried (see _post_retry) so a blip does not spuriously reject a proposal."""
-    key = _monitor_api_key()
-    if not key:
-        return {"approved": False, "violations": [], "reasoning": "monitor unavailable (no ANTHROPIC_API_KEY)", "error": "no_api_key"}
+    """One Opus monitor call -> parsed JSON dict, failing closed on errors."""
+    backend = os.getenv("AAR_MONITOR_BACKEND", "model_api").lower()
     try:
-        import httpx
-        body = {"model": MONITOR_MODEL, "max_tokens": max_tokens,
-                "messages": [{"role": "user", "content": content}]}
-        r = _post_retry("https://api.anthropic.com/v1/messages",
-                        {"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                        body, 150)
-        r.raise_for_status()
-        txt = "".join(b.get("text", "") for b in r.json().get("content", []) if b.get("type") == "text")
+        if backend == "model_api":
+            if not _monitor_model_api_key():
+                raise RuntimeError("monitor unavailable (no MODEL_API_KEY)")
+            from aar.benchmarks._judge_http import model_api_chat
+
+            txt = model_api_chat(
+                [{"role": "user", "content": content}],
+                model=MONITOR_MODEL,
+                max_tokens=max_tokens,
+                timeout=150,
+            )
+        elif backend == "anthropic":
+            key = _monitor_api_key()
+            if not key:
+                raise RuntimeError("monitor unavailable (no ANTHROPIC_API_KEY)")
+            import httpx
+
+            body = {"model": MONITOR_MODEL, "max_tokens": max_tokens,
+                    "messages": [{"role": "user", "content": content}]}
+            r = _post_retry("https://api.anthropic.com/v1/messages",
+                            {"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                            body, 150)
+            r.raise_for_status()
+            txt = "".join(b.get("text", "") for b in r.json().get("content", []) if b.get("type") == "text")
+        else:
+            raise ValueError(f"unsupported AAR_MONITOR_BACKEND={backend!r}")
         v = _parse(txt)
         v["monitor_model"] = MONITOR_MODEL
+        v["monitor_backend"] = backend
         return v
     except Exception as e:
         return {"approved": False, "violations": [], "reasoning": f"monitor call failed (fail-closed): {e}", "error": str(e)}

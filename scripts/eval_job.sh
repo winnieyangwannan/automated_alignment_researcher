@@ -36,13 +36,15 @@ export HELDOUT_SCORES_DIR="${HELDOUT_SCORES_DIR:-${HOLDOUT_DIR}/heldout_scores}"
 export SUBMISSIONS_DIR="${SUBMISSIONS_DIR:-/opt/aar/work/aar_repo_runs/submissions}"
 export SCORES_DIR="${SCORES_DIR:-/opt/aar/work/aar_repo_runs/scores}"
 export OAI_API="$(grep -h '^OAI_API=' /opt/aar/eval-user/.oai_env /opt/aar/eval-user/.env 2>/dev/null | head -1 | cut -d= -f2-)"
-# Anthropic key for the JUDGE_BACKEND=anthropic judges (honesty: mask + deceptionbench, claude-haiku-4-5).
+# API keys for judge backends. Honesty uses MODEL_API_KEY with Claude Opus 4.8;
+# other axes may still use the direct Anthropic route.
 # Load whichever name is present (the judge's _anthropic_key() checks all three). KEY=VALUE extraction
 # only (no `source` — the .env has a $(...) line that would abort).
 for _ak in ANTHROPIC_API_KEY ANT_high_prio_API ANT_API_KEY; do
   _av="$(grep -m1 "^${_ak}=" /opt/aar/eval-user/.env 2>/dev/null | cut -d= -f2-)"
   [ -n "${_av}" ] && export "${_ak}=${_av}"
 done
+export MODEL_API_KEY="${MODEL_API_KEY:-$(grep -m1 '^MODEL_API_KEY=' /opt/aar/eval-user/.env 2>/dev/null | cut -d= -f2-)}"
 # EVAL_GPUS=auto => run_eval uses however many GPUs SLURM gave us (set by --gres at submit).
 export EVAL_GPUS="${EVAL_GPUS:-auto}"
 # DECODING PARITY (critical): the trained-model eval MUST use the SAME decoding as the
@@ -66,8 +68,8 @@ case "${SUITE}" in
 esac
 # JUDGE backend MUST match the axis's baseline (eval_worker.sh sets this too; it was MISSING here
 # -> hallucination would default to openai but is baselined on local Qwen). Pin it per axis:
-#   hallucination/faithfulness/privacy = LOCAL Qwen2.5-7B ; honesty = ANTHROPIC claude-haiku-4-5
-#   (2026-06-21, cheaper than gpt-4o + no OpenAI; re-baselined with it) ; sycophancy/refusal = OpenAI.
+#   hallucination = LOCAL Qwen2.5-7B; honesty = FAIR Model API Claude Opus 4.8;
+#   sycophancy/refusal = OpenAI. Baseline and trained evaluation must match.
 case "${SUITE}" in
   hallucination) export JUDGE_BACKEND="${JUDGE_BACKEND:-local}"; export JUDGE_MODEL_LOCAL="${JUDGE_MODEL_LOCAL:-Qwen/Qwen2.5-7B-Instruct}" ;;
   # faithfulness (2026-06-27 redesign): the 2 MULTI-TURN free-form legs (faith_mt_grounded/claimcheck) + ragtruth
@@ -92,7 +94,7 @@ case "${SUITE}" in
   # backend here is AXIS-LEVEL, so it covers every judge leg incl the new reward_harm_freeform. The Anthropic
   # key is sourced above (same plumbing as honesty).
   reward_hacking) export JUDGE_BACKEND="${JUDGE_BACKEND:-anthropic}"; export JUDGE_MODEL="${JUDGE_MODEL:-claude-haiku-4-5}"; export JUDGE_CONCURRENCY="${JUDGE_CONCURRENCY:-100}"; export ANTHROPIC_MIN_INTERVAL_S="${ANTHROPIC_MIN_INTERVAL_S:-0}" ;;   # conc 100 / no min-interval throttle: the 3 judge legs (~174 Haiku calls/eval) judge in ~2 waves; high-prio key + anthropic_chat honors Retry-After on any 429.
-  honesty) export JUDGE_BACKEND="${JUDGE_BACKEND:-anthropic}"; export JUDGE_MODEL="${JUDGE_MODEL:-claude-haiku-4-5}"; export MASK_JUDGE_MODEL="${MASK_JUDGE_MODEL:-claude-haiku-4-5}" ;;
+  honesty) export JUDGE_BACKEND="${JUDGE_BACKEND:-model_api}"; export JUDGE_MODEL="${JUDGE_MODEL:-claude-4-8-opus}"; export MASK_JUDGE_MODEL="${MASK_JUDGE_MODEL:-claude-4-8-opus}" ;;
   # bias (2026-06-28): the 2 MULTI-TURN FREE-FORM legs (bias_mt_decision/bias_mt_occupation) are judged by
   # VERDICT EXTRACTION (engagement + sign) → ANTHROPIC claude-haiku-4-5 @ conc 100 (mirror reward_hacking/
   # faithfulness). bbq + bbq_heldout are RULE-scored (logprob, no judge). WITHOUT this case the bias eval falls

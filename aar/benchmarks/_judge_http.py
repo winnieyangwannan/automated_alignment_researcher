@@ -1,4 +1,4 @@
-"""Shared API chat callers with retry/backoff for the honesty judge legs (OpenAI + Anthropic).
+"""Shared API chat callers with retry/backoff for benchmark judge legs.
 
 When the judge backend is an API and the suite is sharded across GPUs, several eval
 processes each fan out ~JUDGE_CONCURRENCY calls at once. A transient 429 / 5xx must NOT
@@ -6,9 +6,8 @@ silently fail-closed (that would corrupt the score), so these wrap the call in e
 backoff and only the caller's own except handles a true terminal failure. Greedy
 (temperature 0) for reproducibility.
 
-`anthropic_chat` is the Anthropic-Messages equivalent of `openai_chat` (JUDGE_BACKEND=anthropic,
-default model claude-haiku-4-5) — same return contract (the assistant text) so the MASK /
-deceptionbench judge getters can route to it identically.
+All callers have the same return contract (assistant text), including
+``model_api_chat`` for FAIR's Responses endpoint.
 """
 from __future__ import annotations
 
@@ -18,7 +17,95 @@ import time
 
 _ENDPOINT = "https://api.openai.com/v1/chat/completions"
 _ANTHROPIC_ENDPOINT = "https://api.anthropic.com/v1/messages"
+_MODEL_API_ENDPOINT = "https://api.meta.ai/v1/responses"
 _RETRYABLE = {429, 500, 502, 503, 504, 529}   # 529 = Anthropic "overloaded"
+
+
+def _model_api_key() -> str | None:
+    return os.getenv("MODEL_API_KEY") or os.getenv("AAR_MONITOR_MODEL_API_KEY")
+
+
+def _responses_output_text(response: dict) -> str:
+    return "".join(
+        content.get("text", "")
+        for item in response.get("output", [])
+        if item.get("type") == "message"
+        for content in item.get("content", [])
+        if content.get("type") == "output_text"
+    )
+
+
+def model_api_chat(
+    messages: list[dict],
+    model: str = "claude-4-8-opus",
+    max_tokens: int = 512,
+    temperature: float = 0.0,
+    retries: int = 5,
+    timeout: float = 90.0,
+) -> str:
+    """Call a catalog model through FAIR's Responses API and return its text.
+
+    The endpoint accepts a plain input string reliably for third-party models.
+    Preserve message roles in that string instead of relying on a
+    provider-specific message translation at the gateway. The Claude route
+    currently rejects the Responses ``temperature`` field, so the compatibility
+    argument is intentionally not sent.
+    """
+    import random
+
+    import httpx
+
+    key = _model_api_key()
+    if not key:
+        raise RuntimeError("FAIR Model API judge needs MODEL_API_KEY")
+    prompt = "\n\n".join(
+        f"{str(message.get('role', 'user')).upper()}:\n{message.get('content', '')}"
+        for message in messages
+    )
+    payload = {
+        "model": model,
+        "input": prompt,
+        "max_output_tokens": max_tokens,
+    }
+    _ = temperature
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    last: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                response = client.post(_MODEL_API_ENDPOINT, headers=headers, json=payload)
+            if response.status_code in _RETRYABLE:
+                last = httpx.HTTPStatusError(
+                    f"retryable {response.status_code}",
+                    request=response.request,
+                    response=response,
+                )
+                if attempt < retries:
+                    retry_after = response.headers.get("retry-after")
+                    try:
+                        wait = float(retry_after) if retry_after else min(2**attempt, 60)
+                    except (TypeError, ValueError):
+                        wait = min(2**attempt, 60)
+                    time.sleep(wait + random.uniform(0, 1.0))
+                    continue
+                raise last
+            response.raise_for_status()
+            output = _responses_output_text(response.json())
+            if not output:
+                raise ValueError("Model API response contained no output text")
+            return output
+        except httpx.HTTPStatusError:
+            raise
+        except Exception as error:  # noqa: BLE001 - retry transport/decode failures
+            last = error
+            if attempt < retries:
+                time.sleep(min(2**attempt, 60) + random.uniform(0, 1.0))
+                continue
+            raise
+    raise last if last is not None else RuntimeError("model_api_chat: unreachable")
 
 
 def openai_chat(messages: list[dict], model: str = "gpt-4o", max_tokens: int = 512,

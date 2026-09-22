@@ -92,8 +92,8 @@ scripts/launch_team.sh "smoke1" 1 4
 
 `AAR_WEB_MODE=auto` selects Meta's authenticated Claude CLI and secure-internet
 mode when available. The AAR uses the bounded `scripts/aar-paper-search` helper;
-the integrity monitor and honesty evaluator retain their direct Anthropic API
-calls. `launch_team.sh` reuses the existing axis literature, starts the same-user
+the integrity monitor and honesty evaluator use Claude Opus 4.8 through FAIR
+Model API. `launch_team.sh` reuses the existing axis literature, starts the same-user
 evaluator first, then submits the one-iteration chain. It never requests a GPU
 for the agent itself. Run `scripts/preflight_aar.sh` again inside a one-GPU Slurm
 allocation to execute its CUDA/BF16 checks before launching the full smoke.

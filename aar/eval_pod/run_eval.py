@@ -87,6 +87,14 @@ def _resolve_judge_fn(model: str | None = None):
         if _anthropic_key():
             return make_anthropic_judge(model=(os.getenv("JUDGE_MODEL") or "claude-haiku-4-5"))
         return None
+    if backend == "model_api":
+        from aar.eval_pod.judges import make_model_api_judge
+        from aar.benchmarks._judge_http import _model_api_key
+        if _model_api_key():
+            return make_model_api_judge(
+                model=(os.getenv("JUDGE_MODEL") or "claude-4-8-opus")
+            )
+        return None
     if os.getenv("OAI_API") or os.getenv("OPENAI_API_KEY") or os.getenv("MODEL_API_KEY"):
         from aar.eval_pod.judges import make_openai_judge
         return make_openai_judge(model=(os.getenv("JUDGE_MODEL") or model or "gpt-4o"))

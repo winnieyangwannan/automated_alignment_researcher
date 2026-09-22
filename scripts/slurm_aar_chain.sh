@@ -90,9 +90,9 @@ echo "[aar] forum=${LOCAL_FINDINGS_DIR}  methods=${AAR_IDEAS_DIR}  lit(team)=${L
 
 # --- agent authentication + web mode ---
 # Match the working FAIR librarian route: prefer Meta's authenticated Claude CLI
-# when it advertises secure-internet mode. The integrity monitor still uses the
-# direct Anthropic key, moved to a monitor-specific name so the CLI does not
-# switch away from Meta authentication.
+# when it advertises secure-internet mode. The integrity monitor uses Claude
+# Opus 4.8 through FAIR Model API by default; its key is moved to a
+# monitor-specific name so the internet-enabled agent child cannot use it.
 if [ -z "${CLAUDE_CLI_PATH:-}" ]; then
   CLAUDE_CLI_PATH="$(command -v claude || true)"
 fi
@@ -111,13 +111,26 @@ if [ "${_requested_web}" = auto ]; then
 else
   export AAR_WEB_MODE="${_requested_web}"
 fi
-if [ -z "${AAR_MONITOR_ANTHROPIC_API_KEY:-}" ]; then
-  export AAR_MONITOR_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-${ANT_high_prio_API:-${ANT_API_KEY:-}}}"
-fi
-if [ -z "${AAR_MONITOR_ANTHROPIC_API_KEY}" ]; then
-  echo "[aar] ERROR: the integrity monitor needs a direct Anthropic key in ${HARNESS_ENV}" >&2
-  exit 2
-fi
+export AAR_MONITOR_BACKEND="${AAR_MONITOR_BACKEND:-model_api}"
+case "${AAR_MONITOR_BACKEND}" in
+  model_api)
+    export MONITOR_MODEL="${MONITOR_MODEL:-claude-4-8-opus}"
+    export AAR_MONITOR_MODEL_API_KEY="${AAR_MONITOR_MODEL_API_KEY:-${MODEL_API_KEY:-}}"
+    [ -n "${AAR_MONITOR_MODEL_API_KEY}" ] || {
+      echo "[aar] ERROR: Model API monitor needs MODEL_API_KEY in ${HARNESS_ENV}" >&2
+      exit 2
+    }
+    ;;
+  anthropic)
+    export MONITOR_MODEL="${MONITOR_MODEL:-claude-opus-4-8}"
+    export AAR_MONITOR_ANTHROPIC_API_KEY="${AAR_MONITOR_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-${ANT_high_prio_API:-${ANT_API_KEY:-}}}}"
+    [ -n "${AAR_MONITOR_ANTHROPIC_API_KEY}" ] || {
+      echo "[aar] ERROR: Anthropic monitor needs a direct key in ${HARNESS_ENV}" >&2
+      exit 2
+    }
+    ;;
+  *) echo "[aar] ERROR: AAR_MONITOR_BACKEND must be model_api or anthropic" >&2; exit 2;;
+esac
 if [ "${AAR_WEB_MODE}" = meta_secure ]; then
   [ -x "${CLAUDE_CLI_PATH:-}" ] || { echo "[aar] ERROR: meta_secure requires an executable Claude CLI" >&2; exit 2; }
   [ -x "${REPO}/scripts/aar-paper-search" ] || { echo "[aar] ERROR: paper-search helper is not executable" >&2; exit 2; }

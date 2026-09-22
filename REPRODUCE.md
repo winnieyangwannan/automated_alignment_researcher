@@ -176,7 +176,7 @@ measured with the same judge**, so use the same backend to reproduce.
 | refusal | `openai` | gpt-4o-mini (StrongREJECT) | harmbench/jbb use gated local HF judges; `HF_TOKEN` |
 | prompt_injection | (rule-based) | — | `OAI_API` only if a judged path runs |
 | power_seeking | `local` | Qwen2.5-7B-Instruct | on-GPU; MACHIAVELLI legs rule-scored |
-| honesty | `anthropic` | claude-haiku-4-5 | also set `MASK_JUDGE_MODEL=claude-haiku-4-5` |
+| honesty | `model_api` | claude-4-8-opus | FAIR Responses API; also set `MASK_JUDGE_MODEL=claude-4-8-opus` |
 | faithfulness | `anthropic` | claude-haiku-4-5 | `JUDGE_CONCURRENCY=100` |
 | bias | `anthropic` | claude-haiku-4-5 | `JUDGE_CONCURRENCY=100` |
 | privacy | `anthropic` | claude-haiku-4-5 | `JUDGE_CONCURRENCY=4 ANTHROPIC_MIN_INTERVAL_S=0.2` (429 throttle) |

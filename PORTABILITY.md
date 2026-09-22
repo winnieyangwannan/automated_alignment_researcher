@@ -13,7 +13,7 @@ env-overridable. Copy `.env.example` to `.env` and fill it in.
 | **Transport** | `HARNESS_TRANSPORT` = `fs` \| `s3` | How the research side and the evaluator exchange the model and the scores (`aar/transport.py`). `fs` = a shared filesystem (a mounted volume). `s3` = any S3-compatible object store. |
 | **Holdout (eval-only)** | `HOLDOUT_DIR`, `HELDOUT_SCORES_DIR`, `AAR_BENCHMARK_DOCS` | The secret suite + held-out scores + `benchmark_docs/` (which names the held-out). Must be reachable **only** by the evaluator. |
 | **Shared handoff** | `SUBMISSIONS_DIR`, `SCORES_DIR` | The research side stages a model in `SUBMISSIONS_DIR`; the evaluator writes the held-out-stripped composite to `SCORES_DIR`. |
-| **Judges** | `JUDGE_BACKEND` (`openai`\|`anthropic`\|`local`), `JUDGE_MODEL`, `JUDGE_MODEL_LOCAL`, `OAI_API`, `ANTHROPIC_API_KEY`, `HF_TOKEN` | Per-axis judge (see `REPRODUCE.md` §4). `local` runs a judge model (Qwen2.5-7B) on the GPU; the others call an API. |
+| **Judges** | `JUDGE_BACKEND` (`model_api`\|`openai`\|`anthropic`\|`local`), `JUDGE_MODEL`, `JUDGE_MODEL_LOCAL`, `MODEL_API_KEY`, `OAI_API`, `ANTHROPIC_API_KEY`, `HF_TOKEN` | Per-axis judge (see `REPRODUCE.md` §4). `model_api` uses FAIR's Responses API; `local` runs a judge model on the GPU. |
 | **Compute** | `CUDA_VISIBLE_DEVICES` | `run_eval` uses every visible GPU (benchmarks scored in parallel). Each trained method uses one GPU for ~30 min. |
 | **Repo root** | `WORKSPACE_DIR`, `AAR_REPO` | Repo location; used to resolve configs, briefings, and the bundled `benchmark_docs/`. |
 

@@ -138,10 +138,19 @@ def get_mask_judge() -> Callable[[str], str | None]:
         # underlying local HF model directly via a tiny generate-and-parse shim.
         return _local_letter_judge()
 
-    # API judge (paper used gpt-4o; JUDGE_BACKEND=anthropic routes to Claude, default
-    # claude-haiku-4-5 — cheaper, no OpenAI). Retry-wrapped shared callers so sharded
+    # API judge (paper used gpt-4o; model_api routes to the selected FAIR catalog
+    # model). Retry-wrapped shared callers so sharded
     # concurrent judging doesn't fail-closed on a 429/5xx (which would corrupt the score).
-    if backend == "anthropic":
+    if backend == "model_api":
+        from aar.benchmarks._judge_http import _model_api_key, model_api_chat
+        if not _model_api_key():
+            raise RuntimeError(
+                "mask judge (model_api) needs MODEL_API_KEY, or set "
+                "MASK_STUB=1 / JUDGE_BACKEND=local."
+            )
+        model = os.getenv("MASK_JUDGE_MODEL", "claude-4-8-opus")
+        _call = lambda m: model_api_chat(m, model=model, max_tokens=500)
+    elif backend == "anthropic":
         from aar.benchmarks._judge_http import anthropic_chat, _anthropic_key
         if not _anthropic_key():
             raise RuntimeError("mask judge (anthropic) needs ANTHROPIC_API_KEY / ANT_high_prio_API / "

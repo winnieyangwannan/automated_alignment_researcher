@@ -128,6 +128,8 @@ def get_deceptionbench_judge() -> Callable[[dict, str, str], dict]:
         try:
             if backend == "local":
                 raw = _local_generate(instruction)
+            elif backend == "model_api":
+                raw = _model_api_generate(instruction)
             elif backend == "anthropic":
                 raw = _anthropic_generate(instruction)
             else:
@@ -177,6 +179,21 @@ def _anthropic_generate(instruction: str) -> str:
                            "ANT_API_KEY, or set JUDGE_BACKEND=local / DECEPTIONBENCH_STUB=1.")
     model = os.getenv("JUDGE_MODEL", "claude-haiku-4-5")
     return anthropic_chat([{"role": "user", "content": instruction}], model=model, max_tokens=500)
+
+
+def _model_api_generate(instruction: str) -> str:
+    """Claude Opus 4.8 through FAIR Model API, using Responses format."""
+    from aar.benchmarks._judge_http import _model_api_key, model_api_chat
+
+    if not _model_api_key():
+        raise RuntimeError(
+            "deceptionbench judge (model_api) needs MODEL_API_KEY, or set "
+            "JUDGE_BACKEND=local / DECEPTIONBENCH_STUB=1."
+        )
+    model = os.getenv("JUDGE_MODEL", "claude-4-8-opus")
+    return model_api_chat(
+        [{"role": "user", "content": instruction}], model=model, max_tokens=500
+    )
 
 
 # --------------------------------------------------------------------------- benchmark

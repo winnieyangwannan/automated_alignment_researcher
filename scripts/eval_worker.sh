@@ -55,9 +55,15 @@ PY="${HARNESS_PY}"
 [ -x "${PY}" ] || { echo "[worker] ERROR: Python is not executable: ${PY}" >&2; exit 2; }
 SUITE="${1:-sycophancy}"
 IDLE_EXIT="${2:-1800}"   # exit after this many seconds with no work
-if [ "${SUITE}" = honesty ] && [ -z "${ANTHROPIC_API_KEY:-${ANT_high_prio_API:-${ANT_API_KEY:-}}}" ]; then
-  echo "[worker] ERROR: honesty evaluation requires a direct Anthropic key" >&2
-  exit 2
+if [ "${SUITE}" = honesty ]; then
+  export JUDGE_BACKEND="${JUDGE_BACKEND:-model_api}"
+  export JUDGE_MODEL="${JUDGE_MODEL:-claude-4-8-opus}"
+  export MASK_JUDGE_MODEL="${MASK_JUDGE_MODEL:-claude-4-8-opus}"
+  case "${JUDGE_BACKEND}" in
+    model_api) [ -n "${MODEL_API_KEY:-}" ] || { echo "[worker] ERROR: honesty Model API judge requires MODEL_API_KEY" >&2; exit 2; };;
+    anthropic) [ -n "${ANTHROPIC_API_KEY:-${ANT_high_prio_API:-${ANT_API_KEY:-}}}" ] || { echo "[worker] ERROR: honesty Anthropic judge requires a direct key" >&2; exit 2; };;
+    *) echo "[worker] ERROR: honesty JUDGE_BACKEND must be model_api or anthropic" >&2; exit 2;;
+  esac
 fi
 if [ -z "${HF_TOKEN:-}" ]; then
   echo "[worker] ERROR: HF_TOKEN is required for the target model/datasets" >&2
@@ -112,13 +118,15 @@ case "${SUITE}" in
   # reward_hacking: the MCQ legs (loophole_*/revealing_score) are RULE-scored (logprob, no judge); only the
   # FREE-FORM leg (reward_hacking_freeform[_heldout]) is judged. Its plugin calls the ANTHROPIC claude-haiku-4-5
   # 3-way judge (HACK/HONOR/EXCLUDE) directly; pin backend + concurrency/throttle (mirror privacy + eval_job.sh)
-  # so the Haiku calls are fast and rate-limit-safe. The Anthropic key is sourced above (same plumbing as honesty).
+  # so the Haiku calls are fast and rate-limit-safe. The Anthropic key is loaded by the shared runtime helper.
   reward_hacking) export JUDGE_BACKEND="${JUDGE_BACKEND:-anthropic}"; export JUDGE_MODEL="${JUDGE_MODEL:-claude-haiku-4-5}"; export JUDGE_CONCURRENCY="${JUDGE_CONCURRENCY:-100}"; export ANTHROPIC_MIN_INTERVAL_S="${ANTHROPIC_MIN_INTERVAL_S:-0}" ;;   # conc 100 / no throttle (2026-06-27; mirror eval_job.sh): the 3 free-form legs judge in 1-2 waves; high-prio key + Retry-After backoff on any 429.
-  honesty) export JUDGE_BACKEND="${JUDGE_BACKEND:-anthropic}"; export JUDGE_MODEL="${JUDGE_MODEL:-claude-haiku-4-5}"; export MASK_JUDGE_MODEL="${MASK_JUDGE_MODEL:-claude-haiku-4-5}" ;;
+  # Paper-aligned choice for this run: Claude Opus 4.8 through FAIR Model API.
+  # Baseline and trained evaluation must use these same values.
+  honesty) export JUDGE_BACKEND="${JUDGE_BACKEND:-model_api}"; export JUDGE_MODEL="${JUDGE_MODEL:-claude-4-8-opus}"; export MASK_JUDGE_MODEL="${MASK_JUDGE_MODEL:-claude-4-8-opus}" ;;
   # bias: the two MULTI-TURN FREE-FORM legs (bias_mt_decision/bias_mt_occupation) are judged for engagement ×
   # A-vs-B invariance; bbq + bbq_heldout are RULE-scored (logprob, no judge). ANTHROPIC claude-haiku-4-5 — a
   # strong CoT judge for the free-form decision/recommendation comparisons. Concurrency 100 (Haiku handles it;
-  # anthropic_chat honors Retry-After on any 429 bursts). Anthropic key sourced above (same plumbing as honesty).
+  # anthropic_chat honors Retry-After on any 429 bursts). The shared runtime helper loads the key.
   bias) export JUDGE_BACKEND="${JUDGE_BACKEND:-anthropic}"; export JUDGE_MODEL="${JUDGE_MODEL:-claude-haiku-4-5}"; export JUDGE_CONCURRENCY="${JUDGE_CONCURRENCY:-100}" ;;
   sycophancy|refusal) export JUDGE_BACKEND="${JUDGE_BACKEND:-openai}" ;;
 esac

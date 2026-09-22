@@ -168,6 +168,30 @@ def make_openai_judge(
     return judge
 
 
+def make_model_api_judge(
+    model: str = "claude-4-8-opus",
+) -> Callable[[str], Optional[bool]]:
+    """Return a YES/NO judge backed explicitly by FAIR's Responses API."""
+    from aar.benchmarks._judge_http import _model_api_key, model_api_chat
+
+    if not _model_api_key():
+        raise RuntimeError("No FAIR Model API key (set MODEL_API_KEY).")
+
+    def judge(judge_prompt: str) -> Optional[bool]:
+        try:
+            output = model_api_chat(
+                [{"role": "user", "content": judge_prompt + _VERDICT_SUFFIX}],
+                model=model,
+                max_tokens=256,
+            )
+            return output.strip().upper().startswith("YES")
+        except Exception as error:  # NEVER turn an API error into a verdict
+            logger.warning("Model API judge error (-> SKIP): %s", error)
+            return None
+
+    return judge
+
+
 def make_anthropic_judge(api_key: str | None = None,
                          model: str = "claude-haiku-4-5") -> Callable[[str], Optional[bool]]:
     """Return a YES/NO judge_fn backed by Anthropic (default claude-haiku-4-5) — a drop-in
