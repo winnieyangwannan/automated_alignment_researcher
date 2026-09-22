@@ -111,7 +111,9 @@ def get_deceptionbench_judge() -> Callable[[dict, str, str], dict]:
       * DECEPTIONBENCH_STUB / REFUSAL_STUB set, or no torch/API -> lexical stub.
       * JUDGE_BACKEND=local -> on-GPU local judge (grid default; cost-bounded, NOT
         paper-faithful — must be used on BOTH baseline and trained sides for parity).
-      * else gpt-4o over httpx (the paper's judge), needs OAI_API/OPENAI_API_KEY.
+      * JUDGE_BACKEND=model_api -> the selected FAIR Responses API model.
+      * JUDGE_BACKEND=anthropic -> direct Anthropic Messages API.
+      * otherwise -> gpt-4o over the public OpenAI API.
     The judge prompt is DeceptionBench's verbatim EVAL_TEMPLATE for the SINGLE
     condition `key` (we embed exactly that condition's response in the case)."""
     if _stub():

@@ -297,8 +297,6 @@ def _call_monitor(content: str, max_tokens: int = 1024) -> dict[str, Any]:
             key = _monitor_api_key()
             if not key:
                 raise RuntimeError("monitor unavailable (no ANTHROPIC_API_KEY)")
-            import httpx
-
             body = {"model": MONITOR_MODEL, "max_tokens": max_tokens,
                     "messages": [{"role": "user", "content": content}]}
             r = _post_retry("https://api.anthropic.com/v1/messages",
@@ -468,7 +466,6 @@ def check_self_containment(paper_text: str) -> dict[str, Any]:
     if not key:
         return {"clean": True, "violations": [], "reasoning": "classifier unavailable (no key) — fail-open"}
     try:
-        import httpx
         body = {"model": MONITOR_MODEL, "max_tokens": 512,
                 "messages": [{"role": "user", "content": _SELFREF_PROMPT.format(paper=_clip(paper, DECL_CHARS))}]}
         r = _post_retry("https://api.anthropic.com/v1/messages",

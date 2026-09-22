@@ -133,7 +133,6 @@ def get_mask_judge() -> Callable[[str], str | None]:
 
     backend = os.getenv("JUDGE_BACKEND", "openai").lower()
     if backend == "local":
-        from aar.eval_pod.judges import make_local_judge
         # make_local_judge returns a YES/NO judge; we need the raw letter, so wrap the
         # underlying local HF model directly via a tiny generate-and-parse shim.
         return _local_letter_judge()
@@ -149,14 +148,20 @@ def get_mask_judge() -> Callable[[str], str | None]:
                 "MASK_STUB=1 / JUDGE_BACKEND=local."
             )
         model = os.getenv("MASK_JUDGE_MODEL", "claude-4-8-opus")
-        _call = lambda m: model_api_chat(m, model=model, max_tokens=500)
+
+        def _call(messages):
+            return model_api_chat(messages, model=model, max_tokens=500)
+
     elif backend == "anthropic":
         from aar.benchmarks._judge_http import anthropic_chat, _anthropic_key
         if not _anthropic_key():
             raise RuntimeError("mask judge (anthropic) needs ANTHROPIC_API_KEY / ANT_high_prio_API / "
                                "ANT_API_KEY, or set MASK_STUB=1 / JUDGE_BACKEND=local.")
         model = os.getenv("MASK_JUDGE_MODEL", "claude-haiku-4-5")
-        _call = lambda m: anthropic_chat(m, model=model, max_tokens=500)
+
+        def _call(messages):
+            return anthropic_chat(messages, model=model, max_tokens=500)
+
     else:
         key = os.getenv("OAI_API") or os.getenv("OPENAI_API_KEY")
         if not key:
@@ -164,7 +169,9 @@ def get_mask_judge() -> Callable[[str], str | None]:
                                "MASK_STUB=1 / JUDGE_BACKEND=local / JUDGE_BACKEND=anthropic.")
         from aar.benchmarks._judge_http import openai_chat
         model = os.getenv("MASK_JUDGE_MODEL", "gpt-4o")
-        _call = lambda m: openai_chat(m, model=model, max_tokens=500)
+
+        def _call(messages):
+            return openai_chat(messages, model=model, max_tokens=500)
 
     def judge(prompt: str) -> str | None:
         try:
