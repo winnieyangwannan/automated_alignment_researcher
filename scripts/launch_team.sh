@@ -37,8 +37,9 @@ if [ ! -d "${REPO}/aar" ]; then
   echo "[team] FATAL: repository not found at ${REPO}; set AAR_REPO" >&2
   exit 2
 fi
-export PYTHONPATH="${REPO}${PYTHONPATH:+:${PYTHONPATH}}"
-PY="${HARNESS_PY:-${REPO}/.venv/bin/python}"
+# shellcheck disable=SC1091
+source "${REPO}/scripts/aar_runtime_env.sh"
+PY="${HARNESS_PY}"
 if [ ! -x "${PY}" ]; then
   echo "[team] FATAL: Python is not executable at ${PY}; set HARNESS_PY" >&2
   exit 2
@@ -46,6 +47,7 @@ fi
 RUNTIME_ROOT="${AAR_RUNTIME_ROOT:-${REPO}/_runs}"
 # SINGLE SOURCE OF TRUTH for axis + model — the same file slurm_aar_chain.sh sources, so the
 # team launcher and its chains can never disagree (the old positional SUITE arg did).
+# shellcheck disable=SC1091
 source "${REPO}/scripts/axis_env.sh"   # sets SUITE_NAME, HELD_OUT_BENCH, SAFETY_*, SEED_METHOD, TARGET_MODEL
 SUITE="${SUITE_NAME}"
 SEEDS="${1:-alpha beta gamma}"
@@ -97,7 +99,7 @@ export SCORES_DIR="${TEAM_DIR}/scores"
 export AAR_IDEAS_DIR="${TEAM_DIR}/methods"
 export SESSION_LOGS_DIR="${TEAM_DIR}/logs"
 export LIT_FORUM_DIR="${TEAM_DIR}/litreview"                          # team's OWN in-run lit (private)
-export LIT_AXIS_DIR="${LIT_AXIS_DIR:-${RUNTIME_ROOT}/litreview/${SUITE}}"    # axis baseline (shared, read-only)
+export LIT_AXIS_DIR="${LIT_AXIS_DIR:-${REPO}/_runs/litreview/${SUITE}}"    # axis baseline (shared, read-only)
 cd "${REPO}"
 echo "[team] TEAM_ID=${TEAM_ID}"
 echo "[team] axis=${SUITE}  model=${MODEL} (${TARGET_MODEL})"
@@ -108,11 +110,16 @@ echo "[team] TEAM_DIR=${TEAM_DIR}  (forum+submissions+scores+methods+logs+litrev
 # could read them and game the generalization check. The purge script removes them AND verifies
 # (nonzero exit if any survive) — we trust its exit code rather than re-listing the held-out names
 # here (one source of truth, no drift). Refuse to launch if it can't guarantee a clean research side.
-if ! bash "${REPO}/scripts/purge_heldout_research.sh"; then
-  echo "[team] FATAL: held-out data still present on the research side — REFUSING to launch (the AAR could read it)." >&2
-  exit 1
+if [ "${AAR_FUNCTIONAL_SMOKE:-0}" = "1" ]; then
+  echo "[team] WARNING: AAR_FUNCTIONAL_SMOKE=1 — same-user evaluator; held-out isolation is NOT kernel-enforced"
+  echo "[team] this run validates orchestration only; do not treat its held-out score as scientific evidence"
+else
+  if ! bash "${REPO}/scripts/purge_heldout_research.sh"; then
+    echo "[team] FATAL: held-out data still present on the research side — REFUSING to launch (the AAR could read it)." >&2
+    exit 1
+  fi
+  echo "[team] held-out isolation: research side verified clean of held-out data/scores"
 fi
-echo "[team] held-out isolation: research side verified clean of held-out data/scores"
 
 # --- ISOLATION: archive previous teams' generated methods + transcripts OUT of
 # the live workspace so THIS team starts fresh and cannot read prior teams' work.
@@ -165,6 +172,7 @@ if [ -n "${SEED_FORUM_FROM:-}" ]; then
   SRC_TEAM="${SEED_FORUM_FROM}"
   if [ "${SRC_TEAM}" = "latest" ]; then
     # newest prior team's forum (aar_teams/<team>/forum), excluding the one we just made
+    # shellcheck disable=SC2010  # sorting by mtime is intentional here
     SRC_TEAM=$(ls -1dt "${_AAR_TEAMS}"/*/forum/ 2>/dev/null \
                | grep -v "/${TEAM_ID}/" | head -1 | sed 's#/forum/$##' | xargs -n1 basename 2>/dev/null || true)
   fi
@@ -181,6 +189,7 @@ if [ -n "${SEED_FORUM_FROM:-}" ]; then
     echo "[team] SEEDED forum from prior team '${SRC_TEAM}': ${n} finding(s) + ${c} code snapshot(s) copied (source untouched)"
   else
     echo "[team] WARNING: SEED_FORUM_FROM='${SEED_FORUM_FROM}' not found — starting with an EMPTY forum."
+    # shellcheck disable=SC2012  # human-readable diagnostic only
     echo "[team] available teams: $(ls -1dt "${_AAR_TEAMS}"/*/forum/ 2>/dev/null | sed 's#/forum/$##' | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
   fi
 fi
@@ -245,19 +254,30 @@ if [ "${LITREVIEW_SKIP:-0}" != "1" ] && [ "${n_lit}" -lt "${LITREVIEW_MIN:-30}" 
 fi
 echo "[team] axis literature baseline ready: ${n_lit} entries at ${LIT_AXIS}  (team adds its own to ${LIT_FORUM_DIR})"
 
-# DECOUPLED (DEFAULT = 1 — gpu:0 GPU-LESS agents): the chain holds NO GPU (--gres=gpu:0) and trains
-# each method via a SEPARATE low-QoS GPU job (slurm_train_submit.sh). This is the DEFAULT and the only
+# DECOUPLED (DEFAULT = 1): the chain holds no GPU and trains each method via a
+# separate GPU job (slurm_train_submit.sh). This is the default and the only
 # mode that scales: an agent must NEVER hold a GPU just to think/poll. Agents cost 0 GPUs, so many
 # teams run in parallel without hitting the per-user GPU cap (QOSMaxGRESPerUser); training rides the
 # uncapped `low` queue. Set DECOUPLED=0 ONLY for a deliberate SINGLE inline-capable team (legacy gpu:1)
 # — NEVER run inline alongside other teams (it maxes the GPU cap and starves everyone's training).
 if [ "${DECOUPLED:-1}" = "1" ]; then
   export AAR_NO_LOCAL_GPU=true     # -> prompt renders the "no local GPU, train via job" branch
-  CHAIN_GRES_ARG="--gres=gpu:0"
-  echo "[team] DECOUPLED (default) — gpu:0 GPU-less agents; per-method training via separate low-QoS jobs"
+  echo "[team] DECOUPLED (default) — CPU-only agents; per-method training via separate GPU jobs"
 else
-  CHAIN_GRES_ARG=""
-  echo "[team] ⚠️ DECOUPLED=0 — INLINE gpu:1 agents (legacy): each agent HOLDS a GPU. Only safe as a SINGLE team; do NOT run alongside other teams."
+  echo "[team] FATAL: inline GPU agents are not supported by this portable launcher" >&2
+  exit 2
+fi
+
+# For the agreed same-user functional smoke, start the evaluator before the
+# chain so its first submission cannot sit unserved. A hardened deployment keeps
+# this as a separate eval-principal operator step and leaves the flag unset.
+if [ "${AAR_START_EVAL_WORKER:-${AAR_FUNCTIONAL_SMOKE:-0}}" = "1" ]; then
+  [ -n "${HOLDOUT_DIR:-}" ] || {
+    echo "[team] FATAL: HOLDOUT_DIR is required to start the evaluator" >&2
+    exit 2
+  }
+  echo "[team] starting same-user evaluator before the research chain"
+  "${REPO}/scripts/launch_eval_worker.sh" "${SUITE}" "${AAR_EVAL_IDLE_SECONDS:-14400}"
 fi
 
 for s in ${SEEDS}; do
@@ -267,9 +287,11 @@ for s in ${SEEDS}; do
   # mishandled by this cluster's Slurm — it mangles the job's environment, so the chain shows
   # RUNNING but the agent hangs at init with NO output (no .out, no session log). TEAM_ID is
   # also passed positionally below, so nothing axis-specific depends on the env alone.
-  jid=$(sbatch --parsable ${CHAIN_GRES_ARG} --job-name="aar-${SUITE}-${MODEL}-${s}" \
+  jid=$(sbatch --parsable \
+        --account="${AAR_SLURM_ACCOUNT}" --partition="${AAR_SLURM_PARTITION}" --qos="${AAR_AGENT_QOS}" \
+        --job-name="aar-${SUITE}-${MODEL}-${s}" \
         -o "${TEAM_DIR}/logs/%x_%j.out" \
-        scripts/slurm_aar_chain.sh "explore-${s}" "${MAX_H}" "${MAX_ITERS}" "${TEAM_ID}")
+        "${REPO}/scripts/slurm_aar_chain.sh" "explore-${s}" "${MAX_H}" "${MAX_ITERS}" "${TEAM_ID}")
   echo "[team] chain ${s} -> job ${jid}"
 done
 echo "[team] EVAL SIDE (as eval user): publish the holdout for THIS axis+model, then run the worker"
@@ -277,7 +299,7 @@ echo "[team]   pointed at THIS team's queue. The worker derives the eval-side pe
 echo "[team]   SUBMISSIONS_DIR, so the held-out scores + eval work + log land in the eval user's own"
 echo "[team]   aar_teams/${TEAM_ID}/ (mode-700). The HOLDOUT itself stays per-axis-model."
 echo "[team]   AXIS=${AXIS} MODEL=${MODEL} scripts/publish_holdout.sh"
-echo "[team]   SUBMISSIONS_DIR=${TEAM_DIR}/submissions SCORES_DIR=${TEAM_DIR}/scores HOLDOUT_DIR=<holdout|holdout_${MODEL}> \\"
-echo "[team]     sbatch --gres=gpu:3 --job-name=aar-eval-${SUITE}-${MODEL} scripts/eval_worker.sh ${SUITE} 8000"
+echo "[team]   SUBMISSIONS_DIR=${TEAM_DIR}/submissions SCORES_DIR=${TEAM_DIR}/scores HOLDOUT_DIR=<explicit-holdout-root> \\"
+echo "[team]     AAR_EVAL_GPUS=2 scripts/launch_eval_worker.sh ${SUITE} 8000"
 echo "[team] (dashboard: sbatch scripts/dashboard.sh <port> ${TEAM_ID})"
 echo "[team] TEAM_ID=${TEAM_ID}"

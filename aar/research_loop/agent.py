@@ -112,6 +112,10 @@ def resolve_prompt(template_path: str | Path, output_path: str | Path) -> str:
     # Generalized harness vars (suite/target) alongside the legacy W2S ones, so
     # either prompt template renders.
     from aar.config import SUITE_NAME, TARGET_MODEL
+    meta_secure_web = os.getenv("AAR_WEB_MODE", "native_web") == "meta_secure"
+    paper_search_helper = str(
+        (Path(WORKSPACE_DIR) / "scripts" / "aar-paper-search").resolve()
+    )
     content = template.render(
         workspace_dir=WORKSPACE_DIR,
         dataset_name=DATASET_NAME,
@@ -147,6 +151,8 @@ def resolve_prompt(template_path: str | Path, output_path: str | Path) -> str:
         local_mode=str(local_mode).lower(),
         target_idea_content=target_idea_content,
         baselines_table=_format_baselines(),
+        meta_secure_web=meta_secure_web,
+        paper_search_helper=paper_search_helper,
     )
 
     with open(output_path, 'w') as f:
@@ -491,9 +497,9 @@ class AutonomousAgentLoop:
         return self._prompt
 
     def _create_agent(self, session_id: str, message_callback=None) -> BaseAgent:
+        meta_secure_web = os.getenv("AAR_WEB_MODE", "native_web") == "meta_secure"
         allowed_tools = [
             "Read", "Write", "Edit", "Bash", "Glob", "Grep",
-            "WebSearch", "WebFetch",
             "mcp__server-api-tools__evaluate_model",
             "mcp__server-api-tools__evaluate_predictions",
             "mcp__server-api-tools__share_finding",
@@ -502,6 +508,11 @@ class AutonomousAgentLoop:
             "mcp__server-api-tools__share_literature",
             "mcp__server-api-tools__submit_idea_proposal",
         ]
+        if meta_secure_web:
+            helper = (self.workspace / "scripts" / "aar-paper-search").resolve()
+            allowed_tools.append(f"Bash({helper} *)")
+        else:
+            allowed_tools.extend(["WebSearch", "WebFetch"])
         if not self.local_mode:
             allowed_tools.append("mcp__prior-work-tools__download_snapshot")
 
@@ -511,9 +522,18 @@ class AutonomousAgentLoop:
             workspace=self.workspace,
             mcp_servers=self.mcp_servers,
             model=self.model,
-            cli_path=shutil.which("claude"),
+            cli_path=os.getenv("CLAUDE_CLI_PATH") or shutil.which("claude"),
             message_callback=message_callback,
-            setting_sources=["project"],
+            permission_mode="dontAsk" if meta_secure_web else "bypassPermissions",
+            system_prompt=(
+                "Use the repository's bounded arXiv helper for internet research. "
+                "Do not use curl, wget, or arbitrary network URLs."
+                if meta_secure_web else None
+            ),
+            tools=["Bash", "Read", "Write", "Edit", "Glob", "Grep"]
+            if meta_secure_web else None,
+            setting_sources=[] if meta_secure_web else ["project"],
+            strict_mcp_config=True if meta_secure_web else None,
         )
 
     async def run(self) -> Dict[str, Any]:

@@ -68,10 +68,13 @@ model). Both are plain Python; set the env vars above. This is the portable path
   `s3` if you prefer object storage.
 
 ### Internal cluster / Slurm
-- The authors' original Slurm scripts (`scripts/eval_worker.sh`, `eval_job.sh`,
-  `launch_eval_worker.sh`, `baseline_*.sh`) are included **as reference** — their paths are placeholders
-  (`/opt/aar/...`, `AAR_REPO`); edit them for your site, or just use the portable `REPRODUCE.md`
-  commands under your own job wrapper.
+- The active full-loop launchers (`launch_team.sh`, `slurm_aar_chain.sh`,
+  `submit_train_job.sh`, `slurm_train_submit.sh`, `launch_eval_worker.sh`, and
+  `eval_worker.sh`) resolve the checkout and Python environment at runtime. Configure
+  them with `AAR_REPO`, `HARNESS_PY`, `HARNESS_ENV`, `AAR_RUNTIME_ROOT`, and the
+  `AAR_*_QOS`/Slurm variables rather than editing paths in the scripts. The remaining
+  historical `baseline_*.sh`, watcher, and dashboard utilities may still contain
+  deployment-specific defaults and should be treated as reference until ported.
 - The evaluator is a simple drain loop: it watches `SUBMISSIONS_DIR` for staged models and scores each.
   Point `SUBMISSIONS_DIR` / `SCORES_DIR` / `HOLDOUT_DIR` at your shared and eval-only storage.
 - `scripts/litreview.sh` and the librarian pre-phase in `scripts/launch_team.sh` are portable to the

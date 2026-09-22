@@ -1,12 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=aar-eval-worker
-#SBATCH --partition=general,overflow
-#SBATCH --qos=high
+#SBATCH --account=ram
+#SBATCH --partition=g3
+#SBATCH --qos=g3_ram_high
 #SBATCH --cpus-per-task=8
-#SBATCH --gres=gpu:6
+#SBATCH --gpus=2
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
-#SBATCH --output=/opt/aar/eval-user/eval_worker_%j.out
+#SBATCH --output=slurm-%x-%j.out
 #
 # Eval worker — SUBMIT THIS AS eval-user (the secret-holding user):
 #   ssh eval-user@<login> 'cd <repo>; sbatch scripts/eval_worker.sh'
@@ -18,17 +19,16 @@
 # holdout — it only stages a model and polls SCORES_DIR. Exits after being idle.
 
 set -uo pipefail
-REPO=/opt/aar/aar_repo          # research-owned code, world-readable
-# judge_deps holds tiktoken+sentencepiece+blobfile for the refusal-property PAPER judges
-# (HarmBench-13b-cls / Llama-Guard-3-8B / Llama-3-8B tokenizers). MUST match the baseline
-# runner (scripts/baseline_refusal.sh) or refusal scores fail-closed -> "safe" and break the
-# baseline/method parity. NB: the judge MODEL weights must also be in this user's HF_HOME
-# (or point HF_HOME at the shared cache) — pre-download them eval-side once.
-export PYTHONPATH="${REPO}:/opt/aar/work/judge_deps"
-export HF_HOME="${HF_HOME:-/opt/aar/eval-user/hf}"   # eval-owned cache (overridable)
-# Gated judges/models (Llama-Guard-3, Llama-3, HarmBench-cls, gemma, ...) need an HF token —
-# sourced from the eval-user .env (sycophancy's local judges didn't, so this was unset before).
-export HF_TOKEN="${HF_TOKEN:-$(grep -m1 '^HF_TOKEN=' /opt/aar/eval-user/.env 2>/dev/null | cut -d= -f2-)}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [ -n "${AAR_REPO:-}" ] && [ -d "${AAR_REPO}/aar" ]; then
+  REPO="$(cd -- "${AAR_REPO}" && pwd)"
+elif [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -d "${SLURM_SUBMIT_DIR}/aar" ]; then
+  REPO="$(cd -- "${SLURM_SUBMIT_DIR}" && pwd)"
+else
+  REPO="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+fi
+# shellcheck disable=SC1091
+source "${REPO}/scripts/aar_runtime_env.sh"
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 # Generation budget: leave EVAL_MAX_NEW_TOKENS UNSET so scoring uses the per-model
 # AUTO budget (models.py: model's remaining context, capped by EVAL_AUTO_CEILING).
@@ -47,25 +47,25 @@ export HOLDOUT_DIR="${HOLDOUT_DIR-}"
 # benchmarks, so it must NEVER live on the research (aar-user) side or the AAR could read
 # which benchmark is held out. The eval pod (this user) reads it to score each benchmark at
 # the exact config its baseline used. Lives next to the holdout, mode-700.
-export BENCHMARK_DOCS_DIR="${BENCHMARK_DOCS_DIR:-/opt/aar/eval-user/benchmark_docs}"
+export BENCHMARK_DOCS_DIR="${BENCHMARK_DOCS_DIR:-${REPO}/benchmark_docs}"
 # HELD-OUT scores: per-team (set in the per-team block); legacy fallback finalized after HOLDOUT_DIR.
-export SUBMISSIONS_DIR="${SUBMISSIONS_DIR:-/opt/aar/work/aar_repo_runs/submissions}"
-export SCORES_DIR="${SCORES_DIR:-/opt/aar/work/aar_repo_runs/scores}"      # research-readable handoff (stripped)
-export OAI_API="$(grep -h '^OAI_API=' /opt/aar/eval-user/.oai_env /opt/aar/eval-user/.env 2>/dev/null | head -1 | cut -d= -f2-)"
-# Anthropic key for JUDGE_BACKEND=anthropic (honesty: mask + deceptionbench, claude-haiku-4-5).
-for _ak in ANTHROPIC_API_KEY ANT_high_prio_API ANT_API_KEY; do
-  _av="$(grep -m1 "^${_ak}=" /opt/aar/eval-user/.env 2>/dev/null | cut -d= -f2-)"
-  [ -n "${_av}" ] && export "${_ak}=${_av}"
-done
-PY=/opt/aar/work/git/python  # world-readable venv
+export SUBMISSIONS_DIR="${SUBMISSIONS_DIR:-${AAR_RUNTIME_ROOT}/submissions}"
+export SCORES_DIR="${SCORES_DIR:-${AAR_RUNTIME_ROOT}/scores}"      # research-readable handoff (stripped)
+PY="${HARNESS_PY}"
+[ -x "${PY}" ] || { echo "[worker] ERROR: Python is not executable: ${PY}" >&2; exit 2; }
 SUITE="${1:-sycophancy}"
 IDLE_EXIT="${2:-1800}"   # exit after this many seconds with no work
-# Benchmarks score IN PARALLEL, one per allocated GPU. EVAL_GPUS=auto (default)
-# means run_eval uses however many GPUs SLURM gave us — so the parallelism is set
-# by --gres at submit time, which scripts/launch_eval_worker.sh sizes to the
-# suite's benchmark count (2-3 safety + 3 capability). The #SBATCH --gres above
-# is just a fallback when eval_worker.sh is sbatch'd directly; the launcher
-# overrides it with --gres=gpu:<n_benchmarks>.
+if [ "${SUITE}" = honesty ] && [ -z "${ANTHROPIC_API_KEY:-${ANT_high_prio_API:-${ANT_API_KEY:-}}}" ]; then
+  echo "[worker] ERROR: honesty evaluation requires a direct Anthropic key" >&2
+  exit 2
+fi
+if [ -z "${HF_TOKEN:-}" ]; then
+  echo "[worker] ERROR: HF_TOKEN is required for the target model/datasets" >&2
+  exit 2
+fi
+# Benchmarks score in parallel across the allocated GPUs. EVAL_GPUS=auto means
+# run_eval uses however many GPUs the launcher requested; multiple benchmarks
+# are distributed across each worker when the suite is larger than the GPU count.
 export EVAL_GPUS="${3:-auto}"
 # BATCH-SIZE PARITY: greedy decode is NOT batch-invariant (FP-path drift ~0.5 pt), so the
 # trained-eval batch MUST equal the suite's baseline batch or the composite delta is corrupted.
@@ -128,47 +128,34 @@ esac
 # The atomic mkdir-claim below lets N workers drain the same queue without
 # double-scoring: exactly one worker claims each submission.
 WORKER_ID="${SLURM_JOB_ID:-$$}"
-# EVAL-SIDE per-team organization (mirror of the research TEAM_DIR). The research
-# SUBMISSIONS_DIR is .../aar_teams/<TEAM_ID>/submissions, so derive <TEAM_ID> and keep
-# THIS team's eval-PRIVATE artifacts under the EVAL user's OWN aar_teams/<TEAM_ID>/
-# (mode-700): the held-out (generalization) scores, the per-run eval work staging, and
-# this worker's log. The locked HOLDOUT itself (test set + baselines) stays per-axis-model
-# (shared, comparable across teams) — only the per-RUN RESULTS move into the team folder.
-case "${SUBMISSIONS_DIR}" in
-  */aar_teams/*/submissions)
-    EVAL_TEAM_ID="$(basename "$(dirname "${SUBMISSIONS_DIR}")")"
-    EVAL_TEAMS="/opt/aar/work"
-    EVAL_TEAM_DIR="${EVAL_TEAMS}/${EVAL_TEAM_ID}"
-    mkdir -p "${EVAL_TEAM_DIR}/heldout_scores" "${EVAL_TEAM_DIR}/_evalwork"
-    # mode-700 all the way down: held-out (generalization) scores are eval-SECRET; the
-    # research/AAR user must never read them.
-    chmod 700 "${EVAL_TEAMS}" "${EVAL_TEAM_DIR}" "${EVAL_TEAM_DIR}/heldout_scores" "${EVAL_TEAM_DIR}/_evalwork" 2>/dev/null || true
-    export HELDOUT_SCORES_DIR="${EVAL_TEAM_DIR}/heldout_scores"   # per-team (was shared HOLDOUT_DIR/heldout_scores)
-    export HARNESS_RUNS_DIR="${EVAL_TEAM_DIR}"                    # entrypoint stages _evalwork/<rid> under here
-    # PER-MODEL HOLDOUT (robust, automatic). The team id is <axis>-<model>-<YYYYMMDD>-<HHMMSS>[-<n>];
-    # strip the axis prefix + the timestamp suffix to recover <model_tag> — the IDENTICAL tag
-    # publish_holdout used (so a same-axis/different-model team reads ITS OWN holdout/<model>/<axis>,
-    # never a sibling's). Robust to hyphenated model ids (sed strips only the timestamp).
-    _AXIS="${EVAL_TEAM_ID%%-*}"
-    _MTAG="$(printf '%s' "${EVAL_TEAM_ID#${_AXIS}-}" | sed -E 's/-[0-9]{8}-[0-9]{6}(-[0-9]+)?$//')"
-    export HOLDOUT_DIR="${HOLDOUT_DIR:-/opt/aar/eval-user/holdout/${_MTAG}/${_AXIS}}"
-    exec >> "${EVAL_TEAM_DIR}/eval_worker_${WORKER_ID}.out" 2>&1  # route this worker's log into the team folder
-    echo "[worker ${WORKER_ID}] eval-side team folder: ${EVAL_TEAM_DIR}"
-    echo "[worker ${WORKER_ID}] per-model HOLDOUT_DIR=${HOLDOUT_DIR} (model_tag=${_MTAG}, axis=${_AXIS})"
-    ;;
-esac
-# Finalize: legacy flat fallback if still unset (non-per-team run), then HELD-OUT scores default.
-export HOLDOUT_DIR="${HOLDOUT_DIR:-/opt/aar/eval-user/holdout}"
-export HELDOUT_SCORES_DIR="${HELDOUT_SCORES_DIR:-${HOLDOUT_DIR}/heldout_scores}"
+# The holdout path is explicit. Never reconstruct it from TEAM_ID: current team
+# ids include an agent-model tag, and inference previously selected the wrong
+# per-model suite. Same-user functional smoke keeps eval-private outputs in a
+# clearly marked team subdirectory; a future separate evaluator can override
+# AAR_EVAL_RUNTIME_ROOT with its private filesystem.
+[ -n "${HOLDOUT_DIR}" ] || { echo "[worker] ERROR: HOLDOUT_DIR must be explicit" >&2; exit 2; }
+[ -r "${HOLDOUT_DIR}/${SUITE}/${SUITE}.yaml" ] || {
+  echo "[worker] ERROR: suite is not readable: ${HOLDOUT_DIR}/${SUITE}/${SUITE}.yaml" >&2
+  exit 2
+}
+EVAL_TEAM_DIR="${AAR_EVAL_RUNTIME_ROOT:-${TEAM_DIR:-${AAR_RUNTIME_ROOT}}/_eval_private}"
+mkdir -p "${EVAL_TEAM_DIR}/heldout_scores" "${EVAL_TEAM_DIR}/_evalwork"
+chmod 700 "${EVAL_TEAM_DIR}" "${EVAL_TEAM_DIR}/heldout_scores" "${EVAL_TEAM_DIR}/_evalwork" 2>/dev/null || true
+export HELDOUT_SCORES_DIR="${HELDOUT_SCORES_DIR:-${EVAL_TEAM_DIR}/heldout_scores}"
+export HARNESS_RUNS_DIR="${EVAL_TEAM_DIR}"
+exec >> "${EVAL_TEAM_DIR}/eval_worker_${WORKER_ID}.out" 2>&1
+echo "[worker ${WORKER_ID}] eval runtime: ${EVAL_TEAM_DIR}"
+echo "[worker ${WORKER_ID}] explicit HOLDOUT_DIR=${HOLDOUT_DIR}"
 CLAIMS="${SCORES_DIR}/.claims"
 mkdir -p "${CLAIMS}" 2>/dev/null || true
 
-cd "${REPO}"
+cd "${REPO}" || exit 2
 echo "[worker ${WORKER_ID}] draining submissions for suite=${SUITE} (idle-exit ${IDLE_EXIT}s)"
 last_work=$(date +%s)
 while true; do
   did=0
   for d in "${SUBMISSIONS_DIR}"/*/; do
+    [ -d "${d}" ] || continue
     rid=$(basename "$d")
     [ -f "${d}.submitted" ] || continue
     [ -f "${SCORES_DIR}/${rid}.json" ] && continue          # already scored
@@ -177,7 +164,7 @@ while true; do
     # SCORES_DIR so every worker — same OS user — can create them.)
     mkdir "${CLAIMS}/${rid}" 2>/dev/null || continue        # claimed by another worker
     echo "[worker ${WORKER_ID}] scoring ${rid}"
-    if PYTHONUNBUFFERED=1 ${PY} -u -m aar.eval_pod.entrypoint --run-id "${rid}" --suite "${SUITE}"; then
+    if PYTHONUNBUFFERED=1 "${PY}" -u -m aar.eval_pod.entrypoint --run-id "${rid}" --suite "${SUITE}"; then
       echo "[worker ${WORKER_ID}] done ${rid}"
     else
       echo "[worker ${WORKER_ID}] FAILED ${rid}"

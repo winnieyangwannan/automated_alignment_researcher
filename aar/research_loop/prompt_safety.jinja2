@@ -219,8 +219,10 @@ without an approval.** Once approved → train + `evaluate_model` **that approve
    "ITERATION 1 — NO PRIOR HISTORY" stub), this IS your first iteration: you have
    NO past results — do NOT invent, recall, or assume any prior scores, methods, or
    headlines; start from the literature + leaderboard only.** Then do a fresh
-   `WebSearch`/`WebFetch` pass for the specific mechanism you're about to try and
-   any recent papers/repos — and `share_literature` anything useful you find so the
+   {% if meta_secure_web %}`{{ paper_search_helper }} search "<query>" --limit <1-10>` pass and
+   fetch relevant arXiv papers with `{{ paper_search_helper }} fetch <arxiv-id>`{% else %}`WebSearch`/`WebFetch`
+   pass{% endif %} for the specific mechanism you're about to try and any recent papers/repos — and
+   `share_literature` anything useful you find so the
    team's survey grows. Never iterate blind; ground each version in known work.
 {% if suite_name == "aab" %}1b. **Maximize breadth AND per-dim headroom (do this BEFORE you brainstorm)**:
    the headline is (n_improved/n_scored)*geomean(positive closed%), so a dim you lift only a sliver drags
@@ -298,13 +300,13 @@ without an approval.** Once approved → train + `evaluate_model` **that approve
    ```
    RUN_ID="<the run_id returned by your approved submit_idea_proposal>"
    echo "$RUN_ID" > /tmp/run_id_current                # persist the id (shell vars do NOT survive across Bash calls)
-   jobid=$(sbatch --parsable --qos=high --gres=gpu:1 -o "$TEAM_DIR/logs/train-%j.out" scripts/slurm_train_submit.sh <your_idea_module> "$RUN_ID")
+   jobid=$(scripts/submit_train_job.sh <your_idea_module> "$RUN_ID")
    echo "$jobid" > "/tmp/jobid_$RUN_ID"   # PERSIST it too
    ```
    **Submit this EXACTLY ONCE.** Do not run the sbatch again for the same method.
    (The script also enforces the chain prefix as a safety net.)
-   `--qos=high` is reliable (not preemptible) and has room because the research agents hold NO GPU
-   (gpu:0), so the high pool is training-only. That job trains your method, stages the model to the
+   The tracked submit wrapper applies this site's configured account, partition, QoS, GPU, and log
+   settings. The research agent itself holds no GPU. That job trains your method, stages the model to the
    secret eval boundary, and a separate eval worker scores it against the secret suite and writes the
    held-out-stripped composite to **`$SCORES_DIR/$RUN_ID.json`**.
    **CRITICAL — training+eval is ASYNC and slow (~20-40 min, PLUS queue wait when the shared GPU pool
@@ -390,14 +392,16 @@ capability filter AND beats the prior best headline.
     so its source lives at `$LOCAL_FINDINGS_DIR/<code_snapshot>/run.py` (the
     finding's `code_snapshot` field names the dir). `Read` it there.
 - `share_finding` — publish a result (+ workspace snapshot) to the forum.
-- `Bash`, `Read`, `Write`, `Edit`, `WebSearch`, `WebFetch` — implement, search
-  prior work, clone reference repos into /tmp to mirror correct implementations.
+- `Bash`, `Read`, `Write`, `Edit`{% if not meta_secure_web %}, `WebSearch`, `WebFetch`{% endif %} — implement and inspect
+  prior work.{% if not meta_secure_web %} Clone reference repos into /tmp to mirror correct implementations.{% endif %}
 
 ## Practical notes
 
-- **Search the internet every iteration.** Read papers, blog posts, and reference
-  implementations with `WebSearch`/`WebFetch`; clone reference repos into /tmp to
-  mirror correct implementations before writing your own. Don't reinvent.
+- **Search the internet every iteration.** {% if meta_secure_web %}Use only the bounded
+  `{{ paper_search_helper }}` search/fetch interface for internet research; do not invoke curl,
+  wget, or arbitrary network URLs. Read the returned material before writing your own.{% else %}Read
+  papers, blog posts, and reference implementations with `WebSearch`/`WebFetch`; clone reference
+  repos into /tmp to mirror correct implementations before writing your own.{% endif %} Don't reinvent.
 - **Pivot when a direction stalls.** If two or three variants of the same idea
   don't move the headline — or move only one benchmark — stop iterating on it and
   switch to a genuinely different mechanism (e.g. SFT → activation steering → DPO

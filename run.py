@@ -21,8 +21,9 @@ Usage:
 import argparse
 import importlib
 import os
-import sys
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -30,8 +31,11 @@ def cmd_agent(args, remaining):
     """Launch autonomous research agent."""
     import asyncio
 
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        print("Error: ANTHROPIC_API_KEY is required for agent mode")
+    cli_path = os.getenv("CLAUDE_CLI_PATH") or shutil.which("claude")
+    if not os.getenv("ANTHROPIC_API_KEY") and not (
+        cli_path and os.path.isfile(cli_path) and os.access(cli_path, os.X_OK)
+    ):
+        print("Error: agent mode requires ANTHROPIC_API_KEY or an executable Claude CLI")
         sys.exit(1)
 
     local_mode = getattr(args, 'local', False)
@@ -44,11 +48,15 @@ def cmd_agent(args, remaining):
         os.environ["IDEA_NAME"] = args.idea_name
 
     if local_mode:
-        # Local mode: server runs on localhost, no S3, no findings sync
+        # Local mode: no S3 and no remote findings sync. The FAIR launcher uses
+        # the filesystem forum and does not need a Flask server.
         os.environ.setdefault("ORCHESTRATOR_API_URL", "http://localhost:8000")
         os.environ["LOCAL_MODE"] = "true"
-        print("Local mode: using server at http://localhost:8000")
-        print("Make sure the server is running: python run.py server")
+        if os.getenv("FORUM_BACKEND", "fs") == "fs":
+            print("Local mode: using filesystem forum/evaluator handoff")
+        else:
+            print("Local mode: using server at http://localhost:8000")
+            print("Make sure the server is running: python run.py server")
 
     from aar.research_loop.agent import AutonomousAgentLoop
 

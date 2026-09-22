@@ -11,8 +11,18 @@
 # PUBLISHERS fallback (exact for qwen) is used with a loud WARN. The held-out is INCLUDED in
 # the holdout suite (eval-only) but EXCLUDED from the research-readable prompt baselines.
 set -euo pipefail
-REPO="${AAR_REPO:-/opt/aar/aar_repo}"
-PY="${AAR_PY:-/opt/aar/work/git/python}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [ -n "${AAR_REPO:-}" ] && [ -d "${AAR_REPO}/aar" ]; then
+  REPO="$(cd -- "${AAR_REPO}" && pwd)"
+elif [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -d "${SLURM_SUBMIT_DIR}/aar" ]; then
+  REPO="$(cd -- "${SLURM_SUBMIT_DIR}" && pwd)"
+else
+  REPO="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+fi
+# shellcheck disable=SC1091
+source "${REPO}/scripts/aar_runtime_env.sh"
+PY="${AAR_PY:-${HARNESS_PY}}"
+[ -x "${PY}" ] || { echo "[publish] ERROR: Python is not executable: ${PY}" >&2; exit 2; }
 # The holdout lives in the eval user's mode-700 space (the same dir the eval worker reads).
 # PER-MODEL by default: holdout/<model_tag>/<axis>. Two teams on the SAME axis but DIFFERENT models
 # (e.g. sycophancy×phi and sycophancy×olmo) therefore get SEPARATE holdout dirs automatically and can
@@ -20,24 +30,35 @@ PY="${AAR_PY:-/opt/aar/work/git/python}"
 # IDENTICAL <model_tag> from the team id (scripts/eval_worker.sh), so publish and score always agree.
 # (Explicit HOLDOUT_DIR still wins.) model_tag = the sanitized MODEL alias/id.
 _MTAG="$(printf '%s' "${MODEL:-qwen}" | tr -c 'A-Za-z0-9._-' '_')"
-export HOLDOUT_DIR="${HOLDOUT_DIR:-/opt/aar/eval-user/holdout/${_MTAG}}"
+export HOLDOUT_DIR="${HOLDOUT_DIR:-${AAR_RUNTIME_ROOT}/eval/holdout/${_MTAG}}"
 # benchmark_docs (the per-model baseline source, all 6 models) lives EVAL-side mode-700 —
 # it names the held-out, so it must NOT be research-readable. publish_suite reads it via
 # AAR_BENCHMARK_DOCS. If the dir is absent, it falls back to the qwen-only PUBLISHERS values
 # with a loud WARN (so non-qwen baselines can't silently be wrong).
-export AAR_BENCHMARK_DOCS="${AAR_BENCHMARK_DOCS:-/opt/aar/eval-user/benchmark_docs}"
+export AAR_BENCHMARK_DOCS="${AAR_BENCHMARK_DOCS:-${REPO}/benchmark_docs}"
 # GATED datasets (e.g. walledai/HarmBench) need HF auth or publish_suite SILENTLY
 # skips them — which drops a SAFETY benchmark from the suite (observed: OLMo's
 # harmbench vanished, leaving 3 refusal benchmarks instead of 4, unequal to the
 # other models). Source the token + cache from the eval .env (same as eval_worker.sh)
 # so every refusal benchmark publishes. HARNESS still WARNs+skips if truly unavailable.
-export HF_HOME="${HF_HOME:-/opt/aar/eval-user/hf}"
-export HF_TOKEN="${HF_TOKEN:-$(grep -m1 '^HF_TOKEN=' /opt/aar/eval-user/.env 2>/dev/null | cut -d= -f2-)}"
-export HUGGING_FACE_HUB_TOKEN="${HF_TOKEN}"
+export HUGGING_FACE_HUB_TOKEN="${HF_TOKEN:-}"
+[ -n "${HF_TOKEN:-}" ] || { echo "[publish] ERROR: HF_TOKEN is required" >&2; exit 2; }
+# shellcheck disable=SC1091
 source "${REPO}/scripts/axis_env.sh"      # -> SUITE_NAME (from AXIS), TARGET_MODEL (from MODEL), BASELINES_PATH
 export PYTHONPATH="${REPO}"
 echo "[publish] axis=${SUITE_NAME}  model=${TARGET_MODEL}"
 echo "[publish] holdout -> ${HOLDOUT_DIR}/${SUITE_NAME}/   baselines -> ${BASELINES_PATH}"
+
+if [ -e "${HOLDOUT_DIR}/${SUITE_NAME}" ] && [ "${AAR_ALLOW_HOLDOUT_OVERWRITE:-0}" != "1" ]; then
+  echo "[publish] ERROR: refusing to overwrite retained suite ${HOLDOUT_DIR}/${SUITE_NAME}" >&2
+  echo "[publish] choose a fresh HOLDOUT_DIR or explicitly set AAR_ALLOW_HOLDOUT_OVERWRITE=1" >&2
+  exit 2
+fi
+if [ -e "${BASELINES_PATH}" ] && [ "${AAR_ALLOW_HOLDOUT_OVERWRITE:-0}" != "1" ]; then
+  echo "[publish] ERROR: refusing to overwrite retained prompt baselines ${BASELINES_PATH}" >&2
+  echo "[publish] choose a fresh AAR_RUNTIME_ROOT or explicitly set AAR_ALLOW_HOLDOUT_OVERWRITE=1" >&2
+  exit 2
+fi
 
 # 1) Holdout suite YAML + data (SECRET; includes the held-out) into the mode-700 holdout.
 "${PY}" "${REPO}/scripts/publish_suite.py" \

@@ -244,8 +244,9 @@ Notes and scope:
 - **Training backend:** each method's own `run.py` performs the training (LoRA/PEFT, TRL, etc.); the
   harness only orchestrates single-GPU jobs. Wire your trainer/launcher into the loop for end-to-end
   runs — no specific trainer is bundled. Evaluation (Task A) works without this.
-- The original cluster launchers (`scripts/*.sh`) are included as **reference** with placeholder paths;
-  see [`PORTABILITY.md`](PORTABILITY.md) to run on Modal / an internal cluster / Slurm.
+- The FAIR full-loop launchers are environment-configurable; start with the one-iteration
+  smoke in [`LAUNCH.md`](LAUNCH.md). Historical baseline/watcher/dashboard scripts may still
+  carry deployment-specific defaults; see [`PORTABILITY.md`](PORTABILITY.md).
 
 ---
 

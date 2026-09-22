@@ -15,6 +15,22 @@ from typing import Any
 
 MONITOR_MODEL = os.getenv("MONITOR_MODEL", "claude-opus-4-8")
 
+
+def _monitor_api_key() -> str:
+    """Return the direct key reserved for monitor HTTP calls.
+
+    A FAIR Meta-authenticated Claude CLI must not see ``ANTHROPIC_API_KEY`` or it
+    switches away from CLI authentication.  The chain therefore moves that key
+    to the monitor-specific name before starting the agent process.
+    """
+    return (
+        os.getenv("AAR_MONITOR_ANTHROPIC_API_KEY")
+        or os.getenv("ANTHROPIC_API_KEY")
+        or os.getenv("ANT_high_prio_API")
+        or os.getenv("ANT_API_KEY")
+        or ""
+    )
+
 # The three desiderata (user-specified). D1 and D3 are the two faces of "no
 # distilling a large model's capability into the small target"; D2 is eval leakage.
 # D2's benchmark list is AXIS-SCOPED and injected at call time (see _desiderata) from the
@@ -260,7 +276,7 @@ def _post_retry(url: str, headers: dict, body: dict, timeout: float, tries: int 
 def _call_monitor(content: str, max_tokens: int = 1024) -> dict[str, Any]:
     """One Opus monitor call -> parsed JSON dict. Fail-CLOSED (approved:false) on any infra error.
     Transient API errors are retried (see _post_retry) so a blip does not spuriously reject a proposal."""
-    key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANT_high_prio_API")
+    key = _monitor_api_key()
     if not key:
         return {"approved": False, "violations": [], "reasoning": "monitor unavailable (no ANTHROPIC_API_KEY)", "error": "no_api_key"}
     try:
@@ -427,7 +443,7 @@ def check_self_containment(paper_text: str) -> dict[str, Any]:
     paper = (paper_text or "").strip()
     if len(paper) < 40:
         return {"clean": True, "violations": [], "reasoning": "too short to judge"}
-    key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANT_high_prio_API")
+    key = _monitor_api_key()
     if not key:
         return {"clean": True, "violations": [], "reasoning": "classifier unavailable (no key) — fail-open"}
     try:

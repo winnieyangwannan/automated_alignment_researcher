@@ -27,6 +27,9 @@ PARSE_CHECKED_SCRIPTS = (
     SCRIPT,
     ROOT / "scripts" / "slurm_aar_chain.sh",
     ROOT / "scripts" / "slurm_train_submit.sh",
+    ROOT / "scripts" / "submit_train_job.sh",
+    ROOT / "scripts" / "preflight_aar.sh",
+    ROOT / "scripts" / "launch_eval_worker.sh",
     ROOT / "scripts" / "eval_worker.sh",
     ROOT / "scripts" / "eval_watcher.sh",
 )

@@ -57,11 +57,46 @@ count, so callers can safely gate AAR launch on its completion. The project pins
 `claude-agent-sdk==0.2.157`; the older 0.1.30 release cannot complete the FAIR
 CLI control handshake.
 
-This portability work covers the standalone librarian and the librarian pre-phase
-inside `launch_team.sh`. It also repairs the known shell parse errors in the chain,
-training, and evaluator wrappers. It does **not** make the complete AAR/evaluator
-deployment portable: remaining site-specific scheduler, credential, cache, and
-evaluator paths must be configured or ported before an end-to-end launch.
+The librarian and full-loop launchers share environment-overridable repository,
+Python, runtime, scheduler, credential, cache, and evaluator paths. The FAIR
+defaults below provide the first supported end-to-end deployment; other sites
+should override the same variables rather than edit the launch scripts.
+
+## FAIR one-iteration functional smoke
+
+The FAIR launchers use account `ram`, partition `g3`, and QoS `g3_ram_high` by
+default. They remain environment-overridable. The AAR agent is CPU-only; each
+training job requests one GPU, and the evaluator defaults to two GPUs. Large
+runtime artifacts should live under `/checkpoint/ram`, while the checkout and
+architecture-local `.venv` remain under `/storage/home`.
+
+This mode runs research and evaluation as the same Unix account. It validates
+the complete state machine, but it is **not a kernel-isolated held-out
+experiment** and its held-out score must not be treated as scientific evidence.
+
+From the HPC `uv` worktree:
+
+```bash
+export AAR_REPO="$PWD"
+export HARNESS_PY="$PWD/.venv/bin/python"
+export AAR_RUNTIME_ROOT="/checkpoint/ram/aar/$USER/honesty-smoke"
+export AXIS=honesty MODEL=gemma
+export HOLDOUT_DIR="$AAR_RUNTIME_ROOT/eval/holdout/gemma"
+export AAR_FUNCTIONAL_SMOKE=1 AAR_KEEP_CHECKPOINTS=1
+export AAR_WEB_MODE=auto AAR_EVAL_GPUS=2
+
+scripts/preflight_aar.sh
+scripts/publish_holdout.sh
+scripts/launch_team.sh "smoke1" 1 4
+```
+
+`AAR_WEB_MODE=auto` selects Meta's authenticated Claude CLI and secure-internet
+mode when available. The AAR uses the bounded `scripts/aar-paper-search` helper;
+the integrity monitor and honesty evaluator retain their direct Anthropic API
+calls. `launch_team.sh` reuses the existing axis literature, starts the same-user
+evaluator first, then submits the one-iteration chain. It never requests a GPU
+for the agent itself. Run `scripts/preflight_aar.sh` again inside a one-GPU Slurm
+allocation to execute its CUDA/BF16 checks before launching the full smoke.
 
 ## One chain
 ```bash

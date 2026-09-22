@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
+import os
 import sys
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -122,6 +123,39 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
                 "effort": "xhigh",
             },
         )
+
+    def test_full_agent_meta_secure_mode_uses_restricted_web_surface(self) -> None:
+        class Options:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+        agent_module = _load_agent_module(Options)
+        loop = object.__new__(agent_module.AutonomousAgentLoop)
+        loop.workspace = ROOT
+        loop.mcp_servers = {"server-api-tools": {"type": "sdk"}}
+        loop.model = "claude-opus-4-8"
+        loop.local_mode = True
+
+        with patch.dict(
+            os.environ,
+            {
+                "AAR_WEB_MODE": "meta_secure",
+                "CLAUDE_CLI_PATH": "/usr/local/bin/claude",
+            },
+            clear=False,
+        ):
+            base = loop._create_agent("smoke")
+            options = base._build_options_dict()
+
+        self.assertEqual(options["permission_mode"], "dontAsk")
+        self.assertEqual(options["setting_sources"], [])
+        self.assertIs(options["strict_mcp_config"], True)
+        self.assertNotIn("WebSearch", options["allowed_tools"])
+        self.assertNotIn("WebFetch", options["allowed_tools"])
+        self.assertTrue(
+            any("aar-paper-search" in tool for tool in options["allowed_tools"])
+        )
+        self.assertEqual(options["cli_path"], "/usr/local/bin/claude")
 
 if __name__ == "__main__":
     unittest.main()
