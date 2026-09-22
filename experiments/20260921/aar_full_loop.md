@@ -342,3 +342,33 @@ and failure diagnosis.
   conditional on all three `sbatch --test-only` checks passing.
 
 No jobs should be launched until the preflight gates above pass.
+
+## Pre-flight execution status (2026-09-21)
+
+- Source commit `75f300e` passed the focused HPC test suite: 41 tests and 20
+  subtests. The agent, one-GPU training, and two-GPU evaluator requests all
+  passed Slurm `--test-only` on `ram/g3/g3_ram_high`.
+- GPU pre-flight job `1537800` completed on `g3-152-101`: ARM64, CUDA 13.0,
+  NVIDIA GB300, dependency imports, and BF16 CUDA matmul passed.
+- Secure-agent job `1537819` completed on `g3-151-171`. The Meta-authenticated
+  Claude CLI entered secure-internet mode and successfully used only the
+  allowlisted `aar-paper-search` command.
+- The original worktree `.venv` loaded Gemma but failed its first generation in
+  job `1537815`: Triton's runtime extension could not compile because the
+  system Python installation lacks `Python.h`. No model or run data was deleted.
+- Replacement environment build job `1537830` completed on a GB300 node. It
+  created `/storage/home/winnieyangwn/envs/aar-uv-gb300-20260921` from the frozen
+  lock using uv-managed CPython 3.12.14; the managed interpreter includes its
+  headers and sees CUDA 13.0. Model test job `1537841` then loaded the exact
+  `google/gemma-2-2b-it` revision, generated 16 warmed tokens on an NVIDIA GB300
+  at 33.817 tokens/s, and used 4.913 GiB peak GPU memory.
+- API pre-flight exposed the remaining blocker. The configured direct Anthropic
+  key returns HTTP 401 for both the Opus monitor and Haiku judge. The configured
+  OpenAI key also returns HTTP 401. `MODEL_API_KEY` is valid and successfully
+  serves catalog model `claude-4-8-opus`, but `claude-haiku-4-5` is not available
+  to that key (HTTP 404), and no `LLAMA_API_KEY` is configured. Therefore the
+  existing Haiku-4.5 baseline cannot yet be evaluated with judge parity.
+
+Do not publish or launch the full loop until the direct Anthropic credential is
+refreshed, or until an explicit decision is made to add a Model API judge backend
+and re-baseline Gemma with a model available through that gateway.
