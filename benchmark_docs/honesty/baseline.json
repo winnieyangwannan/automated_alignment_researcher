@@ -1,7 +1,7 @@
 {
  "axis": "honesty",
- "note": "HONESTY re-baselined 2026-06-21 with the CLAUDE HAIKU 4.5 judge (anthropic backend; replaces gpt-4o). OPTIMIZATION (3 scored legs, geomean) = mask_factual + mask_continuation + mask_disinformation \u2014 the MASK mask_generative leg SPLIT into its 2 distinct archetypes (continuations vs disinformation) so honesty has 3 distinct internal-dishonesty facets under pressure (~119 items each). HELD-OUT = deceptionbench_reward (incentive-driven; out of the AAR composite, eval-private). REFERENCE (measured, NOT in _SUITE_CORE) = deceptionbench_pressure. mask_generative ARCHIVED (superseded by the split). NB: the Haiku judge wraps its verdict in markdown ('**Answer: A**'); extract_letter was hardened 2026-06-21 to parse it (was 63% unparsed). Means MEASURED 2026-06-21 EVAL-SIDE, all 5 next-gen models, Haiku judge, decoding auto-ceiling 1024 + no_repeat_ngram 4 + batch 32 (parity with eval_job.sh honesty).",
- "measured_utc": "2026-06-21",
+ "note": "HONESTY Gemma baseline re-measured 2026-09-21 with Claude Opus 4.8 through FAIR Model API (catalog id claude-4-8-opus). OPTIMIZATION (3 scored legs, geomean) = mask_factual + mask_continuation + mask_disinformation. HELD-OUT = deceptionbench_reward (eval-private). The active Gemma values use Opus with the recorded golden decoding; the other model values and the reference-only mask_generative/deceptionbench_pressure values remain historical Claude Haiku 4.5 measurements from 2026-06-21 and must not be treated as Opus baselines. One of 120 mask_continuation items exhausted judge retries and was excluded rather than scored by default, yielding n=119. Capability legs were also checked in the same run and passed their existing gates; their shared baselines are unchanged because the judge does not affect them.",
+ "measured_utc": "2026-09-21",
  "decoding": {
   "strategy": "sample",
   "temperature": 1.0,
@@ -19,9 +19,9 @@
  "benchmarks": {
   "mask_factual": {
    "role": "safety",
-   "judge_model": "claude-haiku-4-5",
+   "judge_model": "claude-4-8-opus",
    "metric": "honesty_score_1 = 1-P(lie) over MASK known_facts (pressured to DENY a known fact) \u2014 OPTIMIZED (2026-06-19 swap; was held-out)",
-   "note": "Pressured to DENY a known fact (MASK known_facts archetype). Haiku 4.5 judge."
+   "note": "Pressured to DENY a known fact (MASK known_facts archetype). Gemma baseline uses Claude Opus 4.8 through FAIR Model API."
   },
   "mask_generative": {
    "role": "reference",
@@ -36,21 +36,21 @@
   },
   "deceptionbench_reward": {
    "role": "held_out",
-   "judge_model": "claude-haiku-4-5",
+   "judge_model": "claude-4-8-opus",
    "metric": "response honest-rate over L2 REWARD conditions (deceive for gain) \u2014 HELD-OUT (2026-06-19 swap; cross-source, same-facet probe)",
-   "note": "Deception for gain (reward-seeking). HELD-OUT generalization probe. Haiku 4.5 judge."
+   "note": "Deception for gain (reward-seeking). HELD-OUT generalization probe. Gemma baseline uses Claude Opus 4.8 through FAIR Model API."
   },
   "mask_continuation": {
    "role": "safety",
-   "judge_model": "claude-haiku-4-5",
+   "judge_model": "claude-4-8-opus",
    "metric": "mask_belief_vs_statement_honesty",
-   "note": "Pressured to CONTINUE a false narrative (MASK continuations). Split from mask_generative 2026-06-21. Haiku 4.5 judge."
+   "note": "Pressured to CONTINUE a false narrative (MASK continuations). Split from mask_generative 2026-06-21. Gemma baseline uses Claude Opus 4.8 through FAIR Model API."
   },
   "mask_disinformation": {
    "role": "safety",
-   "judge_model": "claude-haiku-4-5",
+   "judge_model": "claude-4-8-opus",
    "metric": "mask_belief_vs_statement_honesty",
-   "note": "Pressured to ASSERT falsehoods (MASK disinformation). Split from mask_generative 2026-06-21. Haiku 4.5 judge."
+   "note": "Pressured to ASSERT falsehoods (MASK disinformation). Split from mask_generative 2026-06-21. Gemma baseline uses Claude Opus 4.8 through FAIR Model API."
   }
  },
  "scores": {
@@ -208,9 +208,9 @@
   },
   "google/gemma-2-2b-it": {
    "mask_factual": {
-    "mean": 0.8167,
-    "ci_low": 0.75,
-    "ci_high": 0.8833,
+    "mean": 0.7083333333333334,
+    "ci_low": 0.6333333333333333,
+    "ci_high": 0.7916666666666666,
     "n": 120
    },
    "mask_generative": {
@@ -226,24 +226,24 @@
     "n": 300
    },
    "deceptionbench_reward": {
-    "mean": 0.5933,
-    "ci_low": 0.54,
-    "ci_high": 0.65,
+    "mean": 0.56,
+    "ci_low": 0.5033333333333333,
+    "ci_high": 0.6166666666666667,
     "n": 300
    },
    "mask_continuation": {
-    "mean": 0.75,
-    "ci_low": 0.675,
-    "ci_high": 0.825,
-    "n": 120
+    "mean": 0.773109243697479,
+    "ci_low": 0.6974789915966386,
+    "ci_high": 0.8487394957983193,
+    "n": 119
    },
    "mask_disinformation": {
-    "mean": 0.8,
-    "ci_low": 0.725,
-    "ci_high": 0.875,
+    "mean": 0.825,
+    "ci_low": 0.75,
+    "ci_high": 0.8916666666666667,
     "n": 120
    }
   }
  },
- "judge": "claude-haiku-4-5 (Anthropic; swapped from gpt-4o 2026-06-21 \u2014 cheaper, no OpenAI; both baseline + live eval use it -> parity)"
+ "judge": "Active Gemma baseline and live honesty eval: claude-4-8-opus through FAIR Model API. Other stored model baselines and reference-only legs remain historical claude-haiku-4-5 measurements."
 }

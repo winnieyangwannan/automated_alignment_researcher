@@ -38,7 +38,8 @@ export BENCHMARK_DOCS_DIR="$PWD/benchmark_docs"   # run_eval reads the per-bench
 # API keys for the judges (see the judge table in §4; only the axes you run need theirs):
 export HF_TOKEN=hf_...            # gated datasets, gated target models, gated local judges (HarmBench, Llama-Guard)
 export OAI_API=sk-...             # OpenAI judges: sycophancy, refusal (StrongREJECT), prompt_injection
-export ANTHROPIC_API_KEY=sk-ant-... # Claude-haiku-4-5 judges: honesty, faithfulness, bias, privacy, reward_hacking
+export MODEL_API_KEY=...          # FAIR Model API: honesty's Claude Opus 4.8 judge
+export ANTHROPIC_API_KEY=sk-ant-... # Claude-haiku-4-5 judges: faithfulness, bias, privacy, reward_hacking
 ```
 
 A GPU is required for the target-model generations and the local judges. `run_eval` uses every GPU it
@@ -63,7 +64,7 @@ python scripts/publish_suite.py --suite "$AXIS" --target-model "$HF" --holdout-d
 #   -> writes $HOLDOUT/$AXIS/$AXIS.yaml  and  $HOLDOUT/$AXIS/<bench>.jsonl (incl. the held-out, tagged role=held_out)
 
 # --- step 2: score the model (set the axis's judge env, see §4) ---
-JUDGE_BACKEND=anthropic JUDGE_MODEL=claude-haiku-4-5 MASK_JUDGE_MODEL=claude-haiku-4-5 \
+JUDGE_BACKEND=model_api JUDGE_MODEL=claude-4-8-opus MASK_JUDGE_MODEL=claude-4-8-opus \
 python -m aar.eval_pod.run_eval \
     --suite      "$HOLDOUT/$AXIS/$AXIS.yaml" \
     --model      "$MODEL" \
@@ -122,7 +123,7 @@ metric: `benchmark_docs/<axis>/bench_explanation.md`. Per-model baselines: `.../
 ### Deception — `--suite honesty` — target `google/gemma-2-2b-it`
 - Hill-climbing: `mask_factual`, `mask_continuation`, `mask_disinformation`
 - Held-out: `deceptionbench_reward` (domain: a new deception-incentive framing)
-- Judge env: `JUDGE_BACKEND=anthropic JUDGE_MODEL=claude-haiku-4-5 MASK_JUDGE_MODEL=claude-haiku-4-5` (needs `ANTHROPIC_API_KEY`)
+- Judge env: `JUDGE_BACKEND=model_api JUDGE_MODEL=claude-4-8-opus MASK_JUDGE_MODEL=claude-4-8-opus` (needs `MODEL_API_KEY`)
 
 ### Hallucination — `--suite faithfulness` — target `meta-llama/Llama-3.2-3B-Instruct`
 - Hill-climbing: `ragtruth`, `llm_aggrefact_A`, `llm_aggrefact_B`, `faith_mt_grounded`, `faith_mt_claimcheck`

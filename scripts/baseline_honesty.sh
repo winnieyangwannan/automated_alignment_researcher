@@ -13,16 +13,16 @@
 # every leg scores vs the model's OWN belief / known answer / per-item reference.
 #
 # Judges (3 of 4 legs): mask + behonest_burglar + deceptionbench are LLM-judged;
-# pacchiardi_lying_rate is rule-scored (NO judge). This script uses the PAPER judge
-# (JUDGE_BACKEND=openai -> gpt-4o, the MASK/DeceptionBench paper judge) — it is both more
-# paper-faithful AND much faster than a local 7B judge: the calls run through a thread pool
+# pacchiardi_lying_rate is rule-scored (NO judge). This script uses Claude Opus 4.8
+# through FAIR Model API, matching the active honesty evaluator. It is faster than a local
+# 7B judge because the calls run through a thread pool
 # (no GPU lock), so judging finishes in minutes instead of serially. Combined with 4-GPU
 # sharding (the 4 legs run in parallel, one model replica per GPU), the property finishes
 # WELL UNDER the 30-min budget. Retry/backoff (aar/benchmarks/_judge_http.py) keeps the
 # concurrent calls from fail-closing on a 429.
 #   >>> PARITY (load-bearing): whatever judge you baseline with MUST be the one the
 #       trained-model eval (eval_worker.sh) uses — else the composite delta is invalid.
-#       Pin judge (gpt-4o) + temp 0 on BOTH sides. (Local-Qwen batched judge is the
+#       Pin judge (claude-4-8-opus) on BOTH sides. (Local-Qwen batched judge is the
 #       grid-cost follow-up; if you switch, re-baseline.)
 #
 # Prep ONCE on the login node AS THE EVAL USER (publishes the holdout incl. the GATED
@@ -53,15 +53,16 @@ SCRATCH=/opt/aar/work/aar_repo_runs/_honestybaseline
 export PYTHONPATH="${R}"
 export HF_HOME=/opt/aar/work/hf_cache
 export HF_TOKEN="$(grep -m1 '^HF_TOKEN=' "${ENVF}" | cut -d= -f2-)"   # gated model weights (Llama/Gemma/Mistral)
-export OAI_API="$(grep -m1 '^OAI_API=' "${ENVF}" | cut -d= -f2-)"     # REQUIRED: gpt-4o paper judge
+export MODEL_API_KEY="$(grep -m1 '^MODEL_API_KEY=' "${ENVF}" | cut -d= -f2-)" # REQUIRED: FAIR Model API
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 
-# Judge backend: gpt-4o (the paper judge) via the API thread pool — fast + faithful.
-export JUDGE_BACKEND="${JUDGE_BACKEND:-openai}"
-export JUDGE_MODEL="${JUDGE_MODEL:-gpt-4o}"
+# Judge backend: Claude Opus 4.8 through FAIR Model API, matching live evaluation.
+export JUDGE_BACKEND="${JUDGE_BACKEND:-model_api}"
+export JUDGE_MODEL="${JUDGE_MODEL:-claude-4-8-opus}"
+export MASK_JUDGE_MODEL="${MASK_JUDGE_MODEL:-claude-4-8-opus}"
 
 # Parallelism: shard the 4 legs across the 4 allocated GPUs (one model replica per GPU),
-# so wall-clock = the slowest single leg, not the sum. With gpt-4o judging off-GPU this
+# so wall-clock = the slowest single leg, not the sum. With Opus judging off-GPU this
 # lands the property well under 30 min. Greedy, AUTO 4096 ceiling (EOS bounds it), batch 8.
 export EVAL_GPUS="${EVAL_GPUS:-auto}"
 # Generation robustness (REQUIRED — weakly-aligned + AAR-produced models often don't emit
@@ -78,11 +79,11 @@ export EVAL_NO_REPEAT_NGRAM=4
 export EVAL_BATCH_SIZE=32
 # Judge API parallelism. Internal-honesty suite = 4 judge legs (mask_factual, mask_generative,
 # deceptionbench_pressure, deceptionbench_reward) sharded across 4 GPUs, each with its own
-# judge pool → 48/leg = ≤192 concurrent gpt-4o calls, under the account's ~200 limit (retry
-# absorbs any brief burst). Quality-neutral (concurrency doesn't change verdicts).
-export JUDGE_CONCURRENCY="${JUDGE_CONCURRENCY:-48}"
+# judge pool. The proven Model API path uses a conservative 16 workers per leg; retries
+# absorb brief 429/5xx responses. Quality-neutral (concurrency doesn't change verdicts).
+export JUDGE_CONCURRENCY="${JUDGE_CONCURRENCY:-16}"
 unset EVAL_MAX_NEW_TOKENS
-[ -n "${OAI_API}" ] || { echo "ERROR: OAI_API empty (need gpt-4o judge); set it in ${ENVF}"; exit 1; }
+[ -n "${MODEL_API_KEY}" ] || { echo "ERROR: MODEL_API_KEY empty (need Claude Opus 4.8 judge); set it in ${ENVF}"; exit 1; }
 
 if [[ -n "${SLURM_ARRAY_TASK_ID:-}" ]]; then
   MODEL="${MODELS[${SLURM_ARRAY_TASK_ID}]}"

@@ -55,8 +55,9 @@ per-benchmark judge + decoding is in [`REPRODUCE.md`](REPRODUCE.md). Deeper inte
   [`REPRODUCE.md`](REPRODUCE.md) §4):**
   - `HF_TOKEN` — gated datasets, gated target models, and gated local judges (HarmBench, Llama-Guard).
   - `OAI_API` — OpenAI judges (sycophancy, refusal/StrongREJECT, prompt_injection).
-  - `ANTHROPIC_API_KEY` — Claude-haiku judges (honesty, faithfulness, bias, privacy, reward_hacking) and,
-    for Task B, the AAR agent + integrity monitor.
+  - `MODEL_API_KEY` — FAIR Model API access for the honesty axis's Claude Opus 4.8 judge and monitor.
+  - `ANTHROPIC_API_KEY` — direct Claude-haiku judges (faithfulness, bias, privacy, reward_hacking),
+    and Task B when using the direct-Anthropic agent or monitor path.
 
 ## 2. Install
 

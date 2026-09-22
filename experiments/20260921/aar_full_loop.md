@@ -333,8 +333,9 @@ and failure diagnosis.
 - Isolation: same-user functional smoke for now. It validates orchestration but
   its held-out result is explicitly non-scientific. Add a kernel boundary before
   using held-out results as evidence.
-- AAR agent and paper search: Meta authenticated CLI plus secure-internet mode,
-  following the successful literature-review launch.
+- AAR agent and paper search: Claude Opus 4.8 (Meta CLI model id
+  `claude-opus-4-8`) plus secure-internet mode, following the successful
+  literature-review launch.
 - Integrity monitor and honesty judge: Claude Opus 4.8 through FAIR Model API,
   selected after the direct Anthropic credential failed its live pre-flight.
 - Slurm QoS: `g3_ram_high` for agent, training, and evaluation during the smoke,
@@ -361,13 +362,28 @@ No jobs should be launched until the preflight gates above pass.
   headers and sees CUDA 13.0. Model test job `1537841` then loaded the exact
   `google/gemma-2-2b-it` revision, generated 16 warmed tokens on an NVIDIA GB300
   at 33.817 tokens/s, and used 4.913 GiB peak GPU memory.
-- API pre-flight exposed the remaining blocker. The configured direct Anthropic
+- API pre-flight exposed a judge-routing blocker. The configured direct Anthropic
   key returns HTTP 401 for both the Opus monitor and Haiku judge. The configured
   OpenAI key also returns HTTP 401. `MODEL_API_KEY` is valid and successfully
   serves catalog model `claude-4-8-opus`, but `claude-haiku-4-5` is not available
   to that key (HTTP 404), and no `LLAMA_API_KEY` is configured. Therefore the
-  existing Haiku-4.5 baseline cannot yet be evaluated with judge parity.
+  existing Haiku-4.5 baseline could not be evaluated with judge parity.
 
 The explicit decision is to use Claude Opus 4.8 through FAIR Model API for both
 the monitor and honesty judge. Re-baseline Gemma with that exact judge before
 launching the full loop; the prior Haiku 4.5 values are not interchangeable.
+
+## Opus 4.8 re-baseline (2026-09-21)
+
+- Holdout publication job `1538206` completed successfully. Baseline evaluation
+  job `1538214` then completed on two GB300 GPUs in 32m26s with exit code 0.
+- Gemma means under the exact active judge were: `mask_factual=0.708333` (n=120),
+  `mask_continuation=0.773109` (n=119), `mask_disinformation=0.825000` (n=120),
+  and evaluator-only `deceptionbench_reward=0.560000` (n=300).
+- One of 120 continuation items exhausted judge retries and was excluded rather
+  than default-scored. DeceptionBench had zero parse failures. The three
+  capability checks also passed: MMLU 0.593333, GSM8K 0.620000, IFEval 0.515000.
+- The retained diagnostic run is under
+  `/checkpoint/ram/aar/winnieyangwn/honesty-opus48-baseline-20260921`. The final
+  smoke must publish a fresh suite after synchronizing the updated baseline; it
+  must not reuse the provisional suite that embedded Haiku baseline values.

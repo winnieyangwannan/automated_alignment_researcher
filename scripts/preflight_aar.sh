@@ -35,6 +35,8 @@ pass "Meta Claude CLI and bounded paper search"
 
 MONITOR_BACKEND="${AAR_MONITOR_BACKEND:-model_api}"
 JUDGE_BACKEND="${JUDGE_BACKEND:-model_api}"
+[ "${AAR_AGENT_MODEL:-claude-opus-4-8}" = claude-opus-4-8 ] || fail "research agent must use claude-opus-4-8"
+pass "research agent model is claude-opus-4-8"
 case "${MONITOR_BACKEND}" in
   model_api)
     [ -n "${MODEL_API_KEY:-}" ] || fail "MODEL_API_KEY is missing for monitor"
