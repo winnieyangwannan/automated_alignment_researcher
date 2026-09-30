@@ -6,9 +6,15 @@ source "${SCRIPT_DIR}/env_v0.sh"
 # shellcheck disable=SC1091
 source "${AAR_REPO}/scripts/aar_runtime_env.sh"
 mkdir -p "${AAR_RUNTIME_ROOT}/logs"
-"${HARNESS_PY}" "${AAR_REPO}/replication/preflight_v0.py"
-gpu_jid="$(sbatch --parsable --output="${AAR_RUNTIME_ROOT}/logs/gpu-preflight-%j.out" \
+setup_jid="$(sbatch --parsable --output="${AAR_RUNTIME_ROOT}/logs/env-setup-%j.out" \
+  "${AAR_REPO}/replication/setup_env_v0.sbatch")"
+gpu_jid="$(sbatch --parsable --dependency="afterok:${setup_jid%%;*}" \
+  --output="${AAR_RUNTIME_ROOT}/logs/gpu-preflight-%j.out" \
   "${AAR_REPO}/replication/gpu_preflight_v0.sbatch")"
-web_jid="$(sbatch --parsable --output="${AAR_RUNTIME_ROOT}/logs/web-preflight-%j.out" \
-  "${AAR_REPO}/replication/smoke_aar_internet_v0.sbatch")"
-printf 'gpu_preflight=%s\nweb_preflight=%s\n' "${gpu_jid}" "${web_jid}"
+printf 'env_setup=%s\ngpu_preflight=%s\n' "${setup_jid}" "${gpu_jid}"
+if [ "${1:-}" = "--include-web" ]; then
+  web_jid="$(sbatch --parsable --dependency="afterok:${setup_jid%%;*}" \
+    --output="${AAR_RUNTIME_ROOT}/logs/web-preflight-%j.out" \
+    "${AAR_REPO}/replication/smoke_aar_internet_v0.sbatch")"
+  printf 'web_preflight=%s\n' "${web_jid}"
+fi
