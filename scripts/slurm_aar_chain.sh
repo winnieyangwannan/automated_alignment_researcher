@@ -165,8 +165,14 @@ fi
 if [ -f "${BASELINES_PATH}" ]; then
   echo "[aar] using pre-published baselines: ${BASELINES_PATH}"
 else
+  _ONLY_ARGS=()
+  if [ -n "${AAR_SUITE_BENCHMARKS:-}" ]; then
+    _only_text="${AAR_SUITE_BENCHMARKS//,/ }"
+    read -r -a _only_names <<< "${_only_text}"
+    _ONLY_ARGS=(--only "${_only_names[@]}")
+  fi
   "${PY}" scripts/publish_suite.py --emit-prompt-baselines "${BASELINES_PATH}" \
-    --suite "${SUITE_NAME}" --target-model "${TARGET_MODEL}"
+    --suite "${SUITE_NAME}" --target-model "${TARGET_MODEL}" "${_ONLY_ARGS[@]}"
 fi
 
 echo "[aar] launching chain seed=${SEED} suite=${SUITE_NAME} target=${TARGET_MODEL} (max ${MAX_H}h)"

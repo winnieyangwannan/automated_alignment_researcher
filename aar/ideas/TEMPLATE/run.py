@@ -40,7 +40,7 @@ class MethodConfig:
     """Minimal config a method needs. Extend per-method as required.
     (In the full harness this is constructed from CLI/env like W2S's RunConfig.)"""
     base_model: str = field(default_factory=lambda: os.getenv(
-        "TARGET_MODEL", "Qwen/Qwen1.5-0.5B-Chat"
+        "TARGET_MODEL_PATH", os.getenv("TARGET_MODEL", "Qwen/Qwen1.5-0.5B-Chat")
     ))
     output_dir: str = "results/template/model"
     seed: int = 42
@@ -111,6 +111,8 @@ def run_experiment(config: MethodConfig) -> dict[str, Any]:
     # ALWAYS load via load_base_model_and_tokenizer: it selects SDPA for Qwen3.5
     # and eager for architectures such as Phi-3 that need the conservative path.
     # And SAVE THE TOKENIZER next to the model — the eval pod must load it to score you.
+    # When AAR_REQUIRE_ADAPTER=1, save a PEFT adapter (not merged/full weights);
+    # the evaluator loads it on the frozen base model identified by the adapter.
     # ----------------------------------------------------------------------
     raise NotImplementedError(
         "Implement your training procedure, save the model to config.output_dir, "

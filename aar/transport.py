@@ -18,6 +18,7 @@ transport-agnostic.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import time
 from pathlib import Path
@@ -67,6 +68,11 @@ def validate_model_submission(model_path: str) -> Path:
 
     is_full_model = (path / "config.json").is_file()
     is_adapter = (path / "adapter_config.json").is_file()
+    if os.getenv("AAR_REQUIRE_ADAPTER", "0").lower() in ("1", "true", "yes") and not is_adapter:
+        raise ValueError(
+            "this run requires a PEFT adapter submission; full merged checkpoints "
+            "are disabled by AAR_REQUIRE_ADAPTER"
+        )
     if not (is_full_model or is_adapter):
         raise ValueError(
             "model submission is missing config.json or adapter_config.json; "

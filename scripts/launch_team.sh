@@ -61,7 +61,15 @@ MAX_H="${3:-47}"
 # invaluable when a model is retired mid-fleet (cf. claude-fable-5). Hyphen-free so the positional
 # parsers (dashboard.sh cut -f1/-f2; live_dashboard) keep axis=field1, model=field2, agent=field3.
 _AGENT_TAG="$(printf '%s' "${AAR_AGENT_MODEL:-claude-opus-4-8}" | sed 's/^claude-//; s/[^A-Za-z0-9]//g')"
-TEAM_ID="$(printf '%s' "${SUITE}-${MODEL}-${_AGENT_TAG}-$(date +%Y%m%d-%H%M%S)" | tr -c 'A-Za-z0-9._-' '_')"
+if [ -n "${AAR_TEAM_ID:-}" ]; then
+  TEAM_ID="$(printf '%s' "${AAR_TEAM_ID}" | tr -c 'A-Za-z0-9._-' '_')"
+  [ "${TEAM_ID}" = "${AAR_TEAM_ID}" ] || {
+    echo "[team] FATAL: AAR_TEAM_ID must already be one safe path component" >&2
+    exit 2
+  }
+else
+  TEAM_ID="$(printf '%s' "${SUITE}-${MODEL}-${_AGENT_TAG}-$(date +%Y%m%d-%H%M%S)" | tr -c 'A-Za-z0-9._-' '_')"
+fi
 # UNIQUENESS: the timestamp is only second-granular, so two same-axis+model launches
 # in the SAME second would mint the IDENTICAL id and share one TEAM_DIR. CLAIM the id
 # ATOMICALLY with `mkdir` (no -p): it fails if the dir already exists, so even two
@@ -71,6 +79,10 @@ _AAR_TEAMS="${AAR_TEAMS_DIR:-${RUNTIME_ROOT}/aar_teams}"
 mkdir -p "${_AAR_TEAMS}"
 _base="${TEAM_ID}"; _n=1
 until mkdir "${_AAR_TEAMS}/${TEAM_ID}" 2>/dev/null; do
+  if [ -n "${AAR_TEAM_ID:-}" ]; then
+    echo "[team] FATAL: explicit team already exists: ${_AAR_TEAMS}/${TEAM_ID}" >&2
+    exit 2
+  fi
   # Bounded so a persistent mkdir failure (bad perms, full FS) fails LOUDLY instead of
   # spinning forever — it is NOT a collision in that case.
   [ "${_n}" -gt 1000 ] && { echo "[team] FATAL: cannot claim a unique TEAM_ID under ${_AAR_TEAMS} (perms? disk full?)" >&2; exit 1; }
@@ -289,6 +301,7 @@ for s in ${SEEDS}; do
   # also passed positionally below, so nothing axis-specific depends on the env alone.
   jid=$(sbatch --parsable \
         --account="${AAR_SLURM_ACCOUNT}" --partition="${AAR_SLURM_PARTITION}" --qos="${AAR_AGENT_QOS}" \
+        --time="${MAX_H}:30:00" \
         --job-name="aar-${SUITE}-${MODEL}-${s}" \
         -o "${TEAM_DIR}/logs/%x_%j.out" \
         "${REPO}/scripts/slurm_aar_chain.sh" "explore-${s}" "${MAX_H}" "${MAX_ITERS}" "${TEAM_ID}")

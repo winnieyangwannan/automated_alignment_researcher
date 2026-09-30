@@ -49,6 +49,14 @@ export PYTHONPATH="${REPO}"
 echo "[publish] axis=${SUITE_NAME}  model=${TARGET_MODEL}"
 echo "[publish] holdout -> ${HOLDOUT_DIR}/${SUITE_NAME}/   baselines -> ${BASELINES_PATH}"
 
+_ONLY_ARGS=()
+if [ -n "${AAR_SUITE_BENCHMARKS:-}" ]; then
+  _only_text="${AAR_SUITE_BENCHMARKS//,/ }"
+  read -r -a _only_names <<< "${_only_text}"
+  _ONLY_ARGS=(--only "${_only_names[@]}")
+  echo "[publish] run-specific benchmark filter: ${_only_names[*]}"
+fi
+
 if [ -e "${HOLDOUT_DIR}/${SUITE_NAME}" ] && [ "${AAR_ALLOW_HOLDOUT_OVERWRITE:-0}" != "1" ]; then
   echo "[publish] ERROR: refusing to overwrite retained suite ${HOLDOUT_DIR}/${SUITE_NAME}" >&2
   echo "[publish] choose a fresh HOLDOUT_DIR or explicitly set AAR_ALLOW_HOLDOUT_OVERWRITE=1" >&2
@@ -62,12 +70,14 @@ fi
 
 # 1) Holdout suite YAML + data (SECRET; includes the held-out) into the mode-700 holdout.
 "${PY}" "${REPO}/scripts/publish_suite.py" \
-    --suite "${SUITE_NAME}" --target-model "${TARGET_MODEL}" --holdout-dir "${HOLDOUT_DIR}"
+    --suite "${SUITE_NAME}" --target-model "${TARGET_MODEL}" --holdout-dir "${HOLDOUT_DIR}" \
+    "${_ONLY_ARGS[@]}"
 
 # 2) Research-readable prompt baselines (held-out EXCLUDED), authoritative per-model.
 mkdir -p "$(dirname "${BASELINES_PATH}")"
 "${PY}" "${REPO}/scripts/publish_suite.py" \
-    --emit-prompt-baselines "${BASELINES_PATH}" --suite "${SUITE_NAME}" --target-model "${TARGET_MODEL}"
+    --emit-prompt-baselines "${BASELINES_PATH}" --suite "${SUITE_NAME}" --target-model "${TARGET_MODEL}" \
+    "${_ONLY_ARGS[@]}"
 # This file MUST be research-readable — the AAR (research user) reads it for its prompt baselines.
 # The eval user's umask is 077, which would leave it mode-600 and the AAR would silently fall back
 # to the 0.0 PUBLISHERS placeholders. Force it readable.

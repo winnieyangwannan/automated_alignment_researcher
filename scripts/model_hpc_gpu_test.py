@@ -31,6 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-tokens-per-second", type=float)
     parser.add_argument("--max-generation-seconds", type=float)
     parser.add_argument("--trust-remote-code", action="store_true")
+    parser.add_argument("--enable-thinking", action="store_true")
     parser.add_argument("--output-json")
     args = parser.parse_args()
     if not args.cache_dir:
@@ -62,11 +63,15 @@ def main() -> int:
         importlib.import_module(module_name)
 
     download_started = time.perf_counter()
-    snapshot = Path(
-        snapshot_download(repo_id=args.model, revision=args.revision)
-    ).resolve()
+    model_path = Path(args.model).expanduser()
+    is_local = model_path.is_dir()
+    snapshot = (
+        model_path.resolve()
+        if is_local
+        else Path(snapshot_download(repo_id=args.model, revision=args.revision)).resolve()
+    )
     download_seconds = time.perf_counter() - download_started
-    if not snapshot.is_relative_to(cache_dir):
+    if not is_local and not snapshot.is_relative_to(cache_dir):
         raise RuntimeError(f"snapshot escaped cache directory: {snapshot}")
 
     config = AutoConfig.from_pretrained(
@@ -102,7 +107,10 @@ def main() -> int:
         processor, "chat_template", None
     ):
         prompt = processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=args.enable_thinking,
         )
     else:
         prompt = args.prompt
@@ -129,7 +137,10 @@ def main() -> int:
 
     generated_tokens = output.shape[-1] - input_tokens
     tokens_per_second = generated_tokens / generation_seconds
-    text = processor.batch_decode(output[:, input_tokens:], skip_special_tokens=True)[0]
+    raw_text = processor.batch_decode(output[:, input_tokens:], skip_special_tokens=False)[0]
+    from aar.eval_pod.models import split_reasoning_and_answer_text
+
+    reasoning, text = split_reasoning_and_answer_text(raw_text)
     snapshot_bytes = sum(path.stat().st_size for path in snapshot.rglob("*") if path.is_file())
     passed = True
     if args.min_tokens_per_second is not None:
@@ -154,6 +165,8 @@ def main() -> int:
         "tokens_per_second": round(tokens_per_second, 3),
         "peak_gpu_gib": round(torch.cuda.max_memory_allocated() / 1024**3, 3),
         "output": text,
+        "thinking_enabled": args.enable_thinking,
+        "reasoning_nonempty": bool(reasoning),
     }
     rendered = json.dumps(result, indent=2, ensure_ascii=False)
     print(rendered)

@@ -264,8 +264,8 @@ Do not launch the hill climb until every gate passes.
 - Start the evaluator before the chains so the first submission cannot remain
   unserved.
 - Use account `ram`, partition `g3`, and QoS `g3_ram_high` for every Slurm job.
-- Keep all checkpoints for v0 unless storage pressure is measured and the user
-  explicitly approves a retention policy.
+- Retain every PEFT adapter, all method code, scores, logs, and metadata. Reject
+  merged/full-model submissions so one 59-GiB base copy is not retained per proposal.
 - Monitor the first proposal, monitor verdict, training job, evaluation, score
   publication, and leaderboard update before treating the run as healthy.
 
@@ -297,11 +297,11 @@ The run is complete when:
 - Logs demonstrate AAR adaptive thinking and Gemma thinking were enabled.
 - Reproducibility metadata and retained artifacts are complete.
 
-## Decisions and authorizations required before autonomous execution
+## Decisions and authorizations
 
-The following choices materially affect the experiment. Recommended defaults
-are stated explicitly so the user can approve them together or override any
-item.
+The user approved the recommended defaults on 2026-09-30. The implementation
+therefore uses the resolved choices below. Numeric API spending limits remain a
+launch blocker.
 
 ### Scientific scope
 
@@ -309,8 +309,7 @@ item.
   capability gates, while optimizing only `sycophancy_eval`.
 - Recommended: label the result as a single-benchmark Gemma-4-31B extension,
   not a replication of the paper's Qwen3.5-2B result.
-- Required clarification: whether "thinking enabled" applies to both Claude
-  Opus and Gemma, as currently planned, or only to the AAR researcher.
+- Resolved: thinking applies to both Claude Opus and generative Gemma inference.
 - Recommended: use the Serve API only for base-model self-generation. Measure
   the baseline and all trained checkpoints with the same local Transformers
   evaluator so backend differences cannot corrupt score deltas.
@@ -320,20 +319,20 @@ item.
 - Recommended: five AAR chains, matching the paper's team size.
 - Recommended: first phase of 12 active hours per chain, followed only after a
   health review by a 36-hour continuation using the same team state.
-- Required clarification: whether the 36-hour continuation should be scheduled
-  automatically or wait for explicit approval after the 12-hour report.
+- Resolved: the 36-hour continuation waits for a health review and explicit
+  invocation of the continuation script; it is not scheduled automatically.
 - Recommended: keep one GPU per training job and two GPUs for the evaluator.
-- Required clarification: retain the paper's roughly 30-minute method-training
-  target or allow up to 90 minutes for the 31B model if the timed LoRA smoke
-  demonstrates that 30 minutes is infeasible.
-- Required authorization: paid Claude Opus researcher/monitor calls and GPT-4 /
-  GPT-4o judge calls. Five AARs for 48 hours imply substantial API spend beyond
-  GPU allocation costs.
+- Resolved: retain the 30-minute method-training target unless the timed LoRA
+  smoke proves it infeasible; stop for user direction rather than silently
+  increasing it.
+- Pending: numeric authorization for paid Claude Opus researcher/monitor calls
+  and GPT-4 / GPT-4o judge calls. Five AARs for 48 hours imply substantial API
+  spend beyond GPU allocation costs.
 
 ### Checkpoint retention and storage
 
 - Do not retain a full merged 59-GiB base-model copy for every proposal.
-- Recommended: add PEFT-adapter-aware evaluation and retain every small adapter,
+- Resolved: add PEFT-adapter-aware evaluation and retain every small adapter,
   all method code, scores, logs, and metadata. Materialize a merged checkpoint
   only for the winning method if required.
 - Fallback requiring explicit authorization: automatically prune non-winning
@@ -352,15 +351,14 @@ item.
   worktree untouched.
 - Alternative: reconcile `uv` into the exact `winnie` branch, but only after the
   user decides how its unrelated changes should be handled.
-- Required authorization: commit the scoped implementation and use direct
-  Git-over-SSH synchronization to a matching HPC worktree. GitHub will not be
-  updated unless separately requested.
+- Authorized: commit the scoped implementation and use direct Git-over-SSH
+  synchronization to a matching HPC worktree. GitHub will not be updated.
 
 ### Isolation and sandbox policy
 
 - Recommended: keep researchers CPU-only and keep GPUs confined to training and
   evaluation jobs.
-- Required acknowledgement: the current same-user deployment is not a secure
+- Acknowledged: the current same-user deployment is not a secure
   held-out experiment. A paper-valid result requires a separate evaluator Unix
   principal with evaluator-only data and credentials.
 - Alternative requiring infrastructure from the user: provide the evaluator
@@ -396,17 +394,17 @@ Hard stop conditions requiring user input:
   method, exceeding the approved API/storage budget, weakening capability
   gates, or deleting retained data.
 
-### Cost and quota values still needed
+### Cost and quota status
 
 - Maximum permitted Claude/Model API spend.
 - Maximum permitted OpenAI judge spend.
-- Maximum retained storage for the experiment.
-- Maximum number of simultaneously running training jobs.
-- Whether queued time counts against the requested 12/48 hours. Recommended:
-  count only active AAR wall-clock time, not scheduler wait time.
+- Retained storage: adapter-only artifacts, methods, scores, logs, and metadata;
+  stop on unexpected full-checkpoint output or storage pressure rather than delete.
+- Concurrent training limit: two jobs, enforced through per-team Slurm dependency lanes.
+- Time accounting: active AAR wall-clock only; scheduler queue time does not count.
 
 ## Current hold point
 
-No hill-climbing run is active. Implementation, baseline measurement, and launch
-remain pending. Source synchronization and any actual launch should occur only
-after the user reviews this plan and authorizes the next step.
+No hill-climbing run is active. Implementation and non-paid preflights may
+proceed autonomously. The paid Gemma baseline and 12-hour hill climb must not be
+submitted until maximum Claude/Model API and OpenAI judge spend are supplied.

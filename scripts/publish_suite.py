@@ -2215,10 +2215,45 @@ def _model_baselines(axis: str, model: str) -> dict:
     fixed qwen value). The axis file wins on any overlap (there shouldn't be any)."""
     bl = dict(_load_axis_baselines("capability").get(model, {})) if axis != "capability" else {}
     bl.update(_load_axis_baselines(axis).get(model, {}))
+    override_path = os.getenv("AAR_BASELINE_OVERRIDES", "").strip()
+    if override_path:
+        try:
+            override = json.loads(Path(override_path).read_text())
+            scores = override.get("scores", override)
+            model_scores = scores.get(model, {})
+            if not isinstance(model_scores, dict) or not model_scores:
+                raise ValueError(f"no scores for exact model key {model!r}")
+            bl.update(model_scores)
+        except Exception as exc:
+            sys.exit(f"invalid AAR_BASELINE_OVERRIDES={override_path!r}: {exc}")
     return bl
 
 
-def emit_prompt_baselines(axis: str, target_model: str, out_path: Path) -> None:
+def _selected_suite_names(axis: str, only: list[str] | None = None) -> list[str]:
+    """Return a validated run-specific subset without changing canonical suites."""
+    canonical = SUITES.get(axis)
+    if not canonical:
+        sys.exit(f"unknown suite {axis!r}; known: {sorted(SUITES)}")
+    if not only:
+        return list(canonical)
+    unknown = [name for name in only if name not in canonical]
+    if unknown:
+        sys.exit(
+            f"--only contains benchmarks outside canonical suite {axis!r}: {unknown}; "
+            f"allowed: {canonical}"
+        )
+    # Preserve caller order but reject duplicates, which would create ambiguous IDs.
+    if len(set(only)) != len(only):
+        sys.exit("--only contains duplicate benchmark names")
+    return list(only)
+
+
+def emit_prompt_baselines(
+    axis: str,
+    target_model: str,
+    out_path: Path,
+    only: list[str] | None = None,
+) -> None:
     """Write the RESEARCH-side baselines.json that the AAR prompt's baseline table
     (agent._format_baselines) and the dashboard read — from the SAME single source of
     truth (benchmark_docs/<axis>/baseline.json + the suite membership here), so the
@@ -2230,9 +2265,7 @@ def emit_prompt_baselines(axis: str, target_model: str, out_path: Path) -> None:
     Shape (consumed by _format_baselines): {name: {"baseline": m}} for safety,
     {name: {"baseline": m, "floor": f}} for capability_filter.
     """
-    names = SUITES.get(axis)
-    if not names:
-        sys.exit(f"unknown suite {axis!r}; known: {sorted(SUITES)}")
+    names = _selected_suite_names(axis, only)
     _ho = _HELD_OUT.get(axis)
     held_out = {_ho} if isinstance(_ho, str) else set(_ho or [])   # 1+ held-out benchmarks per axis
     model_bl = _model_baselines(axis, target_model)   # axis safety + shared capability, per-model
@@ -2294,12 +2327,15 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.emit_prompt_baselines:
-        emit_prompt_baselines(args.suite, args.target_model, Path(args.emit_prompt_baselines))
+        emit_prompt_baselines(
+            args.suite,
+            args.target_model,
+            Path(args.emit_prompt_baselines),
+            only=args.only,
+        )
         return
 
-    names = args.only or SUITES.get(args.suite)
-    if not names:
-        sys.exit(f"unknown suite {args.suite!r}; known: {sorted(SUITES)}")
+    names = _selected_suite_names(args.suite, args.only)
 
     # Gold-doc dont_run guard: refuse pairs benchmark_docs marks unrunnable (no signal), override
     # with ALLOW_DONT_RUN=1 (e.g. for a smoke test).

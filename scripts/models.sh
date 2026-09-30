@@ -13,8 +13,9 @@
 #   llama    meta-llama/Llama-3.2-3B-Instruct
 #   olmo     allenai/Olmo-3-7B-Instruct
 #   gemma    google/gemma-2-2b-it
-#   phi      microsoft/Phi-4-mini-instruct
-MODELS_ALIASES="qwen llama olmo gemma phi"
+#   phi          microsoft/Phi-4-mini-instruct
+#   gemma4_31b   google/gemma-4-31B-it (replication-v0 target)
+MODELS_ALIASES="qwen llama olmo gemma phi gemma4_31b"
 
 resolve_model() {
   # Accept either the alias or the exact full HF id (so TARGET_MODEL=<full id> still works).
@@ -24,6 +25,7 @@ resolve_model() {
     olmo|allenai/Olmo-3-7B-Instruct)        echo "allenai/Olmo-3-7B-Instruct" ;;
     gemma|google/gemma-2-2b-it)             echo "google/gemma-2-2b-it" ;;
     phi|microsoft/Phi-4-mini-instruct)      echo "microsoft/Phi-4-mini-instruct" ;;
+    gemma4_31b|google/gemma-4-31B-it)       echo "google/gemma-4-31B-it" ;;
     *) return 1 ;;
   esac
 }

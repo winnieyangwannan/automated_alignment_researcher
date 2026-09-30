@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 
 _FACTS = {
     "capital of france": "paris",
@@ -55,6 +56,30 @@ def _ensure_str(x) -> str:
     if isinstance(x, list):
         return _ensure_str(x[0]) if x else ""
     return str(x)
+
+
+_THOUGHT_CHANNEL_RE = re.compile(
+    r"<\|channel>thought\s*(.*?)<channel\|>", re.DOTALL
+)
+_MODEL_SPECIAL_RE = re.compile(
+    r"<\|(?:turn|channel)>|<(?:turn|channel)\|>|<(?:bos|eos|pad)>"
+)
+
+
+def split_reasoning_and_answer_text(text: str) -> tuple[str, str]:
+    """Split Gemma-4's raw thought channel from the answer scored by benchmarks.
+
+    The canonical template emits ``<|channel>thought ... <channel|>answer``.
+    Keeping this parser text-level also makes it usable by Serve API clients when
+    they request ``skip_special_tokens=false``. Models without that channel are
+    returned unchanged as the answer.
+    """
+    matches = _THOUGHT_CHANNEL_RE.findall(text)
+    if not matches:
+        return "", _MODEL_SPECIAL_RE.sub("", text).strip()
+    reasoning = "\n\n".join(part.strip() for part in matches if part.strip())
+    answer = _THOUGHT_CHANNEL_RE.sub("", text)
+    return reasoning, _MODEL_SPECIAL_RE.sub("", answer).strip()
 
 
 class StubModel:
@@ -134,8 +159,24 @@ class HFModel:
         from aar.utils.attention import select_attention_implementation
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        config = AutoConfig.from_pretrained(model_path)
-        attn_implementation = select_attention_implementation(model_path, config=config)
+        adapter_path = Path(model_path)
+        is_adapter = (adapter_path / "adapter_config.json").is_file()
+        base_model_ref = model_path
+        peft_config = None
+        if is_adapter:
+            from peft import PeftConfig
+
+            peft_config = PeftConfig.from_pretrained(model_path)
+            base_model_ref = (
+                os.getenv("TARGET_MODEL_PATH")
+                or peft_config.base_model_name_or_path
+            )
+            if not base_model_ref:
+                raise ValueError(
+                    f"adapter submission {model_path!r} does not identify a base model"
+                )
+        config = AutoConfig.from_pretrained(base_model_ref)
+        attn_implementation = select_attention_implementation(base_model_ref, config=config)
         load_kwargs = {
             "config": config,
             "torch_dtype": torch.bfloat16 if self.device == "cuda" else torch.float32,
@@ -145,17 +186,23 @@ class HFModel:
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(model_path)
         except Exception:
-            # Some instruct LLMs ship as a multimodal model (e.g. Mistral3 — "an LLM
-            # with vision"); the text tokenizer lives behind an AutoProcessor.
-            from transformers import AutoProcessor
-            self.tokenizer = AutoProcessor.from_pretrained(model_path).tokenizer
+            try:
+                # An adapter may omit a tokenizer only in older submissions. Prefer
+                # its frozen base reference rather than accidentally using another
+                # model's tokenizer.
+                self.tokenizer = AutoTokenizer.from_pretrained(base_model_ref)
+            except Exception:
+                # Some instruct LLMs ship as a multimodal model; the text tokenizer
+                # lives behind an AutoProcessor.
+                from transformers import AutoProcessor
+                self.tokenizer = AutoProcessor.from_pretrained(base_model_ref).tokenizer
         # Left-padding so batched generation + last-token logits work uniformly
         # (the real last token sits at position -1 for every row).
         self.tokenizer.padding_side = "left"
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         try:
-            self.model = AutoModelForCausalLM.from_pretrained(model_path, **load_kwargs).to(self.device)
+            self.model = AutoModelForCausalLM.from_pretrained(base_model_ref, **load_kwargs).to(self.device)
         except (ValueError, KeyError):
             # A multimodal-architecture LLM (e.g. Mistral3ForConditionalGeneration — a strong
             # text LLM that also takes images) is NOT an AutoModelForCausalLM. Load it via the
@@ -163,7 +210,11 @@ class HFModel:
             # judge benches (pure-text prompts) the generation path is identical. Only triggers
             # when the causal-LM load fails, so text-only models are unaffected.
             from transformers import AutoModelForImageTextToText
-            self.model = AutoModelForImageTextToText.from_pretrained(model_path, **load_kwargs).to(self.device)
+            self.model = AutoModelForImageTextToText.from_pretrained(base_model_ref, **load_kwargs).to(self.device)
+        if is_adapter:
+            from peft import PeftModel
+
+            self.model = PeftModel.from_pretrained(self.model, model_path).to(self.device)
         self.model.eval()
         print(
             f"[eval] attention implementation = {attn_implementation or 'transformers default'}",
@@ -235,7 +286,18 @@ class HFModel:
         self._temperature = float(os.getenv("EVAL_TEMPERATURE", "1.0"))
         self._top_p = float(os.getenv("EVAL_TOP_P", "1.0"))
         self._seed = int(os.getenv("EVAL_SEED", "1234"))
+        self._enable_thinking = os.getenv(
+            "AAR_TARGET_ENABLE_THINKING", "0"
+        ).lower() in ("1", "true", "yes")
         self._torch = torch
+
+    def _decode_completion(self, token_ids) -> str:
+        """Decode one completion while excluding private reasoning from scoring."""
+        raw = self.tokenizer.decode(token_ids, skip_special_tokens=False)
+        reasoning, answer = split_reasoning_and_answer_text(raw)
+        if reasoning:
+            return answer
+        return self.tokenizer.decode(token_ids, skip_special_tokens=True).strip()
 
     def apply_decoding(self, *, batch_size=None, auto_ceiling=None,
                        no_repeat_ngram=None, max_new_tokens="__keep__",
@@ -319,7 +381,7 @@ class HFModel:
             )
         new = out[0, enc["input_ids"].shape[1]:]
         self._note_truncation(new, mnt)
-        return self.tokenizer.decode(new, skip_special_tokens=True).strip()
+        return self._decode_completion(new)
 
     def candidate_logits(self, prompt: str, candidates: list[str],
                          use_chat_template: bool = True) -> list[float]:
@@ -328,22 +390,35 @@ class HFModel:
         return self.candidate_logits_batch([prompt], candidates, use_chat_template)[0]
 
     # --- batched variants (the GPU throughput win) -------------------------
-    def _render(self, prompt, use_chat_template: bool = True) -> str:
+    def _render(
+        self,
+        prompt,
+        use_chat_template: bool = True,
+        enable_thinking: bool | None = None,
+    ) -> str:
         """Render a prompt to input text. `prompt` is a string (one user turn, byte-identical
         to before) OR a messages list (real system/multi-turn). If the chat template rejects
         the roles (no system / consecutive same-role, e.g. Gemma-2), flatten to one user turn.
         apply_chat_template's output is coerced to `str` (transformers 5.x returns a 1-elem list)."""
         if not use_chat_template:
             return prompt if isinstance(prompt, str) else _flatten_messages(_as_messages(prompt))
+        if enable_thinking is None:
+            enable_thinking = self._enable_thinking
         messages = _as_messages(prompt)
+        template_kwargs = {
+            "tokenize": False,
+            "add_generation_prompt": True,
+        }
+        if enable_thinking:
+            template_kwargs["enable_thinking"] = True
         try:
             return _ensure_str(self.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True))
+                messages, **template_kwargs))
         except Exception:
             try:   # roles rejected (e.g. Gemma system) -> flatten to one user turn
                 return _ensure_str(self.tokenizer.apply_chat_template(
                     [{"role": "user", "content": _flatten_messages(messages)}],
-                    tokenize=False, add_generation_prompt=True))
+                    **template_kwargs))
             except Exception:
                 return _flatten_messages(messages)
 
@@ -366,7 +441,7 @@ class HFModel:
             new = gen[:, in_len:]
             for r in range(new.shape[0]):
                 self._note_truncation(new[r], mnt)
-            outs.extend(self.tokenizer.batch_decode(new, skip_special_tokens=True))
+            outs.extend(self._decode_completion(new[r]) for r in range(new.shape[0]))
         return [o.strip() for o in outs]
 
     def candidate_logits_batch(self, prompts: list[str], candidates: list[str],
@@ -390,7 +465,13 @@ class HFModel:
         flat: list[list[int]] = []
         meta: list[tuple[int, int, int, list[int]]] = []  # (prompt_idx, cand_idx, prompt_len, cand_ids)
         for pi, p in enumerate(prompts):
-            p_ids = self.tokenizer(self._render(p, use_chat_template)).input_ids
+            # Candidate-logit benchmarks cannot ask the model to generate a
+            # reasoning channel before a fixed continuation. Render Gemma's
+            # canonical empty-thought prefix here while keeping thinking enabled
+            # for every generative benchmark.
+            p_ids = self.tokenizer(
+                self._render(p, use_chat_template, enable_thinking=False)
+            ).input_ids
             for ci, ids in enumerate(cand_ids):
                 flat.append(list(p_ids) + list(ids))
                 meta.append((pi, ci, len(p_ids), ids))

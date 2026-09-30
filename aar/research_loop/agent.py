@@ -135,6 +135,14 @@ def resolve_prompt(template_path: str | Path, output_path: str | Path) -> str:
                          else ""),
         seed_method=os.getenv("SEED_METHOD", ""),   # axis's reference seed idea dir (optional)
         target_model=TARGET_MODEL,
+        target_model_path=os.getenv("TARGET_MODEL_PATH", TARGET_MODEL),
+        target_thinking=os.getenv("AAR_TARGET_ENABLE_THINKING", "0").lower()
+        in ("1", "true", "yes"),
+        require_adapter=os.getenv("AAR_REQUIRE_ADAPTER", "0").lower()
+        in ("1", "true", "yes"),
+        method_train_minutes=int(os.getenv("AAR_METHOD_TRAIN_MINUTES", "30")),
+        serve_v2_deployment_dir=os.getenv("AAR_SERVE_V2_DEPLOYMENT_DIR", ""),
+        serve_v2_model=os.getenv("AAR_SERVE_V2_MODEL", ""),
         s3_bucket=S3_BUCKET,
         s3_ideas_prefix=S3_IDEAS_PREFIX,
         logs_dir=LOGS_DIR,

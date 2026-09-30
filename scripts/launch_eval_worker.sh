@@ -40,7 +40,10 @@ case "${GPUS}" in ''|*[!0-9]*) echo "ERROR: AAR_EVAL_GPUS must be an integer" >&
 LOG_DIR="${TEAM_DIR:-${AAR_RUNTIME_ROOT}}/logs"
 mkdir -p "${LOG_DIR}"
 echo "[launch] suite '${SUITE}' has ${N} benchmarks -> evaluator gpu:${GPUS}"
+_TIME_ARGS=()
+[ -z "${AAR_EVAL_TIME:-}" ] || _TIME_ARGS=(--time="${AAR_EVAL_TIME}")
 sbatch --account="${AAR_SLURM_ACCOUNT}" --partition="${AAR_SLURM_PARTITION}" \
   --qos="${AAR_EVAL_QOS}" --gpus="${GPUS}" \
+  "${_TIME_ARGS[@]}" \
   --output="${LOG_DIR}/aar-eval-${SUITE}-%j.out" --job-name="aar-eval-${SUITE}" \
   "${REPO}/scripts/eval_worker.sh" "${SUITE}" "${IDLE}" auto
