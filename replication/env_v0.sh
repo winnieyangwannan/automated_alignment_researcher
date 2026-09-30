@@ -5,6 +5,7 @@ AAR_REPO="$(cd -- "${_REPLICATION_DIR}/.." && pwd)"
 export AAR_REPO
 REPO="${AAR_REPO}"
 export REPO
+export AAR_EXPECTED_BRANCH=winnie-replication-v0
 export HARNESS_PY="${AAR_REPO}/.venv/bin/python"
 export PYTHONPATH="${AAR_REPO}${PYTHONPATH:+:${PYTHONPATH}}"
 export AAR_BENCHMARK_DOCS="${AAR_REPO}/benchmark_docs"

@@ -18,8 +18,10 @@ source "${REPO}/scripts/axis_env.sh"
 pass() { echo "[preflight] PASS: $*"; }
 fail() { echo "[preflight] FAIL: $*" >&2; exit 1; }
 
-[ "$(git -C "${REPO}" branch --show-current)" = uv ] || fail "checkout is not on branch uv"
-pass "branch uv at $(git -C "${REPO}" rev-parse --short HEAD)"
+_EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-uv}"
+[ "$(git -C "${REPO}" branch --show-current)" = "${_EXPECTED_BRANCH}" ] || \
+  fail "checkout is not on branch ${_EXPECTED_BRANCH}"
+pass "branch ${_EXPECTED_BRANCH} at $(git -C "${REPO}" rev-parse --short HEAD)"
 [ -x "${HARNESS_PY}" ] || fail "Python is not executable: ${HARNESS_PY}"
 pass "Python ${HARNESS_PY}"
 [ "${SUITE_NAME}" = honesty ] || fail "expected honesty suite, got ${SUITE_NAME}"
