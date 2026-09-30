@@ -98,6 +98,8 @@ def main() -> None:
         claude_budget = require_positive_budget("AAR_CLAUDE_SPEND_CAP_USD")
     if args.launch or args.require_openai_budget:
         openai_budget = require_positive_budget("AAR_OPENAI_JUDGE_SPEND_CAP_USD")
+        if not (os.getenv("OAI_API") or os.getenv("OPENAI_API_KEY")):
+            raise SystemExit("OpenAI judge key is missing")
 
     if args.launch:
         for marker in ("environment.ok", "gpu.ok", "evaluator_gpu.ok", "web.ok"):
@@ -106,8 +108,6 @@ def main() -> None:
                 raise SystemExit(f"required preflight marker is missing: {path}")
         if not Path(os.environ["AAR_BASELINE_OVERRIDES"]).is_file():
             raise SystemExit("measured Gemma baseline override is missing")
-        if not (os.getenv("OAI_API") or os.getenv("OPENAI_API_KEY")):
-            raise SystemExit("OpenAI judge key is missing")
         if not os.getenv("MODEL_API_KEY"):
             raise SystemExit("Model API key for the Opus monitor is missing")
     print(json.dumps({
