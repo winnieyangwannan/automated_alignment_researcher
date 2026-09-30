@@ -62,6 +62,10 @@ replication of the paper's Figure 3 Sycophancy result, which used
 - `bitsandbytes==0.46.1` has no CUDA 13 binary for Linux ARM64 and is not used
   by this BF16 PEFT path. The dependency remains enabled on supported platforms
   and is excluded on Linux ARM64 to avoid silently loading an incompatible ABI.
+- The Meta Claude launcher's moving `latest` target failed its ARM64 Manifold
+  prefetch because of an internal TLS-chain error. The run pins the already
+  cached and executable native Claude Code `2.1.278`; secure-internet support is
+  verified through the Meta wrapper before use.
 - The current Serve API worker allocation ends around 2026-10-03 10:00 local
   cluster time. Its coordinator has a dependent renewal job, but continuity must
   be verified before relying on it for an unattended run.

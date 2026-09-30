@@ -36,6 +36,9 @@ export AAR_MAX_CONCURRENT_TRAIN_JOBS=2
 
 export AAR_AGENT_MODEL=claude-opus-4-8
 export AAR_EFFORT=max
+# Pin the newest already-cached ARM64 Claude binary. The launcher's moving
+# "latest" target currently fails its host-side Manifold TLS prefetch.
+export META_CLAUDE_CODE_RELEASE=2.1.278
 export AAR_WEB_MODE=meta_secure
 export LITREVIEW_WEB_MODE=meta_secure
 export AAR_FUNCTIONAL_SMOKE=1
