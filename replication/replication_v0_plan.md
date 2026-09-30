@@ -56,6 +56,12 @@ replication of the paper's Figure 3 Sycophancy result, which used
   optional native Triton JIT cannot compile. Replication v0 sets
   `TORCH_DISABLE_NATIVE_JIT=1` and measures the stock-CUDA fallback throughput
   during the target-model GPU smoke before accepting it.
+- Gemma-4's vision tower wraps projection layers in `Gemma4ClippableLinear`,
+  which generic PEFT suffix matching cannot wrap. LoRA target selection is
+  restricted to `model.language_model.layers.*.self_attn.{q_proj,v_proj}`.
+- `bitsandbytes==0.46.1` has no CUDA 13 binary for Linux ARM64 and is not used
+  by this BF16 PEFT path. The dependency remains enabled on supported platforms
+  and is excluded on Linux ARM64 to avoid silently loading an incompatible ABI.
 - The current Serve API worker allocation ends around 2026-10-03 10:00 local
   cluster time. Its coordinator has a dependent renewal job, but continuity must
   be verified before relying on it for an unattended run.

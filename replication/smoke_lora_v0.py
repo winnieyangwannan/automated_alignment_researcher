@@ -33,7 +33,13 @@ def main() -> None:
             r=4,
             lora_alpha=8,
             lora_dropout=0.0,
-            target_modules=["q_proj", "v_proj"],
+            # A broad q_proj/v_proj suffix also matches Gemma-4's vision
+            # Gemma4ClippableLinear wrappers, which PEFT cannot wrap. Restrict
+            # adapters to ordinary Linear layers in the language tower.
+            target_modules=(
+                r"model\.language_model\.layers\.\d+\.self_attn\."
+                r"(q_proj|v_proj)"
+            ),
             task_type="CAUSAL_LM",
         ),
     )

@@ -20,7 +20,10 @@ dependencies = [
     "accelerate==1.12.0",
     "peft==0.18.0",
     "trl==0.21.0",
-    "bitsandbytes==0.46.1",
+    # The published 0.46.1 ARM64 wheel has no CUDA 13 binary. This run uses
+    # BF16 PEFT without quantization, so keep bitsandbytes only where its
+    # supported binaries are available.
+    "bitsandbytes==0.46.1; sys_platform != 'linux' or platform_machine != 'aarch64'",
     "safetensors>=0.8.0; sys_platform == 'linux' and platform_machine == 'aarch64'",
     "safetensors==0.7.0; sys_platform != 'linux' or platform_machine != 'aarch64'",
     "einops==0.8.1",

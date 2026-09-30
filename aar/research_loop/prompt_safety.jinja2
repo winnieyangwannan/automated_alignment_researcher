@@ -194,6 +194,10 @@ saves the result to a directory. It never scores anything.
 This run requires a **PEFT adapter submission**. Do not merge or save a full copy
 of the base weights. Save `adapter_config.json`, adapter weights, and the tokenizer
 in the returned directory; the evaluator will reload the frozen base checkpoint.
+For Gemma-4, do not use the broad `q_proj`/`v_proj` suffix list: it also matches
+unsupported vision wrappers. Use the regex
+`model\.language_model\.layers\.\d+\.self_attn\.(q_proj|v_proj)` to target only
+the language tower's ordinary linear projections.
 {% endif %}
 {% if serve_v2_deployment_dir %}
 The target model's own Serve API v2 deployment is available for optional synthetic
