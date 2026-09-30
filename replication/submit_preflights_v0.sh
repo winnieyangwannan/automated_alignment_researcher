@@ -6,6 +6,10 @@ source "${SCRIPT_DIR}/env_v0.sh"
 # shellcheck disable=SC1091
 source "${AAR_REPO}/scripts/aar_runtime_env.sh"
 mkdir -p "${AAR_RUNTIME_ROOT}/logs"
+if [ "${1:-}" = "--include-web" ]; then
+  "${HARNESS_PY}" "${AAR_REPO}/replication/preflight_v0.py" \
+    --require-claude-budget
+fi
 setup_jid="$(sbatch --parsable --output="${AAR_RUNTIME_ROOT}/logs/env-setup-%j.out" \
   "${AAR_REPO}/replication/setup_env_v0.sbatch")"
 gpu_jid="$(sbatch --parsable --dependency="afterok:${setup_jid%%;*}" \

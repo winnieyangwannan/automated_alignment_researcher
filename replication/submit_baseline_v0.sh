@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/env_v0.sh"
 # shellcheck disable=SC1091
 source "${AAR_REPO}/scripts/aar_runtime_env.sh"
+"${HARNESS_PY}" "${AAR_REPO}/replication/preflight_v0.py" \
+  --require-openai-budget
 BASE_INPUT="${AAR_RUNTIME_ROOT}/baseline_input"
 if [ -e "${BASE_INPUT}/sycophancy" ]; then
   echo "refusing to overwrite retained baseline input: ${BASE_INPUT}/sycophancy" >&2

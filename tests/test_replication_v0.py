@@ -12,6 +12,7 @@ from unittest import mock
 from aar import transport
 from aar.eval_pod.models import split_reasoning_and_answer_text
 from aar.infrastructure.serve_v2 import chat_completion
+from replication.preflight_v0 import require_positive_budget
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,6 +63,17 @@ class ThinkingParserTests(unittest.TestCase):
 
 
 class ReplicationConfigurationTests(unittest.TestCase):
+    def test_paid_preflight_requires_positive_numeric_cap(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(SystemExit, "positive numeric"):
+                require_positive_budget("AAR_CLAUDE_SPEND_CAP_USD")
+        with mock.patch.dict(
+            os.environ, {"AAR_CLAUDE_SPEND_CAP_USD": "250.00"}, clear=True
+        ):
+            self.assertEqual(
+                require_positive_budget("AAR_CLAUDE_SPEND_CAP_USD"), "250.00"
+            )
+
     def test_gemma4_model_alias(self) -> None:
         output = subprocess.check_output(
             ["bash", "-c", ". scripts/models.sh; resolve_model gemma4_31b"],

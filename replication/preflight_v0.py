@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from decimal import Decimal, InvalidOperation
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,17 @@ from aar.eval_pod.models import split_reasoning_and_answer_text
 
 
 EXPECTED_BENCHMARKS = ["sycophancy_eval", "sycon_fp", "mmlu", "gsm8k", "ifeval"]
+
+
+def require_positive_budget(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    try:
+        amount = Decimal(value)
+    except InvalidOperation as error:
+        raise SystemExit(f"{name} must be a positive numeric USD authorization cap") from error
+    if not amount.is_finite() or amount <= 0:
+        raise SystemExit(f"{name} must be a positive numeric USD authorization cap")
+    return value
 
 
 def api_json(url: str, key: str, path: str, body: dict | None = None) -> dict:
@@ -37,6 +49,8 @@ def api_json(url: str, key: str, path: str, body: dict | None = None) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--launch", action="store_true", help="also require paid-call keys and measured baseline")
+    parser.add_argument("--require-claude-budget", action="store_true")
+    parser.add_argument("--require-openai-budget", action="store_true")
     args = parser.parse_args()
 
     repo = Path(os.environ["AAR_REPO"]).resolve()
@@ -78,6 +92,13 @@ def main() -> None:
     if choice.get("finish_reason") != "stop" or not reasoning or answer.strip() != "36":
         raise SystemExit("thinking completion failed structural checks")
 
+    claude_budget = None
+    openai_budget = None
+    if args.launch or args.require_claude_budget:
+        claude_budget = require_positive_budget("AAR_CLAUDE_SPEND_CAP_USD")
+    if args.launch or args.require_openai_budget:
+        openai_budget = require_positive_budget("AAR_OPENAI_JUDGE_SPEND_CAP_USD")
+
     if args.launch:
         for marker in ("environment.ok", "gpu.ok", "evaluator_gpu.ok", "web.ok"):
             path = Path(os.environ["AAR_RUNTIME_ROOT"]) / "preflight" / marker
@@ -98,6 +119,8 @@ def main() -> None:
         "thinking_reasoning_nonempty": True,
         "thinking_final_answer": answer,
         "launch_gates_checked": args.launch,
+        "claude_spend_cap_usd": claude_budget,
+        "openai_judge_spend_cap_usd": openai_budget,
     }, indent=2))
 
 

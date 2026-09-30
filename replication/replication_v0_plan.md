@@ -406,8 +406,13 @@ Hard stop conditions requiring user input:
 
 ### Cost and quota status
 
-- Maximum permitted Claude/Model API spend.
-- Maximum permitted OpenAI judge spend.
+- Pending `AAR_CLAUDE_SPEND_CAP_USD`: maximum permitted Claude/Model API spend.
+- Pending `AAR_OPENAI_JUDGE_SPEND_CAP_USD`: maximum permitted OpenAI judge spend.
+- The librarian smoke, baseline launcher, 12-hour launcher, and 36-hour resume
+  fail closed until their relevant positive numeric authorization caps are set.
+  The harness records these caps but has no live billing API; time and iteration
+  limits bound calls, while a true dollar kill switch must be configured at the
+  provider/account layer if required.
 - Retained storage: adapter-only artifacts, methods, scores, logs, and metadata;
   stop on unexpected full-checkpoint output or storage pressure rather than delete.
 - Concurrent training limit: two jobs, enforced through per-team Slurm dependency lanes.
@@ -418,3 +423,18 @@ Hard stop conditions requiring user input:
 No hill-climbing run is active. Implementation and non-paid preflights may
 proceed autonomously. The paid Gemma baseline and 12-hour hill climb must not be
 submitted until maximum Claude/Model API and OpenAI judge spend are supplied.
+
+Completed non-paid evidence on 2026-09-30:
+
+- Environment job `1654781`: CUDA 13.0, NVIDIA GB300, BF16 computation and
+  required imports passed; only the documented `nvidia-cusparselt-cu13` wheel
+  tag warning remains.
+- Training smoke job `1654782`: thinking-enabled Gemma generation passed at
+  11.871 tokens/s with 58.473 GiB peak allocation; one LoRA step, adapter save,
+  and adapter reload passed.
+- Evaluator smoke job `1654718`: two NVIDIA GB300 devices were visible and the
+  evaluator selected two workers.
+- CPU-only Slurm diagnostic job `1654896`: no CUDA device was visible; bounded
+  arXiv search and full HTML fetch succeeded for arXiv `2309.02144v1`.
+- Still pending by design: the actual Claude librarian/AAR tool-session smoke,
+  Gemma-specific judged baseline, one-iteration paid canary, and 12-hour launch.

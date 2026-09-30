@@ -74,6 +74,10 @@ def main() -> None:
         "thinking_enabled": os.environ.get("AAR_TARGET_ENABLE_THINKING") == "1",
         "agent_model": os.environ.get("AAR_AGENT_MODEL"),
         "agent_effort": os.environ.get("AAR_EFFORT"),
+        "authorized_spend_caps_usd": {
+            "claude": os.environ.get("AAR_CLAUDE_SPEND_CAP_USD"),
+            "openai_judges": os.environ.get("AAR_OPENAI_JUDGE_SPEND_CAP_USD"),
+        },
         "slurm": {
             "account": os.environ["AAR_SLURM_ACCOUNT"],
             "partition": os.environ["AAR_SLURM_PARTITION"],
