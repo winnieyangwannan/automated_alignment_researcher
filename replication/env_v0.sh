@@ -16,6 +16,10 @@ export MODEL=gemma4_31b
 export TARGET_MODEL_PATH=/checkpoint/ram/shared/models/google/gemma-4-31B-it
 export AAR_SUITE_BENCHMARKS="sycophancy_eval sycon_fp mmlu gsm8k ifeval"
 export AAR_TARGET_ENABLE_THINKING=1
+# Torch 2.14's optional native Triton kernels JIT-compile a helper against
+# Python.h, which is absent from the managed compute image. Use stock CUDA
+# kernels; the GPU smoke records the resulting warm throughput.
+export TORCH_DISABLE_NATIVE_JIT=1
 export AAR_REQUIRE_ADAPTER=1
 export AAR_KEEP_CHECKPOINTS=1
 export AAR_METHOD_TRAIN_MINUTES=30

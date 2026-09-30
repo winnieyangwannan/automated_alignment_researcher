@@ -52,6 +52,10 @@ replication of the paper's Figure 3 Sycophancy result, which used
 - The existing sycophancy literature cache contains 40 entries, but its network
   and tool path still needs an in-environment smoke test.
 - The shared Gemma checkpoint occupies approximately 59 GiB.
+- The managed ARM64 image omits Python development headers, so Torch 2.14's
+  optional native Triton JIT cannot compile. Replication v0 sets
+  `TORCH_DISABLE_NATIVE_JIT=1` and measures the stock-CUDA fallback throughput
+  during the target-model GPU smoke before accepting it.
 - The current Serve API worker allocation ends around 2026-10-03 10:00 local
   cluster time. Its coordinator has a dependent renewal job, but continuity must
   be verified before relying on it for an unattended run.
