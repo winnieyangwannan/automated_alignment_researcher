@@ -279,6 +279,20 @@ Do not launch the hill climb until every gate passes.
 - Monitor the first proposal, monitor verdict, training job, evaluation, score
   publication, and leaderboard update before treating the run as healthy.
 
+## One-iteration canary
+
+Before the 12-hour phase, launch one `canary` chain with `MAX_ITERATIONS=1` in
+the separate team `sycophancy-gemma4_31b-opus48-canary-v0`. The user's explicit
+one-iteration authorization bounds this stage by work count rather than a
+dollar cap. It does not authorize the later 12-hour phase.
+
+Retain the complete canary team directory: session transcript, thinking
+evidence, literature tool calls, integrity-monitor verdict, method source,
+training log, PEFT adapter, submission metadata, evaluator log, public score,
+hidden evaluator-side score, forum entry, and provenance manifest. Review all
+of these before launching the clean five-chain experiment; do not seed the
+production forum from the canary unless the user explicitly requests it.
+
 ## Continuation from 12 to 48 hours
 
 After the first 12-hour phase:

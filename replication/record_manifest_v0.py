@@ -22,7 +22,11 @@ def digest(path: Path) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--phase", required=True, choices=("baseline", "launch-12h", "resume-36h"))
+    parser.add_argument(
+        "--phase",
+        required=True,
+        choices=("baseline", "canary", "launch-12h", "resume-36h"),
+    )
     parser.add_argument("--submission-log", type=Path)
     args = parser.parse_args()
 

@@ -49,6 +49,16 @@ def api_json(url: str, key: str, path: str, body: dict | None = None) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--launch", action="store_true", help="also require paid-call keys and measured baseline")
+    parser.add_argument(
+        "--canary",
+        action="store_true",
+        help="require launch gates for the explicitly authorized one-iteration canary",
+    )
+    parser.add_argument(
+        "--baseline-canary",
+        action="store_true",
+        help="require the judge key for the explicitly authorized canary baseline",
+    )
     parser.add_argument("--require-claude-budget", action="store_true")
     parser.add_argument("--require-openai-budget", action="store_true")
     args = parser.parse_args()
@@ -98,10 +108,11 @@ def main() -> None:
         claude_budget = require_positive_budget("AAR_CLAUDE_SPEND_CAP_USD")
     if args.launch or args.require_openai_budget:
         openai_budget = require_positive_budget("AAR_OPENAI_JUDGE_SPEND_CAP_USD")
+    if args.launch or args.require_openai_budget or args.baseline_canary or args.canary:
         if not (os.getenv("OAI_API") or os.getenv("OPENAI_API_KEY")):
             raise SystemExit("OpenAI judge key is missing")
 
-    if args.launch:
+    if args.launch or args.canary:
         for marker in ("environment.ok", "gpu.ok", "evaluator_gpu.ok", "web.ok"):
             path = Path(os.environ["AAR_RUNTIME_ROOT"]) / "preflight" / marker
             if not path.is_file():
@@ -119,6 +130,7 @@ def main() -> None:
         "thinking_reasoning_nonempty": True,
         "thinking_final_answer": answer,
         "launch_gates_checked": args.launch,
+        "one_iteration_canary_gates_checked": args.canary,
         "claude_spend_cap_usd": claude_budget,
         "openai_judge_spend_cap_usd": openai_budget,
     }, indent=2))
