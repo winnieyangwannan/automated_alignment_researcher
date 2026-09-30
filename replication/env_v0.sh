@@ -3,6 +3,8 @@
 _REPLICATION_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 AAR_REPO="$(cd -- "${_REPLICATION_DIR}/.." && pwd)"
 export AAR_REPO
+REPO="${AAR_REPO}"
+export REPO
 export HARNESS_PY="${AAR_REPO}/.venv/bin/python"
 export PYTHONPATH="${AAR_REPO}${PYTHONPATH:+:${PYTHONPATH}}"
 export AAR_BENCHMARK_DOCS="${AAR_REPO}/benchmark_docs"
