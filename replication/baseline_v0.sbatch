@@ -34,4 +34,5 @@ unset JUDGE_MODEL EVAL_MAX_NEW_TOKENS
 # Publish the immutable production suite only after all five exact-model
 # baselines exist, so no placeholder can enter the hill-climb configuration.
 bash "${REPO}/scripts/publish_holdout.sh"
+"${HARNESS_PY}" "${REPO}/replication/record_manifest_v0.py" --phase baseline
 echo "[baseline-v0] complete; production suite=${HOLDOUT_DIR}/sycophancy/sycophancy.yaml"

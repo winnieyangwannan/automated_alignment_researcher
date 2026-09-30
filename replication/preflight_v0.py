@@ -79,6 +79,10 @@ def main() -> None:
         raise SystemExit("thinking completion failed structural checks")
 
     if args.launch:
+        for marker in ("environment.ok", "gpu.ok", "evaluator_gpu.ok", "web.ok"):
+            path = Path(os.environ["AAR_RUNTIME_ROOT"]) / "preflight" / marker
+            if not path.is_file():
+                raise SystemExit(f"required preflight marker is missing: {path}")
         if not Path(os.environ["AAR_BASELINE_OVERRIDES"]).is_file():
             raise SystemExit("measured Gemma baseline override is missing")
         if not (os.getenv("OAI_API") or os.getenv("OPENAI_API_KEY")):

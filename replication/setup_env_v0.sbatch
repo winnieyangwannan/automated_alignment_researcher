@@ -9,6 +9,8 @@
 #SBATCH --time=01:00:00
 set -euo pipefail
 REPO="${AAR_REPO:-${SLURM_SUBMIT_DIR:?submit from the replication worktree}}"
+# shellcheck disable=SC1091
+source "${REPO}/replication/env_v0.sh"
 [ "$(git -C "${REPO}" branch --show-current)" = winnie-replication-v0 ] || {
   echo "wrong branch" >&2
   exit 2
@@ -37,3 +39,5 @@ assert float((x @ x)[0, 0]) == 64.0
 print("CUDA", torch.version.cuda, torch.cuda.get_device_name(0))
 print("imports", transformers.__version__, peft.__version__, trl.__version__)
 PY
+mkdir -p "${AAR_RUNTIME_ROOT}/preflight"
+date --iso-8601=seconds > "${AAR_RUNTIME_ROOT}/preflight/environment.ok"

@@ -36,6 +36,7 @@ export AAR_WEB_MODE=meta_secure
 export LITREVIEW_WEB_MODE=meta_secure
 export AAR_FUNCTIONAL_SMOKE=1
 export AAR_START_EVAL_WORKER=1
+export AAR_HIDE_EVAL_CONFIG=1
 
 export AAR_RUNTIME_ROOT="/checkpoint/ram/aar/${USER:?}/sycophancy-gemma4-31b-single-v0"
 export AAR_BASELINE_OVERRIDES="${AAR_RUNTIME_ROOT}/metadata/gemma4_31b_baseline.json"

@@ -28,3 +28,4 @@ nvidia-smi
   --output-json "${OUT}/generation.json"
 "${HARNESS_PY}" "${REPO}/replication/smoke_lora_v0.py" \
   --model "${TARGET_MODEL_PATH}" --output "${OUT}/adapter"
+date --iso-8601=seconds > "${AAR_RUNTIME_ROOT}/preflight/gpu.ok"

@@ -189,6 +189,11 @@ export IDEA_NAME="${MODEL:-qwen}-${SEED}"
 # unrelated secrets out of the internet-enabled Claude child.
 unset MODEL_API_KEY LLAMA_API_KEY HF_TOKEN HUGGING_FACE_HUB_TOKEN OAI_API OPENAI_API_KEY
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN RUNPOD_API_KEY WANDB_API_KEY
+if [ "${AAR_HIDE_EVAL_CONFIG:-0}" = "1" ]; then
+  # The evaluator has already inherited what it needs. Do not advertise the
+  # run-specific full suite selection or baseline override to the researcher.
+  unset HOLDOUT_DIR HELDOUT_SCORES_DIR AAR_SUITE_BENCHMARKS AAR_BASELINE_OVERRIDES
+fi
 PYTHONUNBUFFERED=1 "${PY}" -u run.py agent --idea-uid "${IDEA_UID}" --idea-name "${IDEA_NAME}" \
   --max-iterations "${MAX_ITERS}" --max-runtime "${FULL_AUTO_MAX_RUNTIME_SECONDS}" --local
 echo "=== DONE ==="

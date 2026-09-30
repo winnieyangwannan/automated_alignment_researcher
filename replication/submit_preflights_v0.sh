@@ -11,7 +11,11 @@ setup_jid="$(sbatch --parsable --output="${AAR_RUNTIME_ROOT}/logs/env-setup-%j.o
 gpu_jid="$(sbatch --parsable --dependency="afterok:${setup_jid%%;*}" \
   --output="${AAR_RUNTIME_ROOT}/logs/gpu-preflight-%j.out" \
   "${AAR_REPO}/replication/gpu_preflight_v0.sbatch")"
-printf 'env_setup=%s\ngpu_preflight=%s\n' "${setup_jid}" "${gpu_jid}"
+eval_gpu_jid="$(sbatch --parsable --dependency="afterok:${setup_jid%%;*}" \
+  --output="${AAR_RUNTIME_ROOT}/logs/eval-gpu-preflight-%j.out" \
+  "${AAR_REPO}/replication/eval_gpu_preflight_v0.sbatch")"
+printf 'env_setup=%s\ngpu_preflight=%s\neval_gpu_preflight=%s\n' \
+  "${setup_jid}" "${gpu_jid}" "${eval_gpu_jid}"
 if [ "${1:-}" = "--include-web" ]; then
   web_jid="$(sbatch --parsable --dependency="afterok:${setup_jid%%;*}" \
     --output="${AAR_RUNTIME_ROOT}/logs/web-preflight-%j.out" \
