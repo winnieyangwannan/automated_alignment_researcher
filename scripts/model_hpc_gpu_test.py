@@ -82,9 +82,16 @@ def main() -> int:
     if model_class == "auto":
         model_class = "image-text" if "ConditionalGeneration" in architectures else "causal"
     if model_class == "image-text":
-        processor = AutoProcessor.from_pretrained(
-            snapshot, local_files_only=True, trust_remote_code=args.trust_remote_code
-        )
+        try:
+            # Text-only generation does not need the image processor (or its
+            # torchvision dependency). Gemma-4 exposes its text tokenizer directly.
+            processor = AutoTokenizer.from_pretrained(
+                snapshot, local_files_only=True, trust_remote_code=args.trust_remote_code
+            )
+        except Exception:
+            processor = AutoProcessor.from_pretrained(
+                snapshot, local_files_only=True, trust_remote_code=args.trust_remote_code
+            )
         loader = AutoModelForImageTextToText
     else:
         processor = AutoTokenizer.from_pretrained(
