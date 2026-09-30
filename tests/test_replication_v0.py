@@ -85,6 +85,8 @@ class ReplicationConfigurationTests(unittest.TestCase):
     def test_run_specific_prompt_baselines_hide_heldout_and_exclusions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "baselines.json"
+            env = os.environ.copy()
+            env.pop("AAR_BASELINE_OVERRIDES", None)
             subprocess.run(
                 [
                     sys.executable,
@@ -95,6 +97,7 @@ class ReplicationConfigurationTests(unittest.TestCase):
                     "--only", "sycophancy_eval", "sycon_fp", "mmlu", "gsm8k", "ifeval",
                 ],
                 cwd=ROOT,
+                env=env,
                 check=True,
             )
             table = json.loads(output.read_text())
