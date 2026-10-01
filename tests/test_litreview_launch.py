@@ -405,10 +405,12 @@ class LitreviewLaunchTest(unittest.TestCase):
 
         self.assertEqual(captured["cli_path"], str(cli))
         helper = run_litreview._paper_search_helper()
+        repo = helper.parents[1]
         self.assertEqual(
             captured["allowed_tools"],
             [
                 f"Bash({helper} *)",
+                f"Bash(cd {repo} && ./scripts/aar-paper-search *)",
                 "mcp__server-api-tools__get_literature",
                 "mcp__server-api-tools__share_literature",
             ],
@@ -419,6 +421,9 @@ class LitreviewLaunchTest(unittest.TestCase):
         self.assertIs(captured["strict_mcp_config"], True)
         self.assertEqual(captured["mcp_servers"], {})
         self.assertIn(f"`{helper} search", captured["task"])
+        self.assertIn(
+            f"`cd {repo} && ./scripts/aar-paper-search search", captured["task"]
+        )
         self.assertNotIn("WebSearch", captured["allowed_tools"])
         self.assertNotIn("Read", captured["allowed_tools"])
         self.assertNotIn("Write", captured["allowed_tools"])

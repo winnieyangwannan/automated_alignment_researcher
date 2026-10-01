@@ -216,12 +216,20 @@ def _web_config() -> tuple[list[str], str, str, str]:
         helper = _paper_search_helper()
         if not helper.is_file() or not os.access(helper, os.X_OK):
             raise RuntimeError(f"restricted paper-search helper is not executable: {helper}")
+        repo = helper.parents[1]
+        relative_helper = f"./scripts/{helper.name}"
         return (
-            [f"Bash({helper} *)", *forum_tools],
+            [
+                f"Bash({helper} *)",
+                f"Bash(cd {repo} && {relative_helper} *)",
+                *forum_tools,
+            ],
             "dontAsk",
             (
-                f"Use only `{helper} search \"<query>\" --limit <1-10>` to discover real "
-                f"arXiv papers and `{helper} fetch <arxiv-id>` to retrieve metadata and "
+                f"Use only `{helper} search \"<query>\" --limit <1-10>` or the equivalent "
+                f"repo-scoped form `cd {repo} && {relative_helper} search \"<query>\" "
+                f"--limit <1-10>` to discover real arXiv papers. Use the same helper's "
+                f"`fetch <arxiv-id>` command to retrieve metadata and "
                 "bounded visible paper text when arXiv HTML is available, with an explicitly "
                 "labeled abstract fallback otherwise. Fetch every paper you cite. Omit any "
                 "detail or result that the returned content does not directly support rather "
