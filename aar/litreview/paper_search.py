@@ -473,8 +473,8 @@ def _normalize_cached_paper(value: Any) -> dict[str, Any] | None:
     }
 
 
-def _search_cache(path: Path, query: str, limit: int) -> list[dict[str, Any]]:
-    """Rank a bounded, prepared metadata snapshot without network access."""
+def _load_cache(path: Path) -> list[Any]:
+    """Load and validate the bounded prepared-cache envelope."""
     try:
         if path.stat().st_size > MAX_CACHE_BYTES:
             raise PaperSearchError("paper-search cache exceeded the size limit")
@@ -493,6 +493,12 @@ def _search_cache(path: Path, query: str, limit: int) -> list[dict[str, Any]]:
     papers = payload.get("papers")
     if not isinstance(papers, list):
         raise PaperSearchError("paper-search cache has no papers list")
+    return papers
+
+
+def _search_cache(path: Path, query: str, limit: int) -> list[dict[str, Any]]:
+    """Rank a bounded, prepared metadata snapshot without network access."""
+    papers = _load_cache(path)
 
     query_terms = _cache_terms(query)
     ranked: list[tuple[int, str, str, dict[str, Any]]] = []
@@ -561,6 +567,26 @@ def search(query: str, limit: int = MAX_RESULTS) -> dict[str, Any]:
 def fetch(arxiv_id: str) -> dict[str, Any]:
     """Fetch bounded paper text, explicitly falling back to its abstract."""
     normalized = normalize_arxiv_id(arxiv_id)
+    cache_path = os.getenv("AAR_PAPER_SEARCH_CACHE")
+    if cache_path:
+        for raw in _load_cache(Path(cache_path)):
+            paper = _normalize_cached_paper(raw)
+            if paper is None or not paper["arxiv_id"]:
+                continue
+            try:
+                cached_arxiv_id = normalize_arxiv_id(paper["arxiv_id"])
+            except PaperSearchError:
+                continue
+            if cached_arxiv_id == normalized:
+                return {
+                    "ok": True,
+                    "operation": "fetch",
+                    "paper": paper,
+                    "content": paper["abstract"],
+                    "content_source": "prepared_cache_abstract",
+                    "content_truncated": False,
+                    "warning": "prepared cache contains metadata and abstract only",
+                }
     results = _request({"id_list": normalized, "max_results": 1})
     if not results:
         raise PaperSearchError(f"arXiv paper not found: {normalized}")

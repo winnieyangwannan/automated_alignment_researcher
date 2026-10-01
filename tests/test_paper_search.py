@@ -101,6 +101,47 @@ class PaperSearchTest(unittest.TestCase):
                 paper_search.search("honesty")
         curl.assert_not_called()
 
+    def test_fetch_uses_matching_prepared_cache_before_network(self) -> None:
+        payload = {
+            "schema_version": paper_search.PAPER_SEARCH_CACHE_SCHEMA_VERSION,
+            "papers": [
+                {
+                    "arxiv_id": "2310.13548v2",
+                    "title": "Towards Understanding Sycophancy",
+                    "authors": ["Test Author"],
+                    "abstract": "Cached evidence.",
+                    "entry_url": "https://arxiv.org/abs/2310.13548v2",
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "papers.json"
+            cache.write_text(json.dumps(payload), encoding="utf-8")
+            with (
+                patch.dict("os.environ", {"AAR_PAPER_SEARCH_CACHE": str(cache)}),
+                patch.object(paper_search, "_request") as request,
+            ):
+                result = paper_search.fetch("2310.13548v2")
+
+        request.assert_not_called()
+        self.assertEqual(result["content"], "Cached evidence.")
+        self.assertEqual(result["content_source"], "prepared_cache_abstract")
+        self.assertFalse(result["content_truncated"])
+
+    def test_fetch_invalid_explicit_cache_fails_before_network(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "papers.json"
+            cache.write_text("not json", encoding="utf-8")
+            with (
+                patch.dict("os.environ", {"AAR_PAPER_SEARCH_CACHE": str(cache)}),
+                patch.object(paper_search, "_request") as request,
+                self.assertRaisesRegex(
+                    paper_search.PaperSearchError, "could not be read"
+                ),
+            ):
+                paper_search.fetch("2310.13548v2")
+        request.assert_not_called()
+
     @patch.object(paper_search, "_curl", return_value=OPENALEX_JSON)
     def test_search_uses_fixed_openalex_metadata(self, curl) -> None:
         result = paper_search.search("honesty sycophancy", limit=1)
