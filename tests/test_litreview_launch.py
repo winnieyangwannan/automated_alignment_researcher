@@ -367,8 +367,9 @@ class LitreviewLaunchTest(unittest.TestCase):
             def __init__(self, **kwargs: object) -> None:
                 captured.update(kwargs)
 
-            async def execute(self, task: str) -> None:
+            async def execute(self, task: str) -> object:
                 captured["task"] = task
+                return types.SimpleNamespace(success=True, error=None)
 
         with tempfile.TemporaryDirectory() as directory:
             cli = Path(directory) / "claude"
@@ -421,6 +422,46 @@ class LitreviewLaunchTest(unittest.TestCase):
         self.assertNotIn("WebSearch", captured["allowed_tools"])
         self.assertNotIn("Read", captured["allowed_tools"])
         self.assertNotIn("Write", captured["allowed_tools"])
+
+    def test_survey_reports_agent_result_failures(self) -> None:
+        class FailedAgent:
+            def __init__(self, **kwargs: object) -> None:
+                del kwargs
+
+            async def execute(self, task: str) -> object:
+                del task
+                return types.SimpleNamespace(success=False, error="authentication failed")
+
+        agent_module = types.ModuleType("aar.research_loop.agent")
+        agent_module.BaseAgent = FailedAgent
+        lit_forum_module = types.ModuleType("aar.research_loop.tools.lit_forum")
+        lit_forum_module.count = lambda: 0
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(
+                os.environ,
+                {"LITREVIEW_WEB_MODE": "native_web"},
+                clear=False,
+            ),
+            patch.dict(
+                sys.modules,
+                {
+                    "aar.research_loop.agent": agent_module,
+                    "aar.research_loop.tools.lit_forum": lit_forum_module,
+                },
+            ),
+            patch("builtins.print") as printed,
+        ):
+            asyncio.run(
+                run_litreview._survey(
+                    "general", "General {axis}", "sycophancy", 1,
+                    "claude-sonnet-4-6", Path(directory), {},
+                )
+            )
+
+        self.assertTrue(
+            any("authentication failed" in str(call) for call in printed.call_args_list)
+        )
 
     def test_native_web_mode_preserves_portable_tools(self) -> None:
         with patch.dict(

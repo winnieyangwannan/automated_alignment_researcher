@@ -178,7 +178,9 @@ async def _survey(cat: str, desc: str, axis: str, per: int, model: str, ws: Path
     )
     print(f"[litreview] surveying '{cat}' ...", flush=True)
     try:
-        await agent.execute(task=task)
+        result = await agent.execute(task=task)
+        if not result.success:
+            raise RuntimeError(result.error or "librarian agent failed without an error message")
     except Exception as e:
         print(f"[litreview] '{cat}' agent error: {e}", flush=True)
     print(f"[litreview] '{cat}' done; forum now has {count()} entries", flush=True)

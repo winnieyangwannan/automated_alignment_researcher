@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import tempfile
 from typing import Any
 
@@ -54,6 +55,7 @@ async def smoke(query: str) -> dict[str, Any]:
     ):
         os.environ.pop(secret_name, None)
     allowed_rule = f"Bash({helper} search *)"
+    search_command = f"{helper} search {shlex.quote(query)} --limit 1"
     tool_uses: list[dict[str, Any]] = []
     text_parts: list[str] = []
 
@@ -65,12 +67,14 @@ async def smoke(query: str) -> dict[str, Any]:
             cwd=workspace,
             model="claude-sonnet-4-6",
             setting_sources=[],
+            tools=["Bash"],
+            strict_mcp_config=True,
             max_turns=3,
         )
         prompt = (
-            "Use the approved aar-paper-search helper exactly once to search arXiv for "
-            f"{query!r}, with --limit 1. Do not use any other tool. Then report the first "
-            "paper's exact title and arXiv ID."
+            "Run exactly this command once and do not run any other command:\n"
+            f"{search_command}\n"
+            "Then report the first paper's exact title and arXiv ID from its JSON output."
         )
         async with ClaudeSDKClient(options=options) as client:
             await client.query(prompt)
