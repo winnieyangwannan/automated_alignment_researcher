@@ -18,6 +18,8 @@ single-axis behavior and adds versioned search for `honesty_sycophancy`.
 - Live job `1660761` exposed a secure-command mismatch before writing entries.
   Secure librarians now start in the repository and can invoke only the tracked
   paper helper, avoiding unsupported compound `cd` commands and broad Bash.
+- Live job `1661219` exposed oversized fetch results and disallowed `cat` retries.
+  Paper text is now capped for inline tool delivery without filesystem access.
 - Final focused validation: 50 tests passed; shell and Python syntax checks passed.
 
 ## Current decisions

@@ -426,6 +426,7 @@ class LitreviewLaunchTest(unittest.TestCase):
             "`./scripts/aar-paper-search search", captured["task"]
         )
         self.assertIn("Do not prepend `cd`", captured["task"])
+        self.assertIn("never run `cat`", captured["task"])
         self.assertNotIn("WebSearch", captured["allowed_tools"])
         self.assertNotIn("Read", captured["allowed_tools"])
         self.assertNotIn("Write", captured["allowed_tools"])

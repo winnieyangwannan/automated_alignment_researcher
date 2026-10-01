@@ -232,7 +232,9 @@ def _web_config() -> tuple[list[str], str, str, str]:
                 f"helper with another shell command. Use the same helper's "
                 f"`fetch <arxiv-id>` command to retrieve metadata and "
                 "bounded visible paper text when arXiv HTML is available, with an explicitly "
-                "labeled abstract fallback otherwise. Fetch every paper you cite. Omit any "
+                "labeled abstract fallback otherwise. The returned content is intentionally "
+                "bounded; use it directly and never run `cat` on a tool-result file. Fetch "
+                "every paper you cite. Omit any "
                 "detail or result that the returned content does not directly support rather "
                 "than guessing"
             ),

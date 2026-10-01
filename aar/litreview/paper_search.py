@@ -28,7 +28,10 @@ MAX_QUERY_CHARS = 500
 MAX_RESULTS = 10
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_HTML_BYTES = 8 * 1024 * 1024
-MAX_TEXT_CHARS = 160_000
+# Keep one fetch result below Claude Code's inline tool-result threshold. Larger
+# results are externalized to a file that the secure librarian cannot read
+# without granting unrelated filesystem access.
+MAX_TEXT_CHARS = 20_000
 REQUEST_TIMEOUT_SECONDS = 30
 CURL_PATH = Path("/usr/bin/curl")
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import unittest
 from unittest.mock import patch
@@ -40,6 +41,24 @@ def completed(
 
 
 class PaperSearchTest(unittest.TestCase):
+    def test_fetch_json_fits_inline_agent_tool_result(self) -> None:
+        paper = {
+            "arxiv_id": "2310.13548v2",
+            "title": "Towards Understanding Sycophancy",
+            "authors": ["Test Author"],
+            "abstract": "A useful abstract.",
+        }
+        content = "x" * paper_search.MAX_TEXT_CHARS
+        with (
+            patch.object(paper_search, "_request", return_value=[paper]),
+            patch.object(
+                paper_search, "_fetch_html_text", return_value=(content, True)
+            ),
+        ):
+            result = paper_search.fetch("2310.13548v2")
+
+        self.assertLess(len(json.dumps(result)), 25_000)
+
     @patch.object(paper_search, "_require_executable")
     @patch("subprocess.run")
     def test_search_uses_fixed_argv_curl_and_bounded_arxiv_endpoint(
