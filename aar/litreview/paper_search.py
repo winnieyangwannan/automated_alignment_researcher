@@ -177,8 +177,10 @@ def _curl(url: str, *, max_bytes: int) -> bytes:
         except subprocess.TimeoutExpired as error:
             raise PaperSearchError("arXiv request timed out") from error
         detail = completed.stderr.decode("utf-8", errors="replace").strip()
-        rate_limited = completed.returncode != 0 and "429" in detail
-        if not rate_limited or attempt == len(RATE_LIMIT_BACKOFF_SECONDS):
+        transient_failure = completed.returncode == 28 or (
+            completed.returncode != 0 and "429" in detail
+        )
+        if not transient_failure or attempt == len(RATE_LIMIT_BACKOFF_SECONDS):
             break
         # Separate concurrent helper processes slightly while retaining a hard
         # upper bound on retries and total waiting time.

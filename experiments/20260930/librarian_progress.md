@@ -21,7 +21,7 @@ single-axis behavior and adds versioned search for `honesty_sycophancy`.
 - Live job `1661219` exposed oversized fetch results and disallowed `cat` retries.
   Paper text is now capped for inline tool delivery without filesystem access.
 - Live job `1661274` completed three tracks before arXiv throttling blocked joint
-  search. The helper now owns bounded 429 backoff; 25 valid entries are cached.
+  search. The helper now owns bounded 429/timeout backoff; 25 valid entries are cached.
 - Final focused validation: 50 tests passed; shell and Python syntax checks passed.
 
 ## Current decisions

@@ -45,20 +45,21 @@ class PaperSearchTest(unittest.TestCase):
     @patch.object(paper_search.os, "getpid", return_value=0)
     @patch.object(paper_search, "_require_executable")
     @patch("subprocess.run")
-    def test_curl_retries_429_with_bounded_backoff(
+    def test_curl_retries_429_and_timeout_with_bounded_backoff(
         self, run, require_executable, getpid, sleep
     ) -> None:
         del require_executable, getpid
         run.side_effect = [
             completed(b"", returncode=22, stderr=b"curl: (22) HTTP 429"),
+            completed(b"", returncode=28, stderr=b"curl: (28) timed out"),
             completed(ATOM),
         ]
 
         result = paper_search.search("sycophancy", limit=1)
 
         self.assertEqual(result["results"][0]["arxiv_id"], "2310.13548v2")
-        self.assertEqual(run.call_count, 2)
-        sleep.assert_called_once_with(5)
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual([call.args for call in sleep.call_args_list], [(5,), (15,)])
 
     def test_fetch_json_fits_inline_agent_tool_result(self) -> None:
         paper = {
