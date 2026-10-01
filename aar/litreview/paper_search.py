@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.parse
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -34,6 +35,7 @@ MAX_HTML_BYTES = 8 * 1024 * 1024
 MAX_TEXT_CHARS = 20_000
 REQUEST_TIMEOUT_SECONDS = 30
 CURL_PATH = Path("/usr/bin/curl")
+RATE_LIMIT_BACKOFF_SECONDS = (5, 15, 30)
 
 _ATOM = "{http://www.w3.org/2005/Atom}"
 _ARXIV = "{http://arxiv.org/schemas/atom}"
@@ -162,16 +164,27 @@ def _curl(url: str, *, max_bytes: int) -> bytes:
         os.getenv("AAR_PAPER_SEARCH_USER_AGENT", DEFAULT_USER_AGENT),
     ]
     command.append(url)
-    try:
-        completed = subprocess.run(
-            command,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=REQUEST_TIMEOUT_SECONDS + 5,
-        )
-    except subprocess.TimeoutExpired as error:
-        raise PaperSearchError("arXiv request timed out") from error
+    completed: subprocess.CompletedProcess[bytes] | None = None
+    for attempt in range(len(RATE_LIMIT_BACKOFF_SECONDS) + 1):
+        try:
+            completed = subprocess.run(
+                command,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=REQUEST_TIMEOUT_SECONDS + 5,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise PaperSearchError("arXiv request timed out") from error
+        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        rate_limited = completed.returncode != 0 and "429" in detail
+        if not rate_limited or attempt == len(RATE_LIMIT_BACKOFF_SECONDS):
+            break
+        # Separate concurrent helper processes slightly while retaining a hard
+        # upper bound on retries and total waiting time.
+        time.sleep(RATE_LIMIT_BACKOFF_SECONDS[attempt] + os.getpid() % 3)
+
+    assert completed is not None
     if completed.returncode != 0:
         detail = completed.stderr.decode("utf-8", errors="replace").strip()
         raise PaperSearchError(
