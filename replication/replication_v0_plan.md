@@ -32,6 +32,15 @@ replication of the paper's Figure 3 Sycophancy result, which used
 - Verify GPU visibility in the relevant execution environments before launch.
 - Verify internet-backed literature search from inside the actual librarian
   Slurm and Claude tool environment before launch.
+- Use `gpt-5.6-sol` for every GPT-backed role unless the user explicitly
+  specifies another GPT model.
+- Route GPT calls through FAIR Model API with `MODEL_API_KEY`; do not use a
+  public OpenAI key or silently fall back to `api.openai.com`.
+- Before any full benchmark evaluation, successfully complete one minimal
+  `gpt-5.6-sol` request from the same Slurm environment and API path.
+- Start Gemma-4-31B evaluation at batch size 4. Reduce it to 2 if any allocator
+  warning remains; use the accepted setting unchanged for the baseline and all
+  trained candidates.
 - Preserve checkpoints, scores, logs, generated methods, and run metadata; do
   not delete or overwrite retained artifacts without explicit approval.
 
@@ -42,6 +51,10 @@ replication of the paper's Figure 3 Sycophancy result, which used
 - Authenticated readiness returned HTTP 200.
 - `/v1/models` advertised exactly `gemma-4-31B-it`.
 - A minimal authenticated completion returned HTTP 200.
+- FAIR Model API smoke job `1658751` ran from a CPU-only `g3` Slurm allocation
+  and verified that `MODEL_API_KEY` exposes canonical model ID
+  `gpt-5-6-sol`. A Responses request completed successfully and returned exactly
+  `SMOKE_OK` (23 total tokens). No credential value was logged.
 - The model checkpoint is available at
   `/checkpoint/ram/shared/models/google/gemma-4-31B-it`.
 - The server uses vLLM and exposes an OpenAI-compatible chat-completions API.
@@ -69,6 +82,13 @@ replication of the paper's Figure 3 Sycophancy result, which used
 - The current Serve API worker allocation ends around 2026-10-03 10:00 local
   cluster time. Its coordinator has a dependent renewal job, but continuity must
   be verified before relying on it for an unattended run.
+- Baseline job `1658175` demonstrated that the prior public-OpenAI setup is
+  invalid: its `OAI_API` credential received HTTP 401 for every
+  `sycophancy_eval` judgment, producing zero scored examples. This attempt must
+  not supply a baseline.
+- The same attempt showed that batch size 32 is unsuitable for thinking-enabled
+  Gemma-4-31B evaluation: allocator warnings and truncated generations require a
+  smaller run-specific batch.
 - No AAR hill-climbing job is currently active. The obsolete Honesty/Gemma-2B
   setup was cancelled.
 
@@ -76,8 +96,17 @@ replication of the paper's Figure 3 Sycophancy result, which used
 
 The research-visible optimization set will contain only `sycophancy_eval`.
 It measures whether the model keeps a factually correct answer when the user
-states an incorrect belief. The source-paper GPT-4 judge grades factual
-correctness; higher is less sycophantic.
+states an incorrect belief. Replication v0 uses `gpt-5.6-sol` to grade factual
+correctness; higher is less sycophantic. This is an intentional deviation from
+the source paper's GPT-4 judge, so the Gemma baseline and every candidate must be
+measured with the same pinned `gpt-5.6-sol` judge.
+
+All GPT judging uses FAIR Model API's Responses endpoint
+`https://api.meta.ai/v1/responses` with `MODEL_API_KEY`. The verified catalog
+identifier for the user-requested `gpt-5.6-sol` is `gpt-5-6-sol`; pin that exact
+identifier in the run manifest. Fail closed if it becomes unavailable; never
+substitute another GPT model or route to the public OpenAI endpoint
+automatically.
 
 The optimized score is the closed fraction:
 
@@ -252,8 +281,17 @@ Do not launch the hill climb until every gate passes.
 
 - Measure `google/gemma-4-31B-it` on `sycophancy_eval`, `sycon_fp`, MMLU,
   GSM8K, and IFEval using the exact intended thinking and decoding settings.
-- Use the source-paper judges: GPT-4 for `sycophancy_eval` and GPT-4o for
-  `sycon_fp`.
+- Use `gpt-5.6-sol` through FAIR Model API for both `sycophancy_eval` and
+  `sycon_fp`. Record that this differs from the paper's GPT-4/GPT-4o judges.
+- Run a minimal `gpt-5.6-sol` request from the actual baseline Slurm environment
+  before loading Gemma or evaluating any benchmark. Require HTTP success, a
+  completed Responses payload, and parseable output.
+- Set the initial evaluation batch size to 4. If any CUDA allocator warning or
+  OOM occurs, stop and rerun in a fresh retained attempt with batch size 2. Do
+  not mix batch sizes between the baseline and candidate evaluations.
+- After memory is stable, measure the truncation rate separately. Any change to
+  stop-token handling or output-token limits requires a fresh baseline and must
+  be applied identically to all candidates.
 - Record means, 95% confidence intervals, sample counts, decoding parameters,
   judge identities, and dataset revisions/hashes.
 - Store the measured values under the exact Gemma-4-31B model key. Never reuse
@@ -354,7 +392,7 @@ launch blocker.
   smoke proves it infeasible; stop for user direction rather than silently
   increasing it.
 - Pending: numeric authorization for paid Claude Opus researcher/monitor calls
-  and GPT-4 / GPT-4o judge calls. Five AARs for 48 hours imply substantial API
+  and `gpt-5.6-sol` judge calls. Five AARs for 48 hours imply substantial API
   spend beyond GPU allocation costs.
 
 ### Checkpoint retention and storage
@@ -371,16 +409,16 @@ launch blocker.
 
 ### Source-control path
 
-- The current devserver `winnie` branch and validated `uv` launcher line have
-  diverged. `winnie` has one unique commit, lacks 89 `uv` commits, and its
-  worktree contains unrelated user changes.
-- Recommended: create a clean `winnie-replication-v0` worktree from `uv`, apply
-  only the experiment changes there, and leave the existing dirty `winnie`
-  worktree untouched.
-- Alternative: reconcile `uv` into the exact `winnie` branch, but only after the
-  user decides how its unrelated changes should be handled.
-- Authorized: commit the scoped implementation and use direct Git-over-SSH
-  synchronization to a matching HPC worktree. GitHub will not be updated.
+- The authoritative development branch is `uv` at
+  `/home/winnieyangwn/aar-worktrees/uv`; the execution branch is also `uv` at
+  `/storage/home/winnieyangwn/aar-worktrees/uv` on `fair-cw-use2-1`.
+- Replication commits formerly developed on `winnie-replication-v0` were
+  fast-forwarded into the devserver `uv` branch on 2026-09-30. The unrelated
+  uncommitted edit to `experiments/20260920/literature_review_launch_guide.md`
+  remains preserved and excluded from replication commits.
+- Commit scoped implementation and documentation changes on `uv`, then use
+  direct Git-over-SSH to fast-forward the matching HPC `uv` worktree. Do not
+  push GitHub unless separately requested.
 
 ### Isolation and sandbox policy
 
@@ -404,7 +442,7 @@ Recommended authority while the user is unavailable:
 - Retry transient scheduler, HTTP 429/5xx, endpoint-renewal, and node failures
   with bounded backoff and no more than three attempts per stage.
 - Make small, scoped fixes supported by a failing test, rerun validation, and
-  commit them to the approved experiment branch.
+  commit them to `uv`.
 - Never cancel unrelated jobs, overwrite a measured baseline, delete retained
   artifacts, push to GitHub, change credentials, or broaden the benchmark set.
 
@@ -414,7 +452,8 @@ Hard stop conditions requiring user input:
 - Thinking cannot be enabled and parsed consistently across baseline and trained
   evaluation.
 - The Gemma-specific baseline has insufficient hill-climbing headroom.
-- The OpenAI judge model is unavailable or judge parity cannot be established.
+- `gpt-5.6-sol` is unavailable to the configured FAIR Model API key, the
+  same-Slurm canary call fails, or judge parity cannot be established.
 - Secure librarian or per-iteration AAR internet access fails after three
   bounded attempts.
 - The Serve API deployment cannot be kept available for the requested phase.
@@ -425,7 +464,9 @@ Hard stop conditions requiring user input:
 ### Cost and quota status
 
 - Pending `AAR_CLAUDE_SPEND_CAP_USD`: maximum permitted Claude/Model API spend.
-- Pending `AAR_OPENAI_JUDGE_SPEND_CAP_USD`: maximum permitted OpenAI judge spend.
+- Pending judge-spend authorization for `gpt-5.6-sol` through FAIR Model API.
+  Replace the legacy `AAR_OPENAI_JUDGE_SPEND_CAP_USD` naming in the replication
+  launcher with a provider-neutral Model API judge cap before launch.
 - The librarian smoke, baseline launcher, 12-hour launcher, and 36-hour resume
   fail closed until their relevant positive numeric authorization caps are set.
   The harness records these caps but has no live billing API; time and iteration
@@ -438,9 +479,14 @@ Hard stop conditions requiring user input:
 
 ## Current hold point
 
-No hill-climbing run is active. Implementation and non-paid preflights may
-proceed autonomously. The paid Gemma baseline and 12-hour hill climb must not be
-submitted until maximum Claude/Model API and OpenAI judge spend are supplied.
+No hill-climbing run is active. Baseline job `1658175` is an invalid diagnostic
+attempt because its public OpenAI judge calls returned HTTP 401 and its batch-32
+Gemma evaluation produced memory/truncation warnings. Preserve its artifacts but
+do not use its scores. The `gpt-5.6-sol` FAIR Model API gate passed in Slurm job
+`1658751`; the remaining baseline gates are to route the evaluator through that
+backend and make batch size 4 (or, if needed, 2) pass the memory/truncation check.
+The paid baseline and 12-hour hill climb must not proceed until the
+provider-neutral judge-spend cap is supplied.
 
 Completed non-paid evidence on 2026-09-30:
 
