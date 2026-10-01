@@ -32,6 +32,14 @@ HTML = (
     + b"evidence " * 100
     + b"</p></article></body></html>"
 )
+SEARCH_HTML = b"""
+<ol><li class="arxiv-result">
+  <p class="list-title"><a href="https://arxiv.org/abs/2310.13548v2">arXiv:2310.13548v2</a></p>
+  <p class="title is-5 mathjax">Towards Understanding Sycophancy</p>
+  <p class="authors"><a>Test Author</a>, <a>Second Author</a></p>
+  <span class="abstract-full">A useful joint-behavior abstract.</span>
+</li></ol>
+"""
 
 
 def completed(
@@ -41,6 +49,21 @@ def completed(
 
 
 class PaperSearchTest(unittest.TestCase):
+    @patch.object(paper_search, "_curl", return_value=SEARCH_HTML)
+    @patch.object(
+        paper_search,
+        "_request",
+        side_effect=paper_search.PaperSearchError("curl exit 28: timeout"),
+    )
+    def test_search_falls_back_to_fixed_arxiv_html(self, request, curl) -> None:
+        del request
+        result = paper_search.search("honesty sycophancy", limit=1)
+
+        self.assertEqual(result["results"][0]["arxiv_id"], "2310.13548v2")
+        self.assertEqual(result["results"][0]["authors"], ["Test Author", "Second Author"])
+        self.assertIn("query=honesty+sycophancy", curl.call_args.args[0])
+        self.assertTrue(paper_search._approved_url(curl.call_args.args[0]))
+
     def test_search_json_fits_inline_agent_tool_result(self) -> None:
         result = {
             "ok": True,

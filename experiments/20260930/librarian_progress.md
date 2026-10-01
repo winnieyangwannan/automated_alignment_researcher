@@ -24,6 +24,7 @@ single-axis behavior and adds versioned search for `honesty_sycophancy`.
   search. The helper now owns bounded 429/timeout backoff; 25 valid entries are cached.
 - Live job `1661698` exposed oversized multi-result searches. Search payloads are
   now capped at one bounded abstract, the live-proven inline shape.
+- Export API outages now fall back to fixed-scope, bounded arXiv HTML search.
 - Final focused validation: 50 tests passed; shell and Python syntax checks passed.
 
 ## Current decisions

@@ -9,6 +9,7 @@ fixed argument vector; no command is interpreted by a shell.
 from __future__ import annotations
 
 import argparse
+import html
 from html.parser import HTMLParser
 import json
 import os
@@ -135,6 +136,10 @@ def _approved_url(url: str) -> bool:
         parsed.hostname == "arxiv.org"
         and parsed.path.startswith("/html/")
         and not parsed.query
+    ) or (
+        parsed.hostname == "arxiv.org"
+        and parsed.path == "/search/"
+        and bool(parsed.query)
     )
 
 
@@ -267,20 +272,102 @@ def _fetch_html_text(arxiv_id: str) -> tuple[str, bool]:
     return text, parser.truncated
 
 
+def _plain_html(value: str) -> str:
+    """Return normalized visible text from one small arXiv search fragment."""
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", value)).split())
+
+
+def _search_html(query: str, limit: int) -> list[dict[str, Any]]:
+    """Use arXiv's public HTML search when the export API is unavailable."""
+    url = "https://arxiv.org/search/?" + urllib.parse.urlencode(
+        {
+            "query": query,
+            "searchtype": "all",
+            "abstracts": "show",
+            "order": "-announced_date_first",
+            "size": limit,
+        }
+    )
+    payload = _curl(url, max_bytes=MAX_HTML_BYTES).decode("utf-8", errors="replace")
+    chunks = re.findall(
+        r'<li[^>]*class="[^"]*arxiv-result[^"]*"[^>]*>(.*?)</li>',
+        payload,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    results: list[dict[str, Any]] = []
+    for chunk in chunks[:limit]:
+        identifier = re.search(
+            r'href="https?://arxiv\.org/abs/([^"?#]+)', chunk, re.IGNORECASE
+        )
+        title = re.search(
+            r'<p[^>]*class="[^"]*\btitle\b[^"]*"[^>]*>(.*?)</p>',
+            chunk,
+            re.IGNORECASE | re.DOTALL,
+        )
+        authors_block = re.search(
+            r'<p[^>]*class="[^"]*\bauthors\b[^"]*"[^>]*>(.*?)</p>',
+            chunk,
+            re.IGNORECASE | re.DOTALL,
+        )
+        abstract = re.search(
+            r'<span[^>]*class="[^"]*\babstract-full\b[^"]*"[^>]*>(.*?)</span>',
+            chunk,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if identifier is None or title is None:
+            continue
+        arxiv_id = normalize_arxiv_id(identifier.group(1))
+        authors = (
+            [
+                _plain_html(item)
+                for item in re.findall(
+                    r"<a[^>]*>(.*?)</a>", authors_block.group(1), re.DOTALL
+                )
+            ]
+            if authors_block is not None
+            else []
+        )
+        results.append(
+            {
+                "arxiv_id": arxiv_id,
+                "title": _plain_html(title.group(1)),
+                "authors": [author for author in authors if author],
+                "published": "",
+                "updated": "",
+                "abstract": _plain_html(abstract.group(1))[:MAX_ABSTRACT_CHARS]
+                if abstract is not None
+                else "",
+                "categories": [],
+                "primary_category": "",
+                "entry_url": f"https://arxiv.org/abs/{arxiv_id}",
+                "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}",
+            }
+        )
+    if not results:
+        raise PaperSearchError("arXiv HTML search returned no parseable results")
+    return results
+
+
 def search(query: str, limit: int = MAX_RESULTS) -> dict[str, Any]:
     """Search all arXiv fields for a plain-language query."""
     normalized = normalize_query(query)
     if not 1 <= limit <= MAX_RESULTS:
         raise PaperSearchError(f"limit must be between 1 and {MAX_RESULTS}")
-    results = _request(
-        {
-            "search_query": f"all:{normalized}",
-            "start": 0,
-            "max_results": limit,
-            "sortBy": "relevance",
-            "sortOrder": "descending",
-        }
-    )
+    try:
+        results = _request(
+            {
+                "search_query": f"all:{normalized}",
+                "start": 0,
+                "max_results": limit,
+                "sortBy": "relevance",
+                "sortOrder": "descending",
+            }
+        )
+    except PaperSearchError as error:
+        detail = str(error)
+        if "curl exit 28" not in detail and "429" not in detail:
+            raise
+        results = _search_html(normalized, limit)
     return {"ok": True, "operation": "search", "query": normalized, "results": results}
 
 
