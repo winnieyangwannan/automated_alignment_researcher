@@ -26,6 +26,8 @@ single-axis behavior and adds versioned search for `honesty_sycophancy`.
   now capped at one bounded abstract, the live-proven inline shape.
 - Export API outages now fall back to fixed-scope, bounded arXiv HTML search.
 - Fixed-scope OpenAlex metadata search keeps discovery available during arXiv outages.
+- Secure-jail API throttling is handled by a reproducible public-paper cache built
+  on the FAIR login node and searched locally by the same restricted helper.
 - Final focused validation: 50 tests passed; shell and Python syntax checks passed.
 
 ## Current decisions

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 import urllib.parse
@@ -50,6 +52,55 @@ def completed(
 
 
 class PaperSearchTest(unittest.TestCase):
+    def test_search_ranks_prepared_cache_before_network(self) -> None:
+        payload = {
+            "schema_version": paper_search.PAPER_SEARCH_CACHE_SCHEMA_VERSION,
+            "source": "OpenAlex",
+            "papers": [
+                {
+                    "title": "Generic Language Model Alignment",
+                    "abstract": "A broad survey.",
+                    "entry_url": "https://openalex.org/W1",
+                    "seed_queries": ["alignment"],
+                },
+                {
+                    "title": "Sycophancy and Honesty in Language Models",
+                    "abstract": "Joint evaluation evidence.",
+                    "entry_url": "https://openalex.org/W2",
+                    "seed_queries": ["honesty sycophancy"],
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "papers.json"
+            cache.write_text(json.dumps(payload), encoding="utf-8")
+            with (
+                patch.dict("os.environ", {"AAR_PAPER_SEARCH_CACHE": str(cache)}),
+                patch.object(paper_search, "_curl") as curl,
+            ):
+                result = paper_search.search("honesty sycophancy")
+
+        curl.assert_not_called()
+        self.assertEqual(result["search_source"], "prepared_cache")
+        self.assertEqual(
+            result["results"][0]["title"],
+            "Sycophancy and Honesty in Language Models",
+        )
+
+    def test_invalid_explicit_cache_fails_before_network(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "papers.json"
+            cache.write_text('{"schema_version": 99, "papers": []}', encoding="utf-8")
+            with (
+                patch.dict("os.environ", {"AAR_PAPER_SEARCH_CACHE": str(cache)}),
+                patch.object(paper_search, "_curl") as curl,
+                self.assertRaisesRegex(
+                    paper_search.PaperSearchError, "unsupported schema"
+                ),
+            ):
+                paper_search.search("honesty")
+        curl.assert_not_called()
+
     @patch.object(paper_search, "_curl", return_value=OPENALEX_JSON)
     def test_search_uses_fixed_openalex_metadata(self, curl) -> None:
         result = paper_search.search("honesty sycophancy", limit=1)

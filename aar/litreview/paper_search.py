@@ -36,6 +36,8 @@ MAX_HTML_BYTES = 8 * 1024 * 1024
 # results are externalized to a file that the secure librarian cannot read
 # without granting unrelated filesystem access.
 MAX_TEXT_CHARS = 20_000
+MAX_CACHE_BYTES = 16 * 1024 * 1024
+PAPER_SEARCH_CACHE_SCHEMA_VERSION = 1
 REQUEST_TIMEOUT_SECONDS = 30
 CURL_PATH = Path("/usr/bin/curl")
 RATE_LIMIT_BACKOFF_SECONDS = (5, 15, 30)
@@ -436,11 +438,108 @@ def _search_openalex(query: str, limit: int) -> list[dict[str, Any]]:
     return results
 
 
+def _cache_terms(value: str) -> set[str]:
+    """Return stable search terms for the deliberately small local index."""
+    return set(re.findall(r"[a-z0-9]+", value.casefold()))
+
+
+def _normalize_cached_paper(value: Any) -> dict[str, Any] | None:
+    """Validate one cached record and expose only the normal search fields."""
+    if not isinstance(value, dict) or not isinstance(value.get("title"), str):
+        return None
+    title = " ".join(value["title"].split())
+    if not title:
+        return None
+    authors = value.get("authors")
+    if not isinstance(authors, list):
+        authors = []
+    categories = value.get("categories")
+    if not isinstance(categories, list):
+        categories = []
+    return {
+        "arxiv_id": str(value.get("arxiv_id") or "")[:100],
+        "title": title[:500],
+        "authors": [str(author)[:200] for author in authors[:100]],
+        "published": str(value.get("published") or "")[:100],
+        "updated": str(value.get("updated") or "")[:100],
+        "abstract": str(value.get("abstract") or "")[:MAX_ABSTRACT_CHARS],
+        "categories": [str(category)[:100] for category in categories[:100]],
+        "primary_category": str(value.get("primary_category") or "")[:100],
+        "entry_url": str(value.get("entry_url") or "")[:2_000],
+        "pdf_url": str(value.get("pdf_url") or "")[:2_000],
+        "metadata_source": str(
+            value.get("metadata_source") or "OpenAlex cache"
+        )[:100],
+    }
+
+
+def _search_cache(path: Path, query: str, limit: int) -> list[dict[str, Any]]:
+    """Rank a bounded, prepared metadata snapshot without network access."""
+    try:
+        if path.stat().st_size > MAX_CACHE_BYTES:
+            raise PaperSearchError("paper-search cache exceeded the size limit")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise PaperSearchError(f"paper-search cache does not exist: {path}") from error
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise PaperSearchError(
+            f"paper-search cache could not be read: {path}"
+        ) from error
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != PAPER_SEARCH_CACHE_SCHEMA_VERSION
+    ):
+        raise PaperSearchError("paper-search cache has an unsupported schema")
+    papers = payload.get("papers")
+    if not isinstance(papers, list):
+        raise PaperSearchError("paper-search cache has no papers list")
+
+    query_terms = _cache_terms(query)
+    ranked: list[tuple[int, str, str, dict[str, Any]]] = []
+    for raw in papers:
+        paper = _normalize_cached_paper(raw)
+        if paper is None:
+            continue
+        title_terms = _cache_terms(paper["title"])
+        abstract_terms = _cache_terms(paper["abstract"])
+        seed_queries = raw.get("seed_queries") if isinstance(raw, dict) else []
+        if not isinstance(seed_queries, list):
+            seed_queries = []
+        seed_terms = _cache_terms(" ".join(str(item) for item in seed_queries))
+        score = (
+            6 * len(query_terms & title_terms)
+            + 2 * len(query_terms & seed_terms)
+            + len(query_terms & abstract_terms)
+        )
+        if query.casefold() in paper["title"].casefold():
+            score += 12
+        if score:
+            identity = (
+                paper["arxiv_id"]
+                or paper["entry_url"]
+                or paper["title"].casefold()
+            )
+            ranked.append((-score, paper["title"].casefold(), identity, paper))
+    ranked.sort(key=lambda item: item[:3])
+    return [item[3] for item in ranked[:limit]]
+
+
 def search(query: str, limit: int = MAX_RESULTS) -> dict[str, Any]:
     """Search all arXiv fields for a plain-language query."""
     normalized = normalize_query(query)
     if not 1 <= limit <= MAX_RESULTS:
         raise PaperSearchError(f"limit must be between 1 and {MAX_RESULTS}")
+    cache_path = os.getenv("AAR_PAPER_SEARCH_CACHE")
+    if cache_path:
+        cached_results = _search_cache(Path(cache_path), normalized, limit)
+        if cached_results:
+            return {
+                "ok": True,
+                "operation": "search",
+                "query": normalized,
+                "results": cached_results,
+                "search_source": "prepared_cache",
+            }
     try:
         results = _search_openalex(normalized, limit)
     except PaperSearchError:
