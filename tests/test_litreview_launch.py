@@ -410,7 +410,8 @@ class LitreviewLaunchTest(unittest.TestCase):
             captured["allowed_tools"],
             [
                 f"Bash({helper} *)",
-                f"Bash(cd {repo} && ./scripts/aar-paper-search *)",
+                f"Bash(cd {repo})",
+                "Bash(./scripts/aar-paper-search *)",
                 "mcp__server-api-tools__get_literature",
                 "mcp__server-api-tools__share_literature",
             ],

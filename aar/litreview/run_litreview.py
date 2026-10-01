@@ -221,7 +221,8 @@ def _web_config() -> tuple[list[str], str, str, str]:
         return (
             [
                 f"Bash({helper} *)",
-                f"Bash(cd {repo} && {relative_helper} *)",
+                f"Bash(cd {repo})",
+                f"Bash({relative_helper} *)",
                 *forum_tools,
             ],
             "dontAsk",
