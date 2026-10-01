@@ -16,8 +16,8 @@ single-axis behavior and adds versioned search for `honesty_sycophancy`.
 - Added focused tests for manifests, coverage, deduplication, filters, metadata,
   prompt wiring, and legacy behavior.
 - Live job `1660761` exposed a secure-command mismatch before writing entries.
-  The permission rules now accept Claude's repo-scoped helper form as exact `cd`
-  and helper segments without granting broad Bash access.
+  Secure librarians now start in the repository and can invoke only the tracked
+  paper helper, avoiding unsupported compound `cd` commands and broad Bash.
 - Final focused validation: 50 tests passed; shell and Python syntax checks passed.
 
 ## Current decisions

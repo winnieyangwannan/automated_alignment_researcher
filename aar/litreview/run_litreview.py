@@ -221,15 +221,15 @@ def _web_config() -> tuple[list[str], str, str, str]:
         return (
             [
                 f"Bash({helper} *)",
-                f"Bash(cd {repo})",
                 f"Bash({relative_helper} *)",
                 *forum_tools,
             ],
             "dontAsk",
             (
-                f"Use only `{helper} search \"<query>\" --limit <1-10>` or the equivalent "
-                f"repo-scoped form `cd {repo} && {relative_helper} search \"<query>\" "
-                f"--limit <1-10>` to discover real arXiv papers. Use the same helper's "
+                f"Your working directory is `{repo}`. Use only `{relative_helper} search "
+                f"\"<query>\" --limit <1-10>` or `{helper} search \"<query>\" --limit "
+                f"<1-10>` to discover real arXiv papers. Do not prepend `cd` or combine the "
+                f"helper with another shell command. Use the same helper's "
                 f"`fetch <arxiv-id>` command to retrieve metadata and "
                 "bounded visible paper text when arXiv HTML is available, with an explicitly "
                 "labeled abstract fallback otherwise. Fetch every paper you cite. Omit any "
@@ -325,7 +325,7 @@ async def _survey(
         agent = BaseAgent(
             name=f"lit-{cat}",
             allowed_tools=allowed,
-            workspace=ws,
+            workspace=_paper_search_helper().parents[1] if meta_secure else ws,
             mcp_servers=mcp,
             model=model,
             cli_path=_resolve_cli_path(),
