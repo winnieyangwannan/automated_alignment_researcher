@@ -50,15 +50,11 @@ def completed(
 
 class PaperSearchTest(unittest.TestCase):
     @patch.object(paper_search, "_curl", return_value=SEARCH_HTML)
-    @patch.object(
-        paper_search,
-        "_request",
-        side_effect=paper_search.PaperSearchError("curl exit 28: timeout"),
-    )
-    def test_search_falls_back_to_fixed_arxiv_html(self, request, curl) -> None:
-        del request
+    @patch.object(paper_search, "_request")
+    def test_search_uses_fixed_arxiv_html_first(self, request, curl) -> None:
         result = paper_search.search("honesty sycophancy", limit=1)
 
+        request.assert_not_called()
         self.assertEqual(result["results"][0]["arxiv_id"], "2310.13548v2")
         self.assertEqual(result["results"][0]["authors"], ["Test Author", "Second Author"])
         self.assertIn("query=honesty+sycophancy", curl.call_args.args[0])
@@ -96,9 +92,12 @@ class PaperSearchTest(unittest.TestCase):
             completed(ATOM),
         ]
 
-        result = paper_search.search("sycophancy", limit=1)
+        payload = paper_search._curl(
+            f"{paper_search.ARXIV_API_URL}?search_query=all%3Asycophancy",
+            max_bytes=paper_search.MAX_RESPONSE_BYTES,
+        )
 
-        self.assertEqual(result["results"][0]["arxiv_id"], "2310.13548v2")
+        self.assertEqual(payload, ATOM)
         self.assertEqual(run.call_count, 3)
         self.assertEqual([call.args for call in sleep.call_args_list], [(5,), (15,)])
 

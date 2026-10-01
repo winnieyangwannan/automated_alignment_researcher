@@ -284,7 +284,6 @@ def _search_html(query: str, limit: int) -> list[dict[str, Any]]:
             "query": query,
             "searchtype": "all",
             "abstracts": "show",
-            "order": "-announced_date_first",
             "size": limit,
         }
     )
@@ -354,6 +353,10 @@ def search(query: str, limit: int = MAX_RESULTS) -> dict[str, Any]:
     if not 1 <= limit <= MAX_RESULTS:
         raise PaperSearchError(f"limit must be between 1 and {MAX_RESULTS}")
     try:
+        # HTML search is more reliable from FAIR secure internet. The export
+        # API remains a structured fallback for portable deployments.
+        results = _search_html(normalized, limit)
+    except PaperSearchError:
         results = _request(
             {
                 "search_query": f"all:{normalized}",
@@ -363,11 +366,6 @@ def search(query: str, limit: int = MAX_RESULTS) -> dict[str, Any]:
                 "sortOrder": "descending",
             }
         )
-    except PaperSearchError as error:
-        detail = str(error)
-        if "curl exit 28" not in detail and "429" not in detail:
-            raise
-        results = _search_html(normalized, limit)
     return {"ok": True, "operation": "search", "query": normalized, "results": results}
 
 
