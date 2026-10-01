@@ -2,7 +2,7 @@
 
 ## BLUF
 
-The multi-dimensional librarian foundation is implemented. It preserves
+The multi-dimensional librarian is implemented and live-validated. It preserves
 single-axis behavior and adds versioned search for `honesty_sycophancy`.
 
 ## Completed
@@ -30,6 +30,9 @@ single-axis behavior and adds versioned search for `honesty_sycophancy`.
   on the FAIR login node. The restricted helper serves both search results and
   cached abstracts without network access from the secure librarian.
 - Final focused validation: 61 tests passed; shell and Python syntax checks passed.
+- FAIR job `1662185` completed all five tracks with 41 unique valid papers:
+  general 10, honesty 7, sycophancy 8, cross-dimensional 8, and evaluation 8.
+  The schema-v2 manifest passes `baseline_ready(30)`.
 
 ## Current decisions
 
@@ -41,6 +44,5 @@ single-axis behavior and adds versioned search for `honesty_sycophancy`.
 
 ## Remaining
 
-- Relaunch and complete the live five-track FAIR survey.
 - Finish the broader suite, scoring, baseline, and evaluator refactor before an
   end-to-end multi-dimensional AAR launch.
