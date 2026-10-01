@@ -56,7 +56,7 @@ class PaperSearchTest(unittest.TestCase):
             ],
         }
 
-        self.assertEqual(paper_search.MAX_RESULTS, 3)
+        self.assertEqual(paper_search.MAX_RESULTS, 1)
         self.assertLess(len(json.dumps(result)), 20_000)
 
     @patch.object(paper_search.time, "sleep")
