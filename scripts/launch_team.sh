@@ -50,6 +50,12 @@ RUNTIME_ROOT="${AAR_RUNTIME_ROOT:-${REPO}/_runs}"
 # shellcheck disable=SC1091
 source "${REPO}/scripts/axis_env.sh"   # sets SUITE_NAME, HELD_OUT_BENCH, SAFETY_*, SEED_METHOD, TARGET_MODEL
 SUITE="${SUITE_NAME}"
+if [ "${SUITE}" = "honesty_sycophancy" ]; then
+  # Used by literature filtering and to tag papers researchers add during the run.
+  export AAR_DIMENSIONS="${AAR_DIMENSIONS:-honesty,sycophancy}"
+  export LITREVIEW_DIMENSIONS="${LITREVIEW_DIMENSIONS:-honesty,sycophancy}"
+  export LITREVIEW_TARGET_MODEL="${LITREVIEW_TARGET_MODEL:-google/gemma-4-31B-it}"
+fi
 SEEDS="${1:-alpha beta gamma}"
 MAX_ITERS="${2:-500}"          # per-CHAIN session cap (raised 100->500 2026-06-20); the 47h walltime is usually the binding limit per cycle
 MAX_H="${3:-47}"
@@ -220,12 +226,18 @@ _lit_count_dir() {
   LIT_AXIS_DIR="$1" LIT_FORUM_DIR='' PYTHONPATH="${PYTHONPATH}" "${PY}" -c \
     'from aar.research_loop.tools.lit_forum import count; print(count())'
 }
+_lit_ready_dir() {
+  LIT_AXIS_DIR="$1" LIT_FORUM_DIR='' PYTHONPATH="${PYTHONPATH}" "${PY}" -c \
+    'import sys; from aar.research_loop.tools.lit_forum import baseline_ready; print("1" if baseline_ready(int(sys.argv[1])) else "0")' \
+    "${LITREVIEW_MIN:-30}"
+}
 _lit_n="$(_lit_count_dir "${LIT_AXIS}")"
+_lit_ready="$(_lit_ready_dir "${LIT_AXIS}")"
 # RECOVERY: a prior run may have surveyed this axis under a legacy location (the old per-axis
 # _cache/<axis>/, an old per-team aar_litreview/<axis>-*/ forum, or a prior team's
 # aar_teams/<axis>-*/litreview/). Reuse it rather than re-survey — a survey is ~40 min and is
 # identical per axis. [[lit-cache-vs-forum]]
-if [ "${LITREVIEW_SKIP:-0}" != "1" ] && [ "${LITREVIEW_REFRESH:-0}" != "1" ] && [ "${_lit_n}" -lt "${LITREVIEW_MIN:-30}" ]; then
+if [ "${LITREVIEW_SKIP:-0}" != "1" ] && [ "${LITREVIEW_REFRESH:-0}" != "1" ] && [ "${_lit_ready}" != "1" ]; then
   shopt -s nullglob
   _lit_candidates=(
     "${RUNTIME_ROOT}/litreview/_cache/${SUITE}"
@@ -236,9 +248,11 @@ if [ "${LITREVIEW_SKIP:-0}" != "1" ] && [ "${LITREVIEW_REFRESH:-0}" != "1" ] && 
     case "${_src%/}" in "${LIT_AXIS%/}") continue;; esac
     [ -d "${_src%/}" ] || continue
     _pn="$(_lit_count_dir "${_src%/}")"
-    if [ "${_pn:-0}" -ge "${LITREVIEW_MIN:-30}" ]; then
+    _pr="$(_lit_ready_dir "${_src%/}")"
+    if [ "${_pr}" = "1" ]; then
       cp "${_src%/}"/*.json "${LIT_AXIS}/" 2>/dev/null || true
       _lit_n="$(_lit_count_dir "${LIT_AXIS}")"
+      _lit_ready="$(_lit_ready_dir "${LIT_AXIS}")"
       echo "[team] RECOVERED ${_lit_n} axis-baseline lit entries from ${_src%/} (no re-survey)"
       break
     fi
@@ -246,7 +260,7 @@ if [ "${LITREVIEW_SKIP:-0}" != "1" ] && [ "${LITREVIEW_REFRESH:-0}" != "1" ] && 
 fi
 if [ "${LITREVIEW_SKIP:-0}" = "1" ]; then
   echo "[team] LITREVIEW_SKIP=1 — skipping the literature survey"
-elif [ "${LITREVIEW_REFRESH:-0}" != "1" ] && [ "${_lit_n}" -ge "${LITREVIEW_MIN:-30}" ]; then
+elif [ "${LITREVIEW_REFRESH:-0}" != "1" ] && [ "${_lit_ready}" = "1" ]; then
   echo "[team] reusing AXIS baseline literature for '${SUITE}' (${_lit_n} entries, ${LIT_AXIS}) — no re-survey (LITREVIEW_REFRESH=1 to rebuild)"
 else
   [ "${LITREVIEW_REFRESH:-0}" = "1" ] && { echo "[team] LITREVIEW_REFRESH=1 — re-surveying axis '${SUITE}'"; rm -f "${LIT_AXIS}"/*.json 2>/dev/null || true; }
@@ -260,8 +274,9 @@ else
   fi
 fi
 n_lit="$(_lit_count_dir "${LIT_AXIS}")"
-if [ "${LITREVIEW_SKIP:-0}" != "1" ] && [ "${n_lit}" -lt "${LITREVIEW_MIN:-30}" ]; then
-  echo "[team] FATAL: literature baseline has ${n_lit} valid unique entries; need ${LITREVIEW_MIN:-30}" >&2
+lit_ready="$(_lit_ready_dir "${LIT_AXIS}")"
+if [ "${LITREVIEW_SKIP:-0}" != "1" ] && [ "${lit_ready}" != "1" ]; then
+  echo "[team] FATAL: literature baseline has ${n_lit} valid unique entries; need ${LITREVIEW_MIN:-30} plus all composed-manifest track minima" >&2
   exit 1
 fi
 echo "[team] axis literature baseline ready: ${n_lit} entries at ${LIT_AXIS}  (team adds its own to ${LIT_FORUM_DIR})"

@@ -127,13 +127,19 @@ mkdir -p "${LIT_FORUM_DIR}"
 export LITREVIEW_WORKSPACE="${LITREVIEW_WORKSPACE:-${REPO}/_runs/litreview/workspaces/${TEAM_ID}}"
 mkdir -p "${LITREVIEW_WORKSPACE}"
 export LITREVIEW_MODEL="${LITREVIEW_MODEL:-claude-sonnet-4-6}"
+# The composed honesty+sycophancy suite has an explicit research scope and target.
+# Keep both overridable so focused reruns can survey a subset without changing code.
+if [ "${SUITE}" = "honesty_sycophancy" ]; then
+  export LITREVIEW_DIMENSIONS="${LITREVIEW_DIMENSIONS:-honesty,sycophancy}"
+  export LITREVIEW_TARGET_MODEL="${LITREVIEW_TARGET_MODEL:-google/gemma-4-31B-it}"
+fi
 PY="${HARNESS_PY:-${REPO}/.venv/bin/python}"
 if [ ! -x "${PY}" ]; then
   echo "[litreview] ERROR: Python is not executable at ${PY}; set HARNESS_PY" >&2
   exit 2
 fi
 cd "${REPO}"
-echo "[litreview] axis=${SUITE} team=${TEAM_ID} model=${LITREVIEW_MODEL} web=${LITREVIEW_WEB_MODE} -> ${LIT_FORUM_DIR} (min ${MIN})"
+echo "[litreview] axis=${SUITE} dimensions=${LITREVIEW_DIMENSIONS:-${SUITE}} target=${LITREVIEW_TARGET_MODEL:-unspecified} team=${TEAM_ID} model=${LITREVIEW_MODEL} web=${LITREVIEW_WEB_MODE} -> ${LIT_FORUM_DIR} (min ${MIN})"
 PYTHONUNBUFFERED=1 "${PY}" -u -m aar.litreview.run_litreview --suite "${SUITE}" --min-entries "${MIN}"
 _ENTRY_COUNT="$("${PY}" -c 'from aar.research_loop.tools.lit_forum import count; print(count())')"
 echo "[litreview] valid unique entries: ${_ENTRY_COUNT}"

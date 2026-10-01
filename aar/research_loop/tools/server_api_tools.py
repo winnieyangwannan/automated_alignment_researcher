@@ -1102,13 +1102,19 @@ def _lit_digest(e: Dict[str, Any], full: bool = False) -> Dict[str, Any]:
     (drill-down) returns the FULL reproduction guide (every rich field); compact gives a
     browsable digest. Keep these in sync with lit_forum._FIELDS / share_literature."""
     if full:
-        return {k: e.get(k) for k in ("method", "category", "relevance", "summary", "intuition",
+        return {k: e.get(k) for k in ("schema_version", "track", "scope", "dimensions",
+                                      "relevance_by_dimension", "interaction_evidence",
+                                      "method", "category", "relevance", "summary", "intuition",
                                       "core_mechanism", "reproduction_recipe", "prerequisites",
                                       "training_data", "evaluation", "key_results",
                                       "applicability", "source")}
     return {
         "method": e.get("method"),                                        # name
         "category": e.get("category"),
+        "scope": e.get("scope"),
+        "dimensions": e.get("dimensions") or [],
+        "relevance_by_dimension": e.get("relevance_by_dimension") or {},
+        "interaction_evidence": _lit_clip(e.get("interaction_evidence"), _LIT_MECH_CHARS),
         "what_it_does": _lit_clip(e.get("summary"), _LIT_SUMMARY_CHARS),   # the idea
         "key_ingredients": _lit_clip(e.get("core_mechanism"), _LIT_MECH_CHARS),  # how it works
         "key_results": _lit_clip(e.get("key_results"), _LIT_MECH_CHARS),  # what it achieved
@@ -1118,9 +1124,9 @@ def _lit_digest(e: Dict[str, Any], full: bool = False) -> Dict[str, Any]:
 
 @tool(
     "get_literature",
-    "Read the shared LITERATURE-REVIEW forum — a pre-built survey of safety-training "
-    "methods (general post-training methods AND ones specific to the safety axis you "
-    "optimize), plus papers other researchers added. CONSULT THIS BEFORE designing a "
+    "Read the shared LITERATURE-REVIEW forum — a pre-built survey of general, "
+    "dimension-specific, and cross-dimensional safety-training methods, plus papers "
+    "other researchers added. CONSULT THIS BEFORE designing a "
     "method, to ground your idea in known approaches and avoid reinventing. By default "
     "returns COMPACT summaries (method · what it does · key ingredients · source). Pass "
     "a `query` keyword and/or `category` to drill down — matching papers come back FULL "
@@ -1129,7 +1135,9 @@ def _lit_digest(e: Dict[str, Any], full: bool = False) -> Dict[str, Any]:
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "keyword filter — also switches matches to FULL detail (optional)"},
-            "category": {"type": "string", "description": "category filter ('general' / 'axis-specific' / 'mechanism' / 'recent') — also switches matches to FULL detail (optional)"},
+            "category": {"type": "string", "description": "category or track filter, including general, axis-specific, mechanism, recent, cross-dimensional, or evaluation (optional)"},
+            "dimension": {"type": "string", "description": "dimension filter, for example 'honesty' or 'sycophancy' (optional)"},
+            "scope": {"type": "string", "description": "scope filter: 'general', 'dimension-specific', 'cross-dimensional', or 'evaluation' (optional)"},
         },
     },
 )
@@ -1138,16 +1146,25 @@ async def get_literature(args: Dict[str, Any]) -> Dict[str, Any]:
         from aar.research_loop.tools.lit_forum import read_lit_entries
         q = (args.get("query") or "").strip().lower()
         cat = (args.get("category") or "").strip().lower()
+        dimension = (args.get("dimension") or "").strip().lower()
+        scope = (args.get("scope") or "").strip().lower()
         entries = read_lit_entries()
 
         def keep(e):
             if cat and cat not in str(e.get("category", "")).lower():
                 return False
+            if scope and scope != str(e.get("scope") or "").lower():
+                return False
+            entry_dimensions = {
+                str(item).lower() for item in (e.get("dimensions") or [])
+            }
+            if dimension and dimension not in entry_dimensions:
+                return False
             if q and q not in json.dumps(e, default=str).lower():
                 return False
             return True
         sel = [e for e in entries if keep(e)]
-        drill = bool(q or cat)  # any filter ⇒ caller wants full detail on the (smaller) match set
+        drill = bool(q or cat or dimension or scope)
         truncated = 0
         if not drill and len(sel) > _LIT_BROWSE_MAX:
             truncated = len(sel) - _LIT_BROWSE_MAX
@@ -1160,8 +1177,8 @@ async def get_literature(args: Dict[str, Any]) -> Dict[str, Any]:
             "literature": view,
         }
         if not drill:
-            out["hint"] = ("Compact summaries shown. Pass query='<keyword>' or "
-                           "category='general|axis-specific|mechanism|recent' to get the full "
+            out["hint"] = ("Compact summaries shown. Pass query, category, dimension, or scope "
+                           "to get the full "
                            "mechanism + how-to-apply notes for matching papers.")
         if truncated:
             out["note"] = (f"{truncated} older entries omitted from this browse "
@@ -1176,12 +1193,17 @@ async def get_literature(args: Dict[str, Any]) -> Dict[str, Any]:
     "share_literature",
     "Add a paper/method to the shared literature-review forum (use when your own "
     "per-iteration search turns up something useful others should see). Provide the "
-    "structured fields; do NOT invent papers — only real ones you found.",
+    "structured fields, including affected dimensions and any evidence of interaction "
+    "between them; do NOT invent papers — only real ones you found.",
     {
         "type": "object",
         "properties": {
             "method": {"type": "string", "description": "method/approach or paper name"},
-            "category": {"type": "string", "description": "'general' | 'axis-specific' | 'mechanism' | 'recent'"},
+            "category": {"type": "string", "description": "literature category or assigned track"},
+            "scope": {"type": "string", "description": "'general' | 'dimension-specific' | 'cross-dimensional' | 'evaluation'"},
+            "dimensions": {"type": "array", "items": {"type": "string"}, "description": "alignment dimensions addressed by the source"},
+            "relevance_by_dimension": {"type": "object", "description": "map from each dimension to low, medium, or high relevance"},
+            "interaction_evidence": {"type": "string", "description": "reported positive transfer, interference, trade-off, or 'not studied'"},
             "summary": {"type": "string", "description": "3-4 sentence summary: the problem it tackles and the idea"},
             "intuition": {"type": "string", "description": "the KEY INSIGHT in plain terms (2-4 sentences) — WHY it works, the intuition a practitioner carries away, and when it would/wouldn't help"},
             "core_mechanism": {"type": "string", "description": "how it works IN TECHNICAL DETAIL (5-8 sentences): the training objective / loss / algorithm, the design choices that matter, and the key idea"},
@@ -1190,9 +1212,9 @@ async def get_literature(args: Dict[str, Any]) -> Dict[str, Any]:
             "training_data": {"type": "string", "description": "if the method TRAINS the model: exactly WHAT data it uses, how it is constructed/collected (human vs synthetic/templated, any generator model), size, and labels/preference pairs — be specific. If it needs no training (inference-time / steering / decoding), say 'no training: <how it intervenes>'"},
             "evaluation": {"type": "string", "description": "the EVALUATION PROTOCOL — how success is measured so a replicator can verify: which benchmarks/datasets, the metric, any judge model, and the decoding/setup"},
             "key_results": {"type": "string", "description": "the paper's MAIN EMPIRICAL RESULTS — concrete numbers/findings: what it improved, by how much, on which base models and benchmarks, vs which baselines, plus notable limitations or failure cases"},
-            "applicability": {"type": "string", "description": "how it could reduce the target safety axis in a small (~3B) instruct model, what data/compute it would need, and what it would cost to try"},
+            "applicability": {"type": "string", "description": "how to adapt the method to the configured target checkpoint, including required data, compute, and interaction risks"},
             "source": {"type": "string", "description": "title, authors, year, and arXiv/URL"},
-            "relevance": {"type": "string", "description": "low | medium | high (to the target axis)"},
+            "relevance": {"type": "string", "description": "overall low | medium | high relevance to the selected dimensions"},
         },
         "required": ["method", "summary", "intuition", "core_mechanism", "reproduction_recipe",
                      "prerequisites", "training_data", "evaluation", "key_results", "source"],
@@ -1202,12 +1224,20 @@ async def share_literature(args: Dict[str, Any]) -> Dict[str, Any]:
     try:
         from aar.research_loop.tools.lit_forum import write_lit_entry
         e = write_lit_entry({**{k: args.get(k) for k in (
+            "scope", "dimensions", "relevance_by_dimension", "interaction_evidence",
             "method", "category", "summary", "intuition", "core_mechanism", "reproduction_recipe",
             "prerequisites", "training_data", "evaluation", "key_results", "applicability",
             "source", "relevance")},
             "by": os.environ.get("IDEA_NAME") or os.environ.get("LITREVIEW_AREA") or "aar"})
         return {"content": [{"type": "text", "text": json.dumps(
-            {"success": e.get("_saved_path") is not None, "id": e.get("id"), "error": e.get("error")}, indent=2)}]}
+            {
+                "success": e.get("_saved_path") is not None,
+                "id": e.get("id"),
+                "duplicate": bool(e.get("_duplicate")),
+                "error": e.get("error"),
+            },
+            indent=2,
+        )}]}
     except Exception as e:
         return {"content": [{"type": "text", "text": json.dumps({"success": False, "error": str(e)})}]}
 

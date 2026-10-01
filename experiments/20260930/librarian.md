@@ -128,3 +128,82 @@ The skill should:
 7. Report the first failing boundary: authentication, tool authorization,
    helper syntax, network, parsing, or forum write.
 8. Never copy environments between the x86 devserver and ARM64 HPC cluster.
+
+## Multi-dimensional literature search
+
+### BLUF
+
+The original prompt cannot be reused unchanged. It assumes one `{axis}` and a
+small ~3B target. Passing `honesty_sycophancy` as that axis would produce an
+ambiguous search and would not force coverage of both properties or their
+interaction.
+
+The multi-dimensional prompt now tells the librarian to prepare research for
+one `google/gemma-4-31B-it` checkpoint that improves honesty and sycophancy
+together while preserving capability. It explicitly says not to assume that an
+improvement transfers across dimensions.
+
+### Search tracks
+
+The composed survey has five required tracks:
+
+1. General multi-task and multi-objective alignment methods.
+2. Honesty and deception methods, mechanisms, data, and public evaluations.
+3. Sycophancy methods, mechanisms, data, and public evaluations.
+4. Cross-dimensional transfer, interference, and trade-offs.
+5. Joint evaluation, judge reliability, aggregation, and regression checks.
+
+Each track must meet its own minimum. A large honesty survey cannot compensate
+for missing sycophancy or interaction coverage.
+
+### Entry contract
+
+Schema-v2 entries add:
+
+- `track` and `scope`.
+- `dimensions` directly addressed by the source.
+- `relevance_by_dimension`.
+- `interaction_evidence`: positive transfer, interference/trade-off, or not
+  studied.
+- `schema_version`.
+
+The reproduction fields from the original prompt remain. The librarian must
+separate reported facts from proposed adaptation. It may describe papers that
+used stronger teachers, but it must not recommend stronger-model-authored
+training answers or labels for this experiment. Held-out benchmark identities
+and data remain unavailable.
+
+### Storage and launch behavior
+
+Dimension-specific caches are stored separately from composition-specific
+tracks. This lets a future composed suite reuse a compatible honesty or
+sycophancy cache. A suite manifest lists its exact track directories, target
+model, schema version, prompt version, minima, counts, and completion state.
+
+The launcher accepts a composed cache only when:
+
+- the manifest is marked complete;
+- its prompt and schema versions match;
+- every track contains enough valid entries; and
+- the unique total meets `LITREVIEW_MIN`.
+
+The AAR prompt now requires dimension-filtered literature reads before
+brainstorming. It asks the researcher to compare honesty, sycophancy, and
+cross-dimensional evidence before proposing one joint checkpoint.
+
+### Other implementation changes
+
+- `get_literature` can filter by `dimension` and `scope`.
+- `share_literature` records dimension metadata and rejects incomplete v2
+  entries.
+- The same arXiv paper is deduplicated across tracks and versions.
+- Existing single-axis directories and prompts remain supported.
+- The restricted helper, Sonnet 4.6, and secure-internet boundary are unchanged.
+
+### Remaining validation
+
+A live five-track survey has not run yet. The complete AAR cannot launch until
+the broader multi-dimensional suite, baselines, scoring, and evaluator changes
+in `multi_dimensional_refactor_plan.md` are implemented. The exact benchmark
+roster also remains an explicit decision; it must not be inferred by the
+librarian or exposed through held-out metadata.
