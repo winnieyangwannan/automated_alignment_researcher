@@ -26,7 +26,8 @@ ARXIV_API_URL = "https://export.arxiv.org/api/query"
 ARXIV_HTML_BASE_URL = "https://arxiv.org/html"
 DEFAULT_USER_AGENT = "automated-alignment-researcher/0.1 (academic-paper helper)"
 MAX_QUERY_CHARS = 500
-MAX_RESULTS = 10
+MAX_RESULTS = 3
+MAX_ABSTRACT_CHARS = 4_000
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_HTML_BYTES = 8 * 1024 * 1024
 # Keep one fetch result below Claude Code's inline tool-result threshold. Larger
@@ -102,7 +103,7 @@ def _entry_to_dict(entry: ET.Element) -> dict[str, Any]:
         ],
         "published": _text(entry, "published"),
         "updated": _text(entry, "updated"),
-        "abstract": _text(entry, "summary"),
+        "abstract": _text(entry, "summary")[:MAX_ABSTRACT_CHARS],
         "categories": categories,
         "primary_category": primary.attrib.get("term", "") if primary is not None else "",
         "entry_url": entry_url,
@@ -266,7 +267,7 @@ def _fetch_html_text(arxiv_id: str) -> tuple[str, bool]:
     return text, parser.truncated
 
 
-def search(query: str, limit: int = 5) -> dict[str, Any]:
+def search(query: str, limit: int = MAX_RESULTS) -> dict[str, Any]:
     """Search all arXiv fields for a plain-language query."""
     normalized = normalize_query(query)
     if not 1 <= limit <= MAX_RESULTS:
@@ -316,7 +317,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     search_parser = subparsers.add_parser("search", help="search arXiv")
     search_parser.add_argument("query", help="plain-language query (quote multi-word queries)")
-    search_parser.add_argument("--limit", type=int, default=5)
+    search_parser.add_argument("--limit", type=int, default=MAX_RESULTS)
 
     fetch_parser = subparsers.add_parser(
         "fetch", help="fetch bounded arXiv HTML text with abstract fallback"

@@ -41,6 +41,24 @@ def completed(
 
 
 class PaperSearchTest(unittest.TestCase):
+    def test_search_json_fits_inline_agent_tool_result(self) -> None:
+        result = {
+            "ok": True,
+            "operation": "search",
+            "results": [
+                {
+                    "arxiv_id": f"2310.1354{index}",
+                    "title": "A" * 200,
+                    "authors": ["Author" * 20],
+                    "abstract": "x" * paper_search.MAX_ABSTRACT_CHARS,
+                }
+                for index in range(paper_search.MAX_RESULTS)
+            ],
+        }
+
+        self.assertEqual(paper_search.MAX_RESULTS, 3)
+        self.assertLess(len(json.dumps(result)), 20_000)
+
     @patch.object(paper_search.time, "sleep")
     @patch.object(paper_search.os, "getpid", return_value=0)
     @patch.object(paper_search, "_require_executable")

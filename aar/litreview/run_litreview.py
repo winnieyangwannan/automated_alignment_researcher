@@ -227,8 +227,8 @@ def _web_config() -> tuple[list[str], str, str, str]:
             "dontAsk",
             (
                 f"Your working directory is `{repo}`. Use only `{relative_helper} search "
-                f"\"<query>\" --limit <1-10>` or `{helper} search \"<query>\" --limit "
-                f"<1-10>` to discover real arXiv papers. Do not prepend `cd` or combine the "
+                f"\"<query>\" --limit <1-3>` or `{helper} search \"<query>\" --limit "
+                f"<1-3>` to discover real arXiv papers. Do not prepend `cd` or combine the "
                 f"helper with another shell command. Run one helper call at a time; the helper "
                 f"handles bounded arXiv rate-limit backoff internally, so never run `sleep`. "
                 f"Use the same helper's "
