@@ -25,6 +25,7 @@ from typing import Any, Sequence
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 ARXIV_HTML_BASE_URL = "https://arxiv.org/html"
+OPENALEX_WORKS_URL = "https://api.openalex.org/works"
 DEFAULT_USER_AGENT = "automated-alignment-researcher/0.1 (academic-paper helper)"
 MAX_QUERY_CHARS = 500
 MAX_RESULTS = 1
@@ -139,6 +140,10 @@ def _approved_url(url: str) -> bool:
     ) or (
         parsed.hostname == "arxiv.org"
         and parsed.path == "/search/"
+        and bool(parsed.query)
+    ) or (
+        parsed.hostname == "api.openalex.org"
+        and parsed.path == "/works"
         and bool(parsed.query)
     )
 
@@ -347,25 +352,110 @@ def _search_html(query: str, limit: int) -> list[dict[str, Any]]:
     return results
 
 
+def _openalex_abstract(index: Any) -> str:
+    if not isinstance(index, dict):
+        return ""
+    positioned: list[tuple[int, str]] = []
+    for word, positions in index.items():
+        if not isinstance(positions, list):
+            continue
+        positioned.extend(
+            (position, str(word)) for position in positions if isinstance(position, int)
+        )
+    return " ".join(word for _position, word in sorted(positioned))[
+        :MAX_ABSTRACT_CHARS
+    ]
+
+
+def _search_openalex(query: str, limit: int) -> list[dict[str, Any]]:
+    """Search one fixed scholarly index and normalize its public metadata."""
+    url = f"{OPENALEX_WORKS_URL}?" + urllib.parse.urlencode(
+        {
+            "search": query,
+            "per-page": limit,
+            "select": (
+                "id,title,publication_year,authorships,abstract_inverted_index,"
+                "primary_location,ids,locations"
+            ),
+        }
+    )
+    try:
+        payload = json.loads(_curl(url, max_bytes=MAX_RESPONSE_BYTES))
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise PaperSearchError("OpenAlex returned malformed JSON") from error
+    works = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(works, list):
+        raise PaperSearchError("OpenAlex returned no parseable results")
+    results: list[dict[str, Any]] = []
+    for work in works[:limit]:
+        if not isinstance(work, dict) or not work.get("title"):
+            continue
+        ids = work.get("ids") if isinstance(work.get("ids"), dict) else {}
+        locations = work.get("locations") if isinstance(work.get("locations"), list) else []
+        arxiv_url = str(ids.get("arxiv") or "")
+        if not arxiv_url:
+            for location in locations:
+                if not isinstance(location, dict):
+                    continue
+                candidate = str(location.get("landing_page_url") or "")
+                if "arxiv.org/abs/" in candidate:
+                    arxiv_url = candidate
+                    break
+        arxiv_id = arxiv_url.rstrip("/").rsplit("/", 1)[-1] if arxiv_url else ""
+        primary = (
+            work.get("primary_location")
+            if isinstance(work.get("primary_location"), dict)
+            else {}
+        )
+        authorships = work.get("authorships") if isinstance(work.get("authorships"), list) else []
+        authors = [
+            str(item.get("author", {}).get("display_name"))
+            for item in authorships
+            if isinstance(item, dict)
+            and isinstance(item.get("author"), dict)
+            and item["author"].get("display_name")
+        ]
+        entry_url = arxiv_url or str(primary.get("landing_page_url") or work.get("id") or "")
+        results.append(
+            {
+                "arxiv_id": arxiv_id,
+                "title": str(work["title"]),
+                "authors": authors,
+                "published": str(work.get("publication_year") or ""),
+                "updated": "",
+                "abstract": _openalex_abstract(work.get("abstract_inverted_index")),
+                "categories": [],
+                "primary_category": "",
+                "entry_url": entry_url,
+                "pdf_url": str(primary.get("pdf_url") or ""),
+                "metadata_source": "OpenAlex",
+            }
+        )
+    if not results:
+        raise PaperSearchError("OpenAlex returned no parseable results")
+    return results
+
+
 def search(query: str, limit: int = MAX_RESULTS) -> dict[str, Any]:
     """Search all arXiv fields for a plain-language query."""
     normalized = normalize_query(query)
     if not 1 <= limit <= MAX_RESULTS:
         raise PaperSearchError(f"limit must be between 1 and {MAX_RESULTS}")
     try:
-        # HTML search is more reliable from FAIR secure internet. The export
-        # API remains a structured fallback for portable deployments.
-        results = _search_html(normalized, limit)
+        results = _search_openalex(normalized, limit)
     except PaperSearchError:
-        results = _request(
-            {
-                "search_query": f"all:{normalized}",
-                "start": 0,
-                "max_results": limit,
-                "sortBy": "relevance",
-                "sortOrder": "descending",
-            }
-        )
+        try:
+            results = _search_html(normalized, limit)
+        except PaperSearchError:
+            results = _request(
+                {
+                    "search_query": f"all:{normalized}",
+                    "start": 0,
+                    "max_results": limit,
+                    "sortBy": "relevance",
+                    "sortOrder": "descending",
+                }
+            )
     return {"ok": True, "operation": "search", "query": normalized, "results": results}
 
 

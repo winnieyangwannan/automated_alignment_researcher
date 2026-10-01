@@ -25,6 +25,7 @@ single-axis behavior and adds versioned search for `honesty_sycophancy`.
 - Live job `1661698` exposed oversized multi-result searches. Search payloads are
   now capped at one bounded abstract, the live-proven inline shape.
 - Export API outages now fall back to fixed-scope, bounded arXiv HTML search.
+- Fixed-scope OpenAlex metadata search keeps discovery available during arXiv outages.
 - Final focused validation: 50 tests passed; shell and Python syntax checks passed.
 
 ## Current decisions

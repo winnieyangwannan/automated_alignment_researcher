@@ -40,6 +40,7 @@ SEARCH_HTML = b"""
   <span class="abstract-full">A useful joint-behavior abstract.</span>
 </li></ol>
 """
+OPENALEX_JSON = b'{"results":[{"id":"https://openalex.org/W1","title":"Joint Honesty and Sycophancy","publication_year":2025,"authorships":[{"author":{"display_name":"Test Author"}}],"abstract_inverted_index":{"Joint":[0],"evidence":[1]},"primary_location":{"landing_page_url":"https://doi.org/10.1/test","pdf_url":""},"ids":{"openalex":"https://openalex.org/W1"},"locations":[]}]}'
 
 
 def completed(
@@ -49,9 +50,19 @@ def completed(
 
 
 class PaperSearchTest(unittest.TestCase):
+    @patch.object(paper_search, "_curl", return_value=OPENALEX_JSON)
+    def test_search_uses_fixed_openalex_metadata(self, curl) -> None:
+        result = paper_search.search("honesty sycophancy", limit=1)
+
+        self.assertEqual(result["results"][0]["title"], "Joint Honesty and Sycophancy")
+        self.assertEqual(result["results"][0]["abstract"], "Joint evidence")
+        self.assertEqual(result["results"][0]["metadata_source"], "OpenAlex")
+        self.assertTrue(paper_search._approved_url(curl.call_args.args[0]))
+
     @patch.object(paper_search, "_curl", return_value=SEARCH_HTML)
     @patch.object(paper_search, "_request")
     def test_search_uses_fixed_arxiv_html_first(self, request, curl) -> None:
+        curl.side_effect = [b"not json", SEARCH_HTML]
         result = paper_search.search("honesty sycophancy", limit=1)
 
         request.assert_not_called()
