@@ -68,7 +68,19 @@ def cmd_agent(args, remaining):
         model=args.model,
         local_mode=local_mode,
     )
-    asyncio.run(loop.run())
+    result = asyncio.run(loop.run())
+    if os.getenv("AAR_REQUIRE_SUCCESSFUL_ITERATIONS", "0").lower() in (
+        "1", "true", "yes"
+    ):
+        expected = getattr(args, "max_iterations", None)
+        if (
+            expected is None
+            or result.get("sessions") != expected
+            or result.get("successful_sessions") != expected
+            or result.get("failed_sessions") != 0
+        ):
+            print("Error: required successful AAR iterations did not complete")
+            sys.exit(1)
 
 
 def cmd_server(args, remaining):

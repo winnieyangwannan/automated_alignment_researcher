@@ -168,6 +168,18 @@ generalization. Each failure runs on one canonical target model.
 (Code axis names differ from the paper's display names: `refusal` = Jailbreaks, `honesty` = Deception,
 `faithfulness` = Hallucination, `bias` = Social bias.)
 
+### Three-dimensional composed experiment
+
+The experimental suite `honesty_sycophancy_concealing_uncertainty` trains one
+`google/gemma-4-31B-it` checkpoint across honesty, sycophancy resistance, and
+honest communication of uncertainty. It combines seven optimized benchmarks,
+three evaluator-only held-outs, and the three shared capability gates with
+equal dimension weights. Its operator contract, cache reuse, and incremental
+baseline procedure are documented in
+[`experiments/dishonest_sycophancy_concealing/`](experiments/dishonest_sycophancy_concealing/).
+The legacy `honesty_sycophancy` composition remains available for reproducible
+historical runs.
+
 ---
 
 ## 5. Task A — reproduce the evaluation

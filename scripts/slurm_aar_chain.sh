@@ -196,4 +196,8 @@ if [ "${AAR_HIDE_EVAL_CONFIG:-0}" = "1" ]; then
 fi
 PYTHONUNBUFFERED=1 "${PY}" -u run.py agent --idea-uid "${IDEA_UID}" --idea-name "${IDEA_NAME}" \
   --max-iterations "${MAX_ITERS}" --max-runtime "${FULL_AUTO_MAX_RUNTIME_SECONDS}" --local
+if [ "${AAR_VERIFY_TWO_ITERATION_ARTIFACTS:-0}" = 1 ]; then
+  "${PY}" "${REPO}/replication/verify_two_iteration_multidimensional.py" \
+    --team-dir "${TEAM_DIR}" --expected-iterations 2
+fi
 echo "=== DONE ==="

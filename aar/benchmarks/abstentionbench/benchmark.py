@@ -25,12 +25,19 @@ Secret data: secret_dir/abstentionbench.jsonl, one {"prompt","should_abstain","d
 """
 from __future__ import annotations
 
+import concurrent.futures
 import json
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from aar.benchmarks.base import BenchmarkScore, JudgeBenchmark, Model, bootstrap_ci
+from aar.benchmarks.base import (
+    JUDGE_CONCURRENCY,
+    BenchmarkScore,
+    JudgeBenchmark,
+    Model,
+    bootstrap_ci,
+)
 
 # The source's COCONOT-style abstention-classifier criteria (recipe/evaluation_judge_prompts.py),
 # with the [REFERENCE ANSWERS] and [GROUND TRUTH ABSTENTION LABEL] lines REMOVED so the judge runs BLIND.
@@ -91,7 +98,10 @@ class AbstentionBench(JudgeBenchmark):
         outputs = model.generate_batch([it["prompt"] for it in items], max_new_tokens=self.GEN_MAX_NEW)
         jprompts = [self.judge_prompt(it, o) for it, o in zip(items, outputs)]
         if self._injected_judge:                      # stub (tests) / single-prompt judge (e.g. gpt-4o)
-            verdicts = [self.judge_fn(p) for p in jprompts]
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=JUDGE_CONCURRENCY
+            ) as executor:
+                verdicts = list(executor.map(self.judge_fn, jprompts))
         else:                                          # default: on-GPU Qwen2.5-7B parity judge (blind)
             from aar.eval_pod.judges import make_local_judge_batch
             verdicts = make_local_judge_batch()(jprompts)

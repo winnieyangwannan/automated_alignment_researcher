@@ -27,6 +27,9 @@ META_SECURE_WEB_MODE = "meta_secure"
 NATIVE_WEB_MODE = "native_web"
 MULTI_DIMENSIONAL_SUITES = {
     "honesty_sycophancy": ("honesty", "sycophancy"),
+    "honesty_sycophancy_concealing_uncertainty": (
+        "honesty", "sycophancy", "concealing_uncertainty",
+    ),
 }
 MULTI_SCHEMA_VERSION = 2
 MULTI_PROMPT_VERSION = "multi-dimensional-v1"
@@ -480,18 +483,32 @@ async def _run_multi_dimensional(
     target_model: str,
     ws: Path,
     mcp: dict,
+    selected_tracks: tuple[str, ...] | None = None,
 ) -> None:
     axis_value = (os.getenv("LIT_AXIS_DIR") or "").strip()
     if not axis_value:
         raise RuntimeError("LIT_AXIS_DIR is required for a multi-dimensional survey")
 
     axis_dir = Path(axis_value).resolve()
+    cache_parent = Path(
+        os.getenv("LITREVIEW_CACHE_ROOT") or axis_dir.parent
+    ).resolve()
     cache_root = (
-        axis_dir.parent
+        cache_parent
         / f"schema-v{MULTI_SCHEMA_VERSION}"
         / _cache_slug(target_model)
     )
     tracks = _multi_tracks(dimensions)
+    known_tracks = {track[0] for track in tracks}
+    requested_tracks = set(selected_tracks or ())
+    unknown_tracks = requested_tracks - known_tracks
+    if unknown_tracks:
+        raise ValueError(
+            f"unknown literature tracks {sorted(unknown_tracks)}; "
+            f"known tracks: {sorted(known_tracks)}"
+        )
+    active_tracks = requested_tracks or known_tracks
+    partial_run = bool(requested_tracks)
     manifest_path = axis_dir / "manifest.json"
 
     def publish_manifest() -> dict:
@@ -512,6 +529,8 @@ async def _run_multi_dimensional(
     # schema/model cache while the sequential tracks are being populated.
     publish_manifest()
     for cat, desc, scope, track_dimensions in tracks:
+        if cat not in active_tracks:
+            continue
         track_dir = _track_directory(cache_root, cat, scope, dimensions)
         track_dir.mkdir(parents=True, exist_ok=True)
         attempts = 0
@@ -539,6 +558,58 @@ async def _run_multi_dimensional(
             publish_manifest()
 
     manifest = publish_manifest()
+    if partial_run:
+        incomplete_selected = [
+            track["name"]
+            for track in manifest["tracks"]
+            if track["name"] in active_tracks and not track["complete"]
+        ]
+        if incomplete_selected:
+            raise RuntimeError(
+                "literature survey did not meet the per-track minimum "
+                f"({per}); incomplete selected tracks: "
+                f"{', '.join(incomplete_selected)}"
+            )
+        print(
+            f"[litreview] PARTIAL DONE — completed selected tracks "
+            f"{', '.join(sorted(active_tracks))}; suite manifest remains "
+            f"{'complete' if manifest['complete'] else 'incomplete'}",
+            flush=True,
+        )
+        return
+
+    # Cross-track source de-duplication can leave the unique total below the
+    # suite minimum even when every track has met its own quota. Top up only the
+    # composition-specific general track; never rerun completed dimension caches.
+    top_up_attempts = 0
+    general_name, general_desc, general_scope, general_dimensions = tracks[0]
+    general_dir = _track_directory(
+        cache_root, general_name, general_scope, dimensions
+    )
+    while manifest["entry_count"] < min_entries and top_up_attempts < 4:
+        top_up_attempts += 1
+        missing = min_entries - manifest["entry_count"]
+        print(
+            f"[litreview] unique total {manifest['entry_count']}/{min_entries} "
+            f"— topping up general track (attempt {top_up_attempts})",
+            flush=True,
+        )
+        await _survey(
+            general_name,
+            general_desc,
+            suite,
+            missing,
+            model,
+            ws,
+            mcp,
+            dimensions=dimensions,
+            entry_dimensions=general_dimensions,
+            scope=general_scope,
+            target_model=target_model,
+            output_dir=general_dir,
+        )
+        manifest = publish_manifest()
+
     incomplete = [
         track["name"] for track in manifest["tracks"] if not track["complete"]
     ]
@@ -565,6 +636,7 @@ async def run(
     *,
     dimensions: tuple[str, ...] | None = None,
     target_model: str = MULTI_TARGET_MODEL,
+    tracks: tuple[str, ...] | None = None,
 ) -> None:
     from aar.research_loop.tools.server_api_tools import create_literature_tools_server
     from aar.research_loop.tools.lit_forum import count
@@ -585,8 +657,11 @@ async def run(
             target_model,
             ws,
             mcp,
+            selected_tracks=tracks,
         )
         return
+    if tracks:
+        raise ValueError("--tracks is supported only for composed suites")
 
     # One pass over the sub-areas (sequential — keeps API/web rate sane + ordering legible).
     legacy_per = per or 9
@@ -629,11 +704,22 @@ def main() -> None:
         default=os.getenv("LITREVIEW_TARGET_MODEL", MULTI_TARGET_MODEL),
         help="checkpoint family the literature should target",
     )
+    ap.add_argument(
+        "--tracks",
+        default=os.getenv("LITREVIEW_TRACKS", ""),
+        help=(
+            "comma-separated composed-suite tracks to run; omitted runs all "
+            "tracks, while a subset leaves an intentionally incomplete manifest"
+        ),
+    )
     args = ap.parse_args()
     explicit_dimensions = tuple(
         dimension.strip()
         for dimension in args.dimensions.split(",")
         if dimension.strip()
+    )
+    selected_tracks = tuple(
+        track.strip() for track in args.tracks.split(",") if track.strip()
     )
     asyncio.run(
         run(
@@ -643,6 +729,7 @@ def main() -> None:
             args.per,
             dimensions=explicit_dimensions or None,
             target_model=args.target_model,
+            tracks=selected_tracks or None,
         )
     )
 

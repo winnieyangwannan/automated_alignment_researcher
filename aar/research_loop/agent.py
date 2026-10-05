@@ -7,6 +7,7 @@ Merges agent_loop, base_agent, and stop_conditions into a single file.
 import asyncio
 import inspect
 import json
+import math
 import os
 import re
 import shutil
@@ -259,6 +260,22 @@ def _add_supported_reasoning_options(options: Dict[str, Any]) -> None:
         options["effort"] = os.getenv("AAR_EFFORT", "max")
 
 
+def _add_supported_budget_options(options: Dict[str, Any]) -> None:
+    """Apply an optional hard Claude CLI budget to one agent session."""
+    raw = os.getenv("AAR_CLAUDE_SESSION_BUDGET_USD", "").strip()
+    if not raw:
+        return
+    try:
+        budget = float(raw)
+    except ValueError as error:
+        raise ValueError("AAR_CLAUDE_SESSION_BUDGET_USD must be positive") from error
+    if not math.isfinite(budget) or budget <= 0:
+        raise ValueError("AAR_CLAUDE_SESSION_BUDGET_USD must be positive")
+    if not _agent_sdk_supports_option("max_budget_usd"):
+        raise RuntimeError("installed Claude Agent SDK cannot enforce max_budget_usd")
+    options["max_budget_usd"] = budget
+
+
 # ---------------------------------------------------------------------------
 # Base agent (wraps Claude Agent SDK)
 # ---------------------------------------------------------------------------
@@ -312,6 +329,7 @@ class BaseAgent:
         if self.strict_mcp_config is not None:
             options["strict_mcp_config"] = self.strict_mcp_config
         _add_supported_reasoning_options(options)
+        _add_supported_budget_options(options)
         if self.cli_path:
             options["cli_path"] = self.cli_path
         return options
@@ -360,6 +378,7 @@ class BaseAgent:
 
             async with ClaudeSDKClient(options=options) as client:
                 await client.query(task)
+                result_message = None
 
                 async for message in client.receive_response():
                     messages.append(message)
@@ -373,12 +392,19 @@ class BaseAgent:
                         self.message_callback(message)
 
                     if isinstance(message, ResultMessage):
+                        result_message = message
                         break
 
                     if isinstance(message, AssistantMessage):
                         for content in message.content:
                             if isinstance(content, ToolUseBlock):
                                 iteration_count += 1
+
+                if result_message is None:
+                    raise RuntimeError("Claude Agent SDK ended without a result message")
+                if getattr(result_message, "is_error", False):
+                    detail = getattr(result_message, "result", None) or "unknown SDK error"
+                    raise RuntimeError(f"Claude Agent SDK returned an error result: {detail}")
 
                 return AgentResult(
                     success=True,
@@ -569,10 +595,13 @@ class AutonomousAgentLoop:
                 print(f"[Loop] Warning: could not start findings sync: {e}")
 
         stop_reason = None
+        successful_sessions = 0
+        failed_sessions = 0
 
         while True:
             if self.max_iterations is not None and self.session_count >= self.max_iterations:
                 print(f"\n[Loop] Stopping: reached max iterations ({self.max_iterations})")
+                stop_reason = "max_iterations"
                 break
             stop_reason = self.stop_checker.check()
             if stop_reason:
@@ -582,6 +611,7 @@ class AutonomousAgentLoop:
             try:
                 await self._run_session()
                 self.stop_checker.record_success()
+                successful_sessions += 1
                 if not self.local_mode:
                     await self._sync_to_s3()
 
@@ -594,6 +624,7 @@ class AutonomousAgentLoop:
                 print(f"\n[Loop] Session error: {e}")
                 traceback.print_exc()
                 self.stop_checker.record_error()
+                failed_sessions += 1
                 # If a 529 still reached the loop (e.g. after in-call retries
                 # were exhausted), back off the full 10 min rather than 30s so we
                 # don't hammer an overloaded API and burn sessions.
@@ -622,8 +653,20 @@ class AutonomousAgentLoop:
             "idea_name": self.idea_name,
             "sessions": self.session_count,
             "duration_seconds": self.stop_checker.elapsed_time,
-            "stop_reason": stop_reason.value if stop_reason else "unknown",
+            "stop_reason": (
+                stop_reason.value if isinstance(stop_reason, StopReason)
+                else stop_reason or "unknown"
+            ),
+            "successful_sessions": successful_sessions,
+            "failed_sessions": failed_sessions,
         }
+
+        summary_dir = getattr(self, "logs_dir", None)
+        if summary_dir is not None:
+            summary_path = Path(summary_dir) / "run_summary.json"
+            summary_tmp = summary_path.with_suffix(".json.tmp")
+            summary_tmp.write_text(json.dumps(result, indent=2) + "\n")
+            os.replace(summary_tmp, summary_path)
 
         print(f"\n{'='*60}")
         print(f"Done: {result['sessions']} sessions, "
@@ -641,6 +684,7 @@ class AutonomousAgentLoop:
         _tag = re.sub(r"[^A-Za-z0-9]+", "_", self.idea_name or "chain").strip("_") or "chain"
         session_id = f"session_{self.session_count:03d}_{_tag}_{timestamp}"
         log_file = self.logs_dir / f"{session_id}.log"
+        os.environ["AAR_CURRENT_SESSION_ID"] = session_id
 
         print(f"\n[Session {self.session_count}] {session_id}")
 
@@ -685,6 +729,7 @@ class AutonomousAgentLoop:
                 raise
             finally:
                 log_f.write(f"\n# Ended: {datetime.now().isoformat()}\n")
+                os.environ.pop("AAR_CURRENT_SESSION_ID", None)
 
         print(f"[Session {self.session_count}] Completed")
 

@@ -34,6 +34,29 @@ Category = Literal["rule", "judge", "trajectory"]
 Role = Literal["safety", "capability_filter", "held_out"]
 
 
+@dataclass(frozen=True)
+class DimensionSpec:
+    """One independently scored alignment dimension in a composed suite."""
+
+    name: str
+    weight: float = 1.0
+
+
+@dataclass(frozen=True)
+class SuiteSpec:
+    """Suite-level scoring metadata.
+
+    ``aggregation`` is deliberately opt-in: legacy suite YAML omits it and
+    continues to use the historical benchmark-level geometric mean.
+    """
+
+    name: str
+    aggregation: str = "legacy_geometric_mean"
+    dimensions: tuple[DimensionSpec, ...] = ()
+    safety_regression_gate: bool = False
+    evaluation_profiles: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
 # ---------------------------------------------------------------------------
 # Result + spec types
 # ---------------------------------------------------------------------------
@@ -75,6 +98,11 @@ class BenchmarkSpec:
     optimum: float = 1.0
     floor: float | None = None          # for capability_filter: pass iff mean >= floor
     subset_size: int | None = None
+    dimension: str | None = None
+    baseline_group: str | None = None
+    evaluation_profile: str | None = None
+    baseline_ci_low: float | None = None
+    baseline_ci_high: float | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

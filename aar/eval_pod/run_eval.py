@@ -11,6 +11,7 @@ ephemeral eval pod; locally it runs as a plain process with a stub model.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -28,15 +29,68 @@ import yaml
 # job's --gres gpu count (eval_worker.sh / baseline_*.sh do this).
 
 from aar.benchmarks import registry
-from aar.benchmarks.base import BenchmarkSpec
+from aar.benchmarks.base import BenchmarkSpec, DimensionSpec, SuiteSpec
 from aar.benchmarks.composite import compute_composite
 from aar.eval_pod.models import load_model
 
 
 def load_suite(path: str) -> tuple[str, list[BenchmarkSpec]]:
+    """Compatibility wrapper for callers that only need the legacy tuple."""
+    suite, specs = load_suite_spec(path)
+    return suite.name, specs
+
+
+def load_suite_spec(path: str) -> tuple[SuiteSpec, list[BenchmarkSpec]]:
     data = yaml.safe_load(Path(path).read_text())
+    dimensions = tuple(
+        DimensionSpec(
+            name=(item if isinstance(item, str) else item["name"]),
+            weight=(1.0 if isinstance(item, str) else float(item.get("weight", 1.0))),
+        )
+        for item in (data.get("dimensions") or [])
+    )
+    profiles = data.get("evaluation_profiles") or {}
+    suite = SuiteSpec(
+        name=data.get("suite", "unnamed"),
+        aggregation=data.get("aggregation", "legacy_geometric_mean"),
+        dimensions=dimensions,
+        safety_regression_gate=bool(data.get("safety_regression_gate", False)),
+        evaluation_profiles=profiles,
+    )
+    allowed_aggregations = {"legacy_geometric_mean", "coverage_weighted_geometric_mean"}
+    if suite.aggregation not in allowed_aggregations:
+        raise ValueError(f"unsupported suite aggregation {suite.aggregation!r}")
+    if len({dimension.name for dimension in dimensions}) != len(dimensions):
+        raise ValueError("suite contains duplicate dimension names")
+    if any(dimension.weight <= 0 for dimension in dimensions):
+        raise ValueError("dimension weights must be positive")
+    gemma_composed_suites = {
+        "honesty_sycophancy",
+        "honesty_sycophancy_concealing_uncertainty",
+    }
+    if (
+        suite.name in gemma_composed_suites
+        and data.get("target_model") != "google/gemma-4-31B-it"
+    ):
+        raise ValueError(
+            f"{suite.name} requires target_model google/gemma-4-31B-it"
+        )
+    if suite.aggregation == "coverage_weighted_geometric_mean" and not dimensions:
+        raise ValueError("dimension aggregation requires at least one dimension")
+    dimension_names = {dimension.name for dimension in dimensions}
     specs = []
     for b in data["benchmarks"]:
+        dimension = b.get("dimension")
+        if dimension and dimension_names and dimension not in dimension_names:
+            raise ValueError(f"benchmark {b['name']!r} has unknown dimension {dimension!r}")
+        profile_name = b.get("evaluation_profile")
+        if profile_name and profile_name not in profiles:
+            raise ValueError(
+                f"benchmark {b['name']!r} requires missing evaluation profile {profile_name!r}"
+            )
+        extra = dict(b.get("extra", {}) or {})
+        if profile_name:
+            extra["_evaluation_profile"] = dict(profiles[profile_name])
         specs.append(BenchmarkSpec(
             name=b["name"],
             category=b["category"],
@@ -46,9 +100,47 @@ def load_suite(path: str) -> tuple[str, list[BenchmarkSpec]]:
             optimum=float(b.get("optimum", 1.0)),
             floor=(float(b["floor"]) if "floor" in b else None),
             subset_size=b.get("subset_size"),
-            extra=b.get("extra", {}) or {},
+            dimension=dimension,
+            baseline_group=b.get("baseline_group"),
+            evaluation_profile=profile_name,
+            baseline_ci_low=(
+                float(b["baseline_ci_low"]) if b.get("baseline_ci_low") is not None else None
+            ),
+            baseline_ci_high=(
+                float(b["baseline_ci_high"]) if b.get("baseline_ci_high") is not None else None
+            ),
+            extra=extra,
         ))
-    return data.get("suite", "unnamed"), specs
+    if len({spec.id for spec in specs}) != len(specs):
+        raise ValueError("suite contains duplicate benchmark ids")
+    if dimensions:
+        missing = [
+            spec.id for spec in specs
+            if spec.role in ("safety", "held_out") and not spec.dimension
+        ]
+        if missing:
+            raise ValueError(f"dimension-aware suite has unassigned safety entries: {missing}")
+        empty = [
+            dimension.name for dimension in dimensions
+            if not any(
+                spec.role == "safety" and spec.dimension == dimension.name
+                for spec in specs
+            )
+        ]
+        if empty:
+            raise ValueError(f"dimensions have no optimized safety benchmarks: {empty}")
+    if suite.safety_regression_gate:
+        missing_intervals = [
+            spec.id for spec in specs
+            if spec.role == "safety"
+            and (spec.baseline_ci_low is None or spec.baseline_ci_high is None)
+        ]
+        if missing_intervals:
+            raise ValueError(
+                "safety regression gate requires baseline confidence intervals: "
+                f"{missing_intervals}"
+            )
+    return suite, specs
 
 
 def build_benchmark(spec: BenchmarkSpec, secret_dir: str, real_judge_fn=None):
@@ -62,12 +154,47 @@ def build_benchmark(spec: BenchmarkSpec, secret_dir: str, real_judge_fn=None):
         # sycophancy_eval/feedback -> "gpt-4"; sycon_fp -> "gpt-4o"). The resolver
         # retains that per-benchmark default unless JUDGE_MODEL explicitly overrides it.
         jm = getattr(cls, "judge_model", None)
-        judge_fn = _resolve_judge_fn(jm) or real_judge_fn or getattr(cls, "default_judge_fn", None)
+        profile = spec.extra.get("_evaluation_profile")
+        judge_fn = _resolve_judge_fn(jm, profile=profile)
+        if profile and judge_fn is None:
+            raise RuntimeError(
+                f"{spec.id}: configured evaluation profile {spec.evaluation_profile!r} "
+                "could not initialize its judge"
+            )
+        judge_fn = judge_fn or real_judge_fn or getattr(cls, "default_judge_fn", None)
         return cls(spec, secret_dir, judge_fn=judge_fn)
     return cls(spec, secret_dir)
 
 
-def _resolve_judge_fn(model: str | None = None):
+@contextmanager
+def _evaluation_profile(spec: BenchmarkSpec):
+    """Apply the benchmark's explicit judge profile inside its evaluator process.
+
+    This is also required by plugins such as MASK that resolve their specialized
+    judge directly from environment variables rather than ``judge_fn``.
+    """
+    profile = spec.extra.get("_evaluation_profile") or {}
+    env_names = {
+        "judge_backend": "JUDGE_BACKEND",
+        "judge_model": "JUDGE_MODEL",
+        "mask_judge_model": "MASK_JUDGE_MODEL",
+        "judge_concurrency": "JUDGE_CONCURRENCY",
+    }
+    previous = {env_name: os.environ.get(env_name) for env_name in env_names.values()}
+    try:
+        for key, env_name in env_names.items():
+            if profile.get(key) is not None:
+                os.environ[env_name] = str(profile[key])
+        yield
+    finally:
+        for env_name, value in previous.items():
+            if value is None:
+                os.environ.pop(env_name, None)
+            else:
+                os.environ[env_name] = value
+
+
+def _resolve_judge_fn(model: str | None = None, profile: dict | None = None):
     """Pick the judge backend for judge-category benchmarks.
 
     `model` = the benchmark's declared historical/default `judge_model`.
@@ -77,7 +204,9 @@ def _resolve_judge_fn(model: str | None = None):
     if a key is present; otherwise returns None.
     """
     import os
-    backend = os.getenv("JUDGE_BACKEND", "openai").lower()
+    profile = profile or {}
+    backend = str(profile.get("judge_backend") or os.getenv("JUDGE_BACKEND", "openai")).lower()
+    configured_model = profile.get("judge_model") or os.getenv("JUDGE_MODEL")
     if backend == "local":
         from aar.eval_pod.judges import make_local_judge
         return make_local_judge(os.getenv("JUDGE_MODEL_LOCAL") or None)
@@ -85,19 +214,19 @@ def _resolve_judge_fn(model: str | None = None):
         from aar.eval_pod.judges import make_anthropic_judge
         from aar.benchmarks._judge_http import _anthropic_key
         if _anthropic_key():
-            return make_anthropic_judge(model=(os.getenv("JUDGE_MODEL") or "claude-haiku-4-5"))
+            return make_anthropic_judge(model=(configured_model or "claude-haiku-4-5"))
         return None
     if backend == "model_api":
         from aar.eval_pod.judges import make_model_api_judge
         from aar.benchmarks._judge_http import _model_api_key
         if _model_api_key():
             return make_model_api_judge(
-                model=(os.getenv("JUDGE_MODEL") or "claude-4-8-opus")
+                model=(configured_model or "claude-4-8-opus")
             )
         return None
     if os.getenv("OAI_API") or os.getenv("OPENAI_API_KEY") or os.getenv("MODEL_API_KEY"):
         from aar.eval_pod.judges import make_openai_judge
-        return make_openai_judge(model=(os.getenv("JUDGE_MODEL") or model or "gpt-4o"))
+        return make_openai_judge(model=(configured_model or model or "gpt-4o"))
     return None
 
 
@@ -107,15 +236,14 @@ _CAP_BENCHES = {"mmlu", "gsm8k", "ifeval"}
 _DECODING_CACHE: dict[str, dict] = {}
 
 # FREE-FORM GENERATION benchmarks: long, open-ended completions where a degenerate model can
-# fall into a no-EOS repetition loop. These (and only these) get the optional run-time
-# no_repeat_ngram guard + tighter ceiling (EVAL_RUN_NGRAM / EVAL_RUN_GEN_CEILING below).
+# fall into a no-EOS repetition loop. These get the optional run-time no_repeat_ngram guard.
 # EXCLUDED on purpose:
 #   - ifeval: instructions REQUIRE legit repetition / verbatim echoing / keyword-frequency — an
 #     ngram guard makes compliance impossible and tanks the score.
 #   - gsm8k: math CoT with an EXACT final-answer format. A tight ceiling truncates verbose chains
 #     before the "#### answer" (Qwen 0.76 -> 0.055) and no_repeat_ngram disrupts the arithmetic
 #     (math naturally repeats number/operator n-grams; Llama 0.665 -> 0.40). It is a reasoning
-#     task, NOT free-form text — keep it at the doc config (ceiling 4096, ngram 0).
+#     task, NOT free-form text — keep ngram 0. Its ceiling can still be raised uniformly.
 #   - logprob/MCQ benches (mmlu, truthfulqa_mc2, news_factor, expert_factor): no generation -> no-op.
 #   - structured prompt-injection extraction benches: short exact-string outputs ngram could corrupt.
 # CAUTION for later: ragtruth measures source-FAITHFULNESS; an ngram guard could force the model to
@@ -124,15 +252,22 @@ _FREEFORM_GEN = {
     # JUDGE-scored, short-response free-form benches only (the judge is robust to the ngram
     # guard). EXCLUDED after the hard way: rule-scored pattern-keyed benches (gsm8k arithmetic,
     # ifeval echoing, elephant_aita affirmation-phrases — ngram inflates them), trajectory/long
-    # benches (sycon_fp — ceiling-1024 truncates the multi-turn rollout), and detector-scored
+    # benches (sycon_fp needs its own long-rollout profile), and detector-scored
     # faithfulness (ragtruth — ngram could force divergence from the quoted source).
     "sycophancy_eval", "sycophancy_feedback",
     "truthfulqa_gen",
-    "mask_generative", "mask_factual", "deceptionbench_pressure", "deceptionbench_reward",
+    "mask_generative", "mask_factual", "mask_continuation", "mask_disinformation",
+    "deceptionbench_pressure", "deceptionbench_reward",
     "harmbench", "jbb", "jbb_artifacts", "strongreject",
     # NB: sycon_fp (trajectory held-out) was TEMPORARILY added here for its dedicated temp-1 re-run
     # (array 1669675, 2026-06-08) so EVAL_RUN_NGRAM/CEILING could bound its degeneration runaways;
     # that run is DONE and it is now removed — it must NOT carry the ngram/ceiling treatment normally.
+}
+
+# Generated target responses that share the run-wide thinking-plus-answer
+# ceiling. Rule/logprob benchmarks are intentionally absent.
+_GENERATION_CEILING_OVERRIDE = _FREEFORM_GEN | {
+    "sycon_fp", "gsm8k", "ifeval", "verbalized_ece", "abstentionbench",
 }
 
 
@@ -141,7 +276,7 @@ def _run_override(spec: BenchmarkSpec, d: dict) -> dict:
     golden configs are untouched when these envs are unset:
       EVAL_RUN_BATCH       -> force batch_size for ALL benches (uniform throughput)
       EVAL_RUN_NGRAM       -> no_repeat_ngram for FREE-FORM GEN benches only (kills runaways)
-      EVAL_RUN_GEN_CEILING -> auto_ceiling for FREE-FORM GEN benches only (caps the tail)
+      EVAL_RUN_GEN_CEILING -> auto_ceiling for every generated combined-suite response
     Temperature is carried by the model (EVAL_TEMPERATURE) and is not touched here."""
     bs = os.getenv("EVAL_RUN_BATCH")
     if bs:
@@ -150,10 +285,58 @@ def _run_override(spec: BenchmarkSpec, d: dict) -> dict:
         ng = os.getenv("EVAL_RUN_NGRAM")
         if ng:
             d["no_repeat_ngram"] = int(ng)
+    if spec.name in _GENERATION_CEILING_OVERRIDE:
         cg = os.getenv("EVAL_RUN_GEN_CEILING")
         if cg:
             d["auto_ceiling"] = int(cg)
+            # A source profile may carry a smaller fixed maximum. The explicit
+            # run-wide budget replaces it for this newly baselined experiment.
+            d["max_new_tokens"] = None
     return d
+
+
+def _health_snapshot(model) -> dict[str, int]:
+    if not hasattr(model, "evaluation_health"):
+        return {}
+    return dict(model.evaluation_health())
+
+
+def _validate_evaluation_health(model, before: dict[str, int], benchmark_id: str) -> None:
+    """Reject unhealthy generation before a benchmark score can be accepted."""
+    after = _health_snapshot(model)
+    if not after:
+        return
+    delta = {
+        name: int(after.get(name, 0)) - int(before.get(name, 0))
+        for name in ("generated", "truncated", "allocator_warnings", "ooms")
+    }
+    if delta["ooms"]:
+        raise RuntimeError(f"{benchmark_id}: CUDA OOM detected during evaluation")
+    if (
+        os.getenv("EVAL_FAIL_ON_ALLOCATOR_WARNING", "0").lower()
+        in ("1", "true", "yes")
+        and delta["allocator_warnings"]
+    ):
+        raise RuntimeError(
+            f"{benchmark_id}: {delta['allocator_warnings']} CUDA allocator warning(s) detected"
+        )
+
+    minimum = int(os.getenv("EVAL_TRUNCATION_MIN_COMPLETIONS", "20"))
+    maximum = os.getenv("EVAL_MAX_TRUNCATION_RATE", "").strip()
+    rate = (
+        delta["truncated"] / delta["generated"] if delta["generated"] else 0.0
+    )
+    print(
+        f"  [health] {benchmark_id}: generated={delta['generated']} "
+        f"truncated={delta['truncated']} rate={rate:.2%} "
+        f"allocator_warnings={delta['allocator_warnings']}",
+        flush=True,
+    )
+    if maximum and delta["generated"] >= minimum and rate > float(maximum):
+        raise RuntimeError(
+            f"{benchmark_id}: truncation rate {rate:.2%} exceeds {float(maximum):.2%} "
+            f"after {delta['generated']} completions"
+        )
 
 
 def _golden_decoding(spec: BenchmarkSpec, suite_name: str) -> dict:
@@ -163,7 +346,7 @@ def _golden_decoding(spec: BenchmarkSpec, suite_name: str) -> dict:
     Returns {} when unavailable, so we keep the current/global decoding as a safe fallback."""
     import json as _json
     from aar import config as _cfg
-    group = "capability" if spec.name in _CAP_BENCHES else suite_name
+    group = spec.baseline_group or ("capability" if spec.name in _CAP_BENCHES else suite_name)
     if group not in _DECODING_CACHE:
         d: dict = {}
         try:
@@ -229,7 +412,7 @@ def _apply_golden(model, spec: BenchmarkSpec, suite_name: str) -> None:
         kw["max_new_tokens"] = None
     if kw:
         model.apply_decoding(**kw)
-        grp = "capability" if spec.name in _CAP_BENCHES else suite_name
+        grp = spec.baseline_group or ("capability" if spec.name in _CAP_BENCHES else suite_name)
         print(f"  [decoding] {spec.id} ({grp}): batch={model.batch_size} "
               f"ceiling={model._auto_ceiling} ngram={model._no_repeat_ngram} "
               f"max_new={model.max_new_tokens} temp={model._temperature} "
@@ -241,8 +424,11 @@ def _score_sequential(specs, model_ref, secret_dir, suite_name=""):
     judge_fn = _resolve_judge_fn()
     scores = {}
     for spec in specs:
-        _apply_golden(model, spec, suite_name)   # golden per-benchmark decoding (== baseline)
-        sc = build_benchmark(spec, secret_dir, real_judge_fn=judge_fn).score(model)
+        with _evaluation_profile(spec):
+            _apply_golden(model, spec, suite_name)   # golden per-benchmark decoding (== baseline)
+            health_before = _health_snapshot(model)
+            sc = build_benchmark(spec, secret_dir, real_judge_fn=judge_fn).score(model)
+            _validate_evaluation_health(model, health_before, spec.id)
         scores[spec.id] = sc
         if spec.role == "held_out":
             # Never print the held-out score to stdout — eval logs can land in
@@ -267,8 +453,11 @@ def _gpu_worker(gpu: str, specs, model_ref: str, secret_dir: str, q, suite_name=
         model = load_model(model_ref)
         for spec in specs:
             try:
-                _apply_golden(model, spec, suite_name)   # golden per-benchmark decoding (== baseline)
-                sc = build_benchmark(spec, secret_dir, real_judge_fn=judge_fn).score(model)
+                with _evaluation_profile(spec):
+                    _apply_golden(model, spec, suite_name)   # golden per-benchmark decoding (== baseline)
+                    health_before = _health_snapshot(model)
+                    sc = build_benchmark(spec, secret_dir, real_judge_fn=judge_fn).score(model)
+                    _validate_evaluation_health(model, health_before, spec.id)
                 q.put((spec.id, sc, None))
             except Exception as e:  # one benchmark failing shouldn't sink the rest
                 q.put((spec.id, None, repr(e)))
@@ -332,7 +521,16 @@ def _resolve_ngpu() -> int:
 def run(suite_path: str, model_ref: str, secret_dir: str = "", out: str = "scores.json",
         heldout_dir: str = "") -> dict[str, Any]:
     registry.discover()
-    suite_name, specs = load_suite(suite_path)
+    suite, specs = load_suite_spec(suite_path)
+    suite_name = suite.name
+
+    if not str(model_ref).startswith("stub:"):
+        for name, profile in suite.evaluation_profiles.items():
+            backend = str(profile.get("judge_backend", "")).lower()
+            if backend == "model_api" and not os.getenv("MODEL_API_KEY"):
+                raise RuntimeError(
+                    f"evaluation profile {name!r} requires MODEL_API_KEY"
+                )
 
     ngpu = _resolve_ngpu()
     if ngpu > 1 and len(specs) > 1 and not str(model_ref).startswith("stub:"):
@@ -340,7 +538,7 @@ def run(suite_path: str, model_ref: str, secret_dir: str = "", out: str = "score
     else:
         scores = _score_sequential(specs, model_ref, secret_dir, suite_name)
 
-    composite = compute_composite(scores, specs)
+    composite = compute_composite(scores, specs, suite=suite)
     result = {
         "suite": suite_name,
         "model": model_ref,
@@ -393,6 +591,10 @@ def run(suite_path: str, model_ref: str, secret_dir: str = "", out: str = "score
         Path(out).write_text(json.dumps(result, indent=2))
     print("=" * 60)
     print(f"  HEADLINE {composite.headline * 100:+.2f}%   passes_filter={composite.passes_filter}")
+    for name, score in composite.dimension_scores.items():
+        print(f"    dimension[{name}] = {score * 100:+.2f}%")
+    if composite.dimension_coverage is not None:
+        print(f"    dimension_coverage = {composite.dimension_coverage:.2%}")
     for name, frac in composite.closed.items():
         print(f"    closed[{name}] = {frac * 100:+.2f}%")
     for name, d in composite.filter_detail.items():

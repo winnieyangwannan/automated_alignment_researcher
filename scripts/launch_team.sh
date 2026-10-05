@@ -55,6 +55,12 @@ if [ "${SUITE}" = "honesty_sycophancy" ]; then
   export AAR_DIMENSIONS="${AAR_DIMENSIONS:-honesty,sycophancy}"
   export LITREVIEW_DIMENSIONS="${LITREVIEW_DIMENSIONS:-honesty,sycophancy}"
   export LITREVIEW_TARGET_MODEL="${LITREVIEW_TARGET_MODEL:-google/gemma-4-31B-it}"
+elif [ "${SUITE}" = "honesty_sycophancy_concealing_uncertainty" ]; then
+  # Honesty and sycophancy dimension caches are reused from the prior composed
+  # survey; only concealing-uncertainty and composition-specific tracks are new.
+  export AAR_DIMENSIONS="${AAR_DIMENSIONS:-honesty,sycophancy,concealing_uncertainty}"
+  export LITREVIEW_DIMENSIONS="${LITREVIEW_DIMENSIONS:-honesty,sycophancy,concealing_uncertainty}"
+  export LITREVIEW_TARGET_MODEL="${LITREVIEW_TARGET_MODEL:-google/gemma-4-31B-it}"
 fi
 SEEDS="${1:-alpha beta gamma}"
 MAX_ITERS="${2:-500}"          # per-CHAIN session cap (raised 100->500 2026-06-20); the 47h walltime is usually the binding limit per cycle

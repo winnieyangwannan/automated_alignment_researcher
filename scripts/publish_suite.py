@@ -2041,6 +2041,33 @@ SUITES = {
     for name, core in _SUITE_CORE.items()
 }
 SUITES["capability"] = list(CAPABILITY_BASKET)   # the shared basket standalone (baselining)
+SUITES["honesty_sycophancy"] = [
+    "mask_factual",
+    "mask_continuation",
+    "mask_disinformation",
+    "sycophancy_eval",
+    "deceptionbench_reward",
+    "sycon_fp",
+    *CAPABILITY_BASKET,
+]
+THREE_DIMENSION_SUITE = "honesty_sycophancy_concealing_uncertainty"
+_COMPOSED_SUITES = {
+    "honesty_sycophancy": ("honesty", "sycophancy"),
+    THREE_DIMENSION_SUITE: ("honesty", "sycophancy", "concealing_uncertainty"),
+}
+SUITES[THREE_DIMENSION_SUITE] = [
+    "mask_factual",
+    "mask_continuation",
+    "mask_disinformation",
+    "sycophancy_eval",
+    "llm_uncertainty_bench",
+    "verbalized_ece",
+    "abstentionbench",
+    "deceptionbench_reward",
+    "sycon_fp",
+    "sciq_uncertainty",
+    *CAPABILITY_BASKET,
+]
 
 # HELD-OUT benchmark per axis (generalization check). It is still PUBLISHED + SCORED,
 # but published with role="held_out" so composite.py keeps it OUT of the AAR-optimized
@@ -2055,6 +2082,10 @@ SUITES["capability"] = list(CAPABILITY_BASKET)   # the shared basket standalone 
 # OOD design or expected gains. Names only here.
 _HELD_OUT = {
     "sycophancy": "sycon_fp",
+    "honesty_sycophancy": ["deceptionbench_reward", "sycon_fp"],
+    THREE_DIMENSION_SUITE: [
+        "deceptionbench_reward", "sycon_fp", "sciq_uncertainty",
+    ],
     # Honesty (2026-06-19 swap): held-out = `deceptionbench_reward` (SINGLE leg) — a CROSS-SOURCE,
     # SAME-FACET (internal-honesty) generalization probe. MASK and DeceptionBench are different
     # benchmarks/scorers but the same facet (+0.58 method-level), so a transfer to it can ONLY come from
@@ -2121,6 +2152,30 @@ _HELD_OUT = {
     "power_seeking": "machiavelli_heldout",
 }
 
+_COMPOSED_DIMENSION = {
+    "mask_factual": "honesty",
+    "mask_continuation": "honesty",
+    "mask_disinformation": "honesty",
+    "deceptionbench_reward": "honesty",
+    "sycophancy_eval": "sycophancy",
+    "sycon_fp": "sycophancy",
+    "llm_uncertainty_bench": "concealing_uncertainty",
+    "verbalized_ece": "concealing_uncertainty",
+    "abstentionbench": "concealing_uncertainty",
+    "sciq_uncertainty": "concealing_uncertainty",
+}
+
+
+def _baseline_group(axis: str, name: str) -> str:
+    if name in CAPABILITY_BASKET:
+        return "capability"
+    if axis in _COMPOSED_SUITES:
+        dimension = _COMPOSED_DIMENSION.get(name)
+        if not dimension:
+            raise ValueError(f"no baseline group for composed-suite benchmark {name!r}")
+        return dimension
+    return axis
+
 
 def _benchmark_docs_dir() -> Path | None:
     """Locate the canonical benchmark_docs/ (single source of truth for baselines).
@@ -2165,7 +2220,7 @@ def _doc_intended_n(axis: str, name: str):
     d = _benchmark_docs_dir()
     if not d:
         return None
-    grp = "capability" if name in _CAP_BASKET else axis
+    grp = _baseline_group(axis, name)
     p = d / grp / "baseline.json"
     if not p.exists():
         return None
@@ -2205,7 +2260,11 @@ def _dont_run_reason(axis: str, model: str):
         pairs = json.loads(p.read_text()).get("dont_run", [])
     except Exception:
         return None
-    return next((e for e in pairs if e.get("axis") == axis and e.get("model") == model), None)
+    axes = _COMPOSED_SUITES.get(axis, (axis,))
+    return next(
+        (e for e in pairs if e.get("axis") in axes and e.get("model") == model),
+        None,
+    )
 
 
 def _model_baselines(axis: str, model: str) -> dict:
@@ -2214,7 +2273,11 @@ def _model_baselines(axis: str, model: str) -> dict:
     benchmark_docs/capability/baseline.json (so mmlu/gsm8k/ifeval floors are per-model, not a
     fixed qwen value). The axis file wins on any overlap (there shouldn't be any)."""
     bl = dict(_load_axis_baselines("capability").get(model, {})) if axis != "capability" else {}
-    bl.update(_load_axis_baselines(axis).get(model, {}))
+    if axis in _COMPOSED_SUITES:
+        for dimension in _COMPOSED_SUITES[axis]:
+            bl.update(_load_axis_baselines(dimension).get(model, {}))
+    else:
+        bl.update(_load_axis_baselines(axis).get(model, {}))
     override_path = os.getenv("AAR_BASELINE_OVERRIDES", "").strip()
     if override_path:
         try:
@@ -2326,6 +2389,14 @@ def main() -> None:
                          "and exit. Does NOT publish the holdout / write any secret.")
     args = ap.parse_args()
 
+    if (
+        args.suite in _COMPOSED_SUITES
+        and args.target_model != "google/gemma-4-31B-it"
+    ):
+        sys.exit(
+            f"{args.suite} currently supports only google/gemma-4-31B-it"
+        )
+
     if args.emit_prompt_baselines:
         emit_prompt_baselines(
             args.suite,
@@ -2367,6 +2438,11 @@ def main() -> None:
                 count = publisher(out)
                 print(f"  published {name}: {count} items")
             entry = {"name": name, **spec}
+            if args.suite in _COMPOSED_SUITES:
+                entry["baseline_group"] = _baseline_group(args.suite, name)
+                if name in _COMPOSED_DIMENSION:
+                    entry["dimension"] = _COMPOSED_DIMENSION[name]
+                    entry["evaluation_profile"] = "gpt_5_6_luna"
             if _tn is not None:                       # ≤300-rule: eval n = min(doc_n, EVAL_MAX_N),
                 entry["subset_size"] = _tn            # honored by run_eval/base (caps items at eval time)
             if name in held_out_names:                # tag the axis's held-out benchmark(s)
@@ -2374,6 +2450,10 @@ def main() -> None:
                 print(f"    -> {name} is a HELD-OUT benchmark (out of AAR composite; generalization check)")
             entries.append(entry)
         except Exception as e:
+            if args.suite in _COMPOSED_SUITES:
+                raise RuntimeError(
+                    f"composed-suite publish failed for required benchmark {name!r}"
+                ) from e
             print(f"  SKIP {name}: {e}", file=sys.stderr)
 
     # SINGLE SOURCE OF TRUTH: pull per-model baselines from benchmark_docs/<axis>/baseline.json
@@ -2385,6 +2465,10 @@ def main() -> None:
         if bl and bl.get("mean") is not None:
             if e.get("role") in ("safety", "held_out"):   # held-out is scored like safety (own baseline)
                 e["baseline"] = round(float(bl["mean"]), 4)
+                if bl.get("ci_low") is not None:
+                    e["baseline_ci_low"] = round(float(bl["ci_low"]), 4)
+                if bl.get("ci_high") is not None:
+                    e["baseline_ci_high"] = round(float(bl["ci_high"]), 4)
             elif e.get("role") == "capability_filter":
                 e.setdefault("extra", {})["baseline"] = round(float(bl["mean"]), 4)
                 if bl.get("ci_low") is not None:
@@ -2395,9 +2479,59 @@ def main() -> None:
                   f"(no baseline.json entry for {args.target_model}) — re-baseline before trusting",
                   file=sys.stderr)
 
+    if args.suite in _COMPOSED_SUITES:
+        expected = SUITES[args.suite]
+        actual = [entry["name"] for entry in entries]
+        if actual != expected or len(set(actual)) != len(actual):
+            sys.exit(
+                f"composed suite must publish exactly {expected}; got {actual}"
+            )
+        held_out = set(_HELD_OUT[args.suite])
+        expected_roles = {
+            name: (
+                "capability_filter" if name in CAPABILITY_BASKET
+                else "held_out" if name in held_out
+                else "safety"
+            )
+            for name in expected
+        }
+        for entry in entries:
+            name = entry["name"]
+            if entry.get("role") != expected_roles[name]:
+                sys.exit(
+                    f"composed suite role mismatch for {name}: "
+                    f"{entry.get('role')!r} != {expected_roles[name]!r}"
+                )
+            baseline = model_bl.get(name) or {}
+            if not baseline or baseline.get("n", 0) <= 0:
+                sys.exit(f"composed suite requires measured n>0 baseline for {name}")
+            if name in _COMPOSED_DIMENSION and (
+                baseline.get("ci_low") is None or baseline.get("ci_high") is None
+            ):
+                sys.exit(
+                    f"composed suite requires baseline confidence interval for {name}"
+                )
+
     # Write the suite YAML INTO the holdout (lives with the secret).
     import yaml
-    suite_yaml = {"suite": args.suite, "target_model": args.target_model, "benchmarks": entries}
+    suite_yaml = {"suite": args.suite, "target_model": args.target_model}
+    if args.suite in _COMPOSED_SUITES:
+        suite_yaml.update({
+            "aggregation": "coverage_weighted_geometric_mean",
+            "safety_regression_gate": True,
+            "dimensions": [
+                {"name": dimension, "weight": 1.0}
+                for dimension in _COMPOSED_SUITES[args.suite]
+            ],
+            "evaluation_profiles": {
+                "gpt_5_6_luna": {
+                    "judge_backend": "model_api",
+                    "judge_model": "gpt-5-6-luna",
+                    "mask_judge_model": "gpt-5-6-luna",
+                },
+            },
+        })
+    suite_yaml["benchmarks"] = entries
     (out / f"{args.suite}.yaml").write_text(yaml.safe_dump(suite_yaml, sort_keys=False))
     print(f"wrote suite -> {out}/{args.suite}.yaml  ({len(entries)} benchmarks)")
     print(f"holdout published at: {out}")

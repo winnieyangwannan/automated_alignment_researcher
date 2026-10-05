@@ -11,7 +11,7 @@ set -euo pipefail
 REPO="${AAR_REPO:-${SLURM_SUBMIT_DIR:?submit from the replication worktree}}"
 # shellcheck disable=SC1091
 source "${REPO}/replication/env_v0.sh"
-[ "$(git -C "${REPO}" branch --show-current)" = winnie-replication-v0 ] || {
+[ "$(git -C "${REPO}" branch --show-current)" = uv ] || {
   echo "wrong branch" >&2
   exit 2
 }

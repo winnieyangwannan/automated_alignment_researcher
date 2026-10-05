@@ -141,6 +141,42 @@ class MultidimensionalBaselineTest(unittest.TestCase):
             ["general", "honesty", "sycophancy", "cross-dimensional", "evaluation"],
         )
 
+    def test_three_dimension_tracks_reuse_existing_dimension_caches(self) -> None:
+        dimensions = run_litreview.resolve_dimensions(
+            "honesty_sycophancy_concealing_uncertainty"
+        )
+        tracks = run_litreview._multi_tracks(dimensions)
+        self.assertEqual(
+            dimensions,
+            ("honesty", "sycophancy", "concealing_uncertainty"),
+        )
+        self.assertEqual(
+            [track[0] for track in tracks],
+            [
+                "general", "honesty", "sycophancy", "concealing_uncertainty",
+                "cross-dimensional", "evaluation",
+            ],
+        )
+        cache_root = Path("/cache/schema-v2/model")
+        old_dimensions = ("honesty", "sycophancy")
+        for track in ("honesty", "sycophancy"):
+            self.assertEqual(
+                run_litreview._track_directory(
+                    cache_root, track, "dimension-specific", old_dimensions
+                ),
+                run_litreview._track_directory(
+                    cache_root, track, "dimension-specific", dimensions
+                ),
+            )
+        self.assertNotEqual(
+            run_litreview._track_directory(
+                cache_root, "general", "general", old_dimensions
+            ),
+            run_litreview._track_directory(
+                cache_root, "general", "general", dimensions
+            ),
+        )
+
     def test_runner_manifest_is_versioned_and_requires_unique_total(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory)
@@ -194,6 +230,69 @@ class MultidimensionalBaselineTest(unittest.TestCase):
             ):
                 self.assertTrue(lit_forum.baseline_ready(5))
                 self.assertEqual(lit_forum.count(), 5)
+
+    def test_partial_run_executes_only_selected_dimension_track(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            cache_root = Path(directory) / "cache"
+            axis_dir = Path(directory) / "suite"
+            dimensions = (
+                "honesty", "sycophancy", "concealing_uncertainty",
+            )
+            target = "google/gemma-4-31B-it"
+            versioned_cache = (
+                cache_root
+                / "schema-v2"
+                / run_litreview._cache_slug(target)
+            )
+            conceal_dir = run_litreview._track_directory(
+                versioned_cache,
+                "concealing_uncertainty",
+                "dimension-specific",
+                dimensions,
+            )
+            _write_entry(
+                conceal_dir,
+                "concealing.json",
+                entry_id="concealing-paper",
+                track="concealing_uncertainty",
+                schema_version=2,
+                source="Distinct concealment source",
+                scope="dimension-specific",
+                dimensions=["concealing_uncertainty"],
+            )
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "LIT_AXIS_DIR": str(axis_dir),
+                        "LITREVIEW_CACHE_ROOT": str(cache_root),
+                    },
+                    clear=False,
+                ),
+                patch.object(run_litreview, "_survey") as survey,
+            ):
+                asyncio.run(run_litreview._run_multi_dimensional(
+                    "honesty_sycophancy_concealing_uncertainty",
+                    dimensions,
+                    6,
+                    "claude-sonnet-4-6",
+                    1,
+                    target,
+                    Path(directory),
+                    {},
+                    selected_tracks=("concealing_uncertainty",),
+                ))
+
+            survey.assert_not_called()
+            manifest = json.loads((axis_dir / "manifest.json").read_text())
+            self.assertFalse(manifest["complete"])
+            counts = {
+                track["name"]: track["entry_count"]
+                for track in manifest["tracks"]
+            }
+            self.assertEqual(counts["concealing_uncertainty"], 1)
+            self.assertEqual(counts["honesty"], 0)
+            self.assertEqual(counts["sycophancy"], 0)
 
     def test_manifest_resolves_and_reads_multiple_relative_track_directories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

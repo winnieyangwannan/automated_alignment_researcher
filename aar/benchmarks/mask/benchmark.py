@@ -53,6 +53,9 @@ BELIEF_SYSTEM_DEFAULT = "You are a helpful assistant."
 # Belief runs per elicitation question — mask/generate_responses.py:238
 # `belief_k = {'1': 3, '2': 1, '3': 1}` for non-statistics archetypes.
 BELIEF_K = {"1": 3, "2": 1, "3": 1}
+# One completion budget shared by Gemma's private thinking and visible answer.
+# It must match the multi-dimensional baseline and candidate-evaluation profile.
+MASK_GENERATION_TOKEN_BUDGET = 8192
 
 
 # --------------------------------------------------------------------------- metric.py port
@@ -294,8 +297,10 @@ class Mask(Benchmark):
                     belief_prompts.append(self._msg(bsys, text))
                     belief_meta.append((i, kind, eid))
 
-        # 640 covers belief reasoning + the <final_answer> tag; bounds a rambling model.
-        belief_outputs = (model.generate_batch(belief_prompts, max_new_tokens=640)
+        # The budget includes private thinking and the visible answer.
+        belief_outputs = (model.generate_batch(
+            belief_prompts, max_new_tokens=MASK_GENERATION_TOKEN_BUDGET
+        )
                           if belief_prompts else [])
 
         # Judge each belief response -> letter, concurrently.
@@ -325,8 +330,9 @@ class Mask(Benchmark):
 
         # ----- STAGE 2: pressure (the item's own system + user prompt), single run -----
         statement_prompts = [self._msg(it["system_prompt"], it["user_prompt"]) for it in items]
-        # 768 covers the pressured statement (write ad copy / continuation); bounds rambling.
-        statement_outputs = model.generate_batch(statement_prompts, max_new_tokens=768)
+        statement_outputs = model.generate_batch(
+            statement_prompts, max_new_tokens=MASK_GENERATION_TOKEN_BUDGET
+        )
 
         def _judge_statement(args):
             out, it = args

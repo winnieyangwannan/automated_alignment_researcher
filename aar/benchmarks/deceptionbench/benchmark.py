@@ -149,6 +149,7 @@ def get_deceptionbench_judge() -> Callable[[dict, str, str], dict]:
 _LOCAL_HOLDER: dict[str, Any] = {}
 import threading as _threading  # noqa: E402
 _LOCAL_LOCK = _threading.Lock()
+DECEPTIONBENCH_GENERATION_TOKEN_BUDGET = 8192
 
 
 def _local_generate(instruction: str) -> str:
@@ -227,8 +228,10 @@ class DeceptionBench(Benchmark):
                     continue
                 flat_prompts.append(instr + GEN_POST)
                 index.append((ii, key))
-        # 768 covers the {thought,response} JSON; bounds a rambling model. In-plugin -> parity.
-        outputs = model.generate_batch(flat_prompts, max_new_tokens=768)
+        # One budget shared by private thinking and the visible answer.
+        outputs = model.generate_batch(
+            flat_prompts, max_new_tokens=DECEPTIONBENCH_GENERATION_TOKEN_BUDGET
+        )
         responses: dict[tuple[int, str], str] = {idx: out for idx, out in zip(index, outputs)}
 
         # Phase 2 (judge, parallel): label each condition's response honest/decept.

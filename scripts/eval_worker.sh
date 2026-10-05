@@ -64,6 +64,11 @@ if [ "${SUITE}" = honesty ]; then
     anthropic) [ -n "${ANTHROPIC_API_KEY:-${ANT_high_prio_API:-${ANT_API_KEY:-}}}" ] || { echo "[worker] ERROR: honesty Anthropic judge requires a direct key" >&2; exit 2; };;
     *) echo "[worker] ERROR: honesty JUDGE_BACKEND must be model_api or anthropic" >&2; exit 2;;
   esac
+elif [ "${SUITE}" = honesty_sycophancy ] || [ "${SUITE}" = honesty_sycophancy_concealing_uncertainty ]; then
+  export JUDGE_BACKEND="${JUDGE_BACKEND:-model_api}"
+  export JUDGE_MODEL="${JUDGE_MODEL:-gpt-5-6-luna}"
+  export MASK_JUDGE_MODEL="${MASK_JUDGE_MODEL:-gpt-5-6-luna}"
+  [ -n "${MODEL_API_KEY:-}" ] || { echo "[worker] ERROR: composed-suite Model API judge requires MODEL_API_KEY" >&2; exit 2; }
 fi
 if [ -z "${HF_TOKEN:-}" ]; then
   echo "[worker] ERROR: HF_TOKEN is required for the target model/datasets" >&2
@@ -77,11 +82,14 @@ export EVAL_GPUS="${3:-auto}"
 # trained-eval batch MUST equal the suite's baseline batch or the composite delta is corrupted.
 # hallucination was baselined at batch 32 (3.2x faster gen on H200, ~36/140 GB). Other suites
 # default to models.py's 16 here — NOTE their baselines used 8 (pre-existing mismatch; see
-# train_baseline_sync.md). sycophancy IS pinned-correct (batch 8 + ceiling 4096, matching
-# benchmark_docs/sycophancy/baseline.json — keep in lock-step with eval_job.sh's same case).
+# train_baseline_sync.md). The multi-dimensional Gemma run pins one 8192-token
+# private-thinking + visible-answer budget on baseline and candidate evaluation.
 case "${SUITE}" in
-  sycophancy|refusal) export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-8}";  export EVAL_AUTO_CEILING="${EVAL_AUTO_CEILING:-4096}" ;;
-  honesty)            export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-32}"; export EVAL_AUTO_CEILING="${EVAL_AUTO_CEILING:-1024}"; export EVAL_NO_REPEAT_NGRAM="${EVAL_NO_REPEAT_NGRAM:-4}" ;;
+  sycophancy)          export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-8}";  export EVAL_AUTO_CEILING="${EVAL_AUTO_CEILING:-8192}"; export EVAL_RUN_GEN_CEILING="${EVAL_RUN_GEN_CEILING:-8192}"; export EVAL_RUN_NGRAM="${EVAL_RUN_NGRAM:-4}" ;;
+  honesty)             export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-32}"; export EVAL_AUTO_CEILING="${EVAL_AUTO_CEILING:-8192}"; export EVAL_RUN_GEN_CEILING="${EVAL_RUN_GEN_CEILING:-8192}"; export EVAL_RUN_NGRAM="${EVAL_RUN_NGRAM:-4}"; export EVAL_NO_REPEAT_NGRAM="${EVAL_NO_REPEAT_NGRAM:-4}" ;;
+  honesty_sycophancy)  export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-4}";  export EVAL_AUTO_CEILING="${EVAL_AUTO_CEILING:-8192}"; export EVAL_RUN_GEN_CEILING="${EVAL_RUN_GEN_CEILING:-8192}"; export EVAL_RUN_NGRAM="${EVAL_RUN_NGRAM:-4}"; export EVAL_NO_REPEAT_NGRAM="${EVAL_NO_REPEAT_NGRAM:-4}" ;;
+  honesty_sycophancy_concealing_uncertainty) export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-4}"; export EVAL_AUTO_CEILING="${EVAL_AUTO_CEILING:-8192}"; export EVAL_RUN_GEN_CEILING="${EVAL_RUN_GEN_CEILING:-8192}"; export EVAL_RUN_NGRAM="${EVAL_RUN_NGRAM:-4}"; export EVAL_NO_REPEAT_NGRAM="${EVAL_NO_REPEAT_NGRAM:-4}" ;;
+  refusal)             export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-8}";  export EVAL_AUTO_CEILING="${EVAL_AUTO_CEILING:-4096}" ;;
   hallucination|faithfulness) export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-32}"
                       # ragtruth FAITHFULNESS needs the finetuned Llama-2-13b detector (~0.80 F1), not the
                       # prompt-judge fallback — pin both (mirror eval_job.sh / baseline_hallucination.sh).
@@ -123,6 +131,7 @@ case "${SUITE}" in
   # Paper-aligned choice for this run: Claude Opus 4.8 through FAIR Model API.
   # Baseline and trained evaluation must use these same values.
   honesty) export JUDGE_BACKEND="${JUDGE_BACKEND:-model_api}"; export JUDGE_MODEL="${JUDGE_MODEL:-claude-4-8-opus}"; export MASK_JUDGE_MODEL="${MASK_JUDGE_MODEL:-claude-4-8-opus}" ;;
+  honesty_sycophancy|honesty_sycophancy_concealing_uncertainty) export JUDGE_BACKEND="${JUDGE_BACKEND:-model_api}"; export JUDGE_MODEL="${JUDGE_MODEL:-gpt-5-6-luna}"; export MASK_JUDGE_MODEL="${MASK_JUDGE_MODEL:-gpt-5-6-luna}" ;;
   # bias: the two MULTI-TURN FREE-FORM legs (bias_mt_decision/bias_mt_occupation) are judged for engagement ×
   # A-vs-B invariance; bbq + bbq_heldout are RULE-scored (logprob, no judge). ANTHROPIC claude-haiku-4-5 — a
   # strong CoT judge for the free-form decision/recommendation comparisons. Concurrency 100 (Haiku handles it;

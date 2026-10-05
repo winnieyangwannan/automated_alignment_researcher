@@ -127,10 +127,14 @@ mkdir -p "${LIT_FORUM_DIR}"
 export LITREVIEW_WORKSPACE="${LITREVIEW_WORKSPACE:-${REPO}/_runs/litreview/workspaces/${TEAM_ID}}"
 mkdir -p "${LITREVIEW_WORKSPACE}"
 export LITREVIEW_MODEL="${LITREVIEW_MODEL:-claude-sonnet-4-6}"
-# The composed honesty+sycophancy suite has an explicit research scope and target.
+# Composed suites have an explicit research scope and target. Dimension-specific
+# caches are shared, so extending a composition does not rerun completed axes.
 # Keep both overridable so focused reruns can survey a subset without changing code.
 if [ "${SUITE}" = "honesty_sycophancy" ]; then
   export LITREVIEW_DIMENSIONS="${LITREVIEW_DIMENSIONS:-honesty,sycophancy}"
+  export LITREVIEW_TARGET_MODEL="${LITREVIEW_TARGET_MODEL:-google/gemma-4-31B-it}"
+elif [ "${SUITE}" = "honesty_sycophancy_concealing_uncertainty" ]; then
+  export LITREVIEW_DIMENSIONS="${LITREVIEW_DIMENSIONS:-honesty,sycophancy,concealing_uncertainty}"
   export LITREVIEW_TARGET_MODEL="${LITREVIEW_TARGET_MODEL:-google/gemma-4-31B-it}"
 fi
 PY="${HARNESS_PY:-${REPO}/.venv/bin/python}"

@@ -101,6 +101,12 @@ else
   echo "[train] retaining staging checkpoint: ${STAGING}"
 fi
 
+if [ "${AAR_TRAIN_EXIT_AFTER_SUBMIT:-0}" = "1" ]; then
+  echo "[train] checkpoint staged; releasing the training GPU while the agent polls ${SCORES_DIR}/${RUN_ID}.json"
+  echo "=== SUBMITTED ==="
+  exit 0
+fi
+
 echo "[train] polling for scores (eval worker scores it against the locked holdout)"
 for _ in $(seq 1 "${AAR_SCORE_POLL_ATTEMPTS:-180}"); do   # default: up to ~1h
   if [ -f "${SCORES_DIR}/${RUN_ID}.json" ]; then

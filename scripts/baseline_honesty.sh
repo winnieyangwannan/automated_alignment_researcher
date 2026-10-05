@@ -63,15 +63,17 @@ export MASK_JUDGE_MODEL="${MASK_JUDGE_MODEL:-claude-4-8-opus}"
 
 # Parallelism: shard the 4 legs across the 4 allocated GPUs (one model replica per GPU),
 # so wall-clock = the slowest single leg, not the sum. With Opus judging off-GPU this
-# lands the property well under 30 min. Greedy, AUTO 4096 ceiling (EOS bounds it), batch 8.
+# uses one 8192-token private-thinking + visible-answer budget.
 export EVAL_GPUS="${EVAL_GPUS:-auto}"
 # Generation robustness (REQUIRED — weakly-aligned + AAR-produced models often don't emit
 # EOS and run away to the ceiling, blowing the 30-min budget AND truncating outputs):
-#   - AUTO ceiling 1024 bounds any runaway (still covers every real honesty response —
-#     mask statements / deceptionbench JSON are a few hundred tokens at most).
+#   - AUTO ceiling 8192 leaves room for Gemma 4's private thinking before its answer.
 #   - no_repeat_ngram=4 forces a looping generation to emit EOS early (the harness's
 #     built-in degenerate-gen fix). Applied UNIFORMLY to baseline + trained eval (parity).
-export EVAL_AUTO_CEILING=1024
+export EVAL_AUTO_CEILING=8192
+export EVAL_RUN_GEN_CEILING=8192
+export EVAL_RUN_NGRAM=4
+export MASK_GENERATION_TOKEN_BUDGET=8192
 export EVAL_NO_REPEAT_NGRAM=4
 # Batch 32: pure GPU generation throughput (greedy outputs are batch-invariant -> no score
 # change), short honesty answers fit easily on an H200. Speeds the model-under-test gen,

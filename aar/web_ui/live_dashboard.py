@@ -389,7 +389,9 @@ def _enrich_finding_scores(f: dict) -> dict:
         merged_pb[k] = cur
     cs = dict(cs)
     cs["per_benchmark"] = merged_pb
-    for k in ("closed_pct", "filter_detail", "passes_filter", "headline_pct"):
+    for k in ("closed_pct", "filter_detail", "passes_filter", "headline_pct",
+              "dimension_scores_pct", "dimension_coverage", "regression_detail",
+              "passes_regression", "aggregation"):
         if cs.get(k) is None and auth.get(k) is not None:
             cs[k] = auth[k]
     f = dict(f)
@@ -732,7 +734,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div class="wrap">
  <div class="card full"><h2>Main Result</h2><div id="bsfcap" class="mut" style="font-size:12px;margin-bottom:2px"></div><img id="bsfimg" alt="best-so-far figure (rendered via Bruce's matplotlib style)"></div>
  <div class="card full"><h2>AARs</h2><div id="chains"></div></div>
- <div class="card"><h2>Leaderboard <span class="mut">(Safety Geometric Mean = geometric mean of headroom-closed over the 3 safety benchmarks)</span></h2><div id="lb"></div></div>
+ <div class="card"><h2>Leaderboard <span class="mut">(suite-configured composite; valid methods rank above invalid methods)</span></h2><div id="lb"></div></div>
  <div class="card"><h2>Forum — latest findings <span id="feedcount" class="countpill"></span></h2><div id="feed"></div></div>
  <div class="card full"><h2>Literature forum <span class="mut" id="litmeta"></span></h2>
   <div id="litagent" class="mut" style="font-size:12px;margin-bottom:8px">librarian: —</div>
@@ -755,15 +757,16 @@ function chains(cs){ if(!cs.length) return '<div class="empty">no chains found</
 const shortname=k=>k;  /* show full benchmark names — axis-agnostic (no hardcoded per-axis map) */
 const f3=v=>v==null?'—':(+v).toFixed(3);
 function lb(rows){ if(!rows.length) return '<div class="empty">no results yet — chains are training…</div>';
- const head='<tr><th>#</th><th>method</th><th>Safety Geometric Mean</th><th>filter</th><th>raw per-benchmark score (closed%)</th></tr>';
+ const head='<tr><th>#</th><th>method</th><th>Composite score</th><th>filter</th><th>raw per-benchmark score (closed%)</th></tr>';
  return '<table>'+head+rows.map((r,i)=>{const cs=r.composite_scores||{};const cl=cs.closed_pct||{};const pb=cs.per_benchmark||{};
   const pf=cs.passes_filter;
+  const dims=Object.entries(cs.dimension_scores_pct||{}).map(([k,v])=>`${k} ${pct(v)}`).join(' · ');
   // RAW score for every evaluated benchmark, with the closed% in parens for safety ones.
   const per=Object.entries(pb).map(([k,v])=>{const c=cl[k];
     const b=(v&&v.baseline!=null)?v.baseline:((BL[k]&&BL[k].baseline!=null)?BL[k].baseline:null);
     return `${shortname(k)} <b>${f3(v&&v.mean)}</b>${b!=null?`<span class="mut">/${f3(b)}</span>`:''}${c!=null?` <span class="${cls(c)}">(${pct(c)})</span>`:''}`;}).join(' · ');
   return `<tr class="lbrow" title="click for full idea details" onclick="openFinding('${r.id||r.post_id||''}')"><td>${i+1}</td><td><b>${r.idea_name||'—'}</b> <span class="view">›</span></td>
-   <td class="${cls(r.headline_pct)}"><b>${pct(r.headline_pct)}</b></td>
+   <td class="${cls(r.headline_pct)}"><b>${pct(r.headline_pct)}</b>${dims?`<div class="mut">${dims}</div>`:''}</td>
    <td>${pf==null?'':`<span class="pill ${pf?'pass':'fail'}">${pf?'PASS':'FAIL'}</span>`}</td>
    <td class="mut">${per||'—'}</td></tr>`}).join('')+'</table>'}
 function feed(fs){ if(!fs.length) return '<div class="empty">no findings yet</div>';
@@ -870,6 +873,7 @@ function renderFinding(f,code){
  const filt=Object.entries(fil).map(([k,v])=>`<tr><td>${k}</td><td>${fmt(v.mean)}</td>
    <td class="mut">floor ${fmt(v.floor!=null?v.floor:v.baseline_ci_low)}</td>
    <td><span class="pill ${v.passed?'pass':'fail'}">${v.passed?'PASS':'FAIL'}</span></td></tr>`).join('');
+ const dims=Object.entries(cs.dimension_scores_pct||{}).map(([k,v])=>`<tr><td>${k}</td><td>${pct(v)}</td></tr>`).join('');
  const cfg=f.config?`<h4>config</h4><pre class="code">${esc(JSON.stringify(f.config,null,2))}</pre>`:'';
  const codeHtml=code.length?'<h4>method code <span class="mut">('+code.length+' file'+(code.length>1?'s':'')+', from snapshot)</span></h4>'+
    code.map(c=>`<details><summary>${esc(c.name)} <span class="mut">· ${c.size}b</span></summary>${
@@ -881,6 +885,7 @@ function renderFinding(f,code){
   <div class="mut">${esc(f.title||'')}</div>
   <div class="mut" style="margin-top:4px;font-size:12px">${f.finding_type||''} · ${(f.created_at||'').replace('T',' ').replace('Z','')} · id ${esc((f.id||'').slice(0,12))}</div>
   ${raw?`<h4>raw per-benchmark scores <span class="mut">(method vs base model)</span></h4><table><tr><th>benchmark</th><th>score</th><th>baseline</th><th>95% CI</th><th>n</th><th>closed</th></tr>${raw}</table>`:''}
+  ${dims?`<h4>dimension scores</h4><table>${dims}</table>`:''}
   ${per?`<h4>safety — closed %</h4><table>${per}</table>`:''}
   ${filt?`<h4>capability filter</h4><table>${filt}</table>`:''}
   ${[['abstract','Abstract'],['motivation','Motivation'],['related_work','Related work'],['method','Method (objective, loss, math)'],['data','Data'],['experimental_setup','Experimental setup'],['results_writeup','Results write-up'],['hypothesis','Hypothesis & mechanism'],['methodology','Method (objective, loss, math)'],['data_recipe','Data recipe'],['generalization','Generalization'],['diagnosis','Diagnosis'],['next_steps','Next steps']]

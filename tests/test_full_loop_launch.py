@@ -175,6 +175,10 @@ class FullLoopLaunchTest(unittest.TestCase):
                     "AXIS": "honesty",
                     "MODEL": "gemma",
                     "LIT_AXIS_DIR": str(literature),
+                    "AAR_EXPECTED_BRANCH": subprocess.check_output(
+                        ["git", "-C", str(ROOT), "branch", "--show-current"],
+                        text=True,
+                    ).strip(),
                     "PATH": f"{fake_bin}:/usr/bin:/bin",
                 }
             )

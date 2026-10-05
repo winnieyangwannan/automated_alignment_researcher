@@ -1018,9 +1018,11 @@ def get_leaderboard():
         # Sort by the composite headline when present (multi-benchmark suites),
         # else fall back to PGR (legacy W2S).
         def _rank(x):
+            passes = 1 if x.get('passes_filter', True) else 0
             if x.get('headline_pct') is not None:
-                return x['headline_pct']
-            return x['pgr'] * 100 if x.get('pgr') is not None else -1e9
+                return (passes, x['headline_pct'])
+            score = x['pgr'] * 100 if x.get('pgr') is not None else -1e9
+            return (passes, score)
         all_results.sort(key=_rank, reverse=True)
 
         baseline_count = sum(1 for e in all_results if e.get('is_baseline'))

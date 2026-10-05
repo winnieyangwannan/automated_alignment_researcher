@@ -799,7 +799,9 @@ async def share_finding(args: Dict[str, Any]) -> Dict[str, Any]:
             _auth = _strip_held_out(_auth)
             merged = dict(metrics) if isinstance(metrics, dict) else {}
             for k in ("suite", "model", "headline_pct", "passes_filter",
-                      "closed_pct", "per_benchmark", "filter_detail", "run_id"):
+                      "passes_regression", "closed_pct", "dimension_scores_pct",
+                      "dimension_coverage", "aggregation", "regression_detail",
+                      "per_benchmark", "filter_detail", "run_id"):
                 if _auth.get(k) is not None:
                     merged[k] = _auth[k]
             merged["_authoritative"] = True
@@ -912,6 +914,7 @@ async def share_finding(args: Dict[str, Any]) -> Dict[str, Any]:
             # against SCORES_DIR above.  The process-level RUN_ID identifies the
             # long-lived agent and is not necessarily the per-method eval id.
             "run_id": _rid if finding_type == "result" else os.environ.get("RUN_ID"),
+            "aar_session_id": os.environ.get("AAR_CURRENT_SESSION_ID"),
             "dataset": os.environ.get("DATASET_NAME"),
             "weak_model": os.environ.get("WEAK_MODEL"),
             "strong_model": os.environ.get("STRONG_MODEL"),

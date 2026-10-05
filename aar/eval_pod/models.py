@@ -12,7 +12,11 @@ from __future__ import annotations
 
 import os
 import re
+import warnings
 from pathlib import Path
+
+GENERATION_TOKEN_BUDGET = 8192
+FALLBACK_CONTEXT_WINDOW = 4096
 
 _FACTS = {
     "capital of france": "paris",
@@ -64,6 +68,42 @@ _THOUGHT_CHANNEL_RE = re.compile(
 _MODEL_SPECIAL_RE = re.compile(
     r"<\|(?:turn|channel)>|<(?:turn|channel)\|>|<(?:bos|eos|pad)>"
 )
+_ALLOCATOR_WARNING_RE = re.compile(
+    r"(?:cuda.*(?:allocat|out of memory)|allocator.*(?:cuda|memory))", re.IGNORECASE
+)
+
+
+def _context_window(config, tokenizer) -> int:
+    """Resolve a usable text context window before falling back conservatively.
+
+    Multimodal configs such as Gemma 4 keep the text model's limit under
+    ``text_config.max_position_embeddings`` while leaving the top-level value
+    unset. Check that nested value before the tokenizer fallback, whose generic
+    default may be much smaller than the checkpoint's real context window.
+    """
+    text_config = getattr(config, "text_config", None)
+    nested_context = (
+        text_config.get("max_position_embeddings")
+        if isinstance(text_config, dict)
+        else getattr(text_config, "max_position_embeddings", 0)
+    )
+    for candidate in (
+        getattr(config, "max_position_embeddings", 0),
+        nested_context,
+        getattr(tokenizer, "model_max_length", 0),
+    ):
+        try:
+            context = int(candidate or 0)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if 0 < context <= 1_000_000:
+            return context
+    return FALLBACK_CONTEXT_WINDOW
+
+
+# Backward-compatible name used by the replication checks introduced with the
+# original two-dimensional runner.
+_resolve_context_window = _context_window
 
 
 def split_reasoning_and_answer_text(text: str) -> tuple[str, str]:
@@ -231,20 +271,20 @@ class HFModel:
         env_mnt = os.getenv("EVAL_MAX_NEW_TOKENS")
         self.max_new_tokens = (max_new_tokens if max_new_tokens is not None
                                else (int(env_mnt) if env_mnt else None))  # None = AUTO
-        # Model context window for the AUTO budget; guard tokenizer sentinels (1e30).
-        ctx = int(getattr(self.model.config, "max_position_embeddings", 0) or 0)
-        if ctx <= 0 or ctx > 1_000_000:
-            tml = int(getattr(self.tokenizer, "model_max_length", 0) or 0)
-            ctx = tml if 0 < tml <= 1_000_000 else 4096
-        self._ctx = ctx
+        # Model context window for the AUTO budget. Multimodal checkpoints may
+        # expose it only on config.text_config; tokenizer limits are a fallback.
+        self._ctx = _context_window(self.model.config, self.tokenizer)
         # AUTO budget = remaining context, but capped at EVAL_AUTO_CEILING so a
         # DEGENERATE model (one that never emits EOS — common for broken fine-tunes
-        # the AAR produces) can't make a single row generate the model's full 32k
+        # the AAR produces) can't make a single row generate the model's full
         # context and stall the whole eval. The ceiling is set comfortably above
         # any legitimate answer (GSM8K CoT / IFEval ≈ a few hundred tokens), so it
         # never truncates real outputs; raise it via env if a suite ever needs more.
         self._auto_ceiling = int(os.getenv("EVAL_AUTO_CEILING", "2048"))
         self._trunc_count = 0
+        self._generation_count = 0
+        self._allocator_warning_count = 0
+        self._oom_count = 0
         # --- robust stop tokens (fixes "won't stop" / wrong-EOS) -----------------
         # A chat model ends its TURN with a turn-ender token that is NOT always the
         # model's nominal eos. Classic traps: Llama-3 turns end with <|eot_id|> (not
@@ -341,16 +381,18 @@ class HFModel:
         """Max new tokens for this call. AUTO (max_new_tokens is None) = the model's
         remaining context capped at the AUTO ceiling — never a small fixed cap, so
         real outputs are never truncated, but a runaway model is still bounded."""
+        remaining = max(1, self._ctx - int(input_len) - 16)
         if override is not None:
-            return int(override)
+            return min(int(override), remaining)
         if self.max_new_tokens is not None:
-            return self.max_new_tokens
-        return max(64, min(self._ctx - int(input_len) - 16, self._auto_ceiling))
+            return min(self.max_new_tokens, remaining)
+        return max(1, min(remaining, self._auto_ceiling))
 
     def _note_truncation(self, new_tokens, mnt: int) -> None:
         """Surface — never silence — a completion that filled the whole budget
         without ever emitting a stop token (genuinely truncated). Works for both
         single and left-padded batched generation (finished rows contain eos/pad)."""
+        self._generation_count += 1
         try:
             row = new_tokens.tolist() if hasattr(new_tokens, "tolist") else list(new_tokens)
         except Exception:
@@ -365,6 +407,33 @@ class HFModel:
                       f"stop token (truncated x{self._trunc_count}); raw output is cut off "
                       f"so answer-extraction may fail. Raise the generation budget.", flush=True)
 
+    def _tracked_generate(self, **kwargs):
+        """Run HF generation while surfacing allocator/OOM health signals."""
+        original_showwarning = warnings.showwarning
+
+        def showwarning(message, category, filename, lineno, file=None, line=None):
+            if _ALLOCATOR_WARNING_RE.search(str(message)):
+                self._allocator_warning_count += 1
+            original_showwarning(message, category, filename, lineno, file=file, line=line)
+
+        try:
+            with warnings.catch_warnings():
+                warnings.showwarning = showwarning
+                return self.model.generate(**kwargs)
+        except getattr(self._torch.cuda, "OutOfMemoryError", RuntimeError):
+            self._oom_count += 1
+            print("[eval] ERROR: CUDA out of memory during generation", flush=True)
+            raise
+
+    def evaluation_health(self) -> dict[str, int]:
+        """Counters consumed by run_eval's fail-closed per-benchmark gate."""
+        return {
+            "generated": self._generation_count,
+            "truncated": self._trunc_count,
+            "allocator_warnings": self._allocator_warning_count,
+            "ooms": self._oom_count,
+        }
+
     def generate(self, prompt, **kwargs) -> str:
         # Render the prompt (a string = one user turn, identical to before; or a messages
         # list = real system/multi-turn) through _render.
@@ -372,7 +441,7 @@ class HFModel:
         enc = self.tokenizer(text, return_tensors="pt").to(self.device)
         mnt = self._budget(enc["input_ids"].shape[1], kwargs.get("max_new_tokens"))
         with self._torch.no_grad():
-            out = self.model.generate(
+            out = self._tracked_generate(
                 **enc,
                 max_new_tokens=mnt,
                 eos_token_id=self._stop_ids or None,   # stop on the turn-ender (union; fixes Qwen <|im_end|>)
@@ -433,7 +502,7 @@ class HFModel:
             in_len = enc["input_ids"].shape[1]
             mnt = self._budget(in_len, override)
             with self._torch.no_grad():
-                gen = self.model.generate(
+                gen = self._tracked_generate(
                     **enc, max_new_tokens=mnt,
                     eos_token_id=self._stop_ids or None,   # stop on the turn-ender (union; fixes Qwen <|im_end|>)
                     pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,

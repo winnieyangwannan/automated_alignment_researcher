@@ -50,12 +50,15 @@ export EVAL_GPUS="${EVAL_GPUS:-auto}"
 # DECODING PARITY (critical): the trained-model eval MUST use the SAME decoding as the
 # suite's baseline (benchmark_docs/<suite>/baseline.json) or the composite delta is
 # corrupted — greedy is NOT batch-invariant, and the AUTO budget is capped by the ceiling.
-# models.py defaults (batch 16, ceiling 2048) DIVERGE from the sycophancy/refusal baselines
-# (batch 8, ceiling 4096). Pin them so eval == baseline. greedy + no_repeat_ngram=0 already
-# match. NB: keep these in lock-step with benchmark_docs/<suite>/baseline.json's `decoding`.
+# Pin decoding so candidate evaluation matches its newly measured exact-model baseline.
+# For Gemma 4, 8192 tokens is one combined private-thinking + visible-answer budget.
+# Keep these in lock-step with benchmark_docs/<suite>/baseline.json's `decoding`.
 case "${SUITE}" in
-  sycophancy|refusal) export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-8}";  export EVAL_AUTO_CEILING="${EVAL_AUTO_CEILING:-4096}" ;;
-  honesty)            export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-32}"; export EVAL_AUTO_CEILING="${EVAL_AUTO_CEILING:-1024}"; export EVAL_NO_REPEAT_NGRAM="${EVAL_NO_REPEAT_NGRAM:-4}" ;;
+  sycophancy)          export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-8}";  export EVAL_AUTO_CEILING="${EVAL_AUTO_CEILING:-8192}"; export EVAL_RUN_GEN_CEILING="${EVAL_RUN_GEN_CEILING:-8192}"; export EVAL_RUN_NGRAM="${EVAL_RUN_NGRAM:-4}" ;;
+  honesty)             export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-32}"; export EVAL_AUTO_CEILING="${EVAL_AUTO_CEILING:-8192}"; export EVAL_RUN_GEN_CEILING="${EVAL_RUN_GEN_CEILING:-8192}"; export EVAL_RUN_NGRAM="${EVAL_RUN_NGRAM:-4}"; export EVAL_NO_REPEAT_NGRAM="${EVAL_NO_REPEAT_NGRAM:-4}" ;;
+  honesty_sycophancy)  export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-4}";  export EVAL_AUTO_CEILING="${EVAL_AUTO_CEILING:-8192}"; export EVAL_RUN_GEN_CEILING="${EVAL_RUN_GEN_CEILING:-8192}"; export EVAL_RUN_NGRAM="${EVAL_RUN_NGRAM:-4}"; export EVAL_NO_REPEAT_NGRAM="${EVAL_NO_REPEAT_NGRAM:-4}" ;;
+  honesty_sycophancy_concealing_uncertainty) export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-4}"; export EVAL_AUTO_CEILING="${EVAL_AUTO_CEILING:-8192}"; export EVAL_RUN_GEN_CEILING="${EVAL_RUN_GEN_CEILING:-8192}"; export EVAL_RUN_NGRAM="${EVAL_RUN_NGRAM:-4}"; export EVAL_NO_REPEAT_NGRAM="${EVAL_NO_REPEAT_NGRAM:-4}" ;;
+  refusal)             export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-8}";  export EVAL_AUTO_CEILING="${EVAL_AUTO_CEILING:-4096}" ;;
   power_seeking)      export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-32}"; export EVAL_AUTO_CEILING="${EVAL_AUTO_CEILING:-1024}"; export EVAL_NO_REPEAT_NGRAM="${EVAL_NO_REPEAT_NGRAM:-4}" ;;  # baseline.json: sample T=1 batch 32; machiavelli legs are logprob (batch-invariant), instrumental_eval freeform
   bias)               export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-32}"; export EVAL_AUTO_CEILING="${EVAL_AUTO_CEILING:-4096}" ;;  # 2026-07-02: KEEP 32 (do NOT raise to 64). Verified bs=64 BREAKS bias_race_content parity: baseline 0.45 (bs<=32, matches running evals ~0.47) -> 0.18 at bs=64 (left-padding artifact on the SHORT story prompts; letters/bios/scenes are batch-stable). Speedup comes from gpu:6 parallelism (watcher), which is parity-safe. Batch is pinned so a stray env can't push it to 64 and miscalibrate the composite.
   hallucination|faithfulness)      export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-32}"
@@ -95,6 +98,7 @@ case "${SUITE}" in
   # key is sourced above (same plumbing as honesty).
   reward_hacking) export JUDGE_BACKEND="${JUDGE_BACKEND:-anthropic}"; export JUDGE_MODEL="${JUDGE_MODEL:-claude-haiku-4-5}"; export JUDGE_CONCURRENCY="${JUDGE_CONCURRENCY:-100}"; export ANTHROPIC_MIN_INTERVAL_S="${ANTHROPIC_MIN_INTERVAL_S:-0}" ;;   # conc 100 / no min-interval throttle: the 3 judge legs (~174 Haiku calls/eval) judge in ~2 waves; high-prio key + anthropic_chat honors Retry-After on any 429.
   honesty) export JUDGE_BACKEND="${JUDGE_BACKEND:-model_api}"; export JUDGE_MODEL="${JUDGE_MODEL:-claude-4-8-opus}"; export MASK_JUDGE_MODEL="${MASK_JUDGE_MODEL:-claude-4-8-opus}" ;;
+  honesty_sycophancy|honesty_sycophancy_concealing_uncertainty) export JUDGE_BACKEND="${JUDGE_BACKEND:-model_api}"; export JUDGE_MODEL="${JUDGE_MODEL:-gpt-5-6-luna}"; export MASK_JUDGE_MODEL="${MASK_JUDGE_MODEL:-gpt-5-6-luna}" ;;
   # bias (2026-06-28): the 2 MULTI-TURN FREE-FORM legs (bias_mt_decision/bias_mt_occupation) are judged by
   # VERDICT EXTRACTION (engagement + sign) → ANTHROPIC claude-haiku-4-5 @ conc 100 (mirror reward_hacking/
   # faithfulness). bbq + bbq_heldout are RULE-scored (logprob, no judge). WITHOUT this case the bias eval falls

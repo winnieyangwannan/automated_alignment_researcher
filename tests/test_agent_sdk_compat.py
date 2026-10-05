@@ -124,6 +124,29 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
             },
         )
 
+    def test_session_budget_is_forwarded_and_requires_sdk_support(self) -> None:
+        class NewOptions:
+            def __init__(self, *, max_budget_usd: float | None = None) -> None:
+                self.max_budget_usd = max_budget_usd
+
+        agent = _load_agent_module(NewOptions)
+        options: dict[str, object] = {}
+        with patch.dict(
+            os.environ, {"AAR_CLAUDE_SESSION_BUDGET_USD": "250"}, clear=False
+        ):
+            agent._add_supported_budget_options(options)
+        self.assertEqual(options, {"max_budget_usd": 250.0})
+
+        class OldOptions:
+            def __init__(self, *, model: str | None = None) -> None:
+                self.model = model
+
+        old_agent = _load_agent_module(OldOptions)
+        with patch.dict(
+            os.environ, {"AAR_CLAUDE_SESSION_BUDGET_USD": "250"}, clear=False
+        ), self.assertRaisesRegex(RuntimeError, "cannot enforce"):
+            old_agent._add_supported_budget_options({})
+
     def test_full_agent_meta_secure_mode_uses_restricted_web_surface(self) -> None:
         class Options:
             def __init__(self, **kwargs) -> None:

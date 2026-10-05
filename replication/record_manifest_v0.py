@@ -25,7 +25,13 @@ def main() -> None:
     parser.add_argument(
         "--phase",
         required=True,
-        choices=("baseline", "canary", "launch-12h", "resume-36h"),
+        choices=(
+            "baseline",
+            "canary",
+            "two-iteration-pilot",
+            "launch-12h",
+            "resume-36h",
+        ),
     )
     parser.add_argument("--submission-log", type=Path)
     args = parser.parse_args()
@@ -49,7 +55,9 @@ def main() -> None:
     )
     for optional in (
         Path(os.environ["AAR_BASELINE_OVERRIDES"]),
-        Path(os.environ["HOLDOUT_DIR"]) / "sycophancy" / "sycophancy.yaml",
+        Path(os.environ["HOLDOUT_DIR"])
+        / os.environ.get("SUITE_NAME", "sycophancy")
+        / f"{os.environ.get('SUITE_NAME', 'sycophancy')}.yaml",
         Path(os.environ["AAR_SERVE_V2_DEPLOYMENT_DIR"]) / "spec.yaml",
     ):
         if optional.is_file():
@@ -76,11 +84,47 @@ def main() -> None:
         "served_model": os.environ["AAR_SERVE_V2_MODEL"],
         "suite_benchmarks": os.environ["AAR_SUITE_BENCHMARKS"].split(),
         "thinking_enabled": os.environ.get("AAR_TARGET_ENABLE_THINKING") == "1",
+        "thinking_plus_answer_token_budget": int(
+            os.environ["EVAL_RUN_GEN_CEILING"]
+        ),
+        "judge": {
+            "backend": os.environ.get("JUDGE_BACKEND"),
+            "model": os.environ.get("JUDGE_MODEL"),
+        },
+        "evaluation_health": {
+            "batch_size": int(os.environ["EVAL_RUN_BATCH"]),
+            "freeform_generation_ceiling": int(
+                os.environ["EVAL_RUN_GEN_CEILING"]
+            ),
+            "generation_ceiling_benchmarks": os.environ[
+                "EVAL_RUN_GEN_CEILING_BENCHMARKS"
+            ].replace(",", " ").split(),
+            "fail_on_allocator_warning": os.environ.get(
+                "EVAL_FAIL_ON_ALLOCATOR_WARNING"
+            ) == "1",
+            "max_truncation_rate": float(os.environ["EVAL_MAX_TRUNCATION_RATE"]),
+            "truncation_min_completions": int(
+                os.environ["EVAL_TRUNCATION_MIN_COMPLETIONS"]
+            ),
+        },
         "agent_model": os.environ.get("AAR_AGENT_MODEL"),
         "agent_effort": os.environ.get("AAR_EFFORT"),
+        "monitor": {
+            "backend": os.environ.get("AAR_MONITOR_BACKEND"),
+            "model": os.environ.get("MONITOR_MODEL"),
+        },
+        "librarian_model": os.environ.get("LITREVIEW_MODEL"),
+        "dimensions": os.environ.get("AAR_DIMENSIONS", "").split(","),
+        "petri": {"mode": "post_hoc_only", "included_in_optimization": False},
+        "functional_smoke": os.environ.get("AAR_FUNCTIONAL_SMOKE") == "1",
+        "held_out_isolation": (
+            "functional_smoke_same_user"
+            if os.environ.get("AAR_FUNCTIONAL_SMOKE") == "1"
+            else "separate_evaluator_principal_required"
+        ),
         "authorized_spend_caps_usd": {
             "claude": os.environ.get("AAR_CLAUDE_SPEND_CAP_USD"),
-            "openai_judges": os.environ.get("AAR_OPENAI_JUDGE_SPEND_CAP_USD"),
+            "gpt_judges": os.environ.get("AAR_GPT_JUDGE_SPEND_CAP_USD"),
         },
         "slurm": {
             "account": os.environ["AAR_SLURM_ACCOUNT"],

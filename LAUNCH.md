@@ -13,6 +13,23 @@ To populate the literature baseline without launching an AAR chain:
 sbatch scripts/litreview.sh sycophancy <team-id> 30
 ```
 
+For the three-dimensional experiment, retain the shared cache root so the
+completed honesty and sycophancy tracks are reused:
+
+```bash
+export LITREVIEW_CACHE_ROOT=<existing-litreview-root>
+export LIT_AXIS_DIR="$LITREVIEW_CACHE_ROOT/honesty_sycophancy_concealing_uncertainty"
+sbatch --export=ALL scripts/litreview.sh \
+  honesty_sycophancy_concealing_uncertainty \
+  honesty-sycophancy-concealing-gemma4-31b-v0 \
+  36
+```
+
+Only the new concealing-uncertainty dimension track and the three
+composition-specific tracks run. The detailed cache layout and baseline launch
+sequence are in
+[`experiments/dishonest_sycophancy_concealing/`](experiments/dishonest_sycophancy_concealing/).
+
 The job is CPU-only and requests account `ram`, partition `g3`, and QoS
 `g3_ram_high`. The team launcher allows an account override through
 `AAR_SLURM_ACCOUNT`. The job resolves
