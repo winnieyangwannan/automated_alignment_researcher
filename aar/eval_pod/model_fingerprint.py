@@ -67,4 +67,10 @@ def fingerprint_model_ref(model_ref: str) -> str | None:
     if not model_ref or str(model_ref).startswith("stub:"):
         return None
     from aar.eval_pod.models import load_model
-    return compute_fingerprint(load_model(model_ref))
+    model = load_model(model_ref)
+    try:
+        return compute_fingerprint(model)
+    finally:
+        close = getattr(model, "close", None)
+        if callable(close):
+            close()

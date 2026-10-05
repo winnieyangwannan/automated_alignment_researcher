@@ -31,7 +31,7 @@ import yaml
 from aar.benchmarks import registry
 from aar.benchmarks.base import BenchmarkSpec, DimensionSpec, SuiteSpec
 from aar.benchmarks.composite import compute_composite
-from aar.eval_pod.models import load_model
+from aar.eval_pod.models import load_model, resolve_inference_backend
 
 
 def load_suite(path: str) -> tuple[str, list[BenchmarkSpec]]:
@@ -421,24 +421,29 @@ def _apply_golden(model, spec: BenchmarkSpec, suite_name: str) -> None:
 
 def _score_sequential(specs, model_ref, secret_dir, suite_name=""):
     model = load_model(model_ref)
-    judge_fn = _resolve_judge_fn()
-    scores = {}
-    for spec in specs:
-        with _evaluation_profile(spec):
-            _apply_golden(model, spec, suite_name)   # golden per-benchmark decoding (== baseline)
-            health_before = _health_snapshot(model)
-            sc = build_benchmark(spec, secret_dir, real_judge_fn=judge_fn).score(model)
-            _validate_evaluation_health(model, health_before, spec.id)
-        scores[spec.id] = sc
-        if spec.role == "held_out":
-            # Never print the held-out score to stdout — eval logs can land in
-            # research-readable paths; the only place its score is allowed is the
-            # eval-private HELDOUT_SCORES_DIR.
-            print("  [a held_out benchmark — name, score, n all hidden from logs]", flush=True)
-        else:
-            print(f"  {spec.id:16s} [{spec.category:10s} {spec.role:18s}] "
-                  f"mean={sc.mean:.4f} ci=[{sc.ci_low:.4f},{sc.ci_high:.4f}] n={sc.n}", flush=True)
-    return scores
+    try:
+        judge_fn = _resolve_judge_fn()
+        scores = {}
+        for spec in specs:
+            with _evaluation_profile(spec):
+                _apply_golden(model, spec, suite_name)   # golden per-benchmark decoding (== baseline)
+                health_before = _health_snapshot(model)
+                sc = build_benchmark(spec, secret_dir, real_judge_fn=judge_fn).score(model)
+                _validate_evaluation_health(model, health_before, spec.id)
+            scores[spec.id] = sc
+            if spec.role == "held_out":
+                # Never print the held-out score to stdout — eval logs can land in
+                # research-readable paths; the only place its score is allowed is the
+                # eval-private HELDOUT_SCORES_DIR.
+                print("  [a held_out benchmark — name, score, n all hidden from logs]", flush=True)
+            else:
+                print(f"  {spec.id:16s} [{spec.category:10s} {spec.role:18s}] "
+                      f"mean={sc.mean:.4f} ci=[{sc.ci_low:.4f},{sc.ci_high:.4f}] n={sc.n}", flush=True)
+        return scores
+    finally:
+        close = getattr(model, "close", None)
+        if callable(close):
+            close()
 
 
 def _gpu_worker(gpu: str, specs, model_ref: str, secret_dir: str, q, suite_name="") -> None:
@@ -451,16 +456,21 @@ def _gpu_worker(gpu: str, specs, model_ref: str, secret_dir: str, q, suite_name=
         _reg.discover()
         judge_fn = _resolve_judge_fn()
         model = load_model(model_ref)
-        for spec in specs:
-            try:
-                with _evaluation_profile(spec):
-                    _apply_golden(model, spec, suite_name)   # golden per-benchmark decoding (== baseline)
-                    health_before = _health_snapshot(model)
-                    sc = build_benchmark(spec, secret_dir, real_judge_fn=judge_fn).score(model)
-                    _validate_evaluation_health(model, health_before, spec.id)
-                q.put((spec.id, sc, None))
-            except Exception as e:  # one benchmark failing shouldn't sink the rest
-                q.put((spec.id, None, repr(e)))
+        try:
+            for spec in specs:
+                try:
+                    with _evaluation_profile(spec):
+                        _apply_golden(model, spec, suite_name)   # golden per-benchmark decoding (== baseline)
+                        health_before = _health_snapshot(model)
+                        sc = build_benchmark(spec, secret_dir, real_judge_fn=judge_fn).score(model)
+                        _validate_evaluation_health(model, health_before, spec.id)
+                    q.put((spec.id, sc, None))
+                except Exception as e:  # one benchmark failing shouldn't sink the rest
+                    q.put((spec.id, None, repr(e)))
+        finally:
+            close = getattr(model, "close", None)
+            if callable(close):
+                close()
     except Exception as e:  # worker-level failure (model load, etc.)
         for spec in specs:
             q.put((spec.id, None, repr(e)))
@@ -542,6 +552,7 @@ def run(suite_path: str, model_ref: str, secret_dir: str = "", out: str = "score
     result = {
         "suite": suite_name,
         "model": model_ref,
+        "inference_backend": resolve_inference_backend(model_ref),
         **composite.to_dict(),
     }
     # Behavioral fingerprint (deterministic greedy probe of the model). Lets share_finding DEDUP

@@ -78,10 +78,10 @@ pip install -e .
 platforms, including Linux aarch64; those installations use the attention implementations
 provided by PyTorch/vLLM. Install a compatible `flash-attn` build separately if desired.
 The optional Triton, Unsloth, Liger, cut-cross-entropy, and SGLang optimization stack remains
-Linux x86_64-only. The old vLLM, FlashInfer, torch-memory-saver, and sentence-transformers
-pins are also omitted on Linux aarch64 because they constrain the environment to the torch 2.8
-or Transformers 4 generation and are not used by the direct Hugging Face evaluator in
-`experiments/20260919/plan.md`. Linux aarch64 uses
+Linux x86_64-only. The PyPI vLLM, FlashInfer, torch-memory-saver, and sentence-transformers
+pins are omitted on Linux aarch64 because they constrain the environment to the torch 2.8
+or Transformers 4 generation. Linux aarch64 therefore needs a compatible cluster-provided
+vLLM build to use the accelerated evaluator; otherwise use Transformers. It uses
 torch 2.14.0, Transformers 5.17.0, tokenizers 0.23.x, a compatible safetensors release,
 PEFT, and PyTorch SDPA instead.
 
@@ -133,17 +133,38 @@ set -a; . ./.env; set +a  # load into your shell
 
 Key variables (full list + infra seams in [`.env.example`](.env.example) and [`PORTABILITY.md`](PORTABILITY.md)):
 
-| Variable | Meaning |
-|---|---|
-| `AXIS` | which alignment failure (`--suite` name; see table) |
-| `MODEL` | target model alias (`qwen`/`llama`/`olmo`/`gemma`/`phi`) or a full HF id (`scripts/models.sh`) |
-| `JUDGE_BACKEND` | `model_api` \| `openai` \| `anthropic` \| `local` (per-axis default in `REPRODUCE.md` §4) |
-| `HF_TOKEN`, `OAI_API`, `ANTHROPIC_API_KEY` | judge / agent credentials |
-| `AAR_BENCHMARK_DOCS` | path `publish_suite` reads baselines from; defaults to the bundled `benchmark_docs/` |
-| `BENCHMARK_DOCS_DIR` | path `run_eval` reads the per-benchmark **golden decoding** from; keep = `benchmark_docs/` (set both) |
-| `HOLDOUT_DIR`, `HELDOUT_SCORES_DIR` | eval-only secret suite + held-out scores (keep off the research side) |
-| `SUBMISSIONS_DIR`, `SCORES_DIR` | the shared research↔eval handoff |
-| `HARNESS_TRANSPORT` | `fs` (shared filesystem) \| `s3` (object store) |
+| Variable                                   | Meaning                                                                                               |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `AXIS`                                     | which alignment failure (`--suite` name; see table)                                                   |
+| `MODEL`                                    | target model alias (`qwen`/`llama`/`olmo`/`gemma`/`phi`) or a full HF id (`scripts/models.sh`)        |
+| `JUDGE_BACKEND`                            | `model_api` \| `openai` \| `anthropic` \| `local` (per-axis default in `REPRODUCE.md` §4)             |
+| `HF_TOKEN`, `OAI_API`, `ANTHROPIC_API_KEY` | judge / agent credentials                                                                             |
+| `AAR_BENCHMARK_DOCS`                       | path `publish_suite` reads baselines from; defaults to the bundled `benchmark_docs/`                  |
+| `BENCHMARK_DOCS_DIR`                       | path `run_eval` reads the per-benchmark **golden decoding** from; keep = `benchmark_docs/` (set both) |
+| `HOLDOUT_DIR`, `HELDOUT_SCORES_DIR`        | eval-only secret suite + held-out scores (keep off the research side)                                 |
+| `SUBMISSIONS_DIR`, `SCORES_DIR`            | the shared research↔eval handoff                                                                      |
+| `HARNESS_TRANSPORT`                        | `fs` (shared filesystem) \| `s3` (object store)                                                       |
+| `EVAL_INFERENCE_BACKEND`                   | `auto` (vLLM when installed), `vllm` (required/fail closed), or `transformers`                        |
+
+### Target-model inference backend
+
+Set `EVAL_INFERENCE_BACKEND=vllm` to use the accelerated evaluator. It submits all prompts from each
+benchmark together so vLLM can continuously batch them, enables prefix caching and CUDA graphs,
+and uses prompt log-probabilities for MCQ and continuation-scored benchmarks. The default,
+`transformers`, preserves existing baseline compatibility; `auto` selects vLLM when importable.
+Explicit `vllm` selection fails closed when the accelerated environment is unavailable.
+
+PEFT checkpoint directories containing `adapter_config.json` are loaded as runtime vLLM LoRAs. For
+composite checkpoints whose vLLM decoder lives under `model.language_model.layers`, the evaluator
+rewrites text-only `model.layers` adapter keys and verifies that the adapter changes token
+log-probabilities. An ineffective adapter aborts evaluation rather than silently scoring the base
+model. `EVAL_VLLM_GPU_MEMORY_UTILIZATION`, `EVAL_VLLM_MAX_MODEL_LEN`, and
+`EVAL_VLLM_MAX_NUM_SEQS` tune engine capacity.
+
+vLLM and Transformers sampling are distributionally close but do not produce byte-identical random
+draws. Baselines and candidate checkpoints used in the same comparison must therefore be measured
+with the same inference backend; do not compare a new vLLM score directly with a retained
+Transformers baseline.
 
 ## The ten alignment failures
 
@@ -218,6 +239,8 @@ its checkpoint directory instead of the HF id.
 ### Reading the output
 
 - **`scores.json`** (research-readable, **held-out stripped**), exact fields:
+  - `suite`, `model`, `inference_backend` — evaluated suite/checkpoint and the recorded
+    `stub`/`transformers`/`vllm` inference implementation.
   - `headline_pct` — geometric-mean closed-% over the hill-climbing benchmarks, in **percent** (the
     number the AAR hill-climbs; higher = safer).
   - `closed_pct{<bench>: pct}` — per hill-climbing benchmark, the % of the baseline→optimum gap closed
@@ -291,7 +314,9 @@ For **Task A** you run only the bottom-right path (`publish_suite` → `run_eval
   what `run_eval` reads the golden decoding from; a wrong path silently falls back to defaults). Do NOT
   set `EVAL_BATCH_SIZE`/`EVAL_AUTO_CEILING`/`EVAL_NO_REPEAT_NGRAM`/`EVAL_TEMPERATURE` — they override the
   golden decoding.
-- **GPU OOM:** reduce `EVAL_BATCH_SIZE`; each benchmark loads the model on one GPU.
+- **GPU OOM:** with vLLM, lower `EVAL_VLLM_GPU_MEMORY_UTILIZATION` or
+  `EVAL_VLLM_MAX_NUM_SEQS`; with Transformers, reduce `EVAL_BATCH_SIZE`. Each evaluator worker
+  loads one model replica on one GPU.
 - **No GPU available:** use the stub smoke test (§3); real target-model/judge evals need a GPU.
 - **Import loads a model unexpectedly:** `registry.discover()` skips `_`-prefixed authoring scripts, so
   discovery does not load a model — if you add a plugin, put the registrar in `<plugin>/benchmark.py`.

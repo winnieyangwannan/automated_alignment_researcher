@@ -1,12 +1,14 @@
 """Model loading for the eval pod.
 
 `load_model(model_ref)` returns an object satisfying the `Model` protocol
-(`generate(prompt) -> str`). Two backends:
+(`generate(prompt) -> str`). Three backends:
 
 - `stub:<flavor>` — a CPU-only deterministic stand-in (no torch/GPU/download),
   used for the local toy. Flavors: `perfect`, `sycophantic`, `weak`.
-- a filesystem path / HF id — Phase 2: load a real HF model. Left as a clear
-  TODO so the toy stays importable without torch installed.
+- a filesystem path / HF id through vLLM (when installed) for continuous-batched
+  evaluation, including PEFT LoRA submissions.
+- the same reference through Transformers when explicitly requested or when
+  vLLM is unavailable in ``auto`` mode.
 """
 from __future__ import annotations
 
@@ -613,11 +615,45 @@ class HFModel:
         return out
 
 
+def resolve_inference_backend(model_ref: str) -> str:
+    """Resolve the recorded backend name without loading model weights."""
+    if model_ref.startswith("stub:"):
+        return "stub"
+    backend = os.getenv("EVAL_INFERENCE_BACKEND", "transformers").strip().lower()
+    if backend not in ("auto", "vllm", "transformers", "hf"):
+        raise ValueError(
+            "EVAL_INFERENCE_BACKEND must be auto, vllm, or transformers"
+        )
+    if backend == "auto":
+        from importlib.util import find_spec
+
+        backend = "vllm" if find_spec("vllm") is not None else "transformers"
+    return "transformers" if backend == "hf" else backend
+
+
 def load_model(model_ref: str):
     """Return a Model for `model_ref`.
     - `stub:<flavor>` -> StubModel (CPU toy, no deps)
-    - any other string -> a local filesystem path to an HF model dir -> HFModel
+    - any other string -> vLLM or Transformers according to
+      EVAL_INFERENCE_BACKEND=(auto|vllm|transformers)
     """
-    if model_ref.startswith("stub:"):
+    backend = resolve_inference_backend(model_ref)
+    if os.getenv("EVAL_INFERENCE_BACKEND", "transformers").strip().lower() == "auto":
+        print(f"[eval] auto-selected inference backend = {backend}", flush=True)
+    if backend == "stub":
         return StubModel(flavor=model_ref.split(":", 1)[1] or "perfect")
+    if backend == "vllm":
+        from importlib.util import find_spec
+
+        if find_spec("vllm") is None:
+            raise RuntimeError(
+                "EVAL_INFERENCE_BACKEND=vllm requires an environment with vLLM installed"
+            )
+        try:
+            from aar.eval_pod.vllm_model import VLLMModel
+        except ImportError as error:
+            raise RuntimeError(
+                "EVAL_INFERENCE_BACKEND=vllm requires an environment with vLLM installed"
+            ) from error
+        return VLLMModel(model_ref)
     return HFModel(model_ref)
