@@ -49,7 +49,6 @@ test_suite="${OUT}/suite/run5_eval_throughput.yaml"
   --subset-size-cap "${AAR_CONCURRENCY_SUBSET_SIZE:-64}" \
   --benchmark llm_uncertainty_bench \
   --benchmark verbalized_ece \
-  --benchmark sciq_uncertainty \
   --benchmark mmlu \
   --benchmark gsm8k \
   --benchmark ifeval

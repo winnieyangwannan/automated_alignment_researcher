@@ -53,3 +53,9 @@ shape but can fail the generation-health gate before producing comparable timing
   it after name matching. The follow-up selector skips all held-out entries
   before matching; requesting only a held-out ID therefore fails as a missing
   public benchmark without copying it into the throughput suite.
+- Job `1740794`, attempt `20261006T200613Z-c99ff855a868`, failed after 31
+  seconds before model loading. The retained published suite has no
+  `sciq_uncertainty` entry, despite that stale identifier appearing in an older
+  environment list. The benchmark allowlist now uses the five available
+  public, non-judge entries: `llm_uncertainty_bench`, `verbalized_ece`, `mmlu`,
+  `gsm8k`, and `ifeval`.
