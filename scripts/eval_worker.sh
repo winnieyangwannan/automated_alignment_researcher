@@ -167,6 +167,21 @@ CLAIMS="${SCORES_DIR}/.claims"
 mkdir -p "${CLAIMS}" 2>/dev/null || true
 
 cd "${REPO}" || exit 2
+if [ "${EVAL_INFERENCE_BACKEND:-transformers}" = vllm ]; then
+  [ "${AAR_VLLM_CONTAINER_IMAGE:-}" = docker.io/vllm/vllm-openai:v0.25.1 ] || {
+    echo "[worker] ERROR: Gemma vLLM evaluation requires the validated v0.25.1 image" >&2
+    exit 2
+  }
+  [ -x "${REPO}/scripts/run_vllm_container.sh" ] || {
+    echo "[worker] ERROR: vLLM container runner is not executable" >&2
+    exit 2
+  }
+  [ -x "${AAR_VLLM_MERGE_PY:-}" ] || {
+    echo "[worker] ERROR: AAR_VLLM_MERGE_PY is not executable" >&2
+    exit 2
+  }
+  echo "[worker ${WORKER_ID}] backend=vllm image=${AAR_VLLM_CONTAINER_IMAGE} lora_strategy=merged_checkpoint"
+fi
 echo "[worker ${WORKER_ID}] draining submissions for suite=${SUITE} (idle-exit ${IDLE_EXIT}s)"
 last_work=$(date +%s)
 while true; do
@@ -181,7 +196,40 @@ while true; do
     # SCORES_DIR so every worker — same OS user — can create them.)
     mkdir "${CLAIMS}/${rid}" 2>/dev/null || continue        # claimed by another worker
     echo "[worker ${WORKER_ID}] scoring ${rid}"
-    if PYTHONUNBUFFERED=1 "${PY}" -u -m aar.eval_pod.entrypoint --run-id "${rid}" --suite "${SUITE}"; then
+    eval_cmd=("${PY}" -u -m aar.eval_pod.entrypoint --run-id "${rid}" --suite "${SUITE}")
+    if [ "${EVAL_INFERENCE_BACKEND:-transformers}" = vllm ]; then
+      : "${AAR_VLLM_MERGE_PY:?vLLM Gemma evaluation requires AAR_VLLM_MERGE_PY}"
+      : "${AAR_VLLM_MERGED_ROOT:?vLLM Gemma evaluation requires AAR_VLLM_MERGED_ROOT}"
+      : "${TARGET_MODEL_PATH:?vLLM Gemma evaluation requires TARGET_MODEL_PATH}"
+      submitted_model="${d%/}/model"
+      merged_model="${AAR_VLLM_MERGED_ROOT}/${rid}"
+      mkdir -p "${AAR_VLLM_MERGED_ROOT}"
+      echo "[worker ${WORKER_ID}] merging adapter ${submitted_model} -> ${merged_model}"
+      if ! "${AAR_VLLM_MERGE_PY}" "${REPO}/scripts/merge_peft_adapter.py" \
+          --base-checkpoint "${TARGET_MODEL_PATH}" \
+          --adapter "${submitted_model}" \
+          --output "${merged_model}" \
+          --source-commit "$(git -C "${REPO}" rev-parse HEAD)"; then
+        echo "[worker ${WORKER_ID}] FAILED merge ${rid}"
+        rmdir "${CLAIMS}/${rid}" 2>/dev/null || true
+        did=1; last_work=$(date +%s)
+        continue
+      fi
+      [ -s "${merged_model}/.merge-complete.json" ] || {
+        echo "[worker ${WORKER_ID}] FAILED missing merge manifest ${rid}"
+        rmdir "${CLAIMS}/${rid}" 2>/dev/null || true
+        did=1; last_work=$(date +%s)
+        continue
+      }
+      export EVAL_MODEL_PATH_OVERRIDE="${merged_model}"
+      export EVAL_VLLM_LORA_STRATEGY=merged_checkpoint
+      export EVAL_VLLM_REQUIRE_MERGED=1
+      export EVAL_FAIL_ON_SCORING_ERROR=1
+      export MODEL_CFG_PATH="${merged_model}"
+      export AAR_VLLM_CONTAINER_RW_MOUNT="${AAR_VLLM_CONTAINER_RW_MOUNT:-${AAR_RUNTIME_ROOT}}"
+      eval_cmd=("${REPO}/scripts/run_vllm_container.sh" python3 -u -m aar.eval_pod.entrypoint --run-id "${rid}" --suite "${SUITE}")
+    fi
+    if PYTHONUNBUFFERED=1 "${eval_cmd[@]}"; then
       echo "[worker ${WORKER_ID}] done ${rid}"
     else
       echo "[worker ${WORKER_ID}] FAILED ${rid}"

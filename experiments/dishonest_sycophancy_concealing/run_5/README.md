@@ -1,0 +1,33 @@
+# Run 5: full Gemma AAR with vLLM evaluation
+
+Run 5 is the first full five-iteration Gemma AAR whose baseline and every
+candidate evaluation use the in-process vLLM backend. It is intentionally
+isolated from the active `uv` runs.
+
+The pipeline first measures a fresh 13-benchmark base-model baseline with
+`docker.io/vllm/vllm-openai:v0.25.1`. Only after that succeeds does it publish
+the matching suite, start one four-GB300 evaluator, and start one sequential
+five-session Claude Opus 4.8 research chain. Candidate adapters are atomically
+merged into full Gemma checkpoints before vLLM scoring; runtime LoRA is not used.
+
+The evaluator fails closed unless its logs show `backend=vllm`, vLLM 0.25.1,
+`language_model_only=True`, the exact checkpoint path, and
+`lora_strategy=merged_checkpoint`. Scoring errors do not publish completion
+scores or silently fall back to Transformers.
+
+`MAX_ITERATIONS=5` counts agent sessions that start, including a session that
+fails before publishing a score. Monitoring therefore distinguishes session
+count from successful iterations: an iteration is complete only when the same
+run ID has an atomic score and a result finding. The run is not reported as five
+successful evaluated iterations unless five such pairs exist.
+
+Submit from the synchronized HPC `multi_vllm` worktree:
+
+```bash
+cd /storage/home/winnieyangwn/aar-worktrees/multi_vllm
+bash experiments/dishonest_sycophancy_concealing/run_5/submit_run_5.sh
+```
+
+The submission record is retained under the newly created attempt's
+`metadata/submission.txt`. The pipeline log records the baseline and, after it
+passes, the evaluator and research-chain job IDs.

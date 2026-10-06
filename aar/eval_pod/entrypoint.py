@@ -46,6 +46,15 @@ def main() -> None:
 
     # 1 + 2: obtain model + secret suite (paths; copies only in s3 mode).
     model_path = transport.get_model(args.run_id)
+    override = os.getenv("EVAL_MODEL_PATH_OVERRIDE", "").strip()
+    if override:
+        override_path = Path(override).resolve()
+        if not override_path.is_dir():
+            raise RuntimeError(
+                f"EVAL_MODEL_PATH_OVERRIDE is not a directory: {override_path}"
+            )
+        model_path = str(override_path)
+        print(f"[eval] model path override -> {model_path}", flush=True)
     suite_dir = transport.resolve_suite_dir(args.suite)
     suite_yaml = Path(suite_dir) / f"{args.suite}.yaml"
     if not suite_yaml.exists():
@@ -61,6 +70,10 @@ def main() -> None:
         result = {"error": str(e)}
         local_scores.write_text(json.dumps(result, indent=2))
         print(f"[eval] scoring failed: {e}", file=sys.stderr)
+        if os.getenv("EVAL_FAIL_ON_SCORING_ERROR", "0").lower() in (
+            "1", "true", "yes", "on"
+        ):
+            raise
 
     # 4: publish scores (completion signal) — HELD-OUT ISOLATION ENFORCED HERE.
     # transport.put_scores writes to the RESEARCH-readable SCORES_DIR (the AAR side

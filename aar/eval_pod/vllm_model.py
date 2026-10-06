@@ -222,6 +222,8 @@ class VLLMModel:
         os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
         from vllm import LLM, SamplingParams
 
+        vllm_version = package_version("vllm")
+
         self._SamplingParams = SamplingParams
         sampling_parameters = inspect.signature(SamplingParams).parameters
         self._vllm_v1_logits_processors = "extra_args" in sampling_parameters
@@ -246,7 +248,29 @@ class VLLMModel:
                 )
 
         self.config = AutoConfig.from_pretrained(base_model_ref)
-        require_compatible_vllm(package_version("vllm"), self.config)
+        require_compatible_vllm(vllm_version, self.config)
+        strategy = os.getenv("EVAL_VLLM_LORA_STRATEGY", "").strip()
+        if strategy not in ("", "base", "merged_checkpoint", "runtime_lora"):
+            raise ValueError(
+                "EVAL_VLLM_LORA_STRATEGY must be base, merged_checkpoint, or "
+                "runtime_lora"
+            )
+        expected_strategy = "runtime_lora" if is_adapter else (
+            "merged_checkpoint"
+            if (submitted / ".merge-complete.json").is_file()
+            else "base"
+        )
+        if strategy and strategy != expected_strategy:
+            raise RuntimeError(
+                f"vLLM LoRA strategy mismatch: requested {strategy!r}, model "
+                f"path requires {expected_strategy!r}"
+            )
+        strategy = strategy or expected_strategy
+        if _env_bool("EVAL_VLLM_REQUIRE_MERGED", False) and strategy != "merged_checkpoint":
+            raise RuntimeError(
+                "EVAL_VLLM_REQUIRE_MERGED=1 requires a checkpoint containing "
+                ".merge-complete.json"
+            )
         tokenizer_ref = model_path if is_adapter else base_model_ref
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_ref)
@@ -341,6 +365,13 @@ class VLLMModel:
                 max_cpu_loras=1,
                 max_lora_rank=_round_lora_rank(int(adapter_config.get("r", 8))),
             )
+        print(
+            "[eval:vllm] runtime "
+            f"backend=vllm version={vllm_version} "
+            f"language_model_only={engine_kwargs.get('language_model_only', False)} "
+            f"model={base_model_ref} lora_strategy={strategy}",
+            flush=True,
+        )
         print(
             "[eval:vllm] loading "
             f"{base_model_ref} max_model_len={self._ctx} "
