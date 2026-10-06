@@ -34,6 +34,33 @@ Category = Literal["rule", "judge", "trajectory"]
 Role = Literal["safety", "capability_filter", "held_out"]
 
 
+def run_generation_max_new_tokens(
+    benchmark_name: str, benchmark_default: int
+) -> int:
+    """Return the exact per-request generation cap for a benchmark.
+
+    Benchmarks normally retain their concise, task-specific defaults.  A run
+    may explicitly opt selected benchmarks into ``EVAL_RUN_GEN_CEILING``; in
+    that case the configured ceiling is passed to the inference backend rather
+    than being shadowed by the benchmark default.
+    """
+    scoped = set(
+        os.getenv("EVAL_RUN_GEN_CEILING_BENCHMARKS", "")
+        .replace(",", " ")
+        .split()
+    )
+    configured = os.getenv("EVAL_RUN_GEN_CEILING", "").strip()
+    if benchmark_name not in scoped or not configured:
+        return benchmark_default
+    try:
+        ceiling = int(configured)
+    except ValueError as exc:
+        raise ValueError("EVAL_RUN_GEN_CEILING must be a positive integer") from exc
+    if ceiling <= 0:
+        raise ValueError("EVAL_RUN_GEN_CEILING must be a positive integer")
+    return ceiling
+
+
 @dataclass(frozen=True)
 class DimensionSpec:
     """One independently scored alignment dimension in a composed suite."""

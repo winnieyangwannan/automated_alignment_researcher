@@ -520,6 +520,23 @@ class VLLMModel:
         max_tokens = self._budget(
             max(map(len, prompt_ids)), kwargs.get("max_new_tokens")
         )
+        requested_max_tokens = kwargs.get("max_new_tokens")
+        if requested_max_tokens is not None:
+            requested_max_tokens = int(requested_max_tokens)
+            print(
+                "[eval:vllm] generation budget "
+                f"requested={requested_max_tokens} effective={max_tokens}",
+                flush=True,
+            )
+            if (
+                _env_bool("EVAL_REQUIRE_EXACT_MAX_NEW_TOKENS", False)
+                and max_tokens != requested_max_tokens
+            ):
+                raise RuntimeError(
+                    "exact generation-budget contract failed: "
+                    f"requested {requested_max_tokens}, effective {max_tokens}; "
+                    "increase the model context limit or shorten the prompt"
+                )
         outputs = self._run(prompt_ids, self._sampling_params(max_tokens))
         answers: list[str] = []
         for request in outputs:

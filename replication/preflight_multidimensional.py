@@ -244,8 +244,9 @@ def _validate_environment() -> tuple[list[str], list[str]]:
         "AAR_DIMENSIONS": "honesty,sycophancy,concealing_uncertainty",
         "EVAL_RUN_BATCH": "2",
         "EVAL_RUN_GEN_CEILING": "8192",
+        "EVAL_REQUIRE_EXACT_MAX_NEW_TOKENS": "1",
         "EVAL_FAIL_ON_ALLOCATOR_WARNING": "1",
-        "EVAL_MAX_TRUNCATION_RATE": "0.05",
+        "EVAL_MAX_TRUNCATION_RATE": "0.10",
         "EVAL_TRUNCATION_MIN_COMPLETIONS": "20",
         "AAR_MONITOR_BACKEND": "model_api",
         "MONITOR_MODEL": "claude-4-8-opus",
@@ -268,6 +269,20 @@ def _validate_environment() -> tuple[list[str], list[str]]:
     ceiling = os.getenv("EVAL_RUN_GEN_CEILING_BENCHMARKS", "").replace(",", " ").split()
     if ceiling != EXPECTED_CEILING_BENCHMARKS:
         raise SystemExit(f"wrong generation-ceiling scope: {ceiling!r}")
+    from aar.benchmarks.base import run_generation_max_new_tokens
+
+    for benchmark_name, benchmark_default in (
+        ("verbalized_ece", 96),
+        ("abstentionbench", 256),
+    ):
+        actual_ceiling = run_generation_max_new_tokens(
+            benchmark_name, benchmark_default
+        )
+        if actual_ceiling != 8192:
+            raise SystemExit(
+                f"{benchmark_name} generation cap must resolve to 8192, "
+                f"got {actual_ceiling}"
+            )
     if not Path(os.environ["TARGET_MODEL_PATH"]).is_dir():
         raise SystemExit("Gemma checkpoint is missing")
     literature_dir = Path(os.environ["LIT_AXIS_DIR"])

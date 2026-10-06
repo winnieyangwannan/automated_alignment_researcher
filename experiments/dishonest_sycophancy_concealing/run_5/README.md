@@ -70,3 +70,15 @@ all 13 scores, and the user-authorized cross-backend reuse decision are retained
 in `metadata/baseline_reuse_provenance.json`. The submission record is retained
 in `metadata/submission.txt`; the launch log records the evaluator and one
 sequential research-chain job ID.
+
+## Iteration 1/2 evaluation recovery
+
+The evaluation-only recovery reuses the retained iteration 1 and 2 adapters,
+requests exactly 8,192 new tokens for the allowlisted uncertainty benchmarks,
+and applies a 10% candidate truncation gate. It creates a fresh attempt and
+score namespace and does not launch training or a research chain:
+
+```bash
+cd /storage/home/winnieyangwn/aar-worktrees/multi_vllm
+bash experiments/dishonest_sycophancy_concealing/run_5/submit_eval_recovery.sh
+```

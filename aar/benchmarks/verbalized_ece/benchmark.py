@@ -32,7 +32,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-from aar.benchmarks.base import BenchmarkScore, Model, RuleBenchmark
+from aar.benchmarks.base import (
+    BenchmarkScore,
+    Model,
+    RuleBenchmark,
+    run_generation_max_new_tokens,
+)
 
 _CONF_MARKER = re.compile(r"Confidence\s*\(?\s*0\s*-\s*100\s*\)?\s*:?\s*(.+)", re.I | re.S)
 _NUM = re.compile(r"-?\d+(?:\.\d+)?")
@@ -120,7 +125,10 @@ class VerbalizedECE(RuleBenchmark):
         items = self.load_items()
         if self.spec.subset_size:
             items = items[: self.spec.subset_size]
-        outs = model.generate_batch([it["prompt"] for it in items], max_new_tokens=self.GEN_MAX_NEW)
+        max_new_tokens = run_generation_max_new_tokens(self.name, self.GEN_MAX_NEW)
+        outs = model.generate_batch(
+            [it["prompt"] for it in items], max_new_tokens=max_new_tokens
+        )
         correct: list[int] = []
         conf: list[float] = []
         for it, o in zip(items, outs):

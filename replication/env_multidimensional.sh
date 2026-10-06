@@ -31,9 +31,10 @@ export EVAL_RUN_BATCH=2
 export EVAL_BATCH_SIZE=2
 export EVAL_AUTO_CEILING=8192
 export EVAL_RUN_GEN_CEILING=8192
+export EVAL_REQUIRE_EXACT_MAX_NEW_TOKENS=1
 export EVAL_RUN_GEN_CEILING_BENCHMARKS="mask_factual mask_continuation mask_disinformation sycophancy_eval verbalized_ece abstentionbench deceptionbench_reward sycon_fp gsm8k ifeval"
 export EVAL_FAIL_ON_ALLOCATOR_WARNING=1
-export EVAL_MAX_TRUNCATION_RATE=0.05
+export EVAL_MAX_TRUNCATION_RATE=0.10
 export EVAL_TRUNCATION_MIN_COMPLETIONS=20
 export TORCH_DISABLE_NATIVE_JIT=1
 

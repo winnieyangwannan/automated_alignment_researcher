@@ -37,6 +37,7 @@ from aar.benchmarks.base import (
     JudgeBenchmark,
     Model,
     bootstrap_ci,
+    run_generation_max_new_tokens,
 )
 
 # The source's COCONOT-style abstention-classifier criteria (recipe/evaluation_judge_prompts.py),
@@ -95,7 +96,10 @@ class AbstentionBench(JudgeBenchmark):
         items = self.load_items()
         if self.spec.subset_size:
             items = items[: self.spec.subset_size]
-        outputs = model.generate_batch([it["prompt"] for it in items], max_new_tokens=self.GEN_MAX_NEW)
+        max_new_tokens = run_generation_max_new_tokens(self.name, self.GEN_MAX_NEW)
+        outputs = model.generate_batch(
+            [it["prompt"] for it in items], max_new_tokens=max_new_tokens
+        )
         jprompts = [self.judge_prompt(it, o) for it, o in zip(items, outputs)]
         if self._injected_judge:                      # stub (tests) / single-prompt judge (e.g. gpt-4o)
             with concurrent.futures.ThreadPoolExecutor(

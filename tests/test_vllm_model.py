@@ -221,6 +221,51 @@ class VLLMDecodingTests(unittest.TestCase):
         self.assertEqual(max_tokens, 8)
         self.assertEqual(model._generation_count, 3)
 
+    def test_explicit_8192_request_reaches_vllm_sampling_params(self) -> None:
+        model = object.__new__(VLLMModel)
+        model._render = lambda prompt, _: prompt
+        model.tokenizer = mock.Mock()
+        model.tokenizer.side_effect = lambda text: SimpleNamespace(
+            input_ids=[ord(char) for char in text]
+        )
+        model.tokenizer.decode.side_effect = lambda ids, **_: "A"
+        model._ctx = 65_536
+        model._auto_ceiling = 96
+        model.max_new_tokens = None
+        model._sampling_params = lambda max_tokens: max_tokens
+        model._generation_count = 0
+        model._trunc_count = 0
+        model._run = mock.Mock(
+            return_value=[
+                SimpleNamespace(
+                    outputs=[SimpleNamespace(token_ids=[65], finish_reason="stop")]
+                )
+            ]
+        )
+
+        self.assertEqual(
+            model.generate_batch(["short prompt"], max_new_tokens=8192), ["A"]
+        )
+        _, max_tokens = model._run.call_args.args
+        self.assertEqual(max_tokens, 8192)
+
+    def test_exact_generation_budget_contract_fails_if_context_clamps_it(self) -> None:
+        model = object.__new__(VLLMModel)
+        model._render = lambda prompt, _: prompt
+        model.tokenizer = mock.Mock(
+            side_effect=lambda text: SimpleNamespace(input_ids=list(range(90)))
+        )
+        model._ctx = 100
+        model._auto_ceiling = 96
+        model.max_new_tokens = None
+        with mock.patch.dict(
+            os.environ, {"EVAL_REQUIRE_EXACT_MAX_NEW_TOKENS": "1"}, clear=False
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "exact generation-budget contract failed"
+            ):
+                model.generate_batch(["prompt"], max_new_tokens=8192)
+
 
 class BackendSelectionTests(unittest.TestCase):
     def test_explicit_vllm_backend_is_lazy_and_strict(self) -> None:
