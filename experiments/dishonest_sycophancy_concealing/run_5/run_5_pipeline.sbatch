@@ -66,7 +66,7 @@ git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || {
   exit 2
 }
 for required in "${PROVISIONAL}" "${TARGET_MODEL_PATH}" "${LIT_AXIS_DIR}/manifest.json" \
-  "${AAR_VLLM_WORKER_SH}" "${AAR_VLLM_MERGE_PY}"; do
+  "${AAR_VLLM_WORKER_SH}" "${AAR_VLLM_MERGE_PY}" "${HARNESS_PY}"; do
   [ -e "${required}" ] || { echo "required artifact missing: ${required}" >&2; exit 2; }
 done
 [ "${EVAL_INFERENCE_BACKEND}" = vllm ] || { echo "vLLM backend not enabled" >&2; exit 2; }

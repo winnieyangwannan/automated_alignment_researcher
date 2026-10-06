@@ -22,6 +22,16 @@ if [ -n "$(git -C "${REPO}" status --porcelain --untracked-files=all -- \
   echo "run 5 refuses untracked or modified launch-critical files" >&2
   exit 2
 fi
+[ -x "${REPO}/.venv/bin/python" ] || {
+  echo "run 5 requires its worktree-local ARM64 environment at ${REPO}/.venv" >&2
+  echo "run replication/setup_env_multidimensional.sbatch on a g3 allocation first" >&2
+  exit 2
+}
+"${REPO}/.venv/bin/python" -c \
+  'import platform; assert platform.machine() == "aarch64"' || {
+  echo "run 5 host orchestration environment is not ARM64" >&2
+  exit 2
+}
 
 commit="$(git -C "${REPO}" rev-parse HEAD)"
 short_commit="$(git -C "${REPO}" rev-parse --short=12 HEAD)"

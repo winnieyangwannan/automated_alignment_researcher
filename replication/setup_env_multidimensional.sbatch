@@ -11,7 +11,10 @@ set -euo pipefail
 REPO="${AAR_REPO:-${SLURM_SUBMIT_DIR:?submit from the uv worktree}}"
 # shellcheck disable=SC1091
 source "${REPO}/replication/env_multidimensional.sh"
-[ "$(git -C "${REPO}" branch --show-current)" = uv ] || { echo "wrong branch" >&2; exit 2; }
+[ "$(git -C "${REPO}" branch --show-current)" = "${AAR_EXPECTED_BRANCH}" ] || {
+  echo "wrong branch: expected ${AAR_EXPECTED_BRANCH}" >&2
+  exit 2
+}
 UV=/storage/home/winnieyangwn/envs/aar-uv-bootstrap/bin/uv
 [ -x "${UV}" ] || { echo "ARM64 uv bootstrap is missing: ${UV}" >&2; exit 2; }
 cd "${REPO}"

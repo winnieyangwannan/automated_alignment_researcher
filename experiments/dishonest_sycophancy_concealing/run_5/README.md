@@ -25,6 +25,10 @@ Submit from the synchronized HPC `multi_vllm` worktree:
 
 ```bash
 cd /storage/home/winnieyangwn/aar-worktrees/multi_vllm
+AAR_EXPECTED_BRANCH=multi_vllm \
+  AAR_RUNTIME_ROOT=/checkpoint/ram/aar/$USER/vllm_preflight/multi_vllm_env \
+  sbatch replication/setup_env_multidimensional.sbatch
+# Wait for the environment job to complete successfully, then:
 bash experiments/dishonest_sycophancy_concealing/run_5/submit_run_5.sh
 ```
 

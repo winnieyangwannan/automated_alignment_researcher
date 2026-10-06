@@ -3,7 +3,7 @@
 _MULTIDIM_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 AAR_REPO="$(cd -- "${_MULTIDIM_DIR}/.." && pwd)"
 export AAR_REPO REPO="${AAR_REPO}"
-export AAR_EXPECTED_BRANCH=uv
+export AAR_EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-uv}"
 export HARNESS_PY="${AAR_REPO}/.venv/bin/python"
 export PYTHONPATH="${AAR_REPO}${PYTHONPATH:+:${PYTHONPATH}}"
 export AAR_BENCHMARK_DOCS="${AAR_REPO}/benchmark_docs"
