@@ -25,12 +25,19 @@ Submit from the synchronized HPC `multi_vllm` worktree:
 
 ```bash
 cd /storage/home/winnieyangwn/aar-worktrees/multi_vllm
+./.venv/bin/python scripts/prepare_llm_uncertainty_source.py
 AAR_EXPECTED_BRANCH=multi_vllm \
   AAR_RUNTIME_ROOT=/checkpoint/ram/aar/$USER/vllm_preflight/multi_vllm_env \
   sbatch replication/setup_env_multidimensional.sbatch
 # Wait for the environment job to complete successfully, then:
 bash experiments/dishonest_sycophancy_concealing/run_5/submit_run_5.sh
 ```
+
+The preparation command downloads the benchmark author's public Hugging Face
+mirror at immutable revision `a199e02b65c6696c467501f01beeb8de9c719916`.
+Submission verifies the revision, item counts, and pinned SHA-256 digest of both
+source files before creating an attempt directory. The same provenance manifest
+is embedded in the retained baseline metadata.
 
 The submission record is retained under the newly created attempt's
 `metadata/submission.txt`. The pipeline log records the baseline and, after it

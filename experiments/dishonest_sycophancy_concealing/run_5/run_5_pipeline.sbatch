@@ -66,9 +66,13 @@ git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || {
   exit 2
 }
 for required in "${PROVISIONAL}" "${TARGET_MODEL_PATH}" "${LIT_AXIS_DIR}/manifest.json" \
-  "${AAR_VLLM_WORKER_SH}" "${AAR_VLLM_MERGE_PY}" "${HARNESS_PY}"; do
+  "${AAR_VLLM_WORKER_SH}" "${AAR_VLLM_MERGE_PY}" "${HARNESS_PY}" \
+  "${LLM_UNCERTAINTY_SOURCE_MANIFEST}"; do
   [ -e "${required}" ] || { echo "required artifact missing: ${required}" >&2; exit 2; }
 done
+"${HARNESS_PY}" "${REPO}/scripts/prepare_llm_uncertainty_source.py" \
+  --output-root "$(dirname -- "${LLM_UNCERTAINTY_SOURCE_MANIFEST}")" \
+  --verify-only >/dev/null
 [ "${EVAL_INFERENCE_BACKEND}" = vllm ] || { echo "vLLM backend not enabled" >&2; exit 2; }
 [ "${AAR_VLLM_CONTAINER_IMAGE}" = docker.io/vllm/vllm-openai:v0.25.1 ] || {
   echo "unvalidated image" >&2
@@ -105,6 +109,7 @@ Path(sys.argv[1]).write_text(json.dumps({
         "max_truncation_rate": float(os.environ["EVAL_MAX_TRUNCATION_RATE"]),
     },
     "suite_benchmarks": os.environ["AAR_SUITE_BENCHMARKS"].split(),
+    "public_source": json.loads(Path(os.environ["LLM_UNCERTAINTY_SOURCE_MANIFEST"]).read_text()),
 }, indent=2) + "\n")
 PY
 

@@ -32,6 +32,15 @@ fi
   echo "run 5 host orchestration environment is not ARM64" >&2
   exit 2
 }
+source_root="${REPO}/data/LLM-Uncertainty-Bench"
+"${REPO}/.venv/bin/python" "${REPO}/scripts/prepare_llm_uncertainty_source.py" \
+  --output-root "${source_root}" --verify-only >/dev/null || {
+  echo "run 5 requires the pinned LLM-Uncertainty-Bench source" >&2
+  echo "run scripts/prepare_llm_uncertainty_source.py before submitting" >&2
+  exit 2
+}
+export LLM_UNCERTAINTY_SRC="${source_root}/data"
+export LLM_UNCERTAINTY_SOURCE_MANIFEST="${source_root}/.aar-source.json"
 
 commit="$(git -C "${REPO}" rev-parse HEAD)"
 short_commit="$(git -C "${REPO}" rev-parse --short=12 HEAD)"
