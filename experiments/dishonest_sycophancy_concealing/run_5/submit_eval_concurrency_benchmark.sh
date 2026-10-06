@@ -10,6 +10,8 @@ SOURCE_SUITE_DIR="${SOURCE_ATTEMPT}/eval/holdout/gemma4_31b/honesty_sycophancy_c
 MODEL_PATH="${AAR_CONCURRENCY_MODEL_PATH:-/checkpoint/ram/shared/models/google/gemma-4-31B-it}"
 SECRET_ENV="${AAR_RUN5_SECRET_ENV:-/storage/home/winnieyangwn/aar-worktrees/uv/.env}"
 EVAL_CONCURRENCIES="${AAR_EVAL_CONCURRENCIES:-1,2,4}"
+MAX_NUM_BATCHED_TOKENS="${AAR_CONCURRENCY_MAX_NUM_BATCHED_TOKENS:-}"
+GPU_MEMORY_UTILIZATION="${AAR_CONCURRENCY_GPU_MEMORY_UTILIZATION:-0.80}"
 
 [ "$(git -C "${REPO}" branch --show-current)" = multi_vllm ] || {
   echo "concurrency benchmark requires branch multi_vllm" >&2
@@ -32,8 +34,9 @@ chmod 700 "${attempt_root}" "${attempt_root}/logs" "${attempt_root}/metadata"
 
 job_id="$(sbatch --parsable \
   --output="${attempt_root}/logs/concurrency-%j.out" \
-  --export=AAR_REPO="${REPO}",AAR_CONCURRENCY_ATTEMPT="${attempt_root}",AAR_CONCURRENCY_SOURCE_SUITE_DIR="${SOURCE_SUITE_DIR}",AAR_CONCURRENCY_MODEL_PATH="${MODEL_PATH}",AAR_CONCURRENCY_GIT_COMMIT="${commit}",AAR_EVAL_CONCURRENCIES="${EVAL_CONCURRENCIES}",HARNESS_ENV="${SECRET_ENV}",USER="${USER}" \
+  --export=AAR_REPO="${REPO}",AAR_CONCURRENCY_ATTEMPT="${attempt_root}",AAR_CONCURRENCY_SOURCE_SUITE_DIR="${SOURCE_SUITE_DIR}",AAR_CONCURRENCY_MODEL_PATH="${MODEL_PATH}",AAR_CONCURRENCY_GIT_COMMIT="${commit}",AAR_EVAL_CONCURRENCIES="${EVAL_CONCURRENCIES}",AAR_CONCURRENCY_MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS}",AAR_CONCURRENCY_GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION}",HARNESS_ENV="${SECRET_ENV}",USER="${USER}" \
   "${SCRIPT_DIR}/benchmark_eval_concurrency.sbatch")"
-printf 'job_id=%s\nattempt_root=%s\ngit_commit=%s\nmodel_path=%s\neval_concurrencies=%s\n' \
-  "${job_id}" "${attempt_root}" "${commit}" "${MODEL_PATH}" "${EVAL_CONCURRENCIES}" | tee \
+printf 'job_id=%s\nattempt_root=%s\ngit_commit=%s\nmodel_path=%s\neval_concurrencies=%s\nmax_num_batched_tokens=%s\ngpu_memory_utilization=%s\n' \
+  "${job_id}" "${attempt_root}" "${commit}" "${MODEL_PATH}" "${EVAL_CONCURRENCIES}" \
+  "${MAX_NUM_BATCHED_TOKENS:-auto}" "${GPU_MEMORY_UTILIZATION}" | tee \
   "${attempt_root}/metadata/submission.txt"

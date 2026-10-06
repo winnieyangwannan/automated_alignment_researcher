@@ -14,6 +14,7 @@ from aar.eval_pod.vllm_model import (
     VLLMModel,
     _is_heterogeneous_gemma4,
     _round_lora_rank,
+    _scheduler_token_budget,
     require_compatible_vllm,
     vllm_hf_overrides,
     vllm_lora_layout,
@@ -52,6 +53,19 @@ class VLLMLoRATests(unittest.TestCase):
 
 
 class VLLMConfigTests(unittest.TestCase):
+    def test_scheduler_token_budget_is_optional_and_validated(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(_scheduler_token_budget())
+        with mock.patch.dict(
+            os.environ, {"EVAL_VLLM_MAX_NUM_BATCHED_TOKENS": "32768"}, clear=True
+        ):
+            self.assertEqual(_scheduler_token_budget(), 32768)
+        with mock.patch.dict(
+            os.environ, {"EVAL_VLLM_MAX_NUM_BATCHED_TOKENS": "0"}, clear=True
+        ):
+            with self.assertRaisesRegex(ValueError, "must be positive"):
+                _scheduler_token_budget()
+
     def test_heterogeneous_gemma_requires_fixed_vllm_loader(self) -> None:
         config = SimpleNamespace(
             model_type="gemma4",

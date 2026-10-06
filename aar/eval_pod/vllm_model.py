@@ -50,6 +50,16 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.lower() in ("1", "true", "yes", "on")
 
 
+def _scheduler_token_budget() -> int | None:
+    value = os.getenv("EVAL_VLLM_MAX_NUM_BATCHED_TOKENS", "").strip()
+    if not value:
+        return None
+    budget = int(value)
+    if budget < 1:
+        raise ValueError("EVAL_VLLM_MAX_NUM_BATCHED_TOKENS must be positive")
+    return budget
+
+
 def _round_lora_rank(rank: int) -> int:
     """Return a vLLM-supported power-of-two capacity for an adapter rank."""
     capacity = 8
@@ -346,6 +356,9 @@ class VLLMModel:
             "enforce_eager": _env_bool("EVAL_VLLM_ENFORCE_EAGER", False),
             "disable_log_stats": True,
         }
+        max_num_batched_tokens = _scheduler_token_budget()
+        if max_num_batched_tokens is not None:
+            engine_kwargs["max_num_batched_tokens"] = max_num_batched_tokens
         if self._vllm_v1_logits_processors:
             # vLLM >= 0.20 registers processor classes once on the engine and
             # enables them per request through SamplingParams.extra_args.
@@ -376,6 +389,8 @@ class VLLMModel:
             "[eval:vllm] loading "
             f"{base_model_ref} max_model_len={self._ctx} "
             f"max_num_seqs={engine_kwargs['max_num_seqs']} "
+            f"max_num_batched_tokens={engine_kwargs.get('max_num_batched_tokens', 'auto')} "
+            f"gpu_memory_utilization={engine_kwargs['gpu_memory_utilization']} "
             f"prefix_caching={engine_kwargs['enable_prefix_caching']} "
             f"lora={is_adapter}",
             flush=True,

@@ -21,10 +21,10 @@ import yaml
 
 # Parallelism. WITHIN each benchmark the expensive work already fans out (judge
 # calls via JUDGE_CONCURRENCY; generation BATCHED via generate_batch). ACROSS
-# benchmarks we parallelize when EVAL_GPUS>1: one model replica per GPU, the
-# suite's benchmarks round-robined across GPUs and scored concurrently (the
-# whole suite runs in ~its slowest benchmark instead of the sum). On a single
-# GPU (EVAL_GPUS=1, default) we stay sequential — benchmark-level threads there
+# benchmarks we parallelize when EVAL_GPUS>1: one model replica per GPU, with
+# workers pulling the next benchmark from a shared queue so uneven benchmark
+# runtimes do not leave GPUs idle. On a single GPU (EVAL_GPUS=1, default) we
+# stay sequential — benchmark-level threads there
 # just starve the cheap benchmarks behind the slow ones. Set EVAL_GPUS to the
 # job's --gres gpu count (eval_worker.sh / baseline_*.sh do this).
 
@@ -339,6 +339,17 @@ def _validate_evaluation_health(model, before: dict[str, int], benchmark_id: str
         )
 
 
+def _fingerprint_loaded_model(model) -> str | None:
+    """Fingerprint an already-loaded model without making scoring depend on it."""
+    try:
+        from aar.eval_pod.model_fingerprint import compute_fingerprint
+
+        return compute_fingerprint(model)
+    except Exception as error:  # noqa: BLE001 - fingerprinting is additive
+        print(f"  [fingerprint] skipped ({error})", flush=True)
+        return None
+
+
 def _golden_decoding(spec: BenchmarkSpec, suite_name: str) -> dict:
     """The benchmark's GOLDEN decoding, read live from benchmark_docs/<group>/baseline.json
     — the SAME config its baseline was measured at. The shared capability basket maps to
@@ -439,68 +450,100 @@ def _score_sequential(specs, model_ref, secret_dir, suite_name=""):
             else:
                 print(f"  {spec.id:16s} [{spec.category:10s} {spec.role:18s}] "
                       f"mean={sc.mean:.4f} ci=[{sc.ci_low:.4f},{sc.ci_high:.4f}] n={sc.n}", flush=True)
-        return scores
+        fingerprint = None
+        if not str(model_ref).startswith("stub:"):
+            fingerprint = _fingerprint_loaded_model(model)
+        return scores, fingerprint
     finally:
         close = getattr(model, "close", None)
         if callable(close):
             close()
 
 
-def _gpu_worker(gpu: str, specs, model_ref: str, secret_dir: str, q, suite_name="") -> None:
-    """One GPU's process: pin the GPU, load a model replica, score its assigned
-    benchmarks, push each result to the queue. Errors are pushed (not raised) so
-    the parent never hangs."""
+def _gpu_worker(
+    gpu: str,
+    tasks,
+    model_ref: str,
+    secret_dir: str,
+    q,
+    suite_name="",
+    fingerprint: bool = False,
+) -> None:
+    """Load one GPU replica and pull benchmarks from the shared task queue."""
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
+    model = None
     try:
         from aar.benchmarks import registry as _reg
         _reg.discover()
         judge_fn = _resolve_judge_fn()
         model = load_model(model_ref)
+        while True:
+            spec = tasks.get()
+            if spec is None:
+                break
+            try:
+                with _evaluation_profile(spec):
+                    _apply_golden(model, spec, suite_name)   # golden per-benchmark decoding (== baseline)
+                    health_before = _health_snapshot(model)
+                    sc = build_benchmark(spec, secret_dir, real_judge_fn=judge_fn).score(model)
+                    _validate_evaluation_health(model, health_before, spec.id)
+                q.put(("score", spec.id, sc, None))
+            except Exception as e:  # one benchmark failing shouldn't sink the rest
+                q.put(("score", spec.id, None, repr(e)))
+        if fingerprint:
+            q.put(("fingerprint", None, _fingerprint_loaded_model(model), None))
+    except Exception as e:  # worker-level failure (model load, etc.)
+        q.put(("worker_error", str(gpu), None, repr(e)))
+    finally:
         try:
-            for spec in specs:
-                try:
-                    with _evaluation_profile(spec):
-                        _apply_golden(model, spec, suite_name)   # golden per-benchmark decoding (== baseline)
-                        health_before = _health_snapshot(model)
-                        sc = build_benchmark(spec, secret_dir, real_judge_fn=judge_fn).score(model)
-                        _validate_evaluation_health(model, health_before, spec.id)
-                    q.put((spec.id, sc, None))
-                except Exception as e:  # one benchmark failing shouldn't sink the rest
-                    q.put((spec.id, None, repr(e)))
-        finally:
             close = getattr(model, "close", None)
             if callable(close):
                 close()
-    except Exception as e:  # worker-level failure (model load, etc.)
-        for spec in specs:
-            q.put((spec.id, None, repr(e)))
+        finally:
+            q.put(("done", str(gpu), None, None))
 
 
 def _score_parallel(specs, model_ref, secret_dir, ngpu, suite_name=""):
-    """Round-robin the suite's benchmarks across `ngpu` GPUs and score them
-    concurrently (one model replica per GPU)."""
+    """Dynamically schedule benchmarks across one model replica per GPU."""
     import multiprocessing as mp
     # The GPUs SLURM allocated us (CUDA_VISIBLE_DEVICES may be physical ids like
     # "2,5"); index into it so each worker gets a distinct allocated GPU.
     alloc = [x for x in os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",") if x.strip()]
     nworkers = min(ngpu, len(specs))
-    buckets: list[list] = [[] for _ in range(nworkers)]
-    for i, spec in enumerate(specs):
-        buckets[i % nworkers].append(spec)
-    print(f"  scoring {len(specs)} benchmarks across {nworkers} GPUs (parallel)", flush=True)
+    print(
+        f"  scoring {len(specs)} benchmarks across {nworkers} GPUs "
+        "(dynamic queue)",
+        flush=True,
+    )
     ctx = mp.get_context("spawn")   # spawn: required for CUDA in subprocesses
+    tasks = ctx.Queue()
     q = ctx.Queue()
+    for spec in specs:
+        tasks.put(spec)
+    for _ in range(nworkers):
+        tasks.put(None)
     procs = []
     for g in range(nworkers):
         gpu = alloc[g] if g < len(alloc) else str(g)
-        p = ctx.Process(target=_gpu_worker, args=(gpu, buckets[g], model_ref, secret_dir, q, suite_name))
+        p = ctx.Process(
+            target=_gpu_worker,
+            args=(gpu, tasks, model_ref, secret_dir, q, suite_name, g == 0),
+        )
         p.start()
         procs.append(p)
     _role = {s.id: s.role for s in specs}
-    scores, errors = {}, []
-    for _ in range(len(specs)):
-        sid, sc, err = q.get()
-        if err:
+    scores, errors, fingerprint = {}, [], None
+    workers_done = 0
+    while workers_done < nworkers:
+        kind, sid, sc, err = q.get()
+        if kind == "done":
+            workers_done += 1
+        elif kind == "fingerprint":
+            fingerprint = sc
+        elif kind == "worker_error":
+            errors.append((f"gpu:{sid}", err))
+            print(f"  gpu:{sid} FAILED: {err}", flush=True)
+        elif err:
             errors.append((sid, err))
             print(f"  {sid:16s} FAILED: {err}", flush=True)
         else:
@@ -513,7 +556,10 @@ def _score_parallel(specs, model_ref, secret_dir, ngpu, suite_name=""):
         p.join()
     if errors:
         raise RuntimeError(f"{len(errors)} benchmark(s) failed: {errors}")
-    return scores
+    missing = sorted(_role.keys() - scores.keys())
+    if missing:
+        raise RuntimeError(f"workers exited without scoring benchmarks: {missing}")
+    return scores, fingerprint
 
 
 def _resolve_ngpu() -> int:
@@ -544,9 +590,13 @@ def run(suite_path: str, model_ref: str, secret_dir: str = "", out: str = "score
 
     ngpu = _resolve_ngpu()
     if ngpu > 1 and len(specs) > 1 and not str(model_ref).startswith("stub:"):
-        scores = _score_parallel(specs, model_ref, secret_dir, ngpu, suite_name)   # capped to len(specs) inside
+        scores, model_fingerprint = _score_parallel(
+            specs, model_ref, secret_dir, ngpu, suite_name
+        )   # capped to len(specs) inside
     else:
-        scores = _score_sequential(specs, model_ref, secret_dir, suite_name)
+        scores, model_fingerprint = _score_sequential(
+            specs, model_ref, secret_dir, suite_name
+        )
 
     composite = compute_composite(scores, specs, suite=suite)
     result = {
@@ -560,14 +610,9 @@ def run(suite_path: str, model_ref: str, secret_dir: str = "", out: str = "score
     # shared trained core that the eval correctly scores identically, but that were otherwise posted
     # as DISTINCT findings (polluting the forum + the idea-forecasting data). Additive + fail-safe:
     # a fingerprint error NEVER breaks scoring; old evals simply lack the field (dedup then no-ops).
-    try:
-        from aar.eval_pod.model_fingerprint import fingerprint_model_ref
-        _fp = fingerprint_model_ref(model_ref)
-        if _fp:
-            result["model_fingerprint"] = _fp
-            print(f"  model_fingerprint = {_fp}")
-    except Exception as _e:   # noqa: BLE001
-        print(f"  [fingerprint] skipped ({_e})", flush=True)
+    if model_fingerprint:
+        result["model_fingerprint"] = model_fingerprint
+        print(f"  model_fingerprint = {model_fingerprint}")
     # HELD-OUT ISOLATION (the boundary that actually enforces invisibility):
     # `--out` is the RESEARCH-readable handoff (the AAR side reads it, and could even
     # `cat` it). So we write the STRIPPED composite there — the held-out's score never

@@ -75,3 +75,14 @@ shape but can fail the generation-health gate before producing comparable timing
   at the user's direction so the next attempt can measure four engines
   directly. The submitter now forwards `AAR_EVAL_CONCURRENCIES`, defaulting to
   the original `1,2,4`, so a reproducible four-only attempt can set it to `4`.
+
+## Single-node throughput optimization
+
+At the user's direction, job `1741009` is the four-engine baseline. The focused
+optimization keeps one node and four independent GPU replicas, replaces static
+round-robin benchmark assignment with a shared work queue, and computes the
+behavioral fingerprint on one already-loaded replica after scoring instead of
+loading the 31B model a fifth time. It also exposes vLLM's scheduler token
+budget for a single optimized comparison at 32,768 batched tokens and 0.90 GPU
+memory utilization. If that setting fails its existing OOM or allocator gates,
+the narrow fallback is 0.85 rather than weakening the gates.
