@@ -59,3 +59,8 @@ shape but can fail the generation-health gate before producing comparable timing
   environment list. The benchmark allowlist now uses the five available
   public, non-judge entries: `llm_uncertainty_bench`, `verbalized_ece`, `mmlu`,
   `gsm8k`, and `ifeval`.
+- Job `1740812`, attempt `20261006T201010Z-ec1cd95fb9bb`, confirmed that both
+  the GB300 batch job and the vLLM container see four CUDA devices, then stopped
+  before model loading because the ARM host lacks `/usr/bin/time`. The harness
+  now uses its already-retained start and end epochs as the sole wall-clock
+  measurement and has no dependency on that optional executable.

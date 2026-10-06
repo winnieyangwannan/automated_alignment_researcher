@@ -91,23 +91,20 @@ for concurrency in "${concurrencies[@]}"; do
   start_iso="$(date --iso-8601=seconds)"
   echo "[concurrency] start gpu=${concurrency} at ${start_iso}"
   set +e
-  /usr/bin/time -f "wall_seconds=%e user_seconds=%U system_seconds=%S max_rss_kb=%M" \
-    -o "${result_dir}/time.txt" \
-    "${REPO}/scripts/run_vllm_container.sh" \
-      python3 -u -m aar.eval_pod.run_eval \
-      --suite "${test_suite}" \
-      --model "${MODEL_PATH}" \
-      --secret-dir "${OUT}/suite" \
-      --out "${result_dir}/scores.json" \
-      --heldout-dir "${result_dir}/heldout" \
-      > "${result_dir}/eval.log" 2>&1
+  "${REPO}/scripts/run_vllm_container.sh" \
+    python3 -u -m aar.eval_pod.run_eval \
+    --suite "${test_suite}" \
+    --model "${MODEL_PATH}" \
+    --secret-dir "${OUT}/suite" \
+    --out "${result_dir}/scores.json" \
+    --heldout-dir "${result_dir}/heldout" \
+    > "${result_dir}/eval.log" 2>&1
   status=$?
   set -e
   end_epoch="$(date +%s)"
   printf 'gpu_concurrency=%s\nstatus=%s\nstart=%s\nend=%s\nelapsed_seconds=%s\n' \
     "${concurrency}" "${status}" "${start_iso}" "$(date --iso-8601=seconds)" \
     "$((end_epoch - start_epoch))" | tee "${result_dir}/summary.txt"
-  cat "${result_dir}/time.txt"
 done
 
 echo "[concurrency] complete results=${OUT}/results"
