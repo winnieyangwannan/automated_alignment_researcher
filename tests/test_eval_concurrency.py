@@ -72,4 +72,4 @@ class EvalConcurrencyTest(unittest.TestCase):
             )
 
             self.assertNotEqual(completed.returncode, 0)
-            self.assertIn("refuses held-out benchmark", completed.stderr)
+            self.assertIn("benchmarks missing from source suite", completed.stderr)

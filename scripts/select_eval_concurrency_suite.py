@@ -25,14 +25,12 @@ def main() -> None:
     selected = []
     found: set[str] = set()
     for benchmark in suite.get("benchmarks", []):
+        if benchmark.get("role") == "held_out":
+            continue
         identities = {str(benchmark.get("id", "")), str(benchmark.get("name", ""))}
         matches = [name for name in requested if name in identities]
         if not matches:
             continue
-        if benchmark.get("role") == "held_out":
-            raise RuntimeError(
-                f"throughput suite refuses held-out benchmark {benchmark.get('id')!r}"
-            )
         item = dict(benchmark)
         current = item.get("subset_size")
         item["subset_size"] = (

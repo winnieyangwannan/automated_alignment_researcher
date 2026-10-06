@@ -44,3 +44,12 @@ shape but can fail the generation-health gate before producing comparable timing
 5. Compare wall time, engine initialization, GPU visibility, failures, and
    throughput for one, two, and four engines before deciding whether a
    multi-node or persistent-server design is justified.
+
+## Attempt history
+
+- Job `1740756`, attempt `20261006T195938Z-e904b6b34b4d`, failed after 22
+  seconds before model loading. A published held-out entry reused a requested
+  public benchmark name and had no explicit ID, so the first selector rejected
+  it after name matching. The follow-up selector skips all held-out entries
+  before matching; requesting only a held-out ID therefore fails as a missing
+  public benchmark without copying it into the throughput suite.
