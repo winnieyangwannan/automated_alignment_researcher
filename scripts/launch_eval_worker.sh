@@ -46,4 +46,4 @@ sbatch --account="${AAR_SLURM_ACCOUNT}" --partition="${AAR_SLURM_PARTITION}" \
   --qos="${AAR_EVAL_QOS}" --gpus="${GPUS}" \
   "${_TIME_ARGS[@]}" \
   --output="${LOG_DIR}/aar-eval-${SUITE}-%j.out" --job-name="aar-eval-${SUITE}" \
-  "${REPO}/scripts/eval_worker.sh" "${SUITE}" "${IDLE}" auto
+  "${REPO}/scripts/eval_worker.sh" "${SUITE}" "${IDLE}" "${GPUS}"

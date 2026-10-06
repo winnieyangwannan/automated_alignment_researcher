@@ -74,9 +74,10 @@ if [ -z "${HF_TOKEN:-}" ]; then
   echo "[worker] ERROR: HF_TOKEN is required for the target model/datasets" >&2
   exit 2
 fi
-# Benchmarks score in parallel across the allocated GPUs. EVAL_GPUS=auto means
-# run_eval uses however many GPUs the launcher requested; multiple benchmarks
-# are distributed across each worker when the suite is larger than the GPU count.
+# Benchmarks score in parallel across the allocated GPUs. The launcher passes
+# its validated numeric GPU count so containerized evaluation does not depend on
+# Slurm's CUDA_VISIBLE_DEVICES surviving the container environment boundary.
+# Direct invocations may still pass "auto" as the third argument.
 export EVAL_GPUS="${3:-auto}"
 # BATCH-SIZE PARITY: greedy decode is NOT batch-invariant (FP-path drift ~0.5 pt), so the
 # trained-eval batch MUST equal the suite's baseline batch or the composite delta is corrupted.

@@ -133,7 +133,7 @@ class FullLoopLaunchTest(unittest.TestCase):
             self.assertIn("--partition=g3", completed.stdout)
             self.assertIn("--qos=g3_ram_high", completed.stdout)
             self.assertIn("--gpus=2", completed.stdout)
-            self.assertIn("eval_worker.sh honesty 30 auto", completed.stdout)
+            self.assertIn("eval_worker.sh honesty 30 2", completed.stdout)
 
     def test_prompt_uses_submit_wrapper_and_secure_search_branch(self) -> None:
         source = (ROOT / "aar" / "research_loop" / "prompt_safety.jinja2").read_text()
