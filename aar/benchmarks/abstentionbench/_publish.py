@@ -26,10 +26,33 @@ import json
 import random
 from pathlib import Path
 
+_SQUAD2_REVISION = "3ffb306f725f7d2ce8394bc1873b24868140c412"
+_SELFAWARE_REVISION = "a0a207ee8dacd78ac97d6993cf0a4df2d6f20276"
+_KUQ_REVISION = "f99b53aa226dbb0d1b086db3ec352b0da0aa8f41"
+
+
+def _load_hub_file(repo_id, revision, filename, builder, split):
+    """Load a pinned physical file without parsing mutable Hub feature metadata."""
+    from datasets import load_dataset
+    from huggingface_hub import hf_hub_download
+
+    path = hf_hub_download(
+        repo_id=repo_id,
+        repo_type="dataset",
+        revision=revision,
+        filename=filename,
+    )
+    return list(load_dataset(builder, data_files={split: path}, split=split))
+
 
 def _squad2(rng, k):
-    from datasets import load_dataset
-    d = list(load_dataset("rajpurkar/squad_v2", split="validation"))
+    d = _load_hub_file(
+        "rajpurkar/squad_v2",
+        _SQUAD2_REVISION,
+        "squad_v2/validation-00000-of-00001.parquet",
+        "parquet",
+        "validation",
+    )
     rng.shuffle(d)
     pos, neg = [], []                              # pos = should_abstain (unanswerable)
     for it in d:
@@ -43,8 +66,13 @@ def _squad2(rng, k):
 
 
 def _selfaware(rng, k):
-    from datasets import load_dataset
-    d = list(load_dataset("JesusCrist/selfaware", split="train"))
+    d = _load_hub_file(
+        "JesusCrist/selfaware",
+        _SELFAWARE_REVISION,
+        "data/train-00000-of-00001.parquet",
+        "parquet",
+        "train",
+    )
     rng.shuffle(d)
     pos, neg = [], []
     for it in d:
@@ -57,8 +85,13 @@ def _selfaware(rng, k):
 
 
 def _kuq(rng, k):
-    from datasets import load_dataset
-    d = list(load_dataset("amayuelas/KUQ", data_files="knowns_unknowns.jsonl", split="train"))
+    d = _load_hub_file(
+        "amayuelas/KUQ",
+        _KUQ_REVISION,
+        "knowns_unknowns.jsonl",
+        "json",
+        "train",
+    )
     rng.shuffle(d)
     pos, neg = [], []
     for it in d:
