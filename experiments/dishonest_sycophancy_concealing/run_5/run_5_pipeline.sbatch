@@ -66,8 +66,14 @@ git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || {
 }
 for required in "${REUSED_BASELINE}" "${TARGET_MODEL_PATH}" "${LIT_AXIS_DIR}/manifest.json" \
   "${AAR_VLLM_WORKER_SH}" "${AAR_VLLM_MERGE_PY}" "${HARNESS_PY}" \
-  "${LLM_UNCERTAINTY_SOURCE_MANIFEST}"; do
+  "${LLM_UNCERTAINTY_SOURCE_MANIFEST}" "${HARNESS_ENV}"; do
   [ -e "${required}" ] || { echo "required artifact missing: ${required}" >&2; exit 2; }
+done
+for secret_name in HF_TOKEN MODEL_API_KEY ANTHROPIC_API_KEY; do
+  [ -n "${!secret_name:-}" ] || {
+    echo "required runtime credential is empty: ${secret_name}" >&2
+    exit 2
+  }
 done
 "${HARNESS_PY}" "${REPO}/scripts/prepare_llm_uncertainty_source.py" \
   --output-root "$(dirname -- "${LLM_UNCERTAINTY_SOURCE_MANIFEST}")" \

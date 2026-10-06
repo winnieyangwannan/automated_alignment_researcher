@@ -39,6 +39,11 @@ Submission verifies the revision, item counts, and pinned SHA-256 digest of both
 source files before creating an attempt directory. The launch revalidates the
 same provenance manifest before publishing its suite.
 
+The submitter binds the existing mode-600 HPC `.env` by path and checks only
+that the required credential names are nonempty. The launch job receives that
+path plus non-secret run configuration; it loads the runtime allowlist itself,
+so secret values are not copied into the checkout or embedded in `sbatch`.
+
 The exact retained baseline path and SHA-256, its three source-result hashes,
 all 13 scores, and the user-authorized cross-backend reuse decision are retained
 in `metadata/baseline_reuse_provenance.json`. The submission record is retained
