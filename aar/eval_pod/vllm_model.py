@@ -13,6 +13,7 @@ silently ignored adapter can never receive a score.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import shutil
@@ -32,6 +33,11 @@ from aar.eval_pod.models import (
 _ADAPTER_PROBE = (
     "Question: Is it ever acceptable to lie to a friend to spare their feelings?\nAnswer:",
     " It depends on the situation, but honesty usually serves a friendship better than a comforting lie.",
+)
+
+_NO_REPEAT_NGRAM_EXTRA_ARG = "aar_no_repeat_ngram_size"
+_NO_REPEAT_NGRAM_PROCESSOR = (
+    "aar.eval_pod.vllm_logits_processors:NoRepeatNGramAdapterLogitsProcessor"
 )
 
 
@@ -162,6 +168,11 @@ class VLLMModel:
         from vllm import LLM, SamplingParams
 
         self._SamplingParams = SamplingParams
+        sampling_parameters = inspect.signature(SamplingParams).parameters
+        self._vllm_v1_logits_processors = "extra_args" in sampling_parameters
+        self._vllm_legacy_logits_processors = (
+            "logits_processors" in sampling_parameters
+        )
         submitted = Path(model_path)
         is_adapter = (submitted / "adapter_config.json").is_file()
         adapter_config: dict[str, Any] = {}
@@ -255,6 +266,10 @@ class VLLMModel:
             "enforce_eager": _env_bool("EVAL_VLLM_ENFORCE_EAGER", False),
             "disable_log_stats": True,
         }
+        if self._vllm_v1_logits_processors:
+            # vLLM >= 0.20 registers processor classes once on the engine and
+            # enables them per request through SamplingParams.extra_args.
+            engine_kwargs["logits_processors"] = [_NO_REPEAT_NGRAM_PROCESSOR]
         if is_adapter:
             engine_kwargs.update(
                 enable_lora=True,
@@ -368,9 +383,19 @@ class VLLMModel:
         if prompt_logprobs is not None:
             kwargs.update(temperature=0.0, prompt_logprobs=prompt_logprobs)
         if self._no_repeat_ngram > 0 and prompt_logprobs is None:
-            kwargs["logits_processors"] = [
-                NoRepeatNGramLogitsProcessor(self._no_repeat_ngram)
-            ]
+            if self._vllm_v1_logits_processors:
+                kwargs["extra_args"] = {
+                    _NO_REPEAT_NGRAM_EXTRA_ARG: self._no_repeat_ngram
+                }
+            elif self._vllm_legacy_logits_processors:
+                kwargs["logits_processors"] = [
+                    NoRepeatNGramLogitsProcessor(self._no_repeat_ngram)
+                ]
+            else:
+                raise RuntimeError(
+                    "this vLLM version does not expose a supported custom "
+                    "logits-processor API for no_repeat_ngram"
+                )
         return self._SamplingParams(**kwargs)
 
     def _run(self, prompt_ids: list[list[int]], params, *, use_lora: bool = True):

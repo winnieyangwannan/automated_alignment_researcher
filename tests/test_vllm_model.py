@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import importlib
+import inspect
 import os
+import sys
 import unittest
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 from aar.eval_pod.models import load_model
@@ -56,6 +59,72 @@ class VLLMDecodingTests(unittest.TestCase):
         logits = FakeLogits([0.0] * 10)
         result = NoRepeatNGramLogitsProcessor(2)([4, 5], [4], logits)
         self.assertEqual(result[5], -float("inf"))
+
+    def test_vllm_v1_sampling_params_use_request_extra_args(self) -> None:
+        model = object.__new__(VLLMModel)
+        model._SamplingParams = mock.Mock(side_effect=lambda **kwargs: kwargs)
+        model._no_repeat_ngram = 4
+        model._temperature = 0.0
+        model._top_p = 1.0
+        model._seed = 1234
+        model._stop_ids = [2]
+        model._vllm_v1_logits_processors = True
+        model._vllm_legacy_logits_processors = False
+
+        params = model._sampling_params(16)
+
+        self.assertEqual(
+            params["extra_args"], {"aar_no_repeat_ngram_size": 4}
+        )
+        self.assertNotIn("logits_processors", params)
+
+    def test_prompt_logprobs_do_not_enable_no_repeat_processor(self) -> None:
+        model = object.__new__(VLLMModel)
+        model._SamplingParams = mock.Mock(side_effect=lambda **kwargs: kwargs)
+        model._no_repeat_ngram = 4
+        model._temperature = 1.0
+        model._top_p = 1.0
+        model._seed = 1234
+        model._stop_ids = [2]
+        model._vllm_v1_logits_processors = True
+        model._vllm_legacy_logits_processors = False
+
+        params = model._sampling_params(1, prompt_logprobs=0)
+
+        self.assertNotIn("extra_args", params)
+        self.assertEqual(params["prompt_logprobs"], 0)
+
+    def test_vllm_v1_adapter_uses_prompt_and_output_tokens(self) -> None:
+        fake_vllm = ModuleType("vllm")
+        fake_vllm.SamplingParams = object
+        fake_request_logits_processors = ModuleType("vllm.logits_process")
+        fake_request_logits_processors.LogitsProcessor = object
+        fake_logits_processors = ModuleType("vllm.v1.sample.logits_processor")
+        fake_logits_processors.AdapterLogitsProcessor = object
+        fake_modules = {
+            "vllm": fake_vllm,
+            "vllm.logits_process": fake_request_logits_processors,
+            "vllm.v1": ModuleType("vllm.v1"),
+            "vllm.v1.sample": ModuleType("vllm.v1.sample"),
+            "vllm.v1.sample.logits_processor": fake_logits_processors,
+        }
+        module_name = "aar.eval_pod.vllm_logits_processors"
+        sys.modules.pop(module_name, None)
+        try:
+            with mock.patch.dict(sys.modules, fake_modules):
+                module = importlib.import_module(module_name)
+                adapter = module.NoRepeatNGramAdapterLogitsProcessor()
+                processor = adapter.new_req_logits_processor(
+                    SimpleNamespace(
+                        extra_args={"aar_no_repeat_ngram_size": 2}
+                    )
+                )
+                self.assertEqual(len(inspect.signature(processor).parameters), 3)
+                logits = FakeLogits([0.0] * 10)
+                result = processor([4, 5], [4], logits)
+                self.assertEqual(result[5], -float("inf"))
+        finally:
+            sys.modules.pop(module_name, None)
 
     def test_sequence_scoring_reads_each_chosen_prompt_token(self) -> None:
         model = object.__new__(VLLMModel)
