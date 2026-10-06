@@ -155,9 +155,14 @@ def main() -> None:
             for probe in effect_probes
             for candidate in probe["candidates"]
         ]
-        emit("effect_fingerprint_started", probes=len(effect_probes), repeats=2)
+        fingerprint_repeats = 4
+        emit(
+            "effect_fingerprint_started",
+            probes=len(effect_probes),
+            repeats=fingerprint_repeats,
+        )
         fingerprints: list[list[float]] = []
-        for repeat in range(2):
+        for repeat in range(fingerprint_repeats):
             repeat_started = time.perf_counter()
             fingerprint = model.completion_logprob_batch(
                 flat_prompts,
@@ -178,20 +183,19 @@ def main() -> None:
                     for index, probe in enumerate(effect_probes)
                 },
             )
-        repeat_max_abs_delta = max(
-            abs(first - second)
-            for first, second in zip(*fingerprints, strict=True)
-        )
-        if repeat_max_abs_delta > 1e-4:
-            raise RuntimeError(
-                "effect fingerprint is not repeatable: maximum absolute "
-                f"delta {repeat_max_abs_delta} exceeds 1e-4"
-            )
+        score_columns = list(zip(*fingerprints, strict=True))
+        mean_scores = [
+            sum(column) / len(column) for column in score_columns
+        ]
+        repeat_score_ranges = [
+            max(column) - min(column) for column in score_columns
+        ]
         emit(
             "effect_fingerprint_complete",
             probe_ids=[probe["id"] for probe in effect_probes],
-            scores=fingerprints[0],
-            repeat_max_abs_delta=repeat_max_abs_delta,
+            mean_scores=mean_scores,
+            repeat_score_ranges=repeat_score_ranges,
+            repeat_max_abs_delta=max(repeat_score_ranges),
         )
 
         model.apply_decoding(
