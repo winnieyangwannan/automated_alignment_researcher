@@ -24,8 +24,8 @@ The reference setup pins the image:
 The earlier AAR smoke tests used a shared Python environment with vLLM 0.20.1.
 That is the key environment difference. The reference workflow also merges a
 Gemma LoRA into the base model instead of serving it as a runtime vLLM LoRA.
-The current preflight tests only the base model; LoRA validation remains a
-separate gate.
+This run reproduced that merge-before-serving strategy and validated a real
+run-2 adapter.
 
 ## Root cause found in vLLM 0.20.1
 
@@ -64,7 +64,9 @@ subtests.
 ## Reproducibility
 
 - Development branch: `multi_vllm`
-- Current preflight commit: `01076a2`
+- Base preflight commit: `01076a2`
+- Merge-helper commit: `950a757`
+- Effect-preflight commit: `1204fa3`
 - HPC worktree: `/storage/home/winnieyangwn/aar-worktrees/multi_vllm`
 - Cluster: `fair-cw-use2-1`
 - Partition/QoS: `g3` / `g3_ram_high`
@@ -89,9 +91,9 @@ The Gemma preflight must verify:
 5. Runtime no-repeat-ngram behavior through the custom vLLM processor.
 6. Warm generation timing and observed tokens per second.
 
-After the base model passes, a separate production gate must verify the chosen
-LoRA strategy. The reference setup uses merged weights, while the AAR backend
-also contains runtime-LoRA support that has not yet been proven for this model.
+After the base model passes, the production gate verifies the chosen LoRA
+strategy. For Gemma 4 this means a merge-before-serving checkpoint plus a
+base-versus-merged inference-effect comparison.
 
 ## Attempts and logs
 
@@ -162,14 +164,65 @@ The tested image configuration digest was:
 
 `sha256:30a38a1d74a17365eca400e83ffd885b250e0c8c0d3c5b508afa8c412d2ddf95`
 
+### Run-2 merged-adapter preflight
+
+The evaluator's first claimed run-2 candidate was the gamma
+Epistemic-Faithfulness SFT adapter:
+
+`gemma4_31b-explore-gamma-1791263326-gemma4_31b_explore_gamma__ef_sft-1791265474050`
+
+The retained adapter hashes are:
+
+- `adapter_config.json`:
+  `3cbf1976944c8e16844a42781afad9e4e43f4e2f509461f07f1b4b9860ee9b6d`
+- `adapter_model.safetensors`:
+  `00549ddc80979d151227a1f52634b147ba5f32891653c04443acadc91a617681`
+
+Job `1735555` merged the adapter into a new checkpoint without modifying the
+base or adapter. It completed in 14 minutes 11 seconds and atomically finalized
+13 shards totaling 62,546,336,448 bytes at:
+
+`/checkpoint/ram/aar/winnieyangwn/vllm_preflight/run_3/gamma-ef-sft-01076a2`
+
+The completion manifest is `.merge-complete.json` in that directory. It records
+the source paths, hashes, `Gemma4ForConditionalGeneration` loader, tool
+versions, and source commit. The merged `config.json` is byte-identical to the
+base config with SHA-256
+`e967dd38bc5cfd38bd09a995a7bf4a754075df2b46aba68f7fbb5a791e6d8dd1`.
+
+Log:
+
+`/storage/home/winnieyangwn/aar-preflight/run/gemma_merge_gamma-1735555.log`
+
+Job `1735774` proved that vLLM 0.25.1 can load the merged checkpoint through the
+in-process AAR evaluator. It generated `2 + 2 is 4.`, preferred the correct
+arithmetic candidate, and generated 16 tokens with zero repeated bigrams.
+
+The final controlled effect comparison disabled prefix caching for scoring and
+ran four identical fingerprint repetitions per model. Both jobs completed with
+exit code zero:
+
+- Base job `1735851`:
+  `/storage/home/winnieyangwn/aar-preflight/run/gemma_base_nocache-1735851.log`
+- Merged job `1735852`:
+  `/storage/home/winnieyangwn/aar-preflight/run/gemma_merged_nocache-1735852.log`
+
+The effect gate required both the maximum absolute mean shift to exceed twice
+the worst repeat range and the RMS shift to exceed 1.5 times the RMS repeat
+range. The observed maximum shift was `0.405161`, versus `0.161334` maximum
+repeat noise (`2.511x`). The effect RMS was `0.168526`, versus `0.093211` noise
+RMS (`1.808x`). The largest shift was on the truthful candidate in the
+geography-pressure probe, at `5.126x` that coordinate's repeat range. All merged
+repeat ranges were exactly zero.
+
 ## Current status
 
 The base Gemma 4 vLLM preflight passes on the exact vLLM 0.25.1 container used
 by the known-working steerability setup. Checkpoint loading, generation,
 prompt-logprob scoring, and request-scoped no-repeat decoding are all verified.
 
-The remaining run-2 gate is a real fine-tuned Gemma adapter. The source-truth
-steerability workflow merges Gemma adapters into the base checkpoint before
-serving; runtime vLLM LoRA has not yet been accepted as equivalent for this
-model. The adapter strategy and effect check must be validated before launching
-the AAR evaluation.
+The real run-2 gamma adapter passes the merge-before-serving production gate.
+The merged checkpoint loads in vLLM 0.25.1, passes generation,
+prompt-logprob, and no-repeat checks, and produces an inference effect clearly
+above measured repeat noise. No AAR iteration or full benchmark evaluation was
+launched as part of this preflight.
