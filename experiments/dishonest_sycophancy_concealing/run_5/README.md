@@ -3,6 +3,27 @@
 Run 5 is a full five-iteration Gemma AAR whose candidate evaluations use the
 in-process vLLM backend. It is intentionally isolated from the active `uv` runs.
 
+## Worktree mapping
+
+The worktree directory name and checked-out Git branch are different on the
+devserver:
+
+- Devserver authoring worktree:
+  `/home/winnieyangwn/aar-worktrees/multi_dimensional`
+- Devserver branch: `multi_vllm`
+- Run-5 source on the devserver:
+  `/home/winnieyangwn/aar-worktrees/multi_dimensional/experiments/dishonest_sycophancy_concealing/run_5`
+- HPC execution worktree:
+  `/storage/home/winnieyangwn/aar-worktrees/multi_vllm`
+- HPC branch: `multi_vllm`
+- Run-5 source on HPC:
+  `/storage/home/winnieyangwn/aar-worktrees/multi_vllm/experiments/dishonest_sycophancy_concealing/run_5`
+
+`multi_dimensional` is the legacy devserver directory name; it does not indicate
+the current branch. Make and commit source changes in that devserver worktree,
+then synchronize the exact commit to the isolated HPC `multi_vllm` worktree.
+Do not edit or advance the active HPC `uv` worktree for this run.
+
 Per the user's explicit 2026-10-06 direction, the run does not recompute the
 base-model baseline. It validates and reuses the complete retained 13-benchmark
 Gemma baseline, then publishes the matching suite, starts one four-GB300
