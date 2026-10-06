@@ -1,14 +1,14 @@
 # Run 5: full Gemma AAR with vLLM evaluation
 
-Run 5 is the first full five-iteration Gemma AAR whose baseline and every
-candidate evaluation use the in-process vLLM backend. It is intentionally
-isolated from the active `uv` runs.
+Run 5 is a full five-iteration Gemma AAR whose candidate evaluations use the
+in-process vLLM backend. It is intentionally isolated from the active `uv` runs.
 
-The pipeline first measures a fresh 13-benchmark base-model baseline with
-`docker.io/vllm/vllm-openai:v0.25.1`. Only after that succeeds does it publish
-the matching suite, start one four-GB300 evaluator, and start one sequential
-five-session Claude Opus 4.8 research chain. Candidate adapters are atomically
-merged into full Gemma checkpoints before vLLM scoring; runtime LoRA is not used.
+Per the user's explicit 2026-10-06 direction, the run does not recompute the
+base-model baseline. It validates and reuses the complete retained 13-benchmark
+Gemma baseline, then publishes the matching suite, starts one four-GB300
+evaluator, and starts one sequential five-session Claude Opus 4.8 research
+chain. Candidate adapters are atomically merged into full Gemma checkpoints
+before vLLM scoring; runtime LoRA is not used.
 
 The evaluator fails closed unless its logs show `backend=vllm`, vLLM 0.25.1,
 `language_model_only=True`, the exact checkpoint path, and
@@ -36,9 +36,11 @@ bash experiments/dishonest_sycophancy_concealing/run_5/submit_run_5.sh
 The preparation command downloads the benchmark author's public Hugging Face
 mirror at immutable revision `a199e02b65c6696c467501f01beeb8de9c719916`.
 Submission verifies the revision, item counts, and pinned SHA-256 digest of both
-source files before creating an attempt directory. The same provenance manifest
-is embedded in the retained baseline metadata.
+source files before creating an attempt directory. The launch revalidates the
+same provenance manifest before publishing its suite.
 
-The submission record is retained under the newly created attempt's
-`metadata/submission.txt`. The pipeline log records the baseline and, after it
-passes, the evaluator and research-chain job IDs.
+The exact retained baseline path and SHA-256, its three source-result hashes,
+all 13 scores, and the user-authorized cross-backend reuse decision are retained
+in `metadata/baseline_reuse_provenance.json`. The submission record is retained
+in `metadata/submission.txt`; the launch log records the evaluator and one
+sequential research-chain job ID.

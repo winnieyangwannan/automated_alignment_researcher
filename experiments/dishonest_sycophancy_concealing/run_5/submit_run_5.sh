@@ -1,12 +1,12 @@
 #!/bin/bash
-# Submit the vLLM baseline -> five-agent AAR pipeline from multi_vllm.
+# Submit the retained-baseline -> five-iteration AAR launch from multi_vllm.
 set -euo pipefail
 umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
-PROVISIONAL="${1:-/checkpoint/ram/aar/${USER:?}/honesty-sycophancy-concealing-gemma4-31b-v0/baseline_attempts/20261005T083040Z-ab488b75137b-reuse/metadata/gemma4_31b_multidimensional_baseline.json}"
-PROVISIONAL="$(realpath -e -- "${PROVISIONAL}")"
+REUSED_BASELINE="${1:-/checkpoint/ram/aar/${USER:?}/honesty-sycophancy-concealing-gemma4-31b-v0/baseline_attempts/20261005T083040Z-ab488b75137b-reuse/metadata/gemma4_31b_multidimensional_baseline.json}"
+REUSED_BASELINE="$(realpath -e -- "${REUSED_BASELINE}")"
 
 [ "$(git -C "${REPO}" branch --show-current)" = multi_vllm ] || {
   echo "run 5 requires branch multi_vllm" >&2
@@ -41,11 +41,13 @@ source_root="${REPO}/data/LLM-Uncertainty-Bench"
 }
 export LLM_UNCERTAINTY_SRC="${source_root}/data"
 export LLM_UNCERTAINTY_SOURCE_MANIFEST="${source_root}/.aar-source.json"
+"${REPO}/.venv/bin/python" "${REPO}/scripts/validate_reused_multidimensional_baseline.py" \
+  "${REUSED_BASELINE}" >/dev/null
 
 commit="$(git -C "${REPO}" rev-parse HEAD)"
 short_commit="$(git -C "${REPO}" rev-parse --short=12 HEAD)"
 attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-${short_commit}"
-attempt_parent="/checkpoint/ram/aar/${USER}/honesty-sycophancy-concealing-gemma4-31b-vllm-v0/baseline_attempts"
+attempt_parent="/checkpoint/ram/aar/${USER}/honesty-sycophancy-concealing-gemma4-31b-vllm-v0/run_attempts"
 attempt_dir="${attempt_parent}/${attempt_id}"
 mkdir -p "${attempt_parent}"
 mkdir "${attempt_dir}" "${attempt_dir}/metadata" "${attempt_dir}/logs"
@@ -53,15 +55,15 @@ printf 'export AAR_RUNTIME_ROOT=%q\n' "${attempt_dir}" > "${attempt_dir}/attempt
 
 export AAR_REPO="${REPO}"
 export AAR_RUNTIME_ROOT="${attempt_dir}"
-export AAR_BASELINE_ATTEMPT_DIR="${attempt_dir}"
+export AAR_RUN_ATTEMPT_DIR="${attempt_dir}"
 export AAR_BASELINE_GIT_COMMIT="${commit}"
-export AAR_PROVISIONAL_BASELINE_OVERRIDES="${PROVISIONAL}"
+export AAR_REUSED_BASELINE="${REUSED_BASELINE}"
 job_id="$(sbatch --parsable \
   --account=ram --partition=g3 --qos=g3_ram_high \
-  --cpus-per-task=48 --gpus=4 --mem=512G --time=36:00:00 \
-  --job-name=aar-gemma-vllm-run5-pipeline \
+  --cpus-per-task=16 --mem=128G --time=02:00:00 \
+  --job-name=aar-gemma-vllm-run5-launch \
   --output="${attempt_dir}/logs/pipeline-%j.out" --export=ALL \
   "${REPO}/experiments/dishonest_sycophancy_concealing/run_5/run_5_pipeline.sbatch")"
-printf 'pipeline_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nprovisional=%s\n' \
-  "${job_id}" "${attempt_dir}" "${commit}" "${PROVISIONAL}" | tee \
+printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nreused_baseline=%s\n' \
+  "${job_id}" "${attempt_dir}" "${commit}" "${REUSED_BASELINE}" | tee \
   "${attempt_dir}/metadata/submission.txt"

@@ -1,19 +1,18 @@
 #!/bin/bash
-#SBATCH --job-name=aar-gemma-vllm-run5-pipeline
+#SBATCH --job-name=aar-gemma-vllm-run5-launch
 #SBATCH --account=ram
 #SBATCH --partition=g3
 #SBATCH --qos=g3_ram_high
-#SBATCH --cpus-per-task=48
-#SBATCH --gpus=4
-#SBATCH --mem=512G
-#SBATCH --time=36:00:00
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=128G
+#SBATCH --time=02:00:00
 set -euo pipefail
 umask 077
 
 REPO="${AAR_REPO:?submit through submit_run_5.sh}"
-ATTEMPT_DIR="${AAR_BASELINE_ATTEMPT_DIR:?missing retained attempt}"
+ATTEMPT_DIR="${AAR_RUN_ATTEMPT_DIR:?missing retained attempt}"
 EXPECTED_COMMIT="${AAR_BASELINE_GIT_COMMIT:?missing submitted commit}"
-PROVISIONAL="${AAR_PROVISIONAL_BASELINE_OVERRIDES:?missing provisional baseline}"
+REUSED_BASELINE="${AAR_REUSED_BASELINE:?missing retained baseline}"
 
 # shellcheck disable=SC1091
 source "${REPO}/replication/env_multidimensional.sh"
@@ -65,7 +64,7 @@ git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || {
   echo "tracked HPC worktree is dirty" >&2
   exit 2
 }
-for required in "${PROVISIONAL}" "${TARGET_MODEL_PATH}" "${LIT_AXIS_DIR}/manifest.json" \
+for required in "${REUSED_BASELINE}" "${TARGET_MODEL_PATH}" "${LIT_AXIS_DIR}/manifest.json" \
   "${AAR_VLLM_WORKER_SH}" "${AAR_VLLM_MERGE_PY}" "${HARNESS_PY}" \
   "${LLM_UNCERTAINTY_SOURCE_MANIFEST}"; do
   [ -e "${required}" ] || { echo "required artifact missing: ${required}" >&2; exit 2; }
@@ -79,74 +78,17 @@ done
   exit 2
 }
 
-BASE_INPUT="${ATTEMPT_DIR}/baseline_input"
-OUT_DIR="${ATTEMPT_DIR}/baseline_results"
-mkdir -p "${BASE_INPUT}" "${OUT_DIR}/private" "${ATTEMPT_DIR}/metadata"
-export EVAL_GPUS=4
-unset EVAL_MAX_NEW_TOKENS EVAL_VLLM_REQUIRE_MERGED EVAL_MODEL_PATH_OVERRIDE
-export EVAL_VLLM_LORA_STRATEGY=base
-
-"${HARNESS_PY}" - "${ATTEMPT_DIR}/metadata/baseline_started.json" <<'PY'
-import importlib.metadata, json, os, subprocess, sys
-from datetime import datetime, timezone
-from pathlib import Path
-Path(sys.argv[1]).write_text(json.dumps({
-    "started_utc": datetime.now(timezone.utc).isoformat(),
-    "git_branch": subprocess.check_output(["git", "-C", os.environ["AAR_REPO"], "branch", "--show-current"], text=True).strip(),
-    "git_commit": os.environ["AAR_BASELINE_GIT_COMMIT"],
-    "model_identity": "google/gemma-4-31B-it",
-    "model_path": os.environ["TARGET_MODEL_PATH"],
-    "inference_backend": "vllm",
-    "vllm_image": os.environ["AAR_VLLM_CONTAINER_IMAGE"],
-    "vllm_strategy": "base",
-    "language_model_only": True,
-    "judge": {"backend": os.environ["JUDGE_BACKEND"], "model": os.environ["JUDGE_MODEL"]},
-    "thinking_enabled": True,
-    "evaluation_health": {
-        "batch_size": int(os.environ["EVAL_RUN_BATCH"]),
-        "freeform_generation_ceiling": int(os.environ["EVAL_RUN_GEN_CEILING"]),
-        "fail_on_allocator_warning": os.environ["EVAL_FAIL_ON_ALLOCATOR_WARNING"] == "1",
-        "max_truncation_rate": float(os.environ["EVAL_MAX_TRUNCATION_RATE"]),
-    },
-    "suite_benchmarks": os.environ["AAR_SUITE_BENCHMARKS"].split(),
-    "public_source": json.loads(Path(os.environ["LLM_UNCERTAINTY_SOURCE_MANIFEST"]).read_text()),
-}, indent=2) + "\n")
-PY
-
-AAR_BASELINE_OVERRIDES="${PROVISIONAL}" "${HARNESS_PY}" "${REPO}/scripts/publish_suite.py" \
-  --suite honesty_sycophancy_concealing_uncertainty \
-  --target-model google/gemma-4-31B-it --holdout-dir "${BASE_INPUT}"
-
-export MODEL_CFG_PATH="${TARGET_MODEL_PATH}"
-"${REPO}/scripts/run_vllm_container.sh" python3 -u -m aar.eval_pod.run_eval \
-  --suite "${BASE_INPUT}/honesty_sycophancy_concealing_uncertainty/honesty_sycophancy_concealing_uncertainty.yaml" \
-  --model "${TARGET_MODEL_PATH}" \
-  --secret-dir "${BASE_INPUT}/honesty_sycophancy_concealing_uncertainty" \
-  --out "${OUT_DIR}/baseline.research.json" \
-  --heldout-dir "${OUT_DIR}/private"
-
-private_result="${OUT_DIR}/private/baseline.research.json"
-"${HARNESS_PY}" - "${private_result}" <<'PY'
-import json, sys
-from pathlib import Path
-result = json.loads(Path(sys.argv[1]).read_text())
-if result.get("inference_backend") != "vllm":
-    raise SystemExit(f"baseline did not use vLLM: {result.get('inference_backend')!r}")
-if result.get("error"):
-    raise SystemExit(f"baseline failed: {result['error']}")
-if len(result.get("per_benchmark", {})) != 13:
-    raise SystemExit("baseline did not produce all 13 benchmark scores")
-PY
-
-"${HARNESS_PY}" "${REPO}/replication/record_composed_baseline.py" \
-  --result "${private_result}" \
-  --manifest "${ATTEMPT_DIR}/metadata/baseline_started.json" \
-  --repo "${REPO}" --output "${AAR_BASELINE_OVERRIDES}"
+mkdir -p "${ATTEMPT_DIR}/metadata"
+"${HARNESS_PY}" "${REPO}/scripts/validate_reused_multidimensional_baseline.py" \
+  "${REUSED_BASELINE}" \
+  --provenance-output "${ATTEMPT_DIR}/metadata/baseline_reuse_provenance.json" >/dev/null
+cp -- "${REUSED_BASELINE}" "${AAR_BASELINE_OVERRIDES}"
+"${HARNESS_PY}" "${REPO}/scripts/validate_reused_multidimensional_baseline.py" \
+  "${AAR_BASELINE_OVERRIDES}" >/dev/null
 bash "${REPO}/scripts/publish_holdout.sh"
-"${HARNESS_PY}" "${REPO}/replication/record_manifest_v0.py" --phase baseline
 
 export EVAL_VLLM_LORA_STRATEGY=merged_checkpoint
 export EVAL_VLLM_REQUIRE_MERGED=1
 launch_log="${ATTEMPT_DIR}/metadata/launch_run5_vllm_submission.txt"
 bash "${REPO}/scripts/launch_team.sh" "pilot" 5 167 | tee "${launch_log}"
-echo "[run5] vLLM baseline completed and sequential five-iteration AAR launched"
+echo "[run5] retained baseline validated; sequential five-iteration vLLM AAR launched"
