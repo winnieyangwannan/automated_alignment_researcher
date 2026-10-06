@@ -354,13 +354,17 @@ without an approval.** Once approved → train + `evaluate_model` **that approve
    training AND its score — is ORPHANED and LOST (the #1 way iterations are wasted).** Poll (this does
    NOT resubmit — the one job you submitted above will run on its own when a GPU frees):
    ```
-   until [ -f "$SCORES_DIR/$RUN_ID.json" ]; do
+   until [ -f "$SCORES_DIR/$RUN_ID.json" ] || [ -f "$SCORES_DIR/$RUN_ID.failed.json" ]; do
      sleep 60
      st=$(sacct -j "$(cat /tmp/jobid_$RUN_ID)" --format=State -n 2>/dev/null | head -1)
      case "$st" in *FAIL*|*CANCEL*|*TIMEOUT*|*OUT_OF*)
        echo "TRAIN JOB DIED ($st) — do NOT resubmit; read $TEAM_DIR/logs/train-*.out, fix the method NEXT iteration"; break;; esac
    done
    ```
+   If `$SCORES_DIR/$RUN_ID.failed.json` exists, the evaluator rejected this
+   candidate and no valid score exists. Read that held-out-safe status, record
+   the method as an evaluation error in your memory file, and end this session
+   without sharing a `result`; use the next iteration to pivot or fix the method.
    **Queue discipline — IGNORING THIS is what actually wastes iterations (observed in real runs):**
    (1) **Submit ONE job, then WAIT. NEVER resubmit, NEVER `scancel`, NEVER manage or "clean up" the
        queue, NEVER build a background resubmit loop.** The GPU pool is SHARED by every team; a job

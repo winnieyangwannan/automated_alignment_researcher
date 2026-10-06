@@ -191,6 +191,7 @@ while true; do
     rid=$(basename "$d")
     [ -f "${d}.submitted" ] || continue
     [ -f "${SCORES_DIR}/${rid}.json" ] && continue          # already scored
+    [ -f "${SCORES_DIR}/${rid}.failed.json" ] && continue   # terminal eval failure
     # Atomic claim: exactly one worker's mkdir succeeds for a given rid, so
     # parallel workers never double-score. (Claims live in the eval-writable
     # SCORES_DIR so every worker — same OS user — can create them.)
@@ -233,7 +234,17 @@ while true; do
       echo "[worker ${WORKER_ID}] done ${rid}"
     else
       echo "[worker ${WORKER_ID}] FAILED ${rid}"
-      rmdir "${CLAIMS}/${rid}" 2>/dev/null || true          # release so another worker can retry
+      # A scoring failure is terminal for this candidate.  Retrying the same
+      # immutable checkpoint and suite forever only burns GPUs and leaves the
+      # research chain polling indefinitely.  Publish a held-out-safe failure
+      # handoff (no item data or partial scores) so the chain can record the
+      # rejected iteration and pivot to a new method.
+      failure_tmp="${SCORES_DIR}/.${rid}.failed.${WORKER_ID}.tmp"
+      "${PY}" -c 'import json, os, sys; json.dump({"status": "failed", "run_id": sys.argv[1], "reason": "evaluator rejected the candidate; inspect the evaluator job log", "eval_job_id": os.environ.get("SLURM_JOB_ID")}, sys.stdout); print()' \
+        "${rid}" > "${failure_tmp}"
+      chmod 640 "${failure_tmp}" 2>/dev/null || true
+      mv -f -- "${failure_tmp}" "${SCORES_DIR}/${rid}.failed.json"
+      rmdir "${CLAIMS}/${rid}" 2>/dev/null || true
     fi
     did=1; last_work=$(date +%s)
   done
