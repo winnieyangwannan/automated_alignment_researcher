@@ -56,6 +56,26 @@ def _round_lora_rank(rank: int) -> int:
     return capacity
 
 
+def vllm_hf_overrides(model_config: Any) -> dict[str, Any]:
+    """Allow vLLM's Gemma-4 converter to inspect heterogeneous dimensions.
+
+    Transformers 5.17 requires consumers to opt in before reading a global
+    value for a per-layer attribute.  vLLM 0.20's Gemma-4 converter knowingly
+    reads both ``head_dim`` and ``global_head_dim`` and takes their maximum, so
+    this is the supported narrow override rather than a homogeneity assumption.
+    """
+    text_config = getattr(model_config, "text_config", None)
+    if text_config is not None and bool(
+        getattr(text_config, "is_heterogeneous", False)
+    ):
+        return {
+            "text_config": {
+                "allow_global_per_layer_attribute_access": True,
+            }
+        }
+    return {}
+
+
 def vllm_lora_layout(
     tensors: dict[str, Any], config: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -270,6 +290,9 @@ class VLLMModel:
             # vLLM >= 0.20 registers processor classes once on the engine and
             # enables them per request through SamplingParams.extra_args.
             engine_kwargs["logits_processors"] = [_NO_REPEAT_NGRAM_PROCESSOR]
+        hf_overrides = vllm_hf_overrides(self.config)
+        if hf_overrides:
+            engine_kwargs["hf_overrides"] = hf_overrides
         if is_adapter:
             engine_kwargs.update(
                 enable_lora=True,

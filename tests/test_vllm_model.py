@@ -13,6 +13,7 @@ from aar.eval_pod.vllm_model import (
     NoRepeatNGramLogitsProcessor,
     VLLMModel,
     _round_lora_rank,
+    vllm_hf_overrides,
     vllm_lora_layout,
 )
 
@@ -46,6 +47,29 @@ class VLLMLoRATests(unittest.TestCase):
         self.assertEqual(_round_lora_rank(4), 8)
         self.assertEqual(_round_lora_rank(16), 16)
         self.assertEqual(_round_lora_rank(48), 64)
+
+
+class VLLMConfigTests(unittest.TestCase):
+    def test_heterogeneous_text_config_enables_safe_global_inspection(self) -> None:
+        config = SimpleNamespace(
+            text_config=SimpleNamespace(is_heterogeneous=True)
+        )
+
+        self.assertEqual(
+            vllm_hf_overrides(config),
+            {
+                "text_config": {
+                    "allow_global_per_layer_attribute_access": True,
+                }
+            },
+        )
+
+    def test_homogeneous_config_needs_no_override(self) -> None:
+        config = SimpleNamespace(
+            text_config=SimpleNamespace(is_heterogeneous=False)
+        )
+
+        self.assertEqual(vllm_hf_overrides(config), {})
 
 
 class VLLMDecodingTests(unittest.TestCase):
