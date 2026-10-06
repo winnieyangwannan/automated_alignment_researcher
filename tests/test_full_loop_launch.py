@@ -97,7 +97,11 @@ class FullLoopLaunchTest(unittest.TestCase):
             fake_bin = tmp / "bin"
             fake_bin.mkdir()
             sbatch = fake_bin / "sbatch"
-            sbatch.write_text("#!/bin/bash\nprintf '%s\\n' \"$*\"\n")
+            sbatch.write_text(
+                "#!/bin/bash\n"
+                "printf '%s\\n' \"$*\"\n"
+                "printf 'Submitted batch job %s\\n' \"$$\"\n"
+            )
             sbatch.chmod(0o755)
             holdout = tmp / "holdout"
             suite_dir = holdout / "honesty"
@@ -128,12 +132,83 @@ class FullLoopLaunchTest(unittest.TestCase):
                 env=env,
             )
 
-            self.assertIn("7 benchmarks -> evaluator gpu:2", completed.stdout)
+            self.assertIn("7 benchmarks -> 1 evaluator worker(s), gpu:2 each", completed.stdout)
             self.assertIn("--account=ram", completed.stdout)
             self.assertIn("--partition=g3", completed.stdout)
             self.assertIn("--qos=g3_ram_high", completed.stdout)
             self.assertIn("--gpus=2", completed.stdout)
             self.assertIn("eval_worker.sh honesty 30 2", completed.stdout)
+
+    def test_eval_launcher_starts_requested_number_of_workers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            fake_bin = tmp / "bin"
+            fake_bin.mkdir()
+            sbatch = fake_bin / "sbatch"
+            sbatch.write_text(
+                "#!/bin/bash\n"
+                "printf '%s\\n' \"$*\"\n"
+                "printf 'Submitted batch job %s\\n' \"$$\"\n"
+            )
+            sbatch.chmod(0o755)
+            holdout = tmp / "holdout"
+            suite_dir = holdout / "honesty"
+            suite_dir.mkdir(parents=True)
+            (suite_dir / "honesty.yaml").write_text(
+                "".join(f"- name: bench-{index}\n" for index in range(7))
+            )
+            team = tmp / "team"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AAR_REPO": str(ROOT),
+                    "HARNESS_ENV": str(tmp / "missing.env"),
+                    "AXIS": "honesty",
+                    "MODEL": "gemma",
+                    "HOLDOUT_DIR": str(holdout),
+                    "TEAM_DIR": str(team),
+                    "AAR_EVAL_GPUS": "4",
+                    "PATH": f"{fake_bin}:/usr/bin:/bin",
+                }
+            )
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(ROOT / "scripts" / "launch_eval_worker.sh"),
+                    "honesty",
+                    "30",
+                    "5",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertIn("5 evaluator worker(s), gpu:4 each", completed.stdout)
+            self.assertEqual(completed.stdout.count("Submitted batch job"), 5)
+            self.assertEqual(completed.stdout.count("--gpus=4"), 5)
+            self.assertEqual(completed.stdout.count("eval_worker.sh honesty 30 4"), 5)
+            self.assertIn("[launch] evaluator 5/5 -> job", completed.stdout)
+            self.assertIn("[launch] evaluator_jobs=", completed.stdout)
+
+    def test_eval_launcher_rejects_zero_workers(self) -> None:
+        completed = subprocess.run(
+            [
+                "bash",
+                str(ROOT / "scripts" / "launch_eval_worker.sh"),
+                "honesty",
+                "30",
+                "0",
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "AAR_REPO": str(ROOT)},
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("worker count must be at least 1", completed.stderr)
 
     def test_prompt_uses_submit_wrapper_and_secure_search_branch(self) -> None:
         source = (ROOT / "aar" / "research_loop" / "prompt_safety.jinja2").read_text()

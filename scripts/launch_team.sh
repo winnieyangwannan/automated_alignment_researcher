@@ -21,8 +21,9 @@
 # List prior teams to pick from:
 #   ls -1dt _runs/aar_teams/*
 #
-# Run the eval worker once as the EVAL user (it serves all teams):
-#   scripts/launch_eval_worker.sh <suite>
+# Run one or more eval workers as the EVAL user (all workers share an atomic
+# candidate-claim queue):
+#   scripts/launch_eval_worker.sh <suite> <idle-seconds> <worker-count>
 set -euo pipefail
 AXIS="${AXIS:-sycophancy}"     # safety axis  -> scripts/axis/<AXIS>.env ('sycophancy' = built-in default)
 MODEL="${MODEL:-qwen}"         # target model -> one of the 6 (scripts/models.sh); independent of AXIS
@@ -309,8 +310,11 @@ if [ "${AAR_START_EVAL_WORKER:-${AAR_FUNCTIONAL_SMOKE:-0}}" = "1" ]; then
     echo "[team] FATAL: HOLDOUT_DIR is required to start the evaluator" >&2
     exit 2
   }
-  echo "[team] starting same-user evaluator before the research chain"
-  "${REPO}/scripts/launch_eval_worker.sh" "${SUITE}" "${AAR_EVAL_IDLE_SECONDS:-14400}"
+  _eval_workers="${AAR_EVAL_WORKERS:-1}"
+  case "${_eval_workers}" in ''|*[!0-9]*) echo "[team] FATAL: AAR_EVAL_WORKERS must be an integer" >&2; exit 2;; esac
+  [ "${_eval_workers}" -ge 1 ] || { echo "[team] FATAL: AAR_EVAL_WORKERS must be at least 1" >&2; exit 2; }
+  echo "[team] starting ${_eval_workers} same-user evaluator(s) before the research chains"
+  "${REPO}/scripts/launch_eval_worker.sh" "${SUITE}" "${AAR_EVAL_IDLE_SECONDS:-14400}" "${_eval_workers}"
 fi
 
 for s in ${SEEDS}; do
@@ -334,6 +338,6 @@ echo "[team]   SUBMISSIONS_DIR, so the held-out scores + eval work + log land in
 echo "[team]   aar_teams/${TEAM_ID}/ (mode-700). The HOLDOUT itself stays per-axis-model."
 echo "[team]   AXIS=${AXIS} MODEL=${MODEL} scripts/publish_holdout.sh"
 echo "[team]   SUBMISSIONS_DIR=${TEAM_DIR}/submissions SCORES_DIR=${TEAM_DIR}/scores HOLDOUT_DIR=<explicit-holdout-root> \\"
-echo "[team]     AAR_EVAL_GPUS=2 scripts/launch_eval_worker.sh ${SUITE} 8000"
+echo "[team]     AAR_EVAL_GPUS=2 scripts/launch_eval_worker.sh ${SUITE} 8000 1"
 echo "[team] (dashboard: sbatch scripts/dashboard.sh <port> ${TEAM_ID})"
 echo "[team] TEAM_ID=${TEAM_ID}"

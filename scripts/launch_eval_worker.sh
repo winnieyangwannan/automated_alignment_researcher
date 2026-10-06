@@ -26,6 +26,10 @@ source "${REPO}/scripts/aar_runtime_env.sh"
 source "${REPO}/scripts/axis_env.sh"
 SUITE="${1:-${SUITE_NAME}}"
 IDLE="${2:-8000}"
+WORKERS="${3:-${AAR_EVAL_WORKERS:-1}}"
+case "${WORKERS}" in ''|*[!0-9]*) echo "ERROR: evaluator worker count must be an integer" >&2; exit 2;; esac
+[ "${WORKERS}" -ge 1 ] || { echo "ERROR: evaluator worker count must be at least 1" >&2; exit 2; }
+[ "${WORKERS}" -le 32 ] || { echo "ERROR: evaluator worker count must be at most 32" >&2; exit 2; }
 HOLDOUT="${HOLDOUT_DIR:-}"
 [ -n "${HOLDOUT}" ] || { echo "ERROR: HOLDOUT_DIR must be explicit" >&2; exit 2; }
 YAML="${HOLDOUT}/${SUITE}/${SUITE}.yaml"
@@ -39,11 +43,23 @@ case "${GPUS}" in ''|*[!0-9]*) echo "ERROR: AAR_EVAL_GPUS must be an integer" >&
 [ "${GPUS}" -le "${AAR_EVAL_GPU_CAP:-4}" ] || GPUS="${AAR_EVAL_GPU_CAP:-4}"
 LOG_DIR="${TEAM_DIR:-${AAR_RUNTIME_ROOT}}/logs"
 mkdir -p "${LOG_DIR}"
-echo "[launch] suite '${SUITE}' has ${N} benchmarks -> evaluator gpu:${GPUS}"
+echo "[launch] suite '${SUITE}' has ${N} benchmarks -> ${WORKERS} evaluator worker(s), gpu:${GPUS} each"
 _TIME_ARGS=()
 [ -z "${AAR_EVAL_TIME:-}" ] || _TIME_ARGS=(--time="${AAR_EVAL_TIME}")
-sbatch --account="${AAR_SLURM_ACCOUNT}" --partition="${AAR_SLURM_PARTITION}" \
-  --qos="${AAR_EVAL_QOS}" --gpus="${GPUS}" \
-  "${_TIME_ARGS[@]}" \
-  --output="${LOG_DIR}/aar-eval-${SUITE}-%j.out" --job-name="aar-eval-${SUITE}" \
-  "${REPO}/scripts/eval_worker.sh" "${SUITE}" "${IDLE}" "${GPUS}"
+_JOB_IDS=()
+for ((worker_index=1; worker_index<=WORKERS; worker_index++)); do
+  _submission="$(sbatch --account="${AAR_SLURM_ACCOUNT}" --partition="${AAR_SLURM_PARTITION}" \
+    --qos="${AAR_EVAL_QOS}" --gpus="${GPUS}" \
+    "${_TIME_ARGS[@]}" \
+    --output="${LOG_DIR}/aar-eval-${SUITE}-%j.out" --job-name="aar-eval-${SUITE}-w${worker_index}" \
+    "${REPO}/scripts/eval_worker.sh" "${SUITE}" "${IDLE}" "${GPUS}")"
+  printf '%s\n' "${_submission}"
+  _job_id="$(printf '%s\n' "${_submission}" | awk '/Submitted batch job [0-9]+/{id=$4} END {print id}')"
+  if [ -z "${_job_id}" ]; then
+    echo "ERROR: could not parse evaluator ${worker_index}/${WORKERS} job id from sbatch output" >&2
+    exit 1
+  fi
+  _JOB_IDS+=("${_job_id}")
+  echo "[launch] evaluator ${worker_index}/${WORKERS} -> job ${_job_id}"
+done
+echo "[launch] evaluator_jobs=${_JOB_IDS[*]}"
