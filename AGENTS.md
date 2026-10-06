@@ -81,3 +81,25 @@ Copy `.env.example` to `.env`; never commit credentials. Preserve the research/e
   computation, and representative target-model generation before a full evaluation. Stop on any additional error.
 - Keep the HPC `.venv` and `.env` local to the HPC worktree. Sync source files and documentation through Git; never
   copy an installed environment between the devserver and HPC.
+
+### Gemma AAR evaluation through vLLM
+
+- This section applies only when the user explicitly requests the `multi_vllm` workflow; that request overrides the
+  default `uv` branch/worktree locations above. Use the isolated devserver branch/worktree selected by the user and
+  `/storage/home/winnieyangwn/aar-worktrees/multi_vllm` on HPC. Never alter the active HPC `uv` worktree or its jobs.
+- Before launching, read `experiments/dishonest_sycophancy_concealing/run_5/README.md` and use its committed submitter.
+  Do not reconstruct the launch from remembered `sbatch` arguments.
+- Run heterogeneous Gemma 4 only in the validated vLLM 0.25.1 container with language-model-only mode. vLLM 0.20.1
+  cannot load this checkpoint's 256-dimensional local- and 512-dimensional global-attention weights correctly.
+- Evaluate Gemma PEFT candidates by atomically merging each adapter into a new checkpoint with the committed merge
+  helper, then serve that checkpoint. Do not silently substitute runtime vLLM LoRA or Transformers inference.
+- Require `EVAL_INFERENCE_BACKEND=vllm` and fail-closed evaluator logs that identify the vLLM version/image, exact
+  checkpoint, and `lora_strategy=merged_checkpoint` before treating a candidate evaluation as active.
+- Regenerate pinned public sources with the committed preparation scripts and verify their manifests, row counts, and
+  hashes. Use an attempt-local `HF_HOME`; set and assert it after loading the allowlisted mode-600 HPC secret file so
+  `.env` cannot redirect the run to stale shared dataset metadata. Never print, copy, or commit secret values.
+- Reuse a cross-backend baseline only when the user explicitly directs it. Validate its model/protocol, source hashes,
+  full expected score set, and file hash, and retain provenance for the reuse decision.
+- A requested five-iteration AAR run means one sequential chain unless the user says otherwise. Do not report the chain
+  as running until the launcher has emitted distinct evaluator and chain job IDs; count success by score/result pairs,
+  because `max_iterations` also counts sessions that fail before scoring.
