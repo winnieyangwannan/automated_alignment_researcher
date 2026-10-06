@@ -49,6 +49,43 @@ def _copytree_retry(src, dst, attempts: int = 4):
     raise last
 
 
+def _validate_finite_adapter_weights(path: Path) -> None:
+    """Reject a PEFT safetensors adapter containing NaN or infinite values.
+
+    The check runs before the atomic ``.submitted`` marker is created, so an
+    optimizer-diverged adapter never enters the evaluator queue.  Reading one
+    tensor at a time keeps peak host memory bounded by the largest LoRA tensor.
+    """
+    weights = path / "adapter_model.safetensors"
+    if not weights.is_file():
+        return
+
+    try:
+        import torch
+        from safetensors import safe_open
+    except ImportError as exc:  # fail closed when an adapter cannot be checked
+        raise RuntimeError(
+            "validating PEFT adapter weights requires torch and safetensors"
+        ) from exc
+
+    bad_names: list[str] = []
+    tensor_count = 0
+    with safe_open(str(weights), framework="pt", device="cpu") as handle:
+        for name in handle.keys():
+            tensor_count += 1
+            if not torch.isfinite(handle.get_tensor(name)).all().item():
+                if len(bad_names) < 5:
+                    bad_names.append(name)
+
+    if tensor_count == 0:
+        raise ValueError("PEFT adapter contains no tensors")
+    if bad_names:
+        raise ValueError(
+            "PEFT adapter contains non-finite weights (NaN/Inf); "
+            f"examples: {', '.join(bad_names)}"
+        )
+
+
 def validate_model_submission(model_path: str) -> Path:
     """Fail fast unless *model_path* is a self-contained HF submission.
 
@@ -109,6 +146,8 @@ def validate_model_submission(model_path: str) -> Path:
             "model submission has tokenizer_config.json but no tokenizer "
             "vocabulary/model asset"
         )
+    if is_adapter:
+        _validate_finite_adapter_weights(path)
     return path
 
 

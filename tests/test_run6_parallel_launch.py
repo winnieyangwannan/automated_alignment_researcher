@@ -33,3 +33,10 @@ def test_shared_evaluator_queue_claim_is_atomic() -> None:
     worker = (ROOT / "scripts" / "eval_worker.sh").read_text()
 
     assert 'mkdir "${CLAIMS}/${rid}" 2>/dev/null || continue' in worker
+
+
+def test_merge_failure_is_terminal_instead_of_retried() -> None:
+    worker = (ROOT / "scripts" / "eval_worker.sh").read_text()
+
+    assert 'publish_terminal_failure "${rid}"' in worker
+    assert "adapter merge failed; candidate checkpoint is invalid" in worker

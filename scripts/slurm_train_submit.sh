@@ -126,6 +126,12 @@ for _ in $(seq 1 "${AAR_SCORE_POLL_ATTEMPTS:-180}"); do   # default: up to ~1h
     fi
     echo "=== DONE ==="; exit 0
   fi
+  if [ -f "${SCORES_DIR}/${RUN_ID}.failed.json" ]; then
+    echo "[train] evaluator rejected ${RUN_ID}:"
+    cat "${SCORES_DIR}/${RUN_ID}.failed.json"
+    echo "=== FAILED ==="
+    exit 1
+  fi
   sleep 20
 done
 echo "[train] TIMEOUT waiting for scores — is the eval worker running?"; exit 1

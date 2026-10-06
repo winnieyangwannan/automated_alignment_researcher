@@ -152,6 +152,62 @@ class SmokeOrchestrationTest(TestCase):
 
             self.assertFalse((submissions / "smoke-run" / ".submitted").exists())
 
+    def test_put_model_rejects_nonfinite_adapter_before_marker(self):
+        class FakeScalar:
+            def __init__(self, value):
+                self.value = value
+
+            def item(self):
+                return self.value
+
+        class FakeFinite:
+            def __init__(self, value):
+                self.value = value
+
+            def all(self):
+                return FakeScalar(self.value)
+
+        class FakeReader:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def keys(self):
+                return ["finite", "broken"]
+
+            def get_tensor(self, name):
+                return SimpleNamespace(finite=name == "finite")
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.isfinite = lambda tensor: FakeFinite(tensor.finite)
+        fake_safetensors = types.ModuleType("safetensors")
+        fake_safetensors.safe_open = lambda *_args, **_kwargs: FakeReader()
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            source.mkdir()
+            (source / "adapter_config.json").write_text("{}")
+            (source / "adapter_model.safetensors").write_bytes(b"weights")
+            (source / "tokenizer_config.json").write_text("{}")
+            (source / "tokenizer.json").write_text("{}")
+            submissions = root / "submissions"
+            with (
+                patch.dict(
+                    sys.modules,
+                    {"torch": fake_torch, "safetensors": fake_safetensors},
+                ),
+                patch.dict(os.environ, {"AAR_REQUIRE_ADAPTER": "1"}),
+                patch.object(config, "HARNESS_TRANSPORT", "fs"),
+                patch.object(config, "SUBMISSIONS_DIR", str(submissions)),
+            ):
+                with self.assertRaisesRegex(ValueError, "non-finite weights"):
+                    transport.put_model(str(source), "smoke-run")
+
+            self.assertFalse((submissions / "smoke-run" / ".submitted").exists())
+
     def test_saturated_held_out_is_still_detected_and_stripped(self):
         full = {
             "headline_pct": 0.0,

@@ -184,6 +184,16 @@ if [ "${EVAL_INFERENCE_BACKEND:-transformers}" = vllm ]; then
   echo "[worker ${WORKER_ID}] backend=vllm image=${AAR_VLLM_CONTAINER_IMAGE} lora_strategy=merged_checkpoint"
 fi
 echo "[worker ${WORKER_ID}] draining submissions for suite=${SUITE} (idle-exit ${IDLE_EXIT}s)"
+publish_terminal_failure() {
+  local failure_run_id="$1"
+  local failure_reason="$2"
+  "${PY}" -m aar.eval_pod.failure \
+    --scores-dir "${SCORES_DIR}" \
+    --run-id "${failure_run_id}" \
+    --reason "${failure_reason}" \
+    --eval-job-id "${WORKER_ID}"
+  rmdir "${CLAIMS}/${failure_run_id}" 2>/dev/null || true
+}
 last_work=$(date +%s)
 while true; do
   did=0
@@ -213,13 +223,15 @@ while true; do
           --output "${merged_model}" \
           --source-commit "$(git -C "${REPO}" rev-parse HEAD)"; then
         echo "[worker ${WORKER_ID}] FAILED merge ${rid}"
-        rmdir "${CLAIMS}/${rid}" 2>/dev/null || true
+        publish_terminal_failure "${rid}" \
+          "adapter merge failed; candidate checkpoint is invalid; inspect the evaluator log"
         did=1; last_work=$(date +%s)
         continue
       fi
       [ -s "${merged_model}/.merge-complete.json" ] || {
         echo "[worker ${WORKER_ID}] FAILED missing merge manifest ${rid}"
-        rmdir "${CLAIMS}/${rid}" 2>/dev/null || true
+        publish_terminal_failure "${rid}" \
+          "adapter merge did not produce a complete checkpoint; inspect the evaluator log"
         did=1; last_work=$(date +%s)
         continue
       }
@@ -240,12 +252,8 @@ while true; do
       # research chain polling indefinitely.  Publish a held-out-safe failure
       # handoff (no item data or partial scores) so the chain can record the
       # rejected iteration and pivot to a new method.
-      failure_tmp="${SCORES_DIR}/.${rid}.failed.${WORKER_ID}.tmp"
-      "${PY}" -c 'import json, os, sys; json.dump({"status": "failed", "run_id": sys.argv[1], "reason": "evaluator rejected the candidate; inspect the evaluator job log", "eval_job_id": os.environ.get("SLURM_JOB_ID")}, sys.stdout); print()' \
-        "${rid}" > "${failure_tmp}"
-      chmod 640 "${failure_tmp}" 2>/dev/null || true
-      mv -f -- "${failure_tmp}" "${SCORES_DIR}/${rid}.failed.json"
-      rmdir "${CLAIMS}/${rid}" 2>/dev/null || true
+      publish_terminal_failure "${rid}" \
+        "evaluator rejected the candidate; inspect the evaluator job log"
     fi
     did=1; last_work=$(date +%s)
   done
