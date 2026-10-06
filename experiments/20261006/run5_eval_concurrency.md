@@ -70,3 +70,8 @@ shape but can fail the generation-health gate before producing comparable timing
   sycophancy dimensions without any selected safety benchmark in them. The
   selector now filters the dimension list to those represented by selected
   public safety benchmarks.
+- Job `1740888`, attempt `20261006T202912Z-96a1bec94830`, completed the
+  one-engine phase in 647 seconds. It was cancelled during the two-engine phase
+  at the user's direction so the next attempt can measure four engines
+  directly. The submitter now forwards `AAR_EVAL_CONCURRENCIES`, defaulting to
+  the original `1,2,4`, so a reproducible four-only attempt can set it to `4`.
