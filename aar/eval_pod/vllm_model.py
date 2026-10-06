@@ -16,8 +16,10 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import re
 import shutil
 import tempfile
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any
 
@@ -56,13 +58,46 @@ def _round_lora_rank(rank: int) -> int:
     return capacity
 
 
+def _is_heterogeneous_gemma4(model_config: Any) -> bool:
+    """Return whether the checkpoint needs vLLM's heterogeneous Gemma-4 loader."""
+    if getattr(model_config, "model_type", None) != "gemma4":
+        return False
+    text_config = getattr(model_config, "text_config", model_config)
+    head_dim = getattr(text_config, "head_dim", None)
+    global_head_dim = getattr(text_config, "global_head_dim", None)
+    return (
+        head_dim is not None
+        and global_head_dim is not None
+        and int(head_dim) != int(global_head_dim)
+    )
+
+
+def require_compatible_vllm(vllm_version: str, model_config: Any) -> None:
+    """Fail quickly on vLLM releases that mis-load heterogeneous Gemma-4."""
+    if not _is_heterogeneous_gemma4(model_config):
+        return
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", vllm_version)
+    if match is None:
+        raise RuntimeError(
+            "cannot verify vLLM compatibility for heterogeneous Gemma-4 from "
+            f"version {vllm_version!r}; use the validated vLLM 0.25.1 image"
+        )
+    release = tuple(int(component) for component in match.groups())
+    if release < (0, 25, 1):
+        raise RuntimeError(
+            "heterogeneous Gemma-4 requires vLLM >= 0.25.1; older releases "
+            "construct 256-dimensional parameters for 512-dimensional global "
+            f"attention weights (installed vLLM: {vllm_version})"
+        )
+
+
 def vllm_hf_overrides(model_config: Any) -> dict[str, Any]:
     """Allow vLLM's Gemma-4 converter to inspect heterogeneous dimensions.
 
     Transformers 5.17 requires consumers to opt in before reading a global
-    value for a per-layer attribute.  vLLM 0.20's Gemma-4 converter knowingly
-    reads both ``head_dim`` and ``global_head_dim`` and takes their maximum, so
-    this is the supported narrow override rather than a homogeneity assumption.
+    value for a per-layer attribute. This narrow override permits inspection; a
+    separate version gate requires the vLLM loader that actually preserves both
+    the local and global dimensions.
     """
     text_config = getattr(model_config, "text_config", None)
     if text_config is not None and bool(
@@ -211,6 +246,7 @@ class VLLMModel:
                 )
 
         self.config = AutoConfig.from_pretrained(base_model_ref)
+        require_compatible_vllm(package_version("vllm"), self.config)
         tokenizer_ref = model_path if is_adapter else base_model_ref
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_ref)
@@ -290,6 +326,11 @@ class VLLMModel:
             # vLLM >= 0.20 registers processor classes once on the engine and
             # enables them per request through SamplingParams.extra_args.
             engine_kwargs["logits_processors"] = [_NO_REPEAT_NGRAM_PROCESSOR]
+        if _is_heterogeneous_gemma4(self.config):
+            # The validated steerability deployment serves this composite
+            # checkpoint as a text model. Avoid loading/profiling the unused
+            # vision encoder and match its known-good vLLM configuration.
+            engine_kwargs["language_model_only"] = True
         hf_overrides = vllm_hf_overrides(self.config)
         if hf_overrides:
             engine_kwargs["hf_overrides"] = hf_overrides

@@ -12,7 +12,9 @@ from aar.eval_pod.models import load_model
 from aar.eval_pod.vllm_model import (
     NoRepeatNGramLogitsProcessor,
     VLLMModel,
+    _is_heterogeneous_gemma4,
     _round_lora_rank,
+    require_compatible_vllm,
     vllm_hf_overrides,
     vllm_lora_layout,
 )
@@ -50,6 +52,27 @@ class VLLMLoRATests(unittest.TestCase):
 
 
 class VLLMConfigTests(unittest.TestCase):
+    def test_heterogeneous_gemma_requires_fixed_vllm_loader(self) -> None:
+        config = SimpleNamespace(
+            model_type="gemma4",
+            text_config=SimpleNamespace(head_dim=256, global_head_dim=512),
+        )
+
+        self.assertTrue(_is_heterogeneous_gemma4(config))
+        with self.assertRaisesRegex(RuntimeError, "vLLM >= 0.25.1"):
+            require_compatible_vllm("0.20.1", config)
+        require_compatible_vllm("0.25.1", config)
+        require_compatible_vllm("0.26.0.dev12", config)
+
+    def test_other_models_do_not_require_gemma_loader_version(self) -> None:
+        config = SimpleNamespace(
+            model_type="qwen3",
+            text_config=SimpleNamespace(head_dim=256, global_head_dim=512),
+        )
+
+        self.assertFalse(_is_heterogeneous_gemma4(config))
+        require_compatible_vllm("0.20.1", config)
+
     def test_heterogeneous_text_config_enables_safe_global_inspection(self) -> None:
         config = SimpleNamespace(
             text_config=SimpleNamespace(is_heterogeneous=True)
