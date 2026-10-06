@@ -13,6 +13,7 @@ REPO="${AAR_REPO:?submit through submit_run_5.sh}"
 ATTEMPT_DIR="${AAR_RUN_ATTEMPT_DIR:?missing retained attempt}"
 EXPECTED_COMMIT="${AAR_BASELINE_GIT_COMMIT:?missing submitted commit}"
 REUSED_BASELINE="${AAR_REUSED_BASELINE:?missing retained baseline}"
+export HF_HOME="${ATTEMPT_DIR}/cache/huggingface"
 
 # shellcheck disable=SC1091
 source "${REPO}/replication/env_multidimensional.sh"
@@ -20,6 +21,13 @@ source "${REPO}/replication/env_multidimensional.sh"
 source "${REPO}/scripts/aar_runtime_env.sh"
 # shellcheck disable=SC1091
 source "${REPO}/scripts/axis_env.sh"
+
+[ "${HF_HOME}" = "${ATTEMPT_DIR}/cache/huggingface" ] || {
+  echo "run-local HF_HOME was overridden" >&2
+  exit 2
+}
+mkdir -p "${HF_HOME}"
+echo "[run5] isolated HF_HOME=${HF_HOME}"
 
 export AAR_EXPECTED_BRANCH=multi_vllm
 export AAR_RUNTIME_ROOT="${ATTEMPT_DIR}"
