@@ -86,3 +86,11 @@ loading the 31B model a fifth time. It also exposes vLLM's scheduler token
 budget for a single optimized comparison at 32,768 batched tokens and 0.90 GPU
 memory utilization. If that setting fails its existing OOM or allocator gates,
 the narrow fallback is 0.85 rather than weakening the gates.
+
+The optimized four-engine job `1741087`, attempt
+`20261006T211241Z-9d18b2d7e8ad`, completed successfully in 348 seconds versus
+470 seconds for baseline job `1741009`: 122 seconds (26.0%) less wall time, or
+1.35x throughput. It reproduced the same aggregate scores and fingerprint
+`v1:d0096acdd17942fd`, with no OOM or allocator warnings. The run used 32,768
+batched tokens and 0.90 GPU memory utilization, so those validated settings are
+now pinned in both the Run 5 pipeline and evaluation-recovery launchers.
