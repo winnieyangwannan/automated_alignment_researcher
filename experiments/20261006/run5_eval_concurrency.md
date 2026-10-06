@@ -64,3 +64,9 @@ shape but can fail the generation-health gate before producing comparable timing
   before model loading because the ARM host lacks `/usr/bin/time`. The harness
   now uses its already-retained start and end epochs as the sole wall-clock
   measurement and has no dependency on that optional executable.
+- Job `1740846`, attempt `20261006T201739Z-71765b16a053`, again confirmed four
+  visible container GPUs. Its three evaluator commands stopped before model
+  loading because the reduced suite retained the original honesty and
+  sycophancy dimensions without any selected safety benchmark in them. The
+  selector now filters the dimension list to those represented by selected
+  public safety benchmarks.

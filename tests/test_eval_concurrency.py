@@ -20,8 +20,15 @@ class EvalConcurrencyTest(unittest.TestCase):
             output = tmp_path / "output.yaml"
             source.write_text(yaml.safe_dump({
                 "suite": "example",
+                "dimensions": ["selected", "empty"],
                 "benchmarks": [
-                    {"name": "public_a", "id": "a", "role": "safety", "subset_size": 100},
+                    {
+                        "name": "public_a",
+                        "id": "a",
+                        "role": "safety",
+                        "dimension": "selected",
+                        "subset_size": 100,
+                    },
                     {"name": "public_b", "id": "b", "role": "capability_filter"},
                     {"name": "secret", "id": "heldout", "role": "held_out"},
                 ],
@@ -43,6 +50,7 @@ class EvalConcurrencyTest(unittest.TestCase):
             suite = yaml.safe_load(output.read_text())
             self.assertEqual([item["id"] for item in suite["benchmarks"]], ["a", "b"])
             self.assertEqual([item["subset_size"] for item in suite["benchmarks"]], [32, 32])
+            self.assertEqual(suite["dimensions"], ["selected"])
 
     def test_concurrency_suite_rejects_heldout(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

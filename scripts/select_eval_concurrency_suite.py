@@ -48,6 +48,18 @@ def main() -> None:
         raise RuntimeError("throughput suite requires at least two benchmarks")
 
     suite["benchmarks"] = selected
+    represented_dimensions = {
+        item.get("dimension")
+        for item in selected
+        if item.get("role", "safety") == "safety" and item.get("dimension")
+    }
+    suite["dimensions"] = [
+        dimension
+        for dimension in suite.get("dimensions", [])
+        if (
+            dimension if isinstance(dimension, str) else dimension.get("name")
+        ) in represented_dimensions
+    ]
     suite["suite"] = f"{suite.get('suite', 'suite')}_throughput"
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(yaml.safe_dump(suite, sort_keys=False))
