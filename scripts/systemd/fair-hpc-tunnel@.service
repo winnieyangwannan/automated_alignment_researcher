@@ -1,0 +1,13 @@
+[Unit]
+Description=Persistent FAIR HPC SSH tunnel for %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=%h/.local/bin/fair-hpc-tunnel start %i
+ExecStop=-/usr/bin/tmux kill-session -t fair-hpc-tunnel-%i
+
+[Install]
+WantedBy=default.target
