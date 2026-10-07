@@ -289,3 +289,21 @@ standalone dataset does not by itself satisfy this criterion.
   confirming that no Run 8 attempt had been created and the production token
   gate was still closed. It was not part of the production chain. No Run 8 job
   remains active.
+
+### 2026-10-07 — Production credential gate opened and first launch preflight
+
+- The user installed the Firecracker Runner bearer in the expected HPC file.
+  Its owner, mode `0600`, nonempty one-line shape, and Git exclusion were
+  verified without reading the secret into logs or source control.
+- Regenerated the pinned LLM-Uncertainty-Bench source on HPC with the committed
+  preparation script. Both 10,000-row inputs passed their frozen revision,
+  byte-size, and SHA-256 checks.
+- Production launcher job `1749477` started and failed safely before creating
+  any child jobs because the old `aar-gemma-4-31b-it` shared deployment
+  snapshot had been removed. The failed attempt is retained at
+  `/storage/home/winnieyangwn/aar-runs/honesty-sycophancy-concealing-gemma4-31b-vllm-v0/run8_attempts/20261007T193446Z-b6125ac0dc0e`.
+- Two existing Gemma deployments were verified healthy on the validated vLLM
+  0.25.1 image. Run 8 now resolves its candidate-evaluation worker from the
+  live user-owned, no-timeout `winnieyangwn-gemma-4-31B-it` deployment snapshot
+  and validates that deployment before an attempt is created. This snapshot is
+  a read-only execution input; new Run 8 outputs remain under user storage.

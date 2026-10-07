@@ -42,7 +42,7 @@ def test_shell_syntax() -> None:
 
 
 def test_exact_chain_and_evaluator_topology() -> None:
-    _, pipeline, _ = _sources()
+    submit, pipeline, _ = _sources()
     assert 'launch_team.sh" "alpha" 2 167' in pipeline
     assert "export AAR_EVAL_WORKERS=1" in pipeline
     assert "export AAR_EVAL_GPUS=4" in pipeline
@@ -51,6 +51,10 @@ def test_exact_chain_and_evaluator_topology() -> None:
     assert "export AAR_AUTODATA_TRAINING_VIEW=sft" in pipeline
     assert "docker.io/vllm/vllm-openai:v0.25.1" in pipeline
     assert "EVAL_VLLM_LORA_STRATEGY=merged_checkpoint" in pipeline
+    assert "VLLM_WORKER_DEPLOYMENT_ID=winnieyangwn-gemma-4-31B-it" in submit
+    assert 'status "${VLLM_WORKER_DEPLOYMENT_ID}" --json' in submit
+    assert 'AAR_RUN8_VLLM_WORKER_SH="${VLLM_WORKER_SH}"' in submit
+    assert 'AAR_RUN8_VLLM_WORKER_SH:?missing validated Gemma vLLM worker' in pipeline
 
 
 def test_live_autodata_is_fail_closed() -> None:

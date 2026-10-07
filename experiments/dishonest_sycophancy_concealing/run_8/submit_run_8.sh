@@ -12,6 +12,8 @@ AUTODATA_SHA=9e623eb25bab4c4ba50642f72ca338f887772e27
 AUTODATA_ROOT="${AAR_RUN8_AUTODATA_ROOT:-/storage/home/winnieyangwn/autodata_pipelines}"
 BROKER_PYTHON="${AAR_RUN8_BROKER_PYTHON:-/storage/home/winnieyangwn/ram_common/sandoq_fleet/.venv-x86_64/bin/python}"
 SERVE_API_V2="${AAR_RUN8_SERVE_API_V2:-${RAM_COMMON_ROOT:-${HOME}}/ram_common/vllm_tools/serve_api_v2/serve.sh}"
+VLLM_WORKER_DEPLOYMENT_ID=winnieyangwn-gemma-4-31B-it
+VLLM_WORKER_SH="/checkpoint/ram/shared/vllm_deployments_v2/${VLLM_WORKER_DEPLOYMENT_ID}/src/serve_api_v2/worker/worker_vllm.sh"
 REUSED_BASELINE="${1:-/checkpoint/ram/aar/${USER:?}/honesty-sycophancy-concealing-gemma4-31b-v0/baseline_attempts/20261005T083040Z-ab488b75137b-reuse/metadata/gemma4_31b_multidimensional_baseline.json}"
 SECRET_ENV="${AAR_RUN8_SECRET_ENV:-${REPO}/.env}"
 EXECSIDECAR_TOKEN_FILE=/storage/home/winnieyangwn/aar-worktrees/autodata/.sandoq-firecracker-token
@@ -197,6 +199,27 @@ if int(value.get("endpoints_summary", {}).get("ready", 0)) < 1:
     raise SystemExit("Kimi deployment has no ready endpoint")
 '
 
+# Candidate evaluation launches a fresh vLLM worker for every atomically merged
+# checkpoint. Reuse the immutable source snapshot retained by the live,
+# user-owned Gemma deployment, and fail before creating an attempt if that
+# snapshot is no longer available. This is a read-only execution input; Run 8
+# outputs remain confined to RUN8_STORAGE_ROOT.
+[ -x "${VLLM_WORKER_SH}" ] || {
+  echo "run 8 requires the validated Gemma vLLM worker: ${VLLM_WORKER_SH}" >&2
+  exit 2
+}
+gemma_deployment_json="$("${SERVE_API_V2}" status "${VLLM_WORKER_DEPLOYMENT_ID}" --json)"
+printf '%s' "${gemma_deployment_json}" | "${REPO}/.venv/bin/python" -c '
+import json, sys
+value = json.load(sys.stdin)
+if value.get("phase") != "serving":
+    raise SystemExit("Gemma worker-source deployment is not serving")
+if value.get("spec", {}).get("served_model_name") != "gemma-4-31B-it":
+    raise SystemExit("Gemma worker-source deployment serves the wrong model")
+if int(value.get("endpoints_summary", {}).get("ready", 0)) < 1:
+    raise SystemExit("Gemma worker-source deployment has no ready endpoint")
+'
+
 gateway_json="$(curl -fsS --noproxy '*' -H 'Host: ram-inference-gateway.ingress.' \
   http://fair-cw-use2-1-ingress-slurm-ingress/v1/models)"
 printf '%s' "${gateway_json}" | "${REPO}/.venv/bin/python" -c '
@@ -325,6 +348,7 @@ for item in \
   "BROKER_PYTHON:${BROKER_PYTHON}" "EXECSIDECAR_TOKEN_FILE:${EXECSIDECAR_TOKEN_FILE}" \
   "ADAPTER_TOKEN_FILE:${adapter_token_file}" "BROKER_TOKEN_FILE:${broker_token_file}" \
   "GENERATOR_URL:${GENERATOR_URL}" \
+  "VLLM_WORKER_SH:${VLLM_WORKER_SH}" \
   "AUTODATA_MAX_COST_USD:${AUTODATA_MAX_COST_USD}" \
   "AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD:${AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD}" \
   "GENERATOR_INPUT_RATE:${GENERATOR_INPUT_RATE}" \
@@ -338,7 +362,7 @@ job_id="$(sbatch --parsable \
   --cpus-per-task=16 --mem=128G --time=02:00:00 \
   --job-name=aar-gemma-vllm-run8-launch \
   --output="${attempt_dir}/logs/pipeline-%j.out" \
-  --export=AAR_REPO="${REPO}",AAR_RUNTIME_ROOT="${attempt_dir}",AAR_RUN_ATTEMPT_DIR="${attempt_dir}",AAR_BASELINE_GIT_COMMIT="${commit}",AAR_REUSED_BASELINE="${REUSED_BASELINE}",HARNESS_ENV="${HARNESS_ENV}",LLM_UNCERTAINTY_SRC="${LLM_UNCERTAINTY_SRC}",LLM_UNCERTAINTY_SOURCE_MANIFEST="${LLM_UNCERTAINTY_SOURCE_MANIFEST}",AUTODATA_SOURCE_ROOT="${AUTODATA_ROOT}",AAR_RUN8_AUTODATA_SHA="${AUTODATA_SHA}",AAR_RUN8_BROKER_PYTHON="${BROKER_PYTHON}",AAR_RUN8_EXECSIDECAR_TOKEN_FILE="${EXECSIDECAR_TOKEN_FILE}",AAR_RUN8_ADAPTER_TOKEN_FILE="${adapter_token_file}",AAR_RUN8_BROKER_TOKEN_FILE="${broker_token_file}",AAR_RUN8_GENERATOR_URL="${GENERATOR_URL}",AAR_RUN8_BUDGET_SCOPE_ID="${budget_scope_id}",AAR_RUN8_RESOURCE_PROFILE="${resource_profile}",AAR_RUN8_RESOURCE_PROFILE_SHA256="${profile_digest}",AAR_RUN8_AUTODATA_MAX_COST_USD="${AUTODATA_MAX_COST_USD}",AAR_RUN8_REQUIRED_RETAINED_ROWS="${AUTODATA_REQUIRED_RETAINED_ROWS}",AAR_RUN8_AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD="${AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD}",AAR_RUN8_GENERATOR_INPUT_USD_PER_MILLION="${GENERATOR_INPUT_RATE}",AAR_RUN8_GENERATOR_OUTPUT_USD_PER_MILLION="${GENERATOR_OUTPUT_RATE}",AAR_RUN8_JUDGE_INPUT_USD_PER_MILLION="${JUDGE_INPUT_RATE}",AAR_RUN8_JUDGE_OUTPUT_USD_PER_MILLION="${JUDGE_OUTPUT_RATE}",USER="${USER}" \
+  --export=AAR_REPO="${REPO}",AAR_RUNTIME_ROOT="${attempt_dir}",AAR_RUN_ATTEMPT_DIR="${attempt_dir}",AAR_BASELINE_GIT_COMMIT="${commit}",AAR_REUSED_BASELINE="${REUSED_BASELINE}",HARNESS_ENV="${HARNESS_ENV}",LLM_UNCERTAINTY_SRC="${LLM_UNCERTAINTY_SRC}",LLM_UNCERTAINTY_SOURCE_MANIFEST="${LLM_UNCERTAINTY_SOURCE_MANIFEST}",AUTODATA_SOURCE_ROOT="${AUTODATA_ROOT}",AAR_RUN8_AUTODATA_SHA="${AUTODATA_SHA}",AAR_RUN8_BROKER_PYTHON="${BROKER_PYTHON}",AAR_RUN8_EXECSIDECAR_TOKEN_FILE="${EXECSIDECAR_TOKEN_FILE}",AAR_RUN8_ADAPTER_TOKEN_FILE="${adapter_token_file}",AAR_RUN8_BROKER_TOKEN_FILE="${broker_token_file}",AAR_RUN8_GENERATOR_URL="${GENERATOR_URL}",AAR_RUN8_VLLM_WORKER_SH="${VLLM_WORKER_SH}",AAR_RUN8_BUDGET_SCOPE_ID="${budget_scope_id}",AAR_RUN8_RESOURCE_PROFILE="${resource_profile}",AAR_RUN8_RESOURCE_PROFILE_SHA256="${profile_digest}",AAR_RUN8_AUTODATA_MAX_COST_USD="${AUTODATA_MAX_COST_USD}",AAR_RUN8_REQUIRED_RETAINED_ROWS="${AUTODATA_REQUIRED_RETAINED_ROWS}",AAR_RUN8_AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD="${AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD}",AAR_RUN8_GENERATOR_INPUT_USD_PER_MILLION="${GENERATOR_INPUT_RATE}",AAR_RUN8_GENERATOR_OUTPUT_USD_PER_MILLION="${GENERATOR_OUTPUT_RATE}",AAR_RUN8_JUDGE_INPUT_USD_PER_MILLION="${JUDGE_INPUT_RATE}",AAR_RUN8_JUDGE_OUTPUT_USD_PER_MILLION="${JUDGE_OUTPUT_RATE}",USER="${USER}" \
   "${SCRIPT_DIR}/run_8_pipeline.sbatch")"
 
 printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nautodata_framework_commit=%s\nreused_baseline=%s\nresearch_chains=1\nmax_iterations_per_chain=2\nevaluator_jobs=1\nevaluator_gpus_per_job=4\nautodata_budget_scope_id=%s\nautodata_max_cost_usd=%s\nautodata_required_retained_rows=%s\ngenerator_deployment_id=winnieyangwn-kimi26\ngenerator_model=Kimi-K2.6\njudge_model=gpt-5-6-luna\n' \
