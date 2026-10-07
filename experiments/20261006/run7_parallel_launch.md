@@ -75,3 +75,34 @@ recovery launcher that reuses the existing team queue, starts five new
 four-GPU evaluators, and never removes or overwrites terminal candidate
 artifacts. Fresh research iterations, not evaluator mutation, supply new run
 IDs after the infrastructure failure.
+
+## Second evaluator worker-snapshot recovery
+
+At 06:13 UTC, Alpha's `bdpa_v1` adapter completed training and an evaluator
+atomically merged it into a 13-shard, 62,546,336,448-byte checkpoint. Before
+the benchmark suite started, the evaluator failed closed because the configured
+`eval-gemma-4-31b-it` worker snapshot was unreadable. At 06:14 UTC that snapshot
+was moved into the shared deployment root's `.removed` directory by an external
+operator, so the five live evaluator jobs cannot recover through polling and
+would reject every subsequent candidate at the same preflight check. Preserve
+the BDPA failure JSON, submitted adapter, merged checkpoint, and evaluator log;
+do not count it as a score/result pair.
+
+The replacement snapshot
+`baseline_gemma-4-31b-ib/src/serve_api_v2/worker/worker_vllm.sh` is readable,
+owned by the Run 7 user, and has the already pinned SHA-256
+`913c3286e237ed2231c64de200a4bcfc65729292a05c6aa3a88100f8c0248361`.
+Update only Run 7's worker-snapshot path while retaining the hash gate. Cancel
+only evaluator jobs `1742454` through `1742458`, submit a replacement five-job
+pool through the committed evaluator-recovery launcher, and leave research jobs
+`1742199` through `1742203` running.
+
+The devserver and HPC source worktrees are both on `multi_vllm` at pre-change
+commit `a483b386c28eeffd294f36daae163bd508162375`. Transfer the focused recovery
+commit directly over SSH to a unique temporary `refs/aar-sync/` ref, require a
+fast-forward and path-collision checks, and preserve all HPC-local ignored
+state. Planned runtime checks are: five distinct replacement evaluator IDs,
+the hash-pinned worker path in each evaluator environment, and the mandatory
+`backend=vllm`, vLLM 0.25.1, exact merged checkpoint,
+`language_model_only=True`, and `lora_strategy=merged_checkpoint` markers on
+the first fresh candidate. These are planned checks, not completion claims.
