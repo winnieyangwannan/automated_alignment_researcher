@@ -49,7 +49,7 @@ _TIME_ARGS=()
 _JOB_IDS=()
 for ((worker_index=1; worker_index<=WORKERS; worker_index++)); do
   _submission="$(sbatch --account="${AAR_SLURM_ACCOUNT}" --partition="${AAR_SLURM_PARTITION}" \
-    --qos="${AAR_EVAL_QOS}" --gpus="${GPUS}" \
+    --qos="${AAR_EVAL_QOS}" --nodes=1 --ntasks=1 --gpus="${GPUS}" \
     "${_TIME_ARGS[@]}" \
     --output="${LOG_DIR}/aar-eval-${SUITE}-%j.out" --job-name="aar-eval-${SUITE}-w${worker_index}" \
     "${REPO}/scripts/eval_worker.sh" "${SUITE}" "${IDLE}" "${GPUS}")"

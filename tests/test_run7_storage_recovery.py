@@ -58,3 +58,15 @@ def test_full_continuation_uses_recovered_history_and_remaining_budgets() -> Non
     assert "export AAR_VLLM_EPHEMERAL_MERGED=1" in pipeline
     assert "AAR_MAX_ITERATIONS_BY_SEED" in launcher
     assert "AAR_RECOVERED_AGENT_LOG_DIR" in chain
+
+
+def test_eval_workers_are_single_node_and_storage_recoverable() -> None:
+    launcher = (ROOT / "scripts" / "launch_eval_worker.sh").read_text()
+    replacement = (
+        RUN7 / "submit_storage_evaluator_replacements.sh"
+    ).read_text()
+
+    assert '--nodes=1 --ntasks=1 --gpus="${GPUS}"' in launcher
+    assert "AAR_VLLM_EPHEMERAL_MERGED=1" in replacement
+    assert "single_node_evaluator_replacement" in replacement
+    assert 'AAR_EVAL_WORKERS="${WORKERS}"' in replacement
