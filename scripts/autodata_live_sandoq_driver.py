@@ -19,6 +19,7 @@ import stat
 import subprocess
 import sys
 import threading
+import urllib.request
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -96,6 +97,50 @@ def _tree_digest(root: Path) -> str:
 def _write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def _read_frozen_json(
+    path: Path, expected_sha256: str, *, owner_only: bool
+) -> dict[str, Any]:
+    """Read an operator-owned JSON artifact without following or racing a link."""
+
+    resolved = Path(os.path.abspath(path.expanduser()))
+    info = resolved.lstat()
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise RuntimeError("operator evidence must be a regular file")
+    forbidden_mode = 0o077 if owner_only else 0o022
+    if info.st_uid != os.geteuid() or info.st_mode & forbidden_mode:
+        raise RuntimeError("operator evidence has unsafe ownership or mode")
+    if info.st_size > 1 << 20:
+        raise RuntimeError("operator evidence is unexpectedly large")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(resolved, flags)
+    try:
+        opened = os.fstat(descriptor)
+        payload = os.read(descriptor, (1 << 20) + 1)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    identity = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        value.st_size,
+        value.st_mtime_ns,
+    )
+    if identity(info) != identity(opened) or identity(opened) != identity(after):
+        raise RuntimeError("operator evidence changed while it was read")
+    if len(payload) > 1 << 20:
+        raise RuntimeError("operator evidence is unexpectedly large")
+    digest = hashlib.sha256(payload).hexdigest()
+    if expected_sha256 and digest != expected_sha256:
+        raise RuntimeError("operator evidence no longer matches its startup digest")
+    try:
+        value = json.loads(payload)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise RuntimeError("operator evidence is not valid JSON") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError("operator evidence must be a JSON object")
+    return value
 
 
 class _UsageLedger:
@@ -453,8 +498,174 @@ def _protocol_usage_delta(before: list[dict[str, Any]], after: list[dict[str, An
     }
 
 
+def _safe_broker_readiness(executor: Mapping[str, Any]) -> dict[str, Any]:
+    secret_ref = executor.get("broker_auth_secret_ref")
+    if not isinstance(secret_ref, str) or not secret_ref:
+        raise RuntimeError("pinned broker executor omitted its auth secret reference")
+    token = os.environ.get(secret_ref, "")
+    if not token:
+        raise RuntimeError("pinned broker authentication is unavailable")
+    request = urllib.request.Request(
+        str(executor["broker_url"]).rstrip("/") + "/readyz",
+        headers={"Authorization": "Bearer " + token},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            payload = response.read((1 << 20) + 1)
+    except Exception as exc:
+        raise RuntimeError("current broker readiness could not be verified") from exc
+    if len(payload) > 1 << 20:
+        raise RuntimeError("broker readiness response is unexpectedly large")
+    try:
+        value = json.loads(payload)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise RuntimeError("broker readiness response is invalid") from exc
+    runner = value.get("runner") if isinstance(value, dict) else None
+    registry = value.get("registry") if isinstance(value, dict) else None
+    if (
+        not isinstance(value, dict)
+        or value.get("ready") is not True
+        or not isinstance(runner, dict)
+        or runner.get("ready") is not True
+        or runner.get("runner") != "sandoq-firecracker"
+        or not isinstance(registry, dict)
+        or registry.get("ready") is not True
+        or isinstance(value.get("max_concurrent"), bool)
+        or not isinstance(value.get("max_concurrent"), int)
+        or value["max_concurrent"] < 1
+    ):
+        raise RuntimeError("canonical broker is not currently ready")
+    # Retain only fields that are useful evidence and cannot contain a secret.
+    return {
+        "ready": True,
+        "runner": {"ready": True, "runner": "sandoq-firecracker"},
+        "registry_ready": True,
+        "max_concurrent": value["max_concurrent"],
+    }
+
+
+def _resource_approval_evidence(
+    args: argparse.Namespace, request: Mapping[str, Any]
+) -> dict[str, Any]:
+    profile = _read_frozen_json(args.resource_profile, "", owner_only=False)
+    profile_digest = hashlib.sha256(_canonical_json(profile)).hexdigest()
+    if profile_digest != args.resource_profile_sha256:
+        raise RuntimeError("resource profile no longer matches its startup digest")
+    controls = request["controls"]
+    spec = request["spec"]
+    draft = _protocol_paths(args)["draft"]
+    workspace = json.loads((draft / "autodata.workspace.json").read_text())
+    executor = workspace["execution_defaults"]["executor"]
+
+    expected_profile = {
+        "schema": "aar.autodata.resource-profile/v1",
+        "name": controls["resource_profile"],
+        "autodata_framework_commit": request["pipeline_sha"],
+        "budget_scope_id": controls["budget_scope_id"],
+        "required_retained_rows": controls["required_retained_rows"],
+        "max_concurrency": workspace["execution_defaults"]["concurrency"],
+        "max_wall_seconds": workspace["execution_defaults"]["budget"][
+            "max_wall_seconds"
+        ],
+        "training_view": spec["training_view"],
+    }
+    if any(profile.get(key) != value for key, value in expected_profile.items()):
+        raise RuntimeError("resource profile does not match the approved run controls")
+    for key, expected in (
+        ("max_cost_usd", controls["max_cost_usd"]),
+        (
+            "max_estimated_cost_per_task_usd",
+            _required_env("AAR_AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD"),
+        ),
+    ):
+        try:
+            matches = Decimal(str(profile.get(key))) == Decimal(str(expected))
+        except InvalidOperation:
+            matches = False
+        if not matches:
+            raise RuntimeError(f"resource profile has a mismatched {key}")
+    generator = profile.get("generator")
+    judge = profile.get("judge")
+    pinned_executor = profile.get("executor")
+    if (
+        not isinstance(generator, dict)
+        or generator.get("model") != args.generator_model
+        or generator.get("deployment_id")
+        != executor["non_secret_env"]["AUTODATA_GENERATOR_DEPLOYMENT_ID"]
+        or generator.get("url") != args.generator_url
+        or generator.get("max_output_tokens")
+        != int(executor["non_secret_env"]["AUTODATA_GENERATOR_MAX_OUTPUT"])
+        or not isinstance(judge, dict)
+        or judge.get("model") != args.judge_model
+        or judge.get("max_output_tokens")
+        != int(executor["non_secret_env"]["AUTODATA_JUDGE_MAX_OUTPUT"])
+        or not isinstance(pinned_executor, dict)
+        or any(
+            pinned_executor.get(key) != executor.get(key)
+            for key in ("kind", "environment", "image", "expected_image_id")
+        )
+    ):
+        raise RuntimeError("resource profile provider or executor pins do not match")
+
+    canary = _read_frozen_json(
+        args.model_canary_report, args.model_canary_sha256, owner_only=True
+    )
+    usage = canary.get("provider_usage")
+    if (
+        canary.get("schema") != "aar.autodata.model-broker-canary/v1"
+        or canary.get("success") is not True
+        or canary.get("broker_status") != "SUCCEEDED"
+        or not isinstance(canary.get("broker_job_id"), str)
+        or not canary["broker_job_id"]
+        or not isinstance(canary.get("sandoq_session_id"), str)
+        or not canary["sandoq_session_id"]
+        or canary.get("environment") != executor.get("environment")
+        or canary.get("image") != executor.get("image")
+        or canary.get("expected_image_id") != executor.get("expected_image_id")
+        or canary.get("task_result_schema_valid") is not True
+        or canary.get("task_result_outcome") != "succeeded"
+        or canary.get("generated_item_count") != 1
+        or canary.get("provider_call_count") != 2
+        or canary.get("generator_deployment_id") != generator.get("deployment_id")
+        or not isinstance(usage, list)
+        or len(usage) != 2
+        or [(item.get("role"), item.get("model")) for item in usage]
+        != [("generator", args.generator_model), ("judge", args.judge_model)]
+    ):
+        raise RuntimeError("startup model-backed broker canary is invalid")
+    readiness = _safe_broker_readiness(executor)
+    if readiness["max_concurrent"] < workspace["execution_defaults"]["concurrency"]:
+        raise RuntimeError("current broker concurrency is below the pinned profile")
+    executor_evidence = {
+        key: executor[key]
+        for key in ("kind", "environment", "image", "expected_image_id", "broker_url")
+    }
+    return {
+        "resource_evidence_schema": "aar.autodata.resource-approval-evidence/v1",
+        "resource_profile_sha256": profile_digest,
+        "budget_scope_id": controls["budget_scope_id"],
+        "model_canary_sha256": args.model_canary_sha256,
+        "broker_ready_snapshot_sha256": hashlib.sha256(
+            _canonical_json(readiness)
+        ).hexdigest(),
+        "executor_sha256": hashlib.sha256(
+            _canonical_json(executor_evidence)
+        ).hexdigest(),
+        "checks": [
+            {"name": "resource_profile_verified", "passed": True},
+            {"name": "budget_scope_verified", "passed": True},
+            {"name": "startup_model_canary_verified", "passed": True},
+            {"name": "broker_ready_verified", "passed": True},
+            {"name": "executor_pins_verified", "passed": True},
+        ],
+    }
+
+
 def _public_action(
-    action: Any, artifacts: Any, request: Mapping[str, Any]
+    action: Any,
+    artifacts: Any,
+    request: Mapping[str, Any],
+    args: argparse.Namespace | None = None,
 ) -> dict[str, Any]:
     value = action.to_dict()
     value.pop("editable_root", None)
@@ -545,28 +756,21 @@ def _public_action(
             ]
             extras = {"sample_count": len(samples)}
         else:
-            controls = request["controls"]
-            checks = [
-                # Reaching resources_review means the immediately preceding
-                # native readiness attempt failed. Static configuration is not
-                # evidence that the runtime has recovered, so unattended policy
-                # must fail closed instead of manufacturing a retry approval.
-                {"name": "resource_profile_verified", "passed": False},
-                {"name": "budget_scope_verified", "passed": True},
-            ]
-            extras = {
-                "resource_profile_sha256": controls["resource_profile_sha256"],
-                "budget_scope_id": controls["budget_scope_id"],
-            }
+            if args is None:
+                raise RuntimeError("resource approval requires operator evidence bindings")
+            verified = _resource_approval_evidence(args, request)
+            checks = verified.pop("checks")
+            extras = verified
+        evidence_payload = {"checks": checks, **extras}
         value["evidence"] = {
             "schema": "aar.autodata.approval-evidence/v1",
             "artifact_digest": (
                 ref.digest
                 if ref
-                else "sha256:" + hashlib.sha256(_canonical_json(extras)).hexdigest()
+                else "sha256:"
+                + hashlib.sha256(_canonical_json(evidence_payload)).hexdigest()
             ),
-            "checks": checks,
-            **extras,
+            **evidence_payload,
         }
     return value
 
@@ -881,7 +1085,7 @@ def _protocol_step(args: argparse.Namespace) -> dict[str, Any]:
         engine, _ = _protocol_workspace_engine(store, artifacts, executor, state)
         value = engine.step()
         if hasattr(value, "kind"):
-            public = _public_action(value, artifacts, request)
+            public = _public_action(value, artifacts, request, args)
             _write_json(paths["pending"], {"native": value.to_dict(), "public": public})
             return {"state": "waiting_action", "phase": "workspace", "action": public}
         if value.get("status") != "frozen":
@@ -901,7 +1105,7 @@ def _protocol_step(args: argparse.Namespace) -> dict[str, Any]:
     engine = ExecutionEngine(store, artifacts, executor, str(execution_id))
     value = engine.step()
     if hasattr(value, "kind"):
-        public = _public_action(value, artifacts, request)
+        public = _public_action(value, artifacts, request, args)
         _write_json(paths["pending"], {"native": value.to_dict(), "public": public})
         return {"state": "waiting_action", "phase": state["phase"], "action": public}
     if value.get("status") != "completed":
@@ -1169,6 +1373,10 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--payload", type=Path)
     result.add_argument("--action-id", default="")
     result.add_argument("--reservation-id", default="")
+    result.add_argument("--model-canary-report", type=Path, required=True)
+    result.add_argument("--model-canary-sha256", required=True)
+    result.add_argument("--resource-profile", type=Path, required=True)
+    result.add_argument("--resource-profile-sha256", required=True)
     result.add_argument("--generator-model")
     result.add_argument("--generator-url")
     result.add_argument("--judge-model")

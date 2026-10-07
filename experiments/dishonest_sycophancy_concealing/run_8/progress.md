@@ -361,3 +361,33 @@ standalone dataset does not by itself satisfy this criterion.
   object cache trees read-only, overlays DotSlash's lock directory with private
   tmpfs, and sets offline mode. General cache contents, Claude settings and
   sessions, shell state, and credentials remain hidden.
+
+### 2026-10-07 — First AAR-initiated AutoData workspace reached a real dry run
+
+- Compute diagnostic `1750333` passed the complete research launcher path with
+  the private mount/PID namespace, installed Claude Code 2.1.281, AI Gateway,
+  and BPF jail. A fresh production attempt was then retained at
+  `/storage/home/winnieyangwn/aar-runs/honesty-sycophancy-concealing-gemma4-31b-vllm-v0/run8_attempts/20261007T204015Z-df77d0dff36a`.
+- Launcher `1750355` emitted AutoData services `1750385`, four-GPU evaluator
+  `1750425`, and sequential two-iteration research chain `1750426`. The real
+  native and Kimi/Luna Firecracker canaries both passed before the agent began.
+- Iteration 1's AAR research agent authored a training method, submitted its
+  proposal, called `autodata_generate`, and created native workspace
+  `ws_91c52ea4016d43818f655dad0c31cbb4`. It completed design clarification,
+  grounding authoring, delegated grounding approval, and pipeline authoring.
+- The first Firecracker pipeline check failed because the AAR-owned recipe
+  checker treated a negative constraint ("do not imitate any evaluation
+  benchmark") as a prohibited request merely because it contained the word
+  `benchmark`. The second check leased and prepared another real Firecracker
+  session, but its broker status request stalled on SQLite WAL state located on
+  network storage and the client cancelled the job after its 60-second bound.
+- The adapter consequently reached native `resources_review` and failed closed
+  because its resource evidence deliberately did not claim recovery. This was
+  a deterministic integration failure, not missing credentials or an
+  unavailable model route. The chain and unused evaluator were cancelled, the
+  AutoData service stopped normally, and all artifacts were retained. No new
+  output was written to `/checkpoint/ram`.
+- Fixes are in progress: node-local live broker state with retained shutdown
+  archival; evidence-backed unattended resource retry using the frozen
+  Kimi/Luna canary, resource profile, executor pins, and current broker
+  readiness; and a proposed narrower AAR recipe-source check pending review.

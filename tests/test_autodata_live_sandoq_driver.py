@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -531,6 +532,197 @@ class LiveSandoQRecipeTest(unittest.TestCase):
             ["prompt_variant", "summary"],
         )
         self.assertNotIn("editable_root", public_mutation)
+
+    def test_resource_approval_requires_frozen_canary_and_current_broker_readiness(self) -> None:
+        driver = _module(
+            "autodata_live_sandoq_driver_resource_evidence",
+            REPO / "scripts" / "autodata_live_sandoq_driver.py",
+        )
+
+        class Response:
+            def __init__(self, value):
+                self.payload = json.dumps(value).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *unused):
+                return False
+
+            def read(self, limit):
+                return self.payload
+
+        executor = {
+            "kind": "sandoq-firecracker",
+            "environment": "oci-runner-firecracker-small",
+            "image": "registry.invalid/autodata@sha256:" + "a" * 64,
+            "expected_image_id": "b" * 64,
+            "broker_url": "https://broker.invalid",
+            "broker_auth_secret_ref": "TEST_BROKER_TOKEN",
+            "non_secret_env": {
+                "AUTODATA_GENERATOR_DEPLOYMENT_ID": "winnieyangwn-kimi26",
+                "AUTODATA_GENERATOR_MAX_OUTPUT": "1536",
+                "AUTODATA_JUDGE_MAX_OUTPUT": "512",
+            },
+        }
+        ready = {
+            "ready": True,
+            "runner": {"ready": True, "runner": "sandoq-firecracker"},
+            "registry": {"ready": True},
+            "max_concurrent": 4,
+            "active": 0,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state_root = root / "state"
+            draft = state_root / "live-workspace"
+            draft.mkdir(parents=True)
+            (draft / "autodata.workspace.json").write_text(
+                json.dumps(
+                    {
+                        "execution_defaults": {
+                            "executor": executor,
+                            "concurrency": 4,
+                            "budget": {"max_wall_seconds": 10800},
+                        }
+                    }
+                )
+            )
+            profile = {
+                "schema": "aar.autodata.resource-profile/v1",
+                "name": "production-v1",
+                "autodata_framework_commit": "c" * 40,
+                "budget_scope_id": "scope-1",
+                "max_cost_usd": "10.00",
+                "required_retained_rows": 64,
+                "max_estimated_cost_per_task_usd": "0.01",
+                "max_concurrency": 4,
+                "max_wall_seconds": 10800,
+                "training_view": "sft",
+                "generator": {
+                    "model": "Kimi-K2.6",
+                    "deployment_id": "winnieyangwn-kimi26",
+                    "url": "https://generator.invalid/v1",
+                    "max_output_tokens": 1536,
+                },
+                "judge": {"model": "gpt-5.6-luna", "max_output_tokens": 512},
+                "executor": {
+                    key: executor[key]
+                    for key in ("kind", "environment", "image", "expected_image_id")
+                },
+            }
+            profile_path = root / "resource-profile.json"
+            profile_path.write_text(json.dumps(profile))
+            profile_sha = hashlib.sha256(driver._canonical_json(profile)).hexdigest()
+            usage = [
+                {"role": "generator", "model": "Kimi-K2.6"},
+                {"role": "judge", "model": "gpt-5.6-luna"},
+            ]
+            canary = {
+                "schema": "aar.autodata.model-broker-canary/v1",
+                "success": True,
+                "broker_job_id": "job-1",
+                "broker_status": "SUCCEEDED",
+                "sandoq_session_id": "session-1",
+                "environment": executor["environment"],
+                "image": executor["image"],
+                "expected_image_id": executor["expected_image_id"],
+                "task_result_schema_valid": True,
+                "task_result_outcome": "succeeded",
+                "generated_item_count": 1,
+                "provider_call_count": 2,
+                "generator_deployment_id": "winnieyangwn-kimi26",
+                "provider_usage": usage,
+            }
+            canary_path = root / "model-canary.json"
+            canary_path.write_text(json.dumps(canary))
+            canary_path.chmod(0o600)
+            canary_sha = hashlib.sha256(canary_path.read_bytes()).hexdigest()
+            args = SimpleNamespace(
+                state_root=state_root,
+                resource_profile=profile_path,
+                resource_profile_sha256=profile_sha,
+                model_canary_report=canary_path,
+                model_canary_sha256=canary_sha,
+                generator_model="Kimi-K2.6",
+                generator_url="https://generator.invalid/v1",
+                judge_model="gpt-5.6-luna",
+            )
+            request = {
+                "pipeline_sha": "c" * 40,
+                "spec": {"training_view": "sft"},
+                "controls": {
+                    "resource_profile": "production-v1",
+                    "resource_profile_sha256": profile_sha,
+                    "budget_scope_id": "scope-1",
+                    "max_cost_usd": "10",
+                    "required_retained_rows": 64,
+                },
+            }
+            environment = {
+                "TEST_BROKER_TOKEN": "never-retain-this-token",
+                "AAR_AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD": "0.010",
+            }
+            with patch.dict(os.environ, environment, clear=False), patch.object(
+                driver.urllib.request,
+                "urlopen",
+                return_value=Response(ready),
+            ):
+                evidence = driver._resource_approval_evidence(args, request)
+            self.assertTrue(all(item["passed"] for item in evidence["checks"]))
+            self.assertEqual(evidence["model_canary_sha256"], canary_sha)
+            self.assertNotIn("never-retain-this-token", json.dumps(evidence))
+            from autodata.models import ActionScope, ActionSpec
+
+            resource_action = ActionSpec(
+                id="approve-resources-1",
+                scope=ActionScope("workspace", "workspace-1", 1),
+                kind="approve_resources",
+                instructions="Verify runtime recovery.",
+                artifacts=(),
+                editable_root=None,
+                allowed_paths=(),
+                outputs=("decision",),
+                remaining_budget={},
+            )
+            with patch.dict(os.environ, environment, clear=False), patch.object(
+                driver.urllib.request,
+                "urlopen",
+                return_value=Response(ready),
+            ):
+                public = driver._public_action(
+                    resource_action, object(), request, args
+                )
+            self.assertEqual(
+                public["evidence"]["schema"],
+                "aar.autodata.approval-evidence/v1",
+            )
+            self.assertEqual(
+                public["evidence"]["resource_evidence_schema"],
+                "aar.autodata.resource-approval-evidence/v1",
+            )
+            self.assertNotIn("never-retain-this-token", json.dumps(public))
+
+            canary_path.write_text(json.dumps({**canary, "success": False}))
+            canary_path.chmod(0o600)
+            with patch.dict(os.environ, environment, clear=False), patch.object(
+                driver.urllib.request,
+                "urlopen",
+                return_value=Response(ready),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "startup digest"):
+                    driver._resource_approval_evidence(args, request)
+
+            canary_path.write_text(json.dumps(canary))
+            canary_path.chmod(0o600)
+            unavailable = {**ready, "ready": False}
+            with patch.dict(os.environ, environment, clear=False), patch.object(
+                driver.urllib.request,
+                "urlopen",
+                return_value=Response(unavailable),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "not currently ready"):
+                    driver._resource_approval_evidence(args, request)
 
 
 if __name__ == "__main__":

@@ -74,6 +74,12 @@ def main() -> None:
             judge_url=os.getenv("AAR_AUTODATA_JUDGE_URL", ""),
             generator_token_env=os.getenv("AAR_AUTODATA_GENERATOR_TOKEN_ENV", ""),
             judge_token_env=os.getenv("AAR_AUTODATA_JUDGE_TOKEN_ENV", ""),
+            model_canary_report=Path(
+                os.getenv("AAR_AUTODATA_MODEL_CANARY_REPORT", "")
+            ),
+            resource_profile_path=Path(
+                os.getenv("AAR_AUTODATA_RESOURCE_PROFILE_PATH", "")
+            ),
             generator_deployment_id=os.getenv(
                 "AAR_AUTODATA_GENERATOR_DEPLOYMENT_ID", ""
             ),

@@ -11,6 +11,7 @@ import threading
 import traceback
 import uuid
 import fcntl
+import stat
 from abc import ABC, abstractmethod
 from decimal import Decimal, InvalidOperation
 from http import HTTPStatus
@@ -219,6 +220,10 @@ class LifecycleBackend(ABC):
     def interactive(self) -> bool:
         return False
 
+    @property
+    def resource_evidence_binding(self) -> Mapping[str, str]:
+        return {}
+
     def create_workspace(
         self,
         job_root: Path,
@@ -390,6 +395,8 @@ class LiveModelLifecycleBackend(LifecycleBackend):
         judge_url: str,
         generator_token_env: str,
         judge_token_env: str,
+        model_canary_report: Path,
+        resource_profile_path: Path,
         generator_deployment_id: str = "",
         max_wall_seconds: int = 10800,
         python: str | None = None,
@@ -403,6 +410,35 @@ class LiveModelLifecycleBackend(LifecycleBackend):
         self.generator_token_env = generator_token_env.strip()
         self.judge_token_env = judge_token_env.strip()
         self.generator_deployment_id = generator_deployment_id.strip()
+        self.model_canary_report = Path(
+            os.path.abspath(model_canary_report.expanduser())
+        )
+        self.resource_profile_path = Path(
+            os.path.abspath(resource_profile_path.expanduser())
+        )
+        for label, path, owner_only in (
+            ("model canary report", self.model_canary_report, True),
+            ("resource profile", self.resource_profile_path, False),
+        ):
+            try:
+                info = path.lstat()
+            except OSError as exc:
+                raise ValueError(f"live AutoData {label} is unavailable") from exc
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                raise ValueError(f"live AutoData {label} must be a regular file")
+            if info.st_uid != os.geteuid() or info.st_mode & (0o077 if owner_only else 0o022):
+                raise ValueError(f"live AutoData {label} has unsafe ownership or mode")
+        canary_bytes = self.model_canary_report.read_bytes()
+        self.model_canary_sha256 = hashlib.sha256(canary_bytes).hexdigest()
+        try:
+            profile = json.loads(self.resource_profile_path.read_text())
+        except (OSError, ValueError) as exc:
+            raise ValueError("live AutoData resource profile is invalid") from exc
+        if not isinstance(profile, dict):
+            raise ValueError("live AutoData resource profile must be a JSON object")
+        self.resource_profile_sha256 = hashlib.sha256(
+            _canonical_json(profile)
+        ).hexdigest()
         if isinstance(max_wall_seconds, bool) or not isinstance(max_wall_seconds, int):
             raise ValueError("live AutoData max_wall_seconds must be a positive integer")
         if max_wall_seconds < 1:
@@ -438,6 +474,13 @@ class LiveModelLifecycleBackend(LifecycleBackend):
     def interactive(self) -> bool:
         return True
 
+    @property
+    def resource_evidence_binding(self) -> Mapping[str, str]:
+        return {
+            "model_canary_sha256": self.model_canary_sha256,
+            "resource_profile_sha256": self.resource_profile_sha256,
+        }
+
     def _interactive_operation(
         self,
         operation: str,
@@ -466,6 +509,14 @@ class LiveModelLifecycleBackend(LifecycleBackend):
             str(payload_path),
             "--action-id",
             action_id,
+            "--model-canary-report",
+            str(self.model_canary_report),
+            "--model-canary-sha256",
+            self.model_canary_sha256,
+            "--resource-profile",
+            str(self.resource_profile_path),
+            "--resource-profile-sha256",
+            self.resource_profile_sha256,
         ]
         prepared = subprocess.run(
             [*common, "--operation", "prepare", "--output", str(prepare_path)],
@@ -781,7 +832,13 @@ class AutoDataJobService:
         required_checks = {
             "approve_grounding": {"coverage_present", "provenance_valid"},
             "approve_baseline": {"dry_run_passed", "pipeline_checks_passed"},
-            "approve_resources": {"resource_profile_verified", "budget_scope_verified"},
+            "approve_resources": {
+                "resource_profile_verified",
+                "budget_scope_verified",
+                "startup_model_canary_verified",
+                "broker_ready_verified",
+                "executor_pins_verified",
+            },
         }[str(action["kind"])]
         missing_checks = required_checks - check_names
         if missing_checks:
@@ -798,10 +855,29 @@ class AutoDataJobService:
         else:
             request = self._request(root)
             controls = request["controls"]
+            binding = self.backend.resource_evidence_binding
             if (
-                evidence.get("resource_profile_sha256")
+                evidence.get("resource_evidence_schema")
+                != "aar.autodata.resource-approval-evidence/v1"
+                or evidence.get("resource_profile_sha256")
                 != controls["resource_profile_sha256"]
                 or evidence.get("budget_scope_id") != controls["budget_scope_id"]
+                or evidence.get("resource_profile_sha256")
+                != binding.get("resource_profile_sha256")
+                or evidence.get("model_canary_sha256")
+                != binding.get("model_canary_sha256")
+                or not isinstance(evidence.get("broker_ready_snapshot_sha256"), str)
+                or len(evidence["broker_ready_snapshot_sha256"]) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in evidence["broker_ready_snapshot_sha256"]
+                )
+                or not isinstance(evidence.get("executor_sha256"), str)
+                or len(evidence["executor_sha256"]) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in evidence["executor_sha256"]
+                )
             ):
                 raise RuntimeError("resource approval evidence does not match operator controls")
         attestation = {

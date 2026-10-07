@@ -158,6 +158,15 @@ def request(run_id="run-1"):
     }
 
 
+def live_evidence(root: Path):
+    canary = root / "model-canary.json"
+    canary.write_text(json.dumps({"schema": "aar.autodata.model-broker-canary/v1"}))
+    canary.chmod(0o600)
+    profile = root / "resource-profile.json"
+    profile.write_text(json.dumps({"schema": "aar.autodata.resource-profile/v1"}))
+    return canary, profile
+
+
 class AutoDataJobServiceTest(TestCase):
     def make_service(self, root):
         return AutoDataJobService(Path(root) / "state", SHA, backend=FakeBackend())
@@ -389,6 +398,54 @@ class AutoDataJobServiceTest(TestCase):
             with self.assertRaisesRegex(RuntimeError, "required checks"):
                 service._approval_result(root, action)
 
+    def test_resource_approval_is_bound_to_frozen_canary_and_profile(self):
+        class ResourceBackend(FakeBackend):
+            @property
+            def resource_evidence_binding(self):
+                return {
+                    "model_canary_sha256": "5" * 64,
+                    "resource_profile_sha256": "4" * 64,
+                }
+
+        with TemporaryDirectory() as td:
+            service = AutoDataJobService(
+                Path(td) / "state", SHA, backend=ResourceBackend()
+            )
+            service.submit(request("resource-evidence"))
+            root = Path(td) / "state" / "runs" / "resource-evidence"
+            action = {
+                "id": "approve-resources",
+                "kind": "approve_resources",
+                "created_sequence": 2,
+                "evidence": {
+                    "schema": "aar.autodata.approval-evidence/v1",
+                    "resource_evidence_schema": "aar.autodata.resource-approval-evidence/v1",
+                    "artifact_digest": "sha256:" + "a" * 64,
+                    "recorded_sequence": 1,
+                    "resource_profile_sha256": "4" * 64,
+                    "budget_scope_id": "campaign-1",
+                    "model_canary_sha256": "5" * 64,
+                    "broker_ready_snapshot_sha256": "6" * 64,
+                    "executor_sha256": "7" * 64,
+                    "checks": [
+                        {"name": name, "passed": True}
+                        for name in (
+                            "resource_profile_verified",
+                            "budget_scope_verified",
+                            "startup_model_canary_verified",
+                            "broker_ready_verified",
+                            "executor_pins_verified",
+                        )
+                    ],
+                },
+            }
+            result = service._approval_result(root, action)
+            self.assertEqual(result["decision"], "retry")
+            self.assertNotIn("target", result)
+            action["evidence"]["model_canary_sha256"] = "8" * 64
+            with self.assertRaisesRegex(RuntimeError, "operator controls"):
+                service._approval_result(root, action)
+
     def test_direct_client_cannot_expand_operator_controls(self):
         with TemporaryDirectory() as td:
             expected = dict(request()["controls"])
@@ -430,8 +487,10 @@ class AutoDataJobServiceTest(TestCase):
 
     def test_live_backend_fails_closed_when_route_credentials_are_missing(self):
         with TemporaryDirectory() as td:
-            driver = Path(td) / "driver.py"
+            root = Path(td)
+            driver = root / "driver.py"
             driver.write_text("pass\n")
+            canary, profile = live_evidence(root)
             os.environ.pop("MISSING_GENERATOR_TOKEN", None)
             os.environ.pop("MISSING_JUDGE_TOKEN", None)
             with self.assertRaisesRegex(ValueError, "credential environment variable"):
@@ -443,12 +502,16 @@ class AutoDataJobServiceTest(TestCase):
                     judge_url="https://judge.invalid",
                     generator_token_env="MISSING_GENERATOR_TOKEN",
                     judge_token_env="MISSING_JUDGE_TOKEN",
+                    model_canary_report=canary,
+                    resource_profile_path=profile,
                 )
 
     def test_live_backend_records_qualified_generator_deployment(self):
         with TemporaryDirectory() as td:
-            driver = Path(td) / "driver.py"
+            root = Path(td)
+            driver = root / "driver.py"
             driver.write_text("pass\n")
+            canary, profile = live_evidence(root)
             previous_generator = os.environ.get("TEST_GENERATOR_TOKEN")
             previous_judge = os.environ.get("TEST_JUDGE_TOKEN")
             os.environ["TEST_GENERATOR_TOKEN"] = "generator-secret"
@@ -462,6 +525,8 @@ class AutoDataJobServiceTest(TestCase):
                     judge_url="https://judge.invalid/v1/responses",
                     generator_token_env="TEST_GENERATOR_TOKEN",
                     judge_token_env="TEST_JUDGE_TOKEN",
+                    model_canary_report=canary,
+                    resource_profile_path=profile,
                     generator_deployment_id="winnieyangwn-kimi26",
                     max_wall_seconds=7200,
                 )
@@ -489,6 +554,7 @@ class AutoDataJobServiceTest(TestCase):
             root = Path(td)
             driver = root / "driver.py"
             driver.write_text("pass\n")
+            canary, profile = live_evidence(root)
             os.environ["TEST_GENERATOR_TOKEN"] = "generator-secret"
             os.environ["TEST_JUDGE_TOKEN"] = "judge-secret"
             try:
@@ -500,6 +566,8 @@ class AutoDataJobServiceTest(TestCase):
                     judge_url="https://judge.invalid/v1/responses",
                     generator_token_env="TEST_GENERATOR_TOKEN",
                     judge_token_env="TEST_JUDGE_TOKEN",
+                    model_canary_report=canary,
+                    resource_profile_path=profile,
                 )
                 observed = []
 
@@ -549,11 +617,62 @@ class AutoDataJobServiceTest(TestCase):
                 execute[execute.index("--judge-token-env") + 1],
                 "TEST_JUDGE_TOKEN",
             )
+            self.assertEqual(
+                execute[execute.index("--model-canary-sha256") + 1],
+                backend.model_canary_sha256,
+            )
+            self.assertEqual(
+                execute[execute.index("--resource-profile-sha256") + 1],
+                backend.resource_profile_sha256,
+            )
+
+    def test_live_backend_rejects_mutable_canary_evidence(self):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            driver = root / "driver.py"
+            driver.write_text("pass\n")
+            canary, profile = live_evidence(root)
+            canary.chmod(0o644)
+            os.environ["TEST_GENERATOR_TOKEN"] = "generator-secret"
+            os.environ["TEST_JUDGE_TOKEN"] = "judge-secret"
+            try:
+                with self.assertRaisesRegex(ValueError, "unsafe ownership or mode"):
+                    MODULE.LiveModelLifecycleBackend(
+                        driver_script=driver,
+                        generator_model="Kimi-K2.6",
+                        judge_model="gpt-5.6-luna",
+                        generator_url="https://generator.invalid/v1",
+                        judge_url="https://judge.invalid/v1/responses",
+                        generator_token_env="TEST_GENERATOR_TOKEN",
+                        judge_token_env="TEST_JUDGE_TOKEN",
+                        model_canary_report=canary,
+                        resource_profile_path=profile,
+                    )
+                canary.chmod(0o600)
+                canary_link = root / "model-canary-link.json"
+                canary_link.symlink_to(canary)
+                with self.assertRaisesRegex(ValueError, "regular file"):
+                    MODULE.LiveModelLifecycleBackend(
+                        driver_script=driver,
+                        generator_model="Kimi-K2.6",
+                        judge_model="gpt-5.6-luna",
+                        generator_url="https://generator.invalid/v1",
+                        judge_url="https://judge.invalid/v1/responses",
+                        generator_token_env="TEST_GENERATOR_TOKEN",
+                        judge_token_env="TEST_JUDGE_TOKEN",
+                        model_canary_report=canary_link,
+                        resource_profile_path=profile,
+                    )
+            finally:
+                os.environ.pop("TEST_GENERATOR_TOKEN", None)
+                os.environ.pop("TEST_JUDGE_TOKEN", None)
 
     def test_live_backend_rejects_invalid_operator_wall_timeout(self):
         with TemporaryDirectory() as td:
-            driver = Path(td) / "driver.py"
+            root = Path(td)
+            driver = root / "driver.py"
             driver.write_text("pass\n")
+            canary, profile = live_evidence(root)
             previous_generator = os.environ.get("TEST_GENERATOR_TOKEN")
             previous_judge = os.environ.get("TEST_JUDGE_TOKEN")
             os.environ["TEST_GENERATOR_TOKEN"] = "generator-secret"
@@ -568,6 +687,8 @@ class AutoDataJobServiceTest(TestCase):
                         judge_url="https://judge.invalid/v1/responses",
                         generator_token_env="TEST_GENERATOR_TOKEN",
                         judge_token_env="TEST_JUDGE_TOKEN",
+                        model_canary_report=canary,
+                        resource_profile_path=profile,
                         max_wall_seconds=0,
                     )
             finally:

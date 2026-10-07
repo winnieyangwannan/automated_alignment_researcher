@@ -74,6 +74,29 @@ def test_live_autodata_is_fail_closed() -> None:
     assert "programmatic_contract_smoke" not in combined
 
 
+def test_live_broker_uses_node_local_state_then_retains_without_overwrite() -> None:
+    _, _, services = _sources()
+
+    assert '${SLURM_TMPDIR:?Run 8 requires node-local SLURM_TMPDIR}' in services
+    assert 'mktemp -d "${slurm_tmpdir}/aar-run8-broker-${SLURM_JOB_ID:?}.XXXXXX"' in services
+    assert '--root "${broker_live_root}"' in services
+    assert '--root "${ATTEMPT_DIR}/services/broker-state"' not in services
+    assert 'broker_retained_root="${ATTEMPT_DIR}/services/broker-state"' in services
+    assert 'refusing to overwrite retained broker state' in services
+    assert 'cp -a -- "${broker_live_root}/." "${staging}/"' in services
+    assert (
+        'mv --no-clobber --no-target-directory -- "${staging}" '
+        '"${broker_retained_root}"'
+    ) in services
+    assert "credential-like file; refusing retention" in services
+
+    cleanup = services.index("cleanup()")
+    stop_adapter = services.index('stop_process_group "${adapter_pid}"', cleanup)
+    stop_broker = services.index('stop_process_group "${broker_pid}"', stop_adapter)
+    archive = services.index("retain_broker_state ||", stop_broker)
+    assert stop_adapter < stop_broker < archive
+
+
 def test_models_budget_and_secrets_are_pinned() -> None:
     submit, pipeline, services = _sources()
     combined = submit + pipeline + services
@@ -109,6 +132,16 @@ def test_models_budget_and_secrets_are_pinned() -> None:
     assert services.index("native_broker_canary.json") < model_canary
     assert "model_broker_canary.json" in services
     assert model_canary < services.index('setsid bash "$0" --adapter-child')
+    assert (
+        'export AAR_AUTODATA_MODEL_CANARY_REPORT="${ATTEMPT_DIR}/metadata/'
+        'model_broker_canary.json"'
+    ) in services
+    assert (
+        'export AAR_AUTODATA_RESOURCE_PROFILE_PATH="${ATTEMPT_DIR}/metadata/'
+        'autodata_resource_profile.json"'
+    ) in services
+    assert 'require_mode_0600 model-canary-report' in services
+    assert 'require_mode_0600 resource-profile' in services
     assert 'MODEL_API_KEY="${MODEL_API_KEY}' not in submit
     assert "SANDOQ_AUTH_TOKEN=" not in combined
 

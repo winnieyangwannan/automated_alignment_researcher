@@ -81,6 +81,10 @@ run_adapter_child() {
   export AAR_AUTODATA_TASK_CPUS=2
   export AAR_AUTODATA_TASK_MEMORY_MB=2048
   export AAR_AUTODATA_RECIPE_ROOT="${REPO}/aar/autodata_recipes/dishonest_sycophancy_concealing"
+  export AAR_AUTODATA_MODEL_CANARY_REPORT="${ATTEMPT_DIR}/metadata/model_broker_canary.json"
+  export AAR_AUTODATA_RESOURCE_PROFILE_PATH="${ATTEMPT_DIR}/metadata/autodata_resource_profile.json"
+  require_mode_0600 model-canary-report "${AAR_AUTODATA_MODEL_CANARY_REPORT}"
+  require_mode_0600 resource-profile "${AAR_AUTODATA_RESOURCE_PROFILE_PATH}"
   export AAR_AUTODATA_REQUIRED_CONTROLS_JSON
   AAR_AUTODATA_REQUIRED_CONTROLS_JSON="$("${BROKER_PYTHON}" - \
     "${AAR_RUN8_RESOURCE_PROFILE:?missing resource profile}" \
@@ -164,34 +168,108 @@ service_host="$(hostname -f)"
 export AAR_AUTODATA_BROKER_URL="http://${service_host}:${broker_port}"
 export adapter_port
 
+# SQLite WAL locking and the broker's upload/result archives must stay on the
+# compute node while the service is live.  A unique directory also prevents a
+# requeued service job from opening stale mutable state.
+: "${SLURM_TMPDIR:?Run 8 requires node-local SLURM_TMPDIR}"
+slurm_tmpdir="$(realpath -e -- "${SLURM_TMPDIR}")"
+if [ ! -d "${slurm_tmpdir}" ] || [ ! -w "${slurm_tmpdir}" ]; then
+  echo "SLURM_TMPDIR is not a writable directory: ${slurm_tmpdir}" >&2
+  exit 2
+fi
+broker_live_root="$(mktemp -d "${slurm_tmpdir}/aar-run8-broker-${SLURM_JOB_ID:?}.XXXXXX")"
+broker_live_root="$(realpath -e -- "${broker_live_root}")"
+case "${broker_live_root}" in
+  "${slurm_tmpdir}"/*) ;;
+  *) echo "broker live root escaped SLURM_TMPDIR: ${broker_live_root}" >&2; exit 2 ;;
+esac
+chmod 700 "${broker_live_root}"
+broker_retained_root="${ATTEMPT_DIR}/services/broker-state"
+if [ -e "${broker_retained_root}" ] || [ -L "${broker_retained_root}" ]; then
+  echo "refusing to overwrite retained broker state: ${broker_retained_root}" >&2
+  exit 2
+fi
+
 broker_pid=""
 adapter_pid=""
-cleanup() {
-  trap - EXIT TERM INT HUP
-  for pid in "${adapter_pid}" "${broker_pid}"; do
-    [ -n "${pid}" ] || continue
-    kill -TERM -- "-${pid}" 2>/dev/null || true
-  done
+stop_process_group() {
+  local pid="$1" alive
+  [ -n "${pid}" ] || return 0
+  kill -TERM -- "-${pid}" 2>/dev/null || true
   for _ in $(seq 1 30); do
-    alive=0
-    for pid in "${adapter_pid}" "${broker_pid}"; do
-      [ -z "${pid}" ] || ! kill -0 -- "-${pid}" 2>/dev/null || alive=1
-    done
+    alive=1
+    kill -0 -- "-${pid}" 2>/dev/null || alive=0
     [ "${alive}" = 1 ] || break
     sleep 1
   done
-  for pid in "${adapter_pid}" "${broker_pid}"; do
-    [ -n "${pid}" ] || continue
+  if kill -0 -- "-${pid}" 2>/dev/null; then
     kill -KILL -- "-${pid}" 2>/dev/null || true
-    wait "${pid}" 2>/dev/null || true
-  done
+  fi
+  wait "${pid}" 2>/dev/null || true
+}
+
+retain_broker_state() {
+  local staging unexpected
+  if [ ! -d "${broker_live_root}" ] || [ -L "${broker_live_root}" ]; then
+    echo "broker live state is missing or symlinked: ${broker_live_root}" >&2
+    return 1
+  fi
+  unexpected="$(find "${broker_live_root}" -xdev \
+    \( -type l -o \( ! -type d ! -type f \) \) -print -quit)"
+  [ -z "${unexpected}" ] || {
+    echo "broker audit state contains a symlink or special file; refusing retention" >&2
+    return 1
+  }
+  unexpected="$(find "${broker_live_root}" -xdev -type f \
+    \( -iname '*token*' -o -iname '*.env' -o -iname '*credential*' \
+       -o -iname '*secret*' -o -iname '*auth*' \) -print -quit)"
+  [ -z "${unexpected}" ] || {
+    echo "broker audit state contains a credential-like file; refusing retention" >&2
+    return 1
+  }
+  if [ -e "${broker_retained_root}" ] || [ -L "${broker_retained_root}" ]; then
+    echo "refusing to overwrite retained broker state: ${broker_retained_root}" >&2
+    return 1
+  fi
+  staging="${ATTEMPT_DIR}/services/.broker-state-${SLURM_JOB_ID}.partial"
+  if [ -e "${staging}" ] || [ -L "${staging}" ]; then
+    echo "broker retention staging path already exists: ${staging}" >&2
+    return 1
+  fi
+  mkdir -- "${staging}"
+  chmod 700 "${staging}"
+  cp -a -- "${broker_live_root}/." "${staging}/"
+  # The same-filesystem rename publishes a complete snapshot. --no-clobber is
+  # repeated here to close the check/copy race without replacing retained data.
+  mv --no-clobber --no-target-directory -- "${staging}" "${broker_retained_root}"
+  if [ -e "${staging}" ] || [ -L "${staging}" ]; then
+    echo "retained broker state appeared during archival; partial copy preserved at ${staging}" >&2
+    return 1
+  fi
+  echo "[run8-services] retained stopped broker audit state at ${broker_retained_root}"
+}
+
+cleanup() {
+  local status=$? archive_status=0
+  trap - EXIT TERM INT HUP
+  # Stop the adapter first so it cannot submit more work while the broker is
+  # draining. Archive only after the broker has closed SQLite and worker state.
+  stop_process_group "${adapter_pid}"
+  stop_process_group "${broker_pid}"
+  if [ -n "${broker_pid}" ]; then
+    retain_broker_state || archive_status=$?
+  fi
+  if [ "${status}" -eq 0 ] && [ "${archive_status}" -ne 0 ]; then
+    status="${archive_status}"
+  fi
+  exit "${status}"
 }
 trap cleanup EXIT TERM INT HUP
 
 setsid env \
   PYTHONPATH="${AUTODATA_ROOT}/src" \
   "${BROKER_PYTHON}" -u -m autodata.broker.cli serve \
-  --root "${ATTEMPT_DIR}/services/broker-state" \
+  --root "${broker_live_root}" \
   --gateway-url https://sandoq-gateway.eks-prod.cf.aws.metafb.cloud \
   --host 0.0.0.0 \
   --port "${broker_port}" \
