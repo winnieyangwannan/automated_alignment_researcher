@@ -40,3 +40,19 @@ chains with at most 50 started sessions each, or 250 sessions total.
 
 Planned checks above are not completion claims; final synchronization and
 runtime state are reported from live verification after submission.
+
+## First training-submission recovery
+
+The first approved Run 7 candidate exposed a `set -u` initialization bug in
+`scripts/submit_train_job.sh`: when the per-team dependency-lane state file did
+not yet exist, failed `mapfile` input left `_lanes` undefined before its length
+was read. No Slurm job was submitted by that call. The Delta agent preserved
+the generated method, created the missing state file, and then submitted job
+`1742270` successfully.
+
+Initialize `_lanes` to an empty array before the optional state-file read and
+add a regression test that exercises the first concurrency-limited submission
+with no pre-existing lane file. Validate the focused launch tests and Bash
+syntax, commit on `multi_vllm`, then fast-forward the exact commit from the
+devserver worktree to the isolated HPC worktree through a temporary SSH Git
+ref. Preserve the active Run 7 attempt and all machine-local state.

@@ -91,6 +91,48 @@ class FullLoopLaunchTest(unittest.TestCase):
             self.assertIn(str(team / "logs" / "train-%j.out"), completed.stdout)
             self.assertIn("slurm_train_submit.sh idea run-1", completed.stdout)
 
+    def test_first_concurrency_limited_submission_initializes_lanes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            fake_bin = tmp / "bin"
+            fake_bin.mkdir()
+            sbatch = fake_bin / "sbatch"
+            sbatch.write_text("#!/bin/bash\nprintf '12345\\n'\n")
+            sbatch.chmod(0o755)
+            team = tmp / "team"
+            (team / "logs").mkdir(parents=True)
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AAR_REPO": str(ROOT),
+                    "HARNESS_ENV": str(tmp / "missing.env"),
+                    "TEAM_DIR": str(team),
+                    "TEAM_ID": "test-team",
+                    "AAR_SLURM_ACCOUNT": "ram",
+                    "AAR_SLURM_PARTITION": "g3",
+                    "AAR_TRAIN_QOS": "g3_ram_high",
+                    "AAR_MAX_CONCURRENT_TRAIN_JOBS": "5",
+                    "PATH": f"{fake_bin}:/usr/bin:/bin",
+                }
+            )
+
+            completed = subprocess.run(
+                ["bash", str(ROOT / "scripts" / "submit_train_job.sh"), "idea", "run-1"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertEqual(completed.stdout.strip(), "12345")
+            self.assertEqual(
+                (team / ".train_dependency_lanes").read_text().splitlines(),
+                ["12345", "", "", "", ""],
+            )
+            self.assertEqual(
+                (team / ".train_dependency_lanes.cursor").read_text(), "1\n"
+            )
+
     def test_eval_launcher_caps_honesty_worker_to_requested_gpus(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             tmp = Path(directory)
