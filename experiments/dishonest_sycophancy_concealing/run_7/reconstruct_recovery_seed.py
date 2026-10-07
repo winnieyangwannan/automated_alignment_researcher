@@ -141,8 +141,8 @@ def _write_agent_log(
         "",
         "This is a reconstructed continuation of Run 7 after its checkpoint NFS "
         "namespace became unresolvable. The records below come from the exact "
-        "held-out-stripped leaderboard salvaged from Claude tool results. Do not "
-        "treat this as a fresh first iteration, and do not infer evaluator-private "
+        "held-out-stripped leaderboard salvaged from Claude tool results. This is "
+        "not a fresh first iteration, and you must not infer evaluator-private "
         "benchmark identities or values.",
         "",
         f"The old chain started {OLD_SESSIONS_STARTED[chain]} sessions and completed "
