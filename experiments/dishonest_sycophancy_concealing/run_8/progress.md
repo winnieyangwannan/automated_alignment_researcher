@@ -285,3 +285,7 @@ standalone dataset does not by itself satisfy this criterion.
   namespace probe. The production chain retains its mandatory compute-side
   sandbox canary and still fails closed before an agent call if that boundary
   cannot be constructed.
+- Obsolete pre-Run-8 broker job `1743168` was explicitly cancelled after
+  confirming that no Run 8 attempt had been created and the production token
+  gate was still closed. It was not part of the production chain. No Run 8 job
+  remains active.
