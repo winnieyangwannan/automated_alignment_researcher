@@ -40,3 +40,21 @@ def test_recovered_baseline_requires_hash_bound_source_copies() -> None:
     assert 'f"{index:02d}_{original.name}"' in validator
     assert "_digest(readable_source) != expected_sha" in validator
     assert "_digest(readable_manifest) != expected_sha" in validator
+
+
+def test_full_continuation_uses_recovered_history_and_remaining_budgets() -> None:
+    submitter = (RUN7 / "submit_storage_continuation.sh").read_text()
+    pipeline = (RUN7 / "storage_continuation.sbatch").read_text()
+    launcher = (ROOT / "scripts" / "launch_team.sh").read_text()
+    chain = (ROOT / "scripts" / "slurm_aar_chain.sh").read_text()
+
+    assert "AAR_RUN7_CANARY_PROOF" in submitter
+    assert "merge-base --is-ancestor" in submitter
+    assert "reconstruct_recovery_seed.py" in pipeline
+    assert "--expected-entries 14" in pipeline
+    assert 'launch_team.sh" "alpha beta gamma delta epsilon" 50 167' in pipeline
+    assert "alpha=43,beta=44,gamma=45,delta=44,epsilon=44" in pipeline
+    assert "export AAR_EVAL_WORKERS=5" in pipeline
+    assert "export AAR_VLLM_EPHEMERAL_MERGED=1" in pipeline
+    assert "AAR_MAX_ITERATIONS_BY_SEED" in launcher
+    assert "AAR_RECOVERED_AGENT_LOG_DIR" in chain

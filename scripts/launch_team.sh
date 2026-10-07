@@ -318,6 +318,27 @@ if [ "${AAR_START_EVAL_WORKER:-${AAR_FUNCTIONAL_SMOKE:-0}}" = "1" ]; then
 fi
 
 for s in ${SEEDS}; do
+  _seed_max_iters="${MAX_ITERS}"
+  if [ -n "${AAR_MAX_ITERATIONS_BY_SEED:-}" ]; then
+    _seed_budget=''
+    IFS=',' read -r -a _seed_budget_items <<< "${AAR_MAX_ITERATIONS_BY_SEED}"
+    for _seed_budget_item in "${_seed_budget_items[@]}"; do
+      case "${_seed_budget_item}" in
+        "${s}="*) _seed_budget="${_seed_budget_item#*=}";;
+      esac
+    done
+    case "${_seed_budget}" in
+      ''|*[!0-9]*)
+        echo "[team] FATAL: missing or invalid recovered iteration budget for seed ${s}" >&2
+        exit 2
+        ;;
+    esac
+    [ "${_seed_budget}" -ge 1 ] || {
+      echo "[team] FATAL: recovered iteration budget for ${s} must be at least 1" >&2
+      exit 2
+    }
+    _seed_max_iters="${_seed_budget}"
+  fi
   # AXIS + MODEL are already exported at the top of this script, so Slurm's DEFAULT env
   # propagation carries them to the chain (which resolves the axis/model from axis_env.sh).
   # CRITICAL: do NOT write --export="ALL,AXIS=..,MODEL=..". That "ALL,VAR=val" form is
@@ -329,8 +350,9 @@ for s in ${SEEDS}; do
         --time="${MAX_H}:30:00" \
         --job-name="aar-${SUITE}-${MODEL}-${s}" \
         -o "${TEAM_DIR}/logs/%x_%j.out" \
-        "${REPO}/scripts/slurm_aar_chain.sh" "explore-${s}" "${MAX_H}" "${MAX_ITERS}" "${TEAM_ID}")
+        "${REPO}/scripts/slurm_aar_chain.sh" "explore-${s}" "${MAX_H}" "${_seed_max_iters}" "${TEAM_ID}")
   echo "[team] chain ${s} -> job ${jid}"
+  echo "[team] chain ${s} session budget ${_seed_max_iters}"
 done
 echo "[team] EVAL SIDE (as eval user): publish the holdout for THIS axis+model, then run the worker"
 echo "[team]   pointed at THIS team's queue. The worker derives the eval-side per-team folder from"

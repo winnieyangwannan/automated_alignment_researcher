@@ -60,3 +60,18 @@ The devserver virtual environment does not contain pytest. The focused pytest
 target is therefore deferred to the existing ARM64 HPC environment after exact
 commit synchronization; no package installation or environment mutation was
 performed on the devserver.
+
+## Continuation reconstruction source
+
+The salvaged Claude project includes exact filesystem-tool result files. Three
+independent copies of its latest leaderboard contain the same 14
+research-visible findings. The continuation reconstructor selects the newest
+maximum-count copy, requires the known per-chain distribution (alpha 2, beta 4,
+gamma 4, delta 3, epsilon 1), rejects every evaluator-private benchmark
+identifier recursively, and materializes a 14-entry forum plus five chain-local
+memory files. It does not reconstruct or expose held-out scores.
+
+The generic team launcher gains two opt-in recovery controls only:
+per-seed additional-session budgets and an external directory containing the
+five recovered `AGENT_LOG` files. Ordinary launches retain their existing
+single-budget and fresh-memory behavior.

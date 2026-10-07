@@ -155,6 +155,18 @@ CHAIN_TAG="$(printf '%s' "${MODEL:-qwen}-${SEED}" | tr -cs 'A-Za-z0-9' '_' | sed
 export AAR_AGENT_LOG_PATH="${SESSION_LOGS_DIR}/AGENT_LOG_${CHAIN_TAG}.md"
 mkdir -p "${TEAM_DIR}/timings"
 export AAR_PHASE_TIMINGS_PATH="${TEAM_DIR}/timings/chain_${CHAIN_TAG}.jsonl"
+if [ ! -f "${AAR_AGENT_LOG_PATH}" ] && [ -n "${AAR_RECOVERED_AGENT_LOG_DIR:-}" ]; then
+  _recovered_log_dir="$(realpath -e -- "${AAR_RECOVERED_AGENT_LOG_DIR}")"
+  _recovered_log="${_recovered_log_dir}/AGENT_LOG_${CHAIN_TAG}.md"
+  [ -f "${_recovered_log}" ] || {
+    echo "[aar] ERROR: recovered agent log is missing for ${CHAIN_TAG}" >&2
+    exit 2
+  }
+  cp -- "${_recovered_log}" "${AAR_AGENT_LOG_PATH}"
+  chmod 600 "${AAR_AGENT_LOG_PATH}"
+  echo "[aar] seeded recovered chain memory from ${_recovered_log}"
+  unset _recovered_log_dir _recovered_log
+fi
 if [ ! -f "${AAR_AGENT_LOG_PATH}" ]; then
   printf '# AGENT_LOG — chain %s\n\n## ITERATION 1 — NO PRIOR HISTORY\nThis chain has run NO prior iterations. You have NO past results, scores, or methods yet.\nDo NOT invent or recall any prior iteration — begin from the literature + leaderboard.\nRecord each iteration below as you complete it.\n' "${SEED}" > "${AAR_AGENT_LOG_PATH}"
 fi
