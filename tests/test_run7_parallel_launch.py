@@ -45,7 +45,8 @@ def test_run7_submitter_records_iteration_contract() -> None:
 def test_run7_evaluator_recovery_replaces_five_workers_fail_closed() -> None:
     recovery = (RUN7 / "run_7_eval_recovery.sbatch").read_text()
 
-    assert "eval-gemma-4-31b-it" in recovery
+    assert "baseline_gemma-4-31b-ib" in recovery
+    assert "eval-gemma-4-31b-it" not in recovery
     assert "AAR_VLLM_WORKER_SHA256=" in recovery
     assert 'sha256sum "${AAR_VLLM_WORKER_SH}"' in recovery
     assert "export EVAL_INFERENCE_BACKEND=vllm" in recovery
