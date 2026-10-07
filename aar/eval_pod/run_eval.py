@@ -32,6 +32,7 @@ from aar.benchmarks import registry
 from aar.benchmarks.base import BenchmarkSpec, DimensionSpec, SuiteSpec
 from aar.benchmarks.composite import compute_composite
 from aar.eval_pod.models import load_model, resolve_inference_backend
+from aar.phase_timing import phase
 
 
 def load_suite(path: str) -> tuple[str, list[BenchmarkSpec]]:
@@ -430,17 +431,38 @@ def _apply_golden(model, spec: BenchmarkSpec, suite_name: str) -> None:
               f"top_p={model._top_p} seed={model._seed}", flush=True)
 
 
+def _benchmark_timing_metadata(
+    spec: BenchmarkSpec,
+    *,
+    worker: str | None = None,
+) -> dict[str, str]:
+    is_held_out = spec.role == "held_out"
+    metadata = {
+        "benchmark": "held_out" if is_held_out else spec.id,
+        "category": "held_out" if is_held_out else spec.category,
+        "role": spec.role,
+    }
+    if worker is not None:
+        metadata["worker"] = worker
+    return metadata
+
+
 def _score_sequential(specs, model_ref, secret_dir, suite_name=""):
-    model = load_model(model_ref)
+    with phase("eval.model_loading", metadata={"worker": "sequential"}):
+        model = load_model(model_ref)
     try:
         judge_fn = _resolve_judge_fn()
         scores = {}
         for spec in specs:
-            with _evaluation_profile(spec):
-                _apply_golden(model, spec, suite_name)   # golden per-benchmark decoding (== baseline)
-                health_before = _health_snapshot(model)
-                sc = build_benchmark(spec, secret_dir, real_judge_fn=judge_fn).score(model)
-                _validate_evaluation_health(model, health_before, spec.id)
+            with phase(
+                "eval.benchmark",
+                metadata=_benchmark_timing_metadata(spec),
+            ):
+                with _evaluation_profile(spec):
+                    _apply_golden(model, spec, suite_name)   # golden per-benchmark decoding (== baseline)
+                    health_before = _health_snapshot(model)
+                    sc = build_benchmark(spec, secret_dir, real_judge_fn=judge_fn).score(model)
+                    _validate_evaluation_health(model, health_before, spec.id)
             scores[spec.id] = sc
             if spec.role == "held_out":
                 # Never print the held-out score to stdout — eval logs can land in
@@ -452,7 +474,8 @@ def _score_sequential(specs, model_ref, secret_dir, suite_name=""):
                       f"mean={sc.mean:.4f} ci=[{sc.ci_low:.4f},{sc.ci_high:.4f}] n={sc.n}", flush=True)
         fingerprint = None
         if not str(model_ref).startswith("stub:"):
-            fingerprint = _fingerprint_loaded_model(model)
+            with phase("eval.model_fingerprint"):
+                fingerprint = _fingerprint_loaded_model(model)
         return scores, fingerprint
     finally:
         close = getattr(model, "close", None)
@@ -476,22 +499,28 @@ def _gpu_worker(
         from aar.benchmarks import registry as _reg
         _reg.discover()
         judge_fn = _resolve_judge_fn()
-        model = load_model(model_ref)
+        with phase("eval.model_loading", metadata={"worker": str(gpu)}):
+            model = load_model(model_ref)
         while True:
             spec = tasks.get()
             if spec is None:
                 break
             try:
-                with _evaluation_profile(spec):
-                    _apply_golden(model, spec, suite_name)   # golden per-benchmark decoding (== baseline)
-                    health_before = _health_snapshot(model)
-                    sc = build_benchmark(spec, secret_dir, real_judge_fn=judge_fn).score(model)
-                    _validate_evaluation_health(model, health_before, spec.id)
+                with phase(
+                    "eval.benchmark",
+                    metadata=_benchmark_timing_metadata(spec, worker=str(gpu)),
+                ):
+                    with _evaluation_profile(spec):
+                        _apply_golden(model, spec, suite_name)   # golden per-benchmark decoding (== baseline)
+                        health_before = _health_snapshot(model)
+                        sc = build_benchmark(spec, secret_dir, real_judge_fn=judge_fn).score(model)
+                        _validate_evaluation_health(model, health_before, spec.id)
                 q.put(("score", spec.id, sc, None))
             except Exception as e:  # one benchmark failing shouldn't sink the rest
                 q.put(("score", spec.id, None, repr(e)))
         if fingerprint:
-            q.put(("fingerprint", None, _fingerprint_loaded_model(model), None))
+            with phase("eval.model_fingerprint", metadata={"worker": str(gpu)}):
+                q.put(("fingerprint", None, _fingerprint_loaded_model(model), None))
     except Exception as e:  # worker-level failure (model load, etc.)
         q.put(("worker_error", str(gpu), None, repr(e)))
     finally:
@@ -576,8 +605,9 @@ def _resolve_ngpu() -> int:
 
 def run(suite_path: str, model_ref: str, secret_dir: str = "", out: str = "scores.json",
         heldout_dir: str = "") -> dict[str, Any]:
-    registry.discover()
-    suite, specs = load_suite_spec(suite_path)
+    with phase("eval.suite_loading"):
+        registry.discover()
+        suite, specs = load_suite_spec(suite_path)
     suite_name = suite.name
 
     if not str(model_ref).startswith("stub:"):
@@ -598,7 +628,8 @@ def run(suite_path: str, model_ref: str, secret_dir: str = "", out: str = "score
             specs, model_ref, secret_dir, suite_name
         )
 
-    composite = compute_composite(scores, specs, suite=suite)
+    with phase("eval.composite_calculation"):
+        composite = compute_composite(scores, specs, suite=suite)
     result = {
         "suite": suite_name,
         "model": model_ref,

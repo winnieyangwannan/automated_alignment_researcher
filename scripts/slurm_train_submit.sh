@@ -64,7 +64,21 @@ PY="${HARNESS_PY}"
 [ -x "${PY}" ] || { echo "[train] ERROR: Python is not executable: ${PY}" >&2; exit 2; }
 STAGING="${TEAM_DIR:+${TEAM_DIR}/_train/${RUN_ID}}"
 STAGING="${STAGING:-${REPO}/_runs/_train/${RUN_ID}}"
+TIMINGS_DIR="${TEAM_DIR:+${TEAM_DIR}/timings}"
+TIMINGS_DIR="${TIMINGS_DIR:-${REPO}/_runs/timings}"
+mkdir -p "${TIMINGS_DIR}"
+export AAR_PHASE_TIMINGS_PATH="${TIMINGS_DIR}/${RUN_ID}.research.jsonl"
+export AAR_CURRENT_RUN_ID="${RUN_ID}"
 cd "${REPO}"
+
+if [ -n "${AAR_TRAIN_SUBMITTED_AT_NS:-}" ]; then
+  _train_started_at_ns="$(date +%s%N)"
+  _train_queue_seconds="$(awk -v start="${AAR_TRAIN_SUBMITTED_AT_NS}" -v end="${_train_started_at_ns}" 'BEGIN { printf "%.6f", (end-start)/1000000000 }')"
+  "${PY}" -m aar.phase_timing record \
+    --path "${AAR_PHASE_TIMINGS_PATH}" \
+    --phase train.queue_wait \
+    --duration-seconds "${_train_queue_seconds}"
+fi
 
 # FROZEN PRE-RUN PAPER — per-run audit stamp for the DECOUPLED flow. The inline flow stamps this
 # inside the evaluate_model tool, but a decoupled run goes train -> put_model and never calls
@@ -84,8 +98,13 @@ try:
 except ModuleNotFoundError:
     from aar.ideas.${IDEA}.run import run_experiment, MethodConfig   # repo seed library
 from aar import transport
-out = run_experiment(MethodConfig(output_dir="${STAGING}"))
-transport.put_model(out["model_path"], "${RUN_ID}")
+from aar.phase_timing import phase, require_successful_phases
+with phase("train.method_total"):
+    out = run_experiment(MethodConfig(output_dir="${STAGING}"))
+if "${AAR_REQUIRE_PHASE_TIMINGS:-0}".lower() in {"1", "true", "yes", "on"}:
+    require_successful_phases("${AAR_PHASE_TIMINGS_PATH}")
+with phase("train.model_submission"):
+    transport.put_model(out["model_path"], "${RUN_ID}")
 print("[train] submitted ${RUN_ID}; waiting for eval worker to score it")
 PY
 

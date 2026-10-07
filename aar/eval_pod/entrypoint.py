@@ -23,6 +23,7 @@ from pathlib import Path
 
 from aar import config, transport
 from aar.eval_pod import run_eval
+from aar.phase_timing import phase
 
 
 def _self_terminate() -> None:
@@ -38,6 +39,7 @@ def _self_terminate() -> None:
         print(f"[eval] self-terminate failed (caller will reap): {e}")
 
 
+@phase("eval.total")
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-id", required=True)
@@ -45,27 +47,36 @@ def main() -> None:
     args = ap.parse_args()
 
     # 1 + 2: obtain model + secret suite (paths; copies only in s3 mode).
-    model_path = transport.get_model(args.run_id)
-    override = os.getenv("EVAL_MODEL_PATH_OVERRIDE", "").strip()
-    if override:
-        override_path = Path(override).resolve()
-        if not override_path.is_dir():
-            raise RuntimeError(
-                f"EVAL_MODEL_PATH_OVERRIDE is not a directory: {override_path}"
-            )
-        model_path = str(override_path)
-        print(f"[eval] model path override -> {model_path}", flush=True)
-    suite_dir = transport.resolve_suite_dir(args.suite)
-    suite_yaml = Path(suite_dir) / f"{args.suite}.yaml"
-    if not suite_yaml.exists():
-        suite_yaml = Path(config.SUITE_CONFIG)  # fallback to a bundled config
+    os.environ["AAR_CURRENT_RUN_ID"] = args.run_id
+    with phase("eval.model_resolution"):
+        model_path = transport.get_model(args.run_id)
+        override = os.getenv("EVAL_MODEL_PATH_OVERRIDE", "").strip()
+        if override:
+            override_path = Path(override).resolve()
+            if not override_path.is_dir():
+                raise RuntimeError(
+                    f"EVAL_MODEL_PATH_OVERRIDE is not a directory: {override_path}"
+                )
+            model_path = str(override_path)
+            print(f"[eval] model path override -> {model_path}", flush=True)
+    with phase("eval.suite_resolution"):
+        suite_dir = transport.resolve_suite_dir(args.suite)
+        suite_yaml = Path(suite_dir) / f"{args.suite}.yaml"
+        if not suite_yaml.exists():
+            suite_yaml = Path(config.SUITE_CONFIG)  # fallback to a bundled config
 
     # 3: score (write a local scores file first).
     work = Path(config.HARNESS_RUNS_DIR) / "_evalwork" / args.run_id
     work.mkdir(parents=True, exist_ok=True)
     local_scores = work / "scores.json"
     try:
-        result = run_eval.run(str(suite_yaml), model_path, secret_dir=suite_dir, out=str(local_scores))
+        with phase("eval.scoring"):
+            result = run_eval.run(
+                str(suite_yaml),
+                model_path,
+                secret_dir=suite_dir,
+                out=str(local_scores),
+            )
     except Exception as e:
         result = {"error": str(e)}
         local_scores.write_text(json.dumps(result, indent=2))
@@ -84,27 +95,29 @@ def main() -> None:
     # the generalization score from there with eval credentials.
     from aar.benchmarks.composite import contains_held_out, strip_held_out
     research_result = strip_held_out(result) if isinstance(result, dict) else result
-    if contains_held_out(result):
-        try:
-            hdir = Path(config.HELDOUT_SCORES_DIR)
-            hdir.mkdir(parents=True, exist_ok=True)
+    with phase("eval.private_result_persistence"):
+        if contains_held_out(result):
             try:
-                os.chmod(hdir, 0o700)
-            except OSError:
-                pass
-            private_path = hdir / f"{args.run_id}.json"
-            private_path.write_text(json.dumps(result, indent=2))
-            try:
-                os.chmod(private_path, 0o600)
-            except OSError:
-                pass
-            print(f"[eval] FULL incl held-out -> {private_path} (eval-private, mode-700)")
-        except Exception as e:
-            print(f"[eval] WARN: failed to persist eval-private held-out scores: {e}", file=sys.stderr)
-            research_result = {
-                "error": "held-out evaluation completed but private result storage failed"
-            }
-    ref = transport.put_scores(args.run_id, research_result)
+                hdir = Path(config.HELDOUT_SCORES_DIR)
+                hdir.mkdir(parents=True, exist_ok=True)
+                try:
+                    os.chmod(hdir, 0o700)
+                except OSError:
+                    pass
+                private_path = hdir / f"{args.run_id}.json"
+                private_path.write_text(json.dumps(result, indent=2))
+                try:
+                    os.chmod(private_path, 0o600)
+                except OSError:
+                    pass
+                print(f"[eval] FULL incl held-out -> {private_path} (eval-private, mode-700)")
+            except Exception as e:
+                print(f"[eval] WARN: failed to persist eval-private held-out scores: {e}", file=sys.stderr)
+                research_result = {
+                    "error": "held-out evaluation completed but private result storage failed"
+                }
+    with phase("eval.score_publication"):
+        ref = transport.put_scores(args.run_id, research_result)
     print(f"[eval] published scores (held-out stripped) -> {ref}")
 
     # 5: s3/pod self-terminate (no-op in fs mode).

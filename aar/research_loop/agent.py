@@ -45,6 +45,7 @@ from aar.config import (
     SERVER_URL,
     AAR_MODE,
 )
+from aar.phase_timing import phase
 from .tools.server_api_tools import create_server_api_tools_server
 from .tools.prior_work_tools import create_prior_work_tools_server
 from .tools.findings_sync import FindingsSync
@@ -609,7 +610,14 @@ class AutonomousAgentLoop:
                 break
 
             try:
-                await self._run_session()
+                with phase(
+                    "research.session",
+                    metadata={
+                        "session_index": self.session_count,
+                        "idea_name": self.idea_name,
+                    },
+                ):
+                    await self._run_session()
                 self.stop_checker.record_success()
                 successful_sessions += 1
                 if not self.local_mode:

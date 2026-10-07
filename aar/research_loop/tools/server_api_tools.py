@@ -7,12 +7,15 @@ Provides tools for:
 - Info: Get leaderboard and ideas list
 """
 
+import ast
 import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List
 
 from claude_agent_sdk import tool, create_sdk_mcp_server
+
+from aar.phase_timing import timed_async_phase
 
 from .http_utils import get_server_url, async_http_post, async_http_get
 from .fs_forum import use_fs_forum, write_finding, leaderboard as fs_leaderboard
@@ -177,6 +180,7 @@ def _strip_held_out(obj: Any) -> Any:
         "required": ["model_path"],
     },
 )
+@timed_async_phase("research.inline_evaluation")
 async def evaluate_model(args: Dict[str, Any]) -> Dict[str, Any]:
     """Upload model_path to submissions/<run_id>/model/, then ask the server to
     score it. Returns the composite (aggregates only)."""
@@ -678,6 +682,7 @@ Fields (paper sections — registered at proposal, repeated here for reference):
         "required": ["summary"],
     },
 )
+@timed_async_phase("research.finding_publication")
 async def share_finding(args: Dict[str, Any]) -> Dict[str, Any]:
     """
     Share a finding with other workers and post to forum.
@@ -1359,6 +1364,36 @@ def _proposal_approved():
         return False, f"proposal gate error: {e}"
 
 
+def _missing_method_timing_phases(code: str) -> list[str]:
+    """Return required literal ``with phase(...)`` names absent from method code."""
+    from aar.phase_timing import REQUIRED_METHOD_PHASES
+
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return list(REQUIRED_METHOD_PHASES)
+    observed: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.With, ast.AsyncWith)):
+            continue
+        for item in node.items:
+            call = item.context_expr
+            if not isinstance(call, ast.Call) or not call.args:
+                continue
+            function = call.func
+            function_name = (
+                function.id
+                if isinstance(function, ast.Name)
+                else function.attr if isinstance(function, ast.Attribute) else ""
+            )
+            if function_name != "phase":
+                continue
+            value = call.args[0]
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                observed.add(value.value)
+    return [name for name in REQUIRED_METHOD_PHASES if name not in observed]
+
+
 @tool(
     "submit_idea_proposal",
     "MANDATORY GATE — submit every method here and get APPROVAL **before** you execute it. You "
@@ -1397,6 +1432,7 @@ def _proposal_approved():
         "required": ["idea_name", "title", "abstract", "motivation", "related_work", "method", "data", "experimental_setup", "external_models_used", "benchmark_data_use"],
     },
 )
+@timed_async_phase("research.proposal_review")
 async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
     try:
         import time
@@ -1413,6 +1449,19 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
                 "approved": False, "violations": [],
                 "error": f"No code at $AAR_IDEAS_DIR/{idea_name}/run.py — write your method package FIRST, then submit (the monitor judges the actual code).",
             }, indent=2)}]}
+        if code is not None and os.getenv("AAR_REQUIRE_PHASE_TIMINGS", "0").lower() in (
+            "1", "true", "yes", "on"
+        ):
+            missing_timings = _missing_method_timing_phases(code)
+            if missing_timings:
+                return {"content": [{"type": "text", "text": json.dumps({
+                    "approved": False,
+                    "violations": ["REPRODUCIBILITY: missing structured phase timings"],
+                    "error": (
+                        "Method must use `from aar.phase_timing import phase` and wrap "
+                        "these phases before approval: " + ", ".join(missing_timings)
+                    ),
+                }, indent=2)}]}
         # (B) Validate the paper FIRST (depth, >=5 citations, RULE 1 self-containment, RULE 2 no
         # outcome). A leaky/thin paper is rejected without spending the integrity-monitor call.
         # STRUCTURAL completeness only (per-section depth + >=5 cited works). Self-reference (RULE 1) and

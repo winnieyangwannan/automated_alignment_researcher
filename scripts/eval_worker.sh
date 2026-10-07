@@ -158,7 +158,9 @@ WORKER_ID="${SLURM_JOB_ID:-$$}"
 }
 EVAL_TEAM_DIR="${AAR_EVAL_RUNTIME_ROOT:-${TEAM_DIR:-${AAR_RUNTIME_ROOT}}/_eval_private}"
 mkdir -p "${EVAL_TEAM_DIR}/heldout_scores" "${EVAL_TEAM_DIR}/_evalwork"
-chmod 700 "${EVAL_TEAM_DIR}" "${EVAL_TEAM_DIR}/heldout_scores" "${EVAL_TEAM_DIR}/_evalwork" 2>/dev/null || true
+mkdir -p "${EVAL_TEAM_DIR}/timings"
+chmod 700 "${EVAL_TEAM_DIR}" "${EVAL_TEAM_DIR}/heldout_scores" \
+  "${EVAL_TEAM_DIR}/_evalwork" "${EVAL_TEAM_DIR}/timings" 2>/dev/null || true
 export HELDOUT_SCORES_DIR="${HELDOUT_SCORES_DIR:-${EVAL_TEAM_DIR}/heldout_scores}"
 export HARNESS_RUNS_DIR="${EVAL_TEAM_DIR}"
 exec >> "${EVAL_TEAM_DIR}/eval_worker_${WORKER_ID}.out" 2>&1
@@ -207,6 +209,14 @@ while true; do
     # parallel workers never double-score. (Claims live in the eval-writable
     # SCORES_DIR so every worker — same OS user — can create them.)
     mkdir "${CLAIMS}/${rid}" 2>/dev/null || continue        # claimed by another worker
+    export AAR_CURRENT_RUN_ID="${rid}"
+    export AAR_PHASE_TIMINGS_PATH="${EVAL_TEAM_DIR}/timings/${rid}.eval.jsonl"
+    _submitted_at="$(stat -c %Y "${d}.submitted")"
+    _claimed_at="$(date +%s)"
+    "${PY}" -m aar.phase_timing record \
+      --path "${AAR_PHASE_TIMINGS_PATH}" \
+      --phase eval.queue_wait \
+      --duration-seconds "$((_claimed_at - _submitted_at))"
     echo "[worker ${WORKER_ID}] scoring ${rid}"
     eval_cmd=("${PY}" -u -m aar.eval_pod.entrypoint --run-id "${rid}" --suite "${SUITE}")
     if [ "${EVAL_INFERENCE_BACKEND:-transformers}" = vllm ]; then
@@ -217,7 +227,10 @@ while true; do
       merged_model="${AAR_VLLM_MERGED_ROOT}/${rid}"
       mkdir -p "${AAR_VLLM_MERGED_ROOT}"
       echo "[worker ${WORKER_ID}] merging adapter ${submitted_model} -> ${merged_model}"
-      if ! "${AAR_VLLM_MERGE_PY}" "${REPO}/scripts/merge_peft_adapter.py" \
+      if ! "${PY}" -m aar.phase_timing run \
+          --path "${AAR_PHASE_TIMINGS_PATH}" \
+          --phase eval.adapter_merge -- \
+          "${AAR_VLLM_MERGE_PY}" "${REPO}/scripts/merge_peft_adapter.py" \
           --base-checkpoint "${TARGET_MODEL_PATH}" \
           --adapter "${submitted_model}" \
           --output "${merged_model}" \

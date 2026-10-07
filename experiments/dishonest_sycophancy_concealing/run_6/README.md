@@ -35,3 +35,19 @@ bash experiments/dishonest_sycophancy_concealing/run_6/submit_run_6.sh
 The attempt retains the parent launch ID in `metadata/submission.txt`, all ten
 child IDs in `metadata/children.env`, and the full launcher transcript in
 `metadata/launch_run6_vllm_submission.txt`.
+
+## Phase timing contract
+
+Future submissions fail closed unless every generated method records successful
+`data_generation`, `tokenization`, `model_loading`, `training`, and
+`checkpoint_save` phases with `aar.phase_timing.phase`. Research-side JSONL is
+retained under `TEAM_DIR/timings/<run_id>.research.jsonl`; evaluator-side JSONL
+is retained privately under `_eval_private/timings/<run_id>.eval.jsonl`.
+
+The harness also records research-session duration, proposal review, inline
+evaluation handoff, finding publication, training queue wait, total method
+runtime, model submission, evaluator queue wait, adapter merge, evaluator
+setup, model loading, every benchmark (held-out names remain hidden in logs),
+composite calculation, private-result persistence, score publication, and total
+evaluation runtime. Each event includes UTC start/end timestamps, duration,
+status, run/job identity when available, and safe phase metadata.

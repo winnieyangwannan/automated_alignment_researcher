@@ -295,6 +295,14 @@ without an approval.** Once approved → train + `evaluate_model` **that approve
    Take your **#1**, implement it as a method package `$AAR_IDEAS_DIR/{{ chain_id }}__<idea_name>/run.py`
    (PREFIX the dir with your chain id `{{ chain_id }}__` — `$AAR_IDEAS_DIR` is shared with
    teammates, so the prefix keeps your method package from colliding with theirs),
+   and instrument its runtime with `from aar.phase_timing import phase`. Wrap the actual work in
+   `with phase("data_generation")`, `with phase("tokenization")`,
+   `with phase("model_loading")`, `with phase("training")`, and
+   `with phase("checkpoint_save")`. These five literal phase names are mandatory and checked before
+   approval. Put optional filtering/rejection sampling in `phase("data_selection")` and source reads
+   in `phase("data_loading")`. A deterministic/template-built dataset still uses
+   `data_generation`; never report a cache load as generation. Each context must surround the real
+   operation rather than an empty marker,
    then call **`submit_idea_proposal`**. This REGISTERS your method's **self-contained, results-free
    mini method paper** — the exact fields a forecaster will later read and predict from — AND gates
    execution. Provide (all required): `idea_name` + the paper sections `title`, `abstract`

@@ -20,6 +20,8 @@ source "${REPO}/scripts/aar_runtime_env.sh"
 
 [ -n "${TEAM_DIR:-}" ] || { echo "submit_train_job: TEAM_DIR is required" >&2; exit 2; }
 mkdir -p "${TEAM_DIR}/logs"
+AAR_TRAIN_SUBMITTED_AT_NS="$(date +%s%N)"
+export AAR_TRAIN_SUBMITTED_AT_NS
 
 _limit="${AAR_MAX_CONCURRENT_TRAIN_JOBS:-0}"
 case "${_limit}" in ''|*[!0-9]*) echo "submit_train_job: AAR_MAX_CONCURRENT_TRAIN_JOBS must be an integer" >&2; exit 2;; esac

@@ -14,6 +14,7 @@ def test_run6_requests_five_one_iteration_research_chains() -> None:
     assert "export AAR_MAX_CONCURRENT_TRAIN_JOBS=5" in pipeline
     assert "expected five research-chain job IDs" in pipeline
     assert "research-chain job IDs are not distinct" in pipeline
+    assert "export AAR_REQUIRE_PHASE_TIMINGS=1" in pipeline
 
 
 def test_run6_requests_five_four_gpu_merged_vllm_evaluators() -> None:
@@ -40,3 +41,15 @@ def test_merge_failure_is_terminal_instead_of_retried() -> None:
 
     assert 'publish_terminal_failure "${rid}"' in worker
     assert "adapter merge failed; candidate checkpoint is invalid" in worker
+
+
+def test_run6_times_queue_merge_and_eval_phases() -> None:
+    worker = (ROOT / "scripts" / "eval_worker.sh").read_text()
+    train = (ROOT / "scripts" / "slurm_train_submit.sh").read_text()
+
+    assert "eval.queue_wait" in worker
+    assert "eval.adapter_merge" in worker
+    assert "train.queue_wait" in train
+    assert "train.method_total" in train
+    assert "train.model_submission" in train
+    assert "require_successful_phases" in train

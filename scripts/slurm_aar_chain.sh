@@ -153,6 +153,8 @@ cd "${REPO}"
 # iterations). A fresh team gets a fresh TEAM_DIR, so it always starts clean.
 CHAIN_TAG="$(printf '%s' "${MODEL:-qwen}-${SEED}" | tr -cs 'A-Za-z0-9' '_' | sed 's/^_//; s/_$//')"
 export AAR_AGENT_LOG_PATH="${SESSION_LOGS_DIR}/AGENT_LOG_${CHAIN_TAG}.md"
+mkdir -p "${TEAM_DIR}/timings"
+export AAR_PHASE_TIMINGS_PATH="${TEAM_DIR}/timings/chain_${CHAIN_TAG}.jsonl"
 if [ ! -f "${AAR_AGENT_LOG_PATH}" ]; then
   printf '# AGENT_LOG — chain %s\n\n## ITERATION 1 — NO PRIOR HISTORY\nThis chain has run NO prior iterations. You have NO past results, scores, or methods yet.\nDo NOT invent or recall any prior iteration — begin from the literature + leaderboard.\nRecord each iteration below as you complete it.\n' "${SEED}" > "${AAR_AGENT_LOG_PATH}"
 fi
