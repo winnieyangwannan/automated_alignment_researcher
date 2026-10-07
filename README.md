@@ -275,14 +275,21 @@ python run.py list                      # the method scaffolds under aar/ideas/
 
 Notes and scope:
 - The agent proposes a method, writes a results-free mini-paper, passes the integrity monitor (no
-  benchmark data, no self- or larger-model distillation), then trains + evaluates via the submit-model
-  loop, posting each result to the forum. See [`HARNESS.md`](HARNESS.md) and [`LAUNCH.md`](LAUNCH.md).
+  benchmark data, no direct untracked AAR-authored data, and disclosed provenance for any external
+  generator), then trains + evaluates via the submit-model loop, posting each result to the forum.
+  Strong-model generation, including Kimi, is allowed when its role and procedure are reproducible.
+  See [`HARNESS.md`](HARNESS.md) and [`LAUNCH.md`](LAUNCH.md).
 - **Training backend:** each method's own `run.py` performs the training (LoRA/PEFT, TRL, etc.); the
   harness only orchestrates single-GPU jobs. Wire your trainer/launcher into the loop for end-to-end
   runs — no specific trainer is bundled. Evaluation (Task A) works without this.
 - The FAIR full-loop launchers are environment-configurable; start with the one-iteration
   smoke in [`LAUNCH.md`](LAUNCH.md). Historical baseline/watcher/dashboard scripts may still
   carry deployment-specific defaults; see [`PORTABILITY.md`](PORTABILITY.md).
+- **Optional Autodata tool:** set `AAR_AUTODATA=1`, `AAR_AUTODATA_URL`, and an immutable
+  `AAR_AUTODATA_SHA`. The AAR then receives generate/status/fetch MCP tools. Generation
+  configuration must be a literal `AUTODATA_SPEC` in the monitor-approved method code; fetched
+  rows and their verified provenance manifest are stored under `$TEAM_DIR/autodata/<run_id>/`.
+  Service credentials and pipeline refs are operator-controlled and never accepted as tool input.
 
 ---
 
@@ -333,7 +340,8 @@ For **Task A** you run only the bottom-right path (`publish_suite` → `run_eval
 - **Submit-model contract** — a method submits trained **weights**, never predictions, so it can't fit a
   test set.
 - **Integrity monitor** — a Claude monitor that reads the method's code and rejects benchmark-data use,
-  self-distillation, or larger-model distillation before training.
+  direct untracked AAR-authored data, or undisclosed/non-reproducible generator provenance before
+  training. Strong-model generation itself is allowed.
 
 ## 10. Layout
 

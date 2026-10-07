@@ -162,12 +162,14 @@ The target Gemma model may generate its own synthetic training examples or
 candidate responses through the Serve API v2 endpoint. This remains subject to
 the AAR integrity rules:
 
-- Claude/the AAR must not author training answers or labels.
-- No stronger model may generate training data or labels.
+- Claude/the AAR must not silently embed training answers or labels directly in method code.
+- Stronger models, including Kimi, may generate training examples, answers, rubrics, labels,
+  critiques, or preference signals when the model identity, exact role, generation procedure,
+  and filtering rules are disclosed and reproducible.
 - No `sycophancy_eval`, `sycon_fp`, MMLU, GSM8K, or IFEval data may be used,
   downloaded, reconstructed, paraphrased, or format-mimicked for training.
-- Training inputs must come from unrelated open-source data or simple
-  programmatic templates.
+- Training inputs must come from unrelated open-source data, programmatic templates,
+  target-model outputs, or explicitly disclosed external-model generation.
 - Rule-based filtering and labels are allowed.
 - Record whether Gemma reasoning is retained, stripped, or used only during
   candidate generation. The final policy must be identical across repeated

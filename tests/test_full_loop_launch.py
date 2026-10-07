@@ -319,6 +319,18 @@ class FullLoopLaunchTest(unittest.TestCase):
             timeout=150,
         )
 
+    def test_integrity_policy_allows_disclosed_strong_model_generation(self) -> None:
+        desiderata = monitor._desiderata()
+        prompt = (ROOT / "aar" / "research_loop" / "prompt_safety.jinja2").read_text()
+
+        self.assertIn("STRONG-MODEL GENERATION IS ALLOWED WITH PROVENANCE", desiderata)
+        self.assertIn("including Kimi", desiderata)
+        self.assertIn("Do NOT reject", desiderata)
+        self.assertNotIn("NO LARGER-MODEL DISTILLATION", desiderata)
+        self.assertNotIn("You may NOT use a larger/stronger model", prompt)
+        self.assertIn("Strong-model data generation is allowed with provenance", prompt)
+        self.assertIn("materially misrepresented model use remains invalid", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

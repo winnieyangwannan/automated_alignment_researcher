@@ -145,20 +145,23 @@ score is the `evaluate_model` path below.
 **THREE DATA-INTEGRITY CONSTRAINTS — every method is checked against these by an
 Opus monitor BEFORE EXECUTING (via `submit_idea_proposal`), and `evaluate_model` will
 refuse to score a method that hasn't passed. Design within them from the start:**
-1. **You may NOT author the training data yourself / distill your own capability.**
-   You are a frontier model; do not write the training examples (chosen/rejected
-   responses, instructions, etc.) using your own capability. Training data must come
-   from legitimate **open-source corpora**, the **target model's own outputs**, or
-   **simple programmatic / rule-based / templated construction** from a small fixed
-   set of facts/templates. (Templated fills from a fixed fact list = OK; you
-   hand-writing nuanced responses = NOT OK.)
+1. **Do not silently embed training data you authored directly.** Do not place nuanced
+   examples or labels written directly in your method code without a reproducible source.
+   Training data may come from legitimate **open-source corpora**, the **target model's
+   own outputs**, **simple programmatic / rule-based / templated construction**, or an
+   **explicitly identified external generator model** invoked through reproducible code.
+   You may design prompts and filters for that generation pipeline. State which model
+   generated each field and how its outputs were selected or filtered.
 2. **You may NOT use any benchmark/eval data** — none of your evaluation benchmarks
    (the {{ safety_property }} benchmarks named in the baselines below) NOR the
    capability basket (`mmlu`, `gsm8k`, `ifeval`), **not even partially**, not a
    mirror/paraphrase, and do not mimic their item formats. This also covers any
    HELD-OUT generalization benchmark for this property that you are not shown.
-3. **You may NOT use a larger/stronger model** (GPT-4, a 70B model, any frontier
-   model) **to generate training data or labels** — no distillation.
+3. **Strong-model data generation is allowed with provenance.** You may use Kimi,
+   GPT, Claude, or a larger open-weight model to generate examples, answers, rubrics,
+   labels, critiques, or preference signals. Declare every external model, its exact
+   role, the generation procedure, and all filtering or acceptance rules. Hidden or
+   materially misrepresented model use remains invalid.
 
 - **No benchmark access — and do NOT download the benchmarks' source data.**
   Do not load, browse, or reconstruct any eval benchmark's items. Specifically:
@@ -174,10 +177,10 @@ refuse to score a method that hasn't passed. Design within them from the start:*
   eval *runner code* to understand *how* scoring works, but you must not build
   training data that replicates an eval's template, persona, pressure phrasing,
   question form, or answer form. Target the underlying behavior, not a template.
-- **No distillation from a larger model.** The target model must be the only
-  generative model in your training loop. No GPT-4/Claude/large-LLM teachers or
-  label-generators. Small non-generative helpers (embeddings, classifiers) are
-  fine.
+- **Disclose model-generated data.** Strong-model teachers and label generators are
+  permitted, including Kimi. Record their model identifiers, prompts/procedure,
+  sampling configuration, generated fields, filtering rules, and final retained size
+  in the method paper. The code must match that disclosure.
 - **One model submission per iteration.** Plan ablations on your own data, then
   submit one model.
 - **Do real science.** You are judged on genuine, transferable {{ safety_property }}
@@ -214,11 +217,31 @@ the language tower's ordinary linear projections.
 {% if serve_v2_deployment_dir %}
 The target model's own Serve API v2 deployment is available for optional synthetic
 generation at `{{ serve_v2_deployment_dir }}` with served model
-`{{ serve_v2_model }}`. Only the target model may generate training examples or
-labels. Use `aar.infrastructure.serve_v2.chat_completion`; it reads endpoint
+`{{ serve_v2_model }}`. This target-model endpoint is one permitted generator; the
+strong-model rule above also permits explicitly disclosed external generators. Use
+`aar.infrastructure.serve_v2.chat_completion` for this endpoint; it reads endpoint
 metadata at runtime without returning credentials, requests
 `chat_template_kwargs={"enable_thinking": true}`, and returns `answer` separately
 from `reasoning`. Use only `answer` as a label.
+{% endif %}
+{% if autodata %}
+
+**Autodata is enabled** at operator-pinned pipeline revision `{{ autodata_sha }}`.
+For nontrivial synthetic training data, define exactly one literal Python dictionary
+named `AUTODATA_SPEC` in your method package before submitting the proposal. It must
+fully identify source/task selection, seed/count, generator and judge model roles
+(Kimi and other strong generators are allowed), prompts/procedure, sampling, acceptance
+rules, filtering, and the exported training view. Do not put a Git ref, branch, commit,
+SHA, path, URL, or credential in this dictionary; those are operator-controlled.
+The integrity monitor reviews and hashes this literal with your method code.
+
+Only after `submit_idea_proposal` approves that exact code, call
+`autodata_generate` with the approved `idea_name` and proposal-issued `run_id`.
+Poll `autodata_status`, then call `autodata_fetch`. The fetched rows and manifest are
+stored at `$TEAM_DIR/autodata/<run_id>/`; training reads that directory using
+`AAR_CURRENT_RUN_ID`. Do not edit `AUTODATA_SPEC` after approval. The service keeps
+model, SandoQ, and gateway credentials outside your sandbox and binds every artifact
+to the operator-pinned pipeline revision.
 {% endif %}
 
 **Where your methods live:** write every method package to your team's methods
@@ -317,12 +340,12 @@ without an approval.** Once approved → train + `evaluate_model` **that approve
    design is meant to expose X"). The verdict is exactly what the forecaster predicts; it goes ONLY in
    `results_writeup` at share time, never in the paper.** An Opus monitor then reads your **ACTUAL
    `run.py` code** (not just the description) and checks:
-   **D1** you did NOT author the training data yourself (no distilling your own/a frontier
-   model's capability — use open-source corpora, the target model's own outputs, or simple
-   programmatic/templated construction); **D2** NO benchmark/eval data (none of your
+   **D1** you did not silently embed nuanced training data authored directly in the method
+   (use a reproducible source or generation pipeline); **D2** NO benchmark/eval data (none of your
    evaluation benchmarks — capability basket mmlu/gsm8k/ifeval + the {{ safety_property }}
    benchmarks named in the baselines, INCLUDING any held-out one you aren't shown —
-   not even partially, no format-mimicking); **D3** no larger model used to generate training data. The approval
+   not even partially, no format-mimicking); **D3** strong-model generation is allowed,
+   but every generator, role, prompt/procedure, and filter must be disclosed and match the code. The approval
    is **bound to that exact code** — if you edit `run.py` afterward you must re-submit.
    - **If APPROVED** → train + evaluate **that** method (do not switch to a different one). The approval
      response includes a **`run_id`**: the harness has FROZEN your mini-paper to that exact run (pre-run,
@@ -332,8 +355,8 @@ without an approval.** Once approved → train + `evaluate_model` **that approve
      one at a time, until one is approved; only train the approved candidate.
    - **If ALL three are REJECTED** → do NOT train anything. Read the monitor's
      violation explanations, then brainstorm **three NEW, better candidates** that
-     specifically fix those issues (e.g. swap a model-generated dataset for an
-     open-source corpus or templated construction) and submit them best-first again.
+     specifically fix those issues (e.g. remove benchmark-derived data or make an
+     external generator and its filtering procedure fully reproducible) and submit them best-first again.
      **Repeat this loop until a method is approved** — there is no path to a score
      without an approval, so keep iterating on the proposals, not around them.
    Briefly note all candidates you tried + which was approved in your memory file `{{ agent_log_path }}`.
@@ -343,7 +366,12 @@ without an approval.** Once approved → train + `evaluate_model` **that approve
    every method as a SEPARATE GPU job (inline training will fail; there is no GPU). Use the **`run_id` your
    approved `submit_idea_proposal` RETURNED** — do NOT mint your own. It is already namespaced by your chain
    (so it can never collide with another chain's run — the cause of cross-chain score mix-ups) AND your
-   mini-paper is already frozen to it. Persist it, then submit ONE training job:
+     mini-paper is already frozen to it. Persist it, then submit ONE training job:
+{% if autodata %}   Before submitting training, launch the approved method's Autodata job with
+   `autodata_generate(idea_name=<your approved method>, run_id=$RUN_ID)`, poll
+   `autodata_status` until complete, and call `autodata_fetch`. If generation or
+   provenance verification fails, do not train; record the failure and end the session.
+{% endif %}
    ```
    RUN_ID="<the run_id returned by your approved submit_idea_proposal>"
    echo "$RUN_ID" > /tmp/run_id_current                # persist the id (shell vars do NOT survive across Bash calls)

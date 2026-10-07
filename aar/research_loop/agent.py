@@ -110,6 +110,7 @@ def resolve_prompt(template_path: str | Path, output_path: str | Path) -> str:
         print(f"WARNING: Target idea file not found: {TARGET_IDEA_FILE}")
 
     local_mode = os.getenv("LOCAL_MODE", "false").lower() in ("1", "true", "yes")
+    autodata = os.getenv("AAR_AUTODATA", "0").lower() in ("1", "true", "yes")
 
     # Generalized harness vars (suite/target) alongside the legacy W2S ones, so
     # either prompt template renders.
@@ -163,6 +164,8 @@ def resolve_prompt(template_path: str | Path, output_path: str | Path) -> str:
         baselines_table=_format_baselines(),
         meta_secure_web=meta_secure_web,
         paper_search_helper=paper_search_helper,
+        autodata=autodata,
+        autodata_sha=os.getenv("AAR_AUTODATA_SHA", ""),
     )
 
     with open(output_path, 'w') as f:
@@ -507,6 +510,13 @@ class AutonomousAgentLoop:
                 self.mcp_servers["prior-work-tools"] = create_prior_work_tools_server()
             except Exception as e:
                 print(f"[Init] Warning: prior work tools unavailable: {e}")
+        if os.getenv("AAR_AUTODATA", "0").lower() in ("1", "true", "yes"):
+            try:
+                from .tools.autodata_tools import create_autodata_tools_server
+
+                self.mcp_servers["autodata-tools"] = create_autodata_tools_server()
+            except Exception as e:
+                raise RuntimeError(f"AAR_AUTODATA is enabled but unavailable: {e}") from e
 
         # Findings sync: disabled in local mode (no other workers)
         self.findings_sync = None
@@ -550,6 +560,12 @@ class AutonomousAgentLoop:
             allowed_tools.extend(["WebSearch", "WebFetch"])
         if not self.local_mode:
             allowed_tools.append("mcp__prior-work-tools__download_snapshot")
+        if "autodata-tools" in self.mcp_servers:
+            allowed_tools.extend([
+                "mcp__autodata-tools__autodata_generate",
+                "mcp__autodata-tools__autodata_status",
+                "mcp__autodata-tools__autodata_fetch",
+            ])
 
         return BaseAgent(
             name=f"autonomous-{session_id}",
