@@ -354,3 +354,10 @@ standalone dataset does not by itself satisfy this criterion.
   recommends. The pre-agent canary now invokes the real launcher's `--version`
   path in addition to the mount probe, so this class of failure no longer
   consumes an AAR session.
+- Compute diagnostic `1750243` confirmed the override was removed and selected
+  installed version 2.1.281, but also showed that the HOME isolation hid the
+  DotSlash object already cached for that version, causing another attempted
+  download. The sandbox now exposes only the version-descriptor and DotSlash
+  object cache trees read-only, overlays DotSlash's lock directory with private
+  tmpfs, and sets offline mode. General cache contents, Claude settings and
+  sessions, shell state, and credentials remain hidden.

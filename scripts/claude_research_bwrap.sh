@@ -138,6 +138,23 @@ for hidden_root in "${hidden_roots[@]}"; do
   esac
 done
 
+# The Meta launcher is system-owned, but its versioned DotSlash descriptor and
+# already-materialized native binary live in two non-secret user cache trees.
+# The HOME tmpfs would otherwise hide them and force a Manifold download through
+# shared host scratch. Expose only these caches read-only; give DotSlash a
+# private lock directory and require an offline cache hit. No Claude settings,
+# sessions, shell state, or general user cache becomes visible.
+claude_native_cache="${sandbox_home}/.cache/claude_code_native_versions"
+dotslash_cache="${sandbox_home}/.cache/dotslash"
+if [ -d "${claude_native_cache}" ] && [ -d "${dotslash_cache}" ]; then
+  bind_visible_dir "${claude_native_cache}" ro
+  bind_visible_dir "${dotslash_cache}" ro
+  if [ -d "${dotslash_cache}/locks" ]; then
+    bwrap_args+=(--tmpfs "${dotslash_cache}/locks")
+  fi
+  bwrap_args+=(--setenv DOTSLASH_OFFLINE 1)
+fi
+
 # Rebinding the checkout/run also restores their credential files, so mask
 # those last. /dev/null preserves a harmless file-shaped mountpoint without
 # exposing content; the secret directory becomes an empty private tmpfs.
@@ -164,6 +181,7 @@ unset AAR_CLAUDE_REAL_CLI_PATH AAR_RESEARCH_STORAGE_HOME
 # but prevent an operator-side pin from crossing this isolation boundary.
 unset META_CLAUDE_CODE_RELEASE CLAUDE_CODE_VERSION_OVERRIDE
 unset git_common cli_dir masked_file hidden_root storage_home
+unset claude_native_cache dotslash_cache
 while IFS= read -r env_name; do
   upper_name="${env_name^^}"
   case "${upper_name}" in

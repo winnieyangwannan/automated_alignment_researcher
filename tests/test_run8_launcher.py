@@ -167,6 +167,10 @@ def test_research_chain_uses_positive_slurm_environment_allowlist() -> None:
     assert "--unshare-pid" in BWRAP.read_text()
     assert "bwrap_args+=(--tmpfs /var/slurm-tmp)" in BWRAP.read_text()
     assert "unset META_CLAUDE_CODE_RELEASE CLAUDE_CODE_VERSION_OVERRIDE" in BWRAP.read_text()
+    assert 'bind_visible_dir "${claude_native_cache}" ro' in BWRAP.read_text()
+    assert 'bind_visible_dir "${dotslash_cache}" ro' in BWRAP.read_text()
+    assert 'bwrap_args+=(--setenv DOTSLASH_OFFLINE 1)' in BWRAP.read_text()
+    assert 'bwrap_args+=(--tmpfs "${dotslash_cache}/locks")' in BWRAP.read_text()
     assert "touch /var/slurm-tmp/.aar-research-sandbox-write-canary" in chain
     assert '"${CLAUDE_CLI_PATH}" --version >/dev/null' in chain
     assert 'for hidden_root in "${hidden_roots[@]}"' in BWRAP.read_text()
