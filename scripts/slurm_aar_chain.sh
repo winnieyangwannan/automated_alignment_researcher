@@ -170,6 +170,10 @@ if [ "${AAR_RESEARCH_ENV_ISOLATION:-0}" = 1 ]; then
     fi
     touch "$AAR_RUNTIME_ROOT/.research-sandbox-write-canary"
     rm -f "$AAR_RUNTIME_ROOT/.research-sandbox-write-canary"
+    if [ -d /var/slurm-tmp ]; then
+      touch /var/slurm-tmp/.aar-research-sandbox-write-canary
+      rm -f /var/slurm-tmp/.aar-research-sandbox-write-canary
+    fi
   '
   echo "[aar] Claude research mount/PID namespace verified"
 fi

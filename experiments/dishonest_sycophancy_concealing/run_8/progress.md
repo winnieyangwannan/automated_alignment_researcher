@@ -329,3 +329,19 @@ standalone dataset does not by itself satisfy this criterion.
 - At this milestone the AutoData service is live; evaluator and research chain
   are submitted and waiting for Slurm placement. Completion still requires two
   atomic score/result pairs and the Run 8 linkage verifier.
+
+### 2026-10-07 — Claude sandbox launch failure isolated
+
+- Evaluator `1749774` emitted the required fail-closed markers for vLLM 0.25.1
+  and merged-checkpoint evaluation. Chain `1749775` passed the credential and
+  PID-namespace canary, but both agent sessions failed before tool use because
+  Meta's Claude launcher needed to unpack below `/var/slurm-tmp` while the
+  sandbox root was read-only. No AutoData workspace or training submission was
+  created, so this attempt is not counted as a successful iteration.
+- The failed chain and its two zero-tool session logs remain retained. AutoData
+  services stopped automatically when the chain ended, and the unused
+  evaluator was cancelled rather than left holding four GPUs.
+- The sandbox now overlays the compute node's `/var/slurm-tmp` with a private
+  writable tmpfs. The mandatory pre-agent canary also performs a write/remove
+  probe there, catching this integration failure before a research session is
+  counted while continuing to hide host temp contents and operator secrets.

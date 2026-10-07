@@ -49,6 +49,14 @@ declare -a bwrap_args=(
   --tmpfs /tmp
   --tmpfs /var/tmp
 )
+# Meta's Claude launcher unpacks its native helper below /var/slurm-tmp on
+# compute nodes. The root filesystem is intentionally read-only in this
+# namespace, so replace that host directory with a private writable tmpfs. The
+# conditional keeps the wrapper portable to hosts that do not provide the
+# Slurm-specific mountpoint.
+if [ -d /var/slurm-tmp ]; then
+  bwrap_args+=(--tmpfs /var/slurm-tmp)
+fi
 for hidden_root in "${hidden_roots[@]}"; do
   bwrap_args+=(--tmpfs "${hidden_root}")
 done
