@@ -185,6 +185,12 @@ def _generate(
             "temperature": 0.7,
             "max_tokens": max_tokens,
             "seed": int(task.get("seed") or 0),
+            # Kimi-K2.6's checked-in chat template and model README define
+            # `thinking=false` as instant mode. Structured SFT generation does
+            # not need a long hidden reasoning preamble; without this setting a
+            # real canary exhausted the full output allowance before emitting
+            # its JSON answer.
+            "chat_template_kwargs": {"thinking": False},
         },
         headers={"X-Deployment-Id": deployment},
         timeout=int(os.environ.get("AUTODATA_GENERATOR_TIMEOUT", "90")),

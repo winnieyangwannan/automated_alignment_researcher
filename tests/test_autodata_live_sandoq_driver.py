@@ -136,6 +136,9 @@ class LiveSandoQRecipeTest(unittest.TestCase):
         self.assertEqual(
             observed[0][2]["X-Deployment-Id"], "winnieyangwn-kimi26"
         )
+        self.assertEqual(
+            observed[0][1]["chat_template_kwargs"], {"thinking": False}
+        )
         self.assertNotIn("Authorization", observed[0][2])
         self.assertTrue(observed[1][2]["Authorization"].startswith("Bearer "))
         self.assertNotIn("test-only-secret", json.dumps([generator_usage, judge_usage]))
