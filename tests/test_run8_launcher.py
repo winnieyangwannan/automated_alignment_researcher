@@ -166,7 +166,9 @@ def test_research_chain_uses_positive_slurm_environment_allowlist() -> None:
     assert "claude_research_bwrap.sh" in chain
     assert "--unshare-pid" in BWRAP.read_text()
     assert "bwrap_args+=(--tmpfs /var/slurm-tmp)" in BWRAP.read_text()
+    assert "unset META_CLAUDE_CODE_RELEASE CLAUDE_CODE_VERSION_OVERRIDE" in BWRAP.read_text()
     assert "touch /var/slurm-tmp/.aar-research-sandbox-write-canary" in chain
+    assert '"${CLAUDE_CLI_PATH}" --version >/dev/null' in chain
     assert 'for hidden_root in "${hidden_roots[@]}"' in BWRAP.read_text()
     assert 'bwrap_args+=(--tmpfs "${hidden_root}")' in BWRAP.read_text()
 

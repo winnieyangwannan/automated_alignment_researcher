@@ -345,3 +345,12 @@ standalone dataset does not by itself satisfy this criterion.
   writable tmpfs. The mandatory pre-agent canary also performs a write/remove
   probe there, catching this integration failure before a research session is
   counted while continuing to hide host temp contents and operator secrets.
+- Compute diagnostic `1749907` passed that private tmpfs write probe. A
+  subsequent real launcher startup exposed a second launcher-specific check:
+  the operator-provided Claude version pin caused Meta's launcher to download a
+  replacement binary and reject the isolated shared `/var` hierarchy. The
+  research boundary now removes both supported version-override variables so
+  the launcher uses its already installed native binary, as its error guidance
+  recommends. The pre-agent canary now invokes the real launcher's `--version`
+  path in addition to the mount probe, so this class of failure no longer
+  consumes an AAR session.

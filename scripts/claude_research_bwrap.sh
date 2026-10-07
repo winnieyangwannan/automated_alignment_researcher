@@ -157,6 +157,12 @@ fi
 # already removed raw keys/token paths; repeat the rule here so this boundary
 # remains fail-closed if a future caller bypasses the Python helper.
 unset AAR_CLAUDE_REAL_CLI_PATH AAR_RESEARCH_STORAGE_HOME
+# A version override makes Meta's launcher download and unpack another native
+# binary below the host Slurm scratch tree. That path is deliberately hidden by
+# this sandbox, and the launcher itself recommends using its installed native
+# version when the override cannot be materialized. Keep the trusted launcher
+# but prevent an operator-side pin from crossing this isolation boundary.
+unset META_CLAUDE_CODE_RELEASE CLAUDE_CODE_VERSION_OVERRIDE
 unset git_common cli_dir masked_file hidden_root storage_home
 while IFS= read -r env_name; do
   upper_name="${env_name^^}"

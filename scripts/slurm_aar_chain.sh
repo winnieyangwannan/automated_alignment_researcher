@@ -176,6 +176,11 @@ if [ "${AAR_RESEARCH_ENV_ISOLATION:-0}" = 1 ]; then
     fi
   '
   echo "[aar] Claude research mount/PID namespace verified"
+  # Exercise the real Meta launcher before a research session is counted. This
+  # catches native-binary selection, sandbox ownership, and launcher startup
+  # failures that a /bin/bash mount probe alone cannot detect.
+  "${CLAUDE_CLI_PATH}" --version >/dev/null
+  echo "[aar] Claude research launcher verified"
 fi
 
 PY="${HARNESS_PY}"
