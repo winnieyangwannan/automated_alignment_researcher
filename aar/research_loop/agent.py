@@ -166,6 +166,7 @@ def resolve_prompt(template_path: str | Path, output_path: str | Path) -> str:
         paper_search_helper=paper_search_helper,
         autodata=autodata,
         autodata_sha=os.getenv("AAR_AUTODATA_SHA", ""),
+        autodata_contract_smoke=os.getenv("AAR_AUTODATA_CONTRACT_SMOKE", "0") == "1",
     )
 
     with open(output_path, 'w') as f:

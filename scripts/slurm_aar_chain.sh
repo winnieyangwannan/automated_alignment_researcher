@@ -146,6 +146,43 @@ PY="${HARNESS_PY}"
 [ -x "${PY}" ] || { echo "[aar] ERROR: Python is not executable: ${PY}" >&2; exit 2; }
 cd "${REPO}"
 
+# Explicit functional-test backend for the Autodata MCP contract. Production
+# runs point AAR_AUTODATA_URL at the operator-managed service and leave this off.
+_autodata_smoke_pid=""
+if [ "${AAR_AUTODATA_CONTRACT_SMOKE:-0}" = "1" ]; then
+  [ "${AAR_FUNCTIONAL_SMOKE:-0}" = "1" ] || {
+    echo "[aar] ERROR: AAR_AUTODATA_CONTRACT_SMOKE is allowed only with AAR_FUNCTIONAL_SMOKE=1" >&2
+    exit 2
+  }
+  export AAR_AUTODATA=1
+  _autodata_smoke_port="${AAR_AUTODATA_SMOKE_PORT:-8792}"
+  export AAR_AUTODATA_URL="http://127.0.0.1:${_autodata_smoke_port}"
+  "${PY}" -u scripts/autodata_contract_smoke_server.py \
+    --port "${_autodata_smoke_port}" \
+    --state-root "${TEAM_DIR}/autodata_service" \
+    > "${TEAM_DIR}/logs/autodata-contract-smoke.log" 2>&1 &
+  _autodata_smoke_pid=$!
+  trap 'if [ -n "${_autodata_smoke_pid:-}" ]; then kill "${_autodata_smoke_pid}" 2>/dev/null || true; fi' EXIT
+  _autodata_smoke_ready=0
+  for _attempt in $(seq 1 50); do
+    if "${PY}" -c "import urllib.request; urllib.request.urlopen('${AAR_AUTODATA_URL}/health', timeout=1)" 2>/dev/null; then
+      _autodata_smoke_ready=1
+      break
+    fi
+    kill -0 "${_autodata_smoke_pid}" 2>/dev/null || {
+      echo "[aar] ERROR: Autodata contract smoke server exited" >&2
+      cat "${TEAM_DIR}/logs/autodata-contract-smoke.log" >&2
+      exit 2
+    }
+    sleep 0.1
+  done
+  [ "${_autodata_smoke_ready}" = "1" ] || {
+    echo "[aar] ERROR: Autodata contract smoke server did not become ready" >&2
+    exit 2
+  }
+  echo "[aar] Autodata contract smoke enabled at ${AAR_AUTODATA_URL}"
+fi
+
 # Per-chain MEMORY file (NOT shared between chains), under THIS team's logs/ folder.
 # Parallel chains must not read or append each other's AGENT_LOG. Seed an explicit
 # iteration-1 stub so a fresh chain reads a REAL "no history" note instead of

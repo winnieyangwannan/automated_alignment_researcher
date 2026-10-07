@@ -234,6 +234,11 @@ fully identify source/task selection, seed/count, generator and judge model role
 rules, filtering, and the exported training view. Do not put a Git ref, branch, commit,
 SHA, path, URL, or credential in this dictionary; those are operator-controlled.
 The integrity monitor reviews and hashes this literal with your method code.
+{% if autodata_contract_smoke %}This run is an **integration-only contract smoke**.
+Set `AUTODATA_SPEC["generator"] = "programmatic_contract_smoke"`; the service emits
+16 deterministic arithmetic rows with `prompt` and `response` fields. Use them only
+to exercise orchestration and training plumbing. Do not claim Kimi generation or a
+scientific safety result from this smoke.{% endif %}
 
 Only after `submit_idea_proposal` approves that exact code, call
 `autodata_generate` with the approved `idea_name` and proposal-issued `run_id`.

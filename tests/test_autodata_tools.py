@@ -128,7 +128,10 @@ class AutodataToolsTest(TestCase):
 
     def test_agent_wiring_is_opt_in(self):
         source = (Path(__file__).parents[1] / "aar" / "research_loop" / "agent.py").read_text()
+        chain = (Path(__file__).parents[1] / "scripts" / "slurm_aar_chain.sh").read_text()
         self.assertIn('self.mcp_servers["autodata-tools"]', source)
         self.assertIn("mcp__autodata-tools__autodata_generate", source)
         self.assertIn("mcp__autodata-tools__autodata_status", source)
         self.assertIn("mcp__autodata-tools__autodata_fetch", source)
+        self.assertIn("autodata_contract_smoke_server.py", chain)
+        self.assertIn('AAR_FUNCTIONAL_SMOKE:-0', chain)
