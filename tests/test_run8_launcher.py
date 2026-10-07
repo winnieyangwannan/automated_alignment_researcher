@@ -170,6 +170,17 @@ def test_bwrap_hides_home_and_run_secrets_but_keeps_workspaces_writable(
 ) -> None:
     if shutil.which("bwrap") is None:
         return
+    # FAIR login nodes install Bubblewrap but deny the user namespace it needs;
+    # the production research chain runs on a Slurm compute node where the
+    # mandatory pre-agent canary enforces this boundary. Treat an unusable
+    # login-node binary like an unavailable optional test dependency.
+    capability = subprocess.run(
+        ["bwrap", "--ro-bind", "/", "/", "--", "/bin/true"],
+        capture_output=True,
+        check=False,
+    )
+    if capability.returncode != 0:
+        return
     sandbox_home = tmp_path / "home"
     storage_home = tmp_path / "storage-home"
     repo = storage_home / "repo"

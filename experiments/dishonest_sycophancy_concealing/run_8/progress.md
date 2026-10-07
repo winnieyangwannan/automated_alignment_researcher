@@ -279,3 +279,9 @@ standalone dataset does not by itself satisfy this criterion.
 - HPC still has approximately 11 TiB free at `/storage/home`. The production
   Firecracker token file remains absent, so no production submission has been
   launched yet. No output has been written to `/checkpoint/ram` by Run 8.
+- The HPC login node installs Bubblewrap but denies its user namespace, so the
+  optional login-node unit probe is skipped there. Slurm diagnostic job
+  `1744114` ran on the real `g3` compute environment and passed the Bubblewrap
+  namespace probe. The production chain retains its mandatory compute-side
+  sandbox canary and still fails closed before an agent call if that boundary
+  cannot be constructed.
