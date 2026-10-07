@@ -1,0 +1,1211 @@
+#!/usr/bin/env python3
+"""Run the real AAR AutoData workspace -> meta-optimize -> production lifecycle.
+
+This is the operator-owned implementation behind ``LiveModelLifecycleBackend``.
+It imports a pinned AutoData checkout, binds the AAR scientific request to the
+checked-in recipe, and executes every generation task through AutoData's native
+SandoQ Firecracker executor. Provider credentials remain broker/service-side.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import os
+import shutil
+import stat
+import subprocess
+import sys
+import threading
+from dataclasses import replace
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from typing import Any, Mapping
+
+
+RESEARCH_AGENT = "aar-research-agent"
+INTEGRITY_MONITOR = "aar-integrity-monitor"
+TUNING_COUNT = 64
+VALIDATION_COUNT = 32
+MINIMUM_VALID_RATE = 0.75
+APPROVAL_POLICY_DIGEST = hashlib.sha256(
+    b"aar-run8-unattended-production/v1:synthetic-only:no-benchmark-mimicry"
+).hexdigest()
+
+
+def _canonical_json(value: Any) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _required_env(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise RuntimeError(f"required operator setting is missing: {name}")
+    return value
+
+
+def _positive_decimal_env(name: str, *, allow_zero: bool = False) -> Decimal:
+    try:
+        value = Decimal(_required_env(name))
+    except InvalidOperation as error:
+        raise RuntimeError(f"{name} must be a finite decimal") from error
+    if not value.is_finite() or value < 0 or (not allow_zero and value == 0):
+        raise RuntimeError(f"{name} must be {'non-negative' if allow_zero else 'positive'}")
+    return value
+
+
+def _positive_int_setting(name: str, default: str) -> int:
+    raw = os.environ.get(name, default).strip()
+    if not raw.isdigit() or int(raw) < 1:
+        raise RuntimeError(f"{name} must be a positive integer")
+    return int(raw)
+
+
+def _install_autodata(root: Path) -> None:
+    source = root / "src"
+    if not (source / "autodata" / "engine.py").is_file():
+        raise RuntimeError(f"not an AutoData checkout: {root}")
+    sys.path.insert(0, str(source))
+
+
+def _git_head(root: Path) -> str:
+    value = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ).stdout.strip()
+    if not all(character in "0123456789abcdef" for character in value) or len(value) != 40:
+        raise RuntimeError("AutoData checkout did not resolve to a full Git SHA")
+    return value
+
+
+def _tree_digest(root: Path) -> str:
+    members = {
+        path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and not path.is_symlink()
+    }
+    return hashlib.sha256(_canonical_json(members)).hexdigest()
+
+
+def _write_json(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+class _UsageLedger:
+    """Durable usage-only side channel, including hidden validation calls."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path.resolve()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._calls: dict[str, dict[str, Any]] = {}
+        if self.path.exists():
+            info = self.path.lstat()
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                raise RuntimeError("usage ledger must be a regular file")
+            if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise RuntimeError("usage ledger must be owner-only")
+            for line in self.path.read_text().splitlines():
+                if line.strip():
+                    self._record_value(json.loads(line), append=False)
+
+    @staticmethod
+    def _validated(raw: Mapping[str, Any]) -> dict[str, Any]:
+        request_id = str(raw.get("request_id") or "")
+        role = raw.get("role")
+        model = raw.get("model")
+        input_tokens = raw.get("input_tokens")
+        output_tokens = raw.get("output_tokens")
+        if not request_id or role not in {"generator", "judge"}:
+            raise RuntimeError("provider usage record has invalid identity or role")
+        if not isinstance(model, str) or not model.strip():
+            raise RuntimeError("provider usage record omitted model identity")
+        for name, value in (
+            ("input_tokens", input_tokens),
+            ("output_tokens", output_tokens),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise RuntimeError(f"provider usage record has invalid {name}")
+        cost = Decimal(str(raw.get("estimated_cost_usd", "")))
+        if not cost.is_finite() or cost < 0:
+            raise RuntimeError("provider usage record has invalid estimated cost")
+        if raw.get("cost_basis") != "operator-configured-token-rates":
+            raise RuntimeError("provider usage record has an unsupported cost basis")
+        return {
+            "request_id": request_id,
+            "role": role,
+            "model": model.strip(),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "estimated_cost_usd": format(cost, "f"),
+            "cost_basis": "operator-configured-token-rates",
+        }
+
+    def _record_value(self, raw: Mapping[str, Any], *, append: bool) -> None:
+        value = self._validated(raw)
+        request_id = value["request_id"]
+        previous = self._calls.get(request_id)
+        if previous is not None:
+            if previous != value:
+                raise RuntimeError(
+                    "provider request_id was reused with conflicting usage"
+                )
+            return
+        self._calls[request_id] = value
+        if append:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_CLOEXEC", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(self.path, flags, 0o600)
+            try:
+                payload = json.dumps(value, sort_keys=True) + "\n"
+                os.write(descriptor, payload.encode())
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+
+    def record_payload(self, payload: bytes) -> None:
+        try:
+            value = json.loads(payload)
+        except (UnicodeDecodeError, ValueError):
+            return
+        if not isinstance(value, dict) or value.get("schema") != "autodata.task-result/v1":
+            return
+        usage = value.get("provider_usage", [])
+        if not isinstance(usage, list):
+            raise RuntimeError("task result provider_usage must be an array")
+        with self._lock:
+            for call in usage:
+                if not isinstance(call, dict):
+                    raise RuntimeError("task result contains malformed provider usage")
+                self._record_value(call, append=True)
+
+    def calls(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return [dict(self._calls[key]) for key in sorted(self._calls)]
+
+    def totals(self) -> dict[str, Any]:
+        calls = self.calls()
+        if not calls:
+            raise RuntimeError("no metered provider usage was retained")
+        return {
+            "spent_cost_usd": format(
+                sum(
+                    (Decimal(str(call["estimated_cost_usd"])) for call in calls),
+                    Decimal(0),
+                ),
+                "f",
+            ),
+            "model_calls": len(calls),
+            "input_tokens": sum(int(call["input_tokens"]) for call in calls),
+            "output_tokens": sum(int(call["output_tokens"]) for call in calls),
+            "cost_basis": "operator-configured-token-rates",
+        }
+
+
+class _UsageTeeArtifacts:
+    """Forward artifacts while extracting usage only; never persist hidden content."""
+
+    def __init__(self, target: Any, ledger: _UsageLedger) -> None:
+        self.target = target
+        self.ledger = ledger
+
+    def put_bytes(
+        self, data: bytes, *, media_type: str, name: str | None = None
+    ) -> Any:
+        self.ledger.record_payload(data)
+        return self.target.put_bytes(data, media_type=media_type, name=name)
+
+    def get_bytes(self, ref: Any) -> bytes:
+        return self.target.get_bytes(ref)
+
+    def collect_path(self, root: Path, relative_path: str) -> Any:
+        resolved_root = root.resolve()
+        source = (resolved_root / relative_path).resolve()
+        if source != resolved_root and resolved_root not in source.parents:
+            raise RuntimeError("usage tee artifact path escaped its result root")
+        if source.is_file() and not source.is_symlink():
+            self.ledger.record_payload(source.read_bytes())
+        return self.target.collect_path(root, relative_path)
+
+
+class _UsageRecordingExecutor:
+    """Executor protocol wrapper that records safe usage for every collection."""
+
+    def __init__(self, delegate: Any, ledger: _UsageLedger) -> None:
+        self.delegate = delegate
+        self.ledger = ledger
+        self.backend = delegate.backend
+
+    def submit(self, request: Any) -> Any:
+        return self.delegate.submit(request)
+
+    def poll(self, handle: Any) -> Any:
+        return self.delegate.poll(handle)
+
+    def cancel(self, handle: Any) -> None:
+        self.delegate.cancel(handle)
+
+    def collect(self, handle: Any, artifacts: Any) -> Any:
+        return self.delegate.collect(
+            handle, _UsageTeeArtifacts(artifacts, self.ledger)
+        )
+
+    def cleanup(self, handle: Any) -> None:
+        self.delegate.cleanup(handle)
+
+    def progress(self, handle: Any) -> Any:
+        return self.delegate.progress(handle)
+
+
+def _source_task_count(required_rows: int) -> int:
+    if required_rows < 1:
+        raise ValueError("required_rows must be positive")
+    return max(
+        VALIDATION_COUNT + TUNING_COUNT,
+        (required_rows * 4 + 2) // 3,
+    )
+
+
+def _require_valid_aggregate(
+    dataset: Mapping[str, Any], *, execution_label: str
+) -> float:
+    """Fail closed unless the final full-corpus dataset meets the frozen floor."""
+
+    aggregate = dataset.get("aggregate")
+    metrics = aggregate.get("metrics") if isinstance(aggregate, dict) else None
+    value = metrics.get("valid") if isinstance(metrics, dict) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise RuntimeError(
+            f"{execution_label} final dataset omitted numeric aggregate.metrics.valid"
+        )
+    valid_rate = float(value)
+    if not math.isfinite(valid_rate) or valid_rate < MINIMUM_VALID_RATE:
+        raise RuntimeError(
+            f"{execution_label} final valid rate {valid_rate!r} is below frozen "
+            f"minimum {MINIMUM_VALID_RATE}"
+        )
+    return valid_rate
+
+
+def _maximum_model_task_attempts(source_count: int) -> int:
+    if source_count < TUNING_COUNT + VALIDATION_COUNT:
+        raise ValueError("source_count is too small for the explicit meta split")
+    return 2 + 2 * TUNING_COUNT + 3 * VALIDATION_COUNT + 7 * source_count
+
+
+def _final_dataset(store: Any, artifacts: Any, execution_id: str) -> dict[str, Any]:
+    from autodata.models import ArtifactRef
+
+    finalized = None
+    for event in store.list_events("execution", execution_id):
+        if event["kind"] == "execution.finalized":
+            finalized = json.loads(str(event["payloadJson"]))
+    if finalized is None:
+        raise RuntimeError(f"execution {execution_id} has no final dataset event")
+    return json.loads(artifacts.get_bytes(ArtifactRef.from_dict(finalized["dataset"])))
+
+
+def _runtime_executor(args: argparse.Namespace) -> dict[str, Any]:
+    generator_timeout = _positive_int_setting(
+        "AAR_AUTODATA_GENERATOR_TIMEOUT", "90"
+    )
+    judge_timeout = _positive_int_setting("AAR_AUTODATA_JUDGE_TIMEOUT", "90")
+    # Each request has at most three attempts and two bounded backoff pauses.
+    # Keep the combined generator+judge worst case within the task command's
+    # 600-second sandbox timeout, including a small serialization margin.
+    if 3 * (generator_timeout + judge_timeout) + 6 > 570:
+        raise RuntimeError(
+            "generator and judge retry timeouts exceed the 600-second task envelope"
+        )
+    generator_max_output = _positive_int_setting(
+        "AAR_AUTODATA_GENERATOR_MAX_TOKENS", "1536"
+    )
+    judge_max_output = _positive_int_setting(
+        "AAR_AUTODATA_JUDGE_MAX_TOKENS", "512"
+    )
+    executor: dict[str, Any] = {
+        "kind": "sandoq-firecracker",
+        "environment": _required_env("AAR_AUTODATA_SANDOQ_ENVIRONMENT"),
+        "image": _required_env("AAR_AUTODATA_OCI_IMAGE"),
+        "expected_image_id": _required_env("AAR_AUTODATA_OCI_EXPECTED_IMAGE_ID"),
+        "broker_url": _required_env("AAR_AUTODATA_BROKER_URL"),
+        "model_backed": True,
+        "cpus": int(os.environ.get("AAR_AUTODATA_TASK_CPUS", "2")),
+        "memory_mb": int(os.environ.get("AAR_AUTODATA_TASK_MEMORY_MB", "2048")),
+        "network": "host",
+        "workdir": "/workspace",
+        "non_secret_env": {
+            "AUTODATA_GENERATOR_URL": args.generator_url,
+            "AUTODATA_GENERATOR_MODEL": args.generator_model,
+            "AUTODATA_GENERATOR_DEPLOYMENT_ID": _required_env(
+                "AAR_AUTODATA_GENERATOR_DEPLOYMENT_ID"
+            ),
+            "AUTODATA_GENERATOR_MAX_OUTPUT": str(generator_max_output),
+            "AUTODATA_GENERATOR_TIMEOUT": str(generator_timeout),
+            "AUTODATA_GENERATOR_INPUT_USD_PER_MILLION": str(
+                _positive_decimal_env(
+                    "AAR_AUTODATA_GENERATOR_INPUT_USD_PER_MILLION", allow_zero=True
+                )
+            ),
+            "AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION": str(
+                _positive_decimal_env(
+                    "AAR_AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION", allow_zero=True
+                )
+            ),
+            "AUTODATA_JUDGE_URL": args.judge_url,
+            "AUTODATA_JUDGE_MODEL": args.judge_model,
+            "AUTODATA_JUDGE_MAX_OUTPUT": str(judge_max_output),
+            "AUTODATA_JUDGE_TIMEOUT": str(judge_timeout),
+            "AUTODATA_JUDGE_INPUT_USD_PER_MILLION": str(
+                _positive_decimal_env("AAR_AUTODATA_JUDGE_INPUT_USD_PER_MILLION")
+            ),
+            "AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": str(
+                _positive_decimal_env("AAR_AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION")
+            ),
+        },
+    }
+    auth_ref = os.environ.get("AAR_AUTODATA_BROKER_AUTH_SECRET_REF", "").strip()
+    if auth_ref:
+        if not os.environ.get(auth_ref):
+            raise RuntimeError(f"broker auth secret environment variable is unset: {auth_ref}")
+        executor["broker_auth_secret_ref"] = auth_ref
+    return executor
+
+
+def _make_executor(
+    spec: Any, store: Any, artifacts: Any, usage_ledger: _UsageLedger
+) -> Any:
+    from autodata.executors import SandoQFirecrackerExecutor
+    from autodata.secrets import EnvironmentSecretResolver
+
+    resolver = EnvironmentSecretResolver()
+    if spec.broker_auth_secret_ref:
+        secret = resolver.resolve([spec.broker_auth_secret_ref])[spec.broker_auth_secret_ref]
+        store.register_secret_values([secret])
+        artifacts.register_secret_values([secret])
+    return _UsageRecordingExecutor(
+        SandoQFirecrackerExecutor(spec, resolver), usage_ledger
+    )
+
+
+def _protocol_paths(args: argparse.Namespace) -> dict[str, Path]:
+    root = args.state_root.resolve()
+    return {
+        "root": root,
+        "state": root / "driver-state.json",
+        "pending": root / "pending-action.json",
+        "draft": root / "live-workspace",
+        "staging": root / "staging-recipe",
+        "database": root / "autodata-state.db",
+        "artifacts": root / "autodata-artifacts",
+        "workspaces": root / "autodata-workspaces",
+        "usage": root / "provider-usage.jsonl",
+        "audit": root / "action-audit.json",
+    }
+
+
+def _protocol_request(args: argparse.Namespace) -> dict[str, Any]:
+    saved = json.loads(args.request.read_text())
+    return saved.get("request", saved)
+
+
+def _protocol_runtime(
+    args: argparse.Namespace,
+) -> tuple[Any, Any, Any, _UsageLedger, dict[str, Path], dict[str, Any]]:
+    from autodata.artifacts import FileArtifactStore
+    from autodata.sqlite_store import SQLiteStateStore
+
+    paths = _protocol_paths(args)
+    request = _protocol_request(args)
+    store = SQLiteStateStore(paths["database"])
+    artifacts = FileArtifactStore(paths["artifacts"])
+    usage = _UsageLedger(paths["usage"])
+    state = json.loads(paths["state"].read_text())
+    executor_spec = json.loads((paths["draft"] / "autodata.workspace.json").read_text())[
+        "execution_defaults"
+    ]["executor"]
+    from autodata.models import ExecutorSpec
+
+    executor = _make_executor(
+        ExecutorSpec.from_dict(executor_spec), store, artifacts, usage
+    )
+    return store, artifacts, executor, usage, paths, {**state, "request": request}
+
+
+def _protocol_usage_delta(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> dict[str, Any]:
+    known = {item["request_id"] for item in before}
+    calls = [item for item in after if item["request_id"] not in known]
+    return {
+        "spent_cost_usd": format(
+            sum((Decimal(str(item["estimated_cost_usd"])) for item in calls), Decimal(0)),
+            "f",
+        ),
+        "model_calls": len(calls),
+        "input_tokens": sum(int(item["input_tokens"]) for item in calls),
+        "output_tokens": sum(int(item["output_tokens"]) for item in calls),
+    }
+
+
+def _public_action(
+    action: Any, artifacts: Any, request: Mapping[str, Any]
+) -> dict[str, Any]:
+    value = action.to_dict()
+    value.pop("editable_root", None)
+    kind = value["kind"]
+    if kind == "analyze_results":
+        value["required_result"] = {
+            "type": "object",
+            "required": ["proposal", "dashboard_summary"],
+            "properties": {
+                "proposal": {"type": "string", "minLength": 1},
+                "dashboard_summary": {
+                    "type": "object",
+                    "required": ["headline", "summary", "next_step"],
+                    "properties": {
+                        key: {"type": "string", "minLength": 1}
+                        for key in ("headline", "summary", "next_step")
+                    },
+                },
+            },
+        }
+        value["instructions"] += (
+            " Return proposal plus dashboard_summary containing headline, summary, "
+            "and next_step."
+        )
+    elif kind == "mutate_candidate":
+        value["required_result"] = {
+            "type": "object",
+            "required": ["prompt_variant", "summary"],
+            "properties": {
+                "prompt_variant": {
+                    "type": "string",
+                    "enum": ["baseline_v1", "contrastive_v2"],
+                },
+                "summary": {"type": "string", "minLength": 1},
+            },
+        }
+        value["instructions"] += (
+            " Select prompt_variant from baseline_v1 or contrastive_v2 and explain "
+            "the choice in summary."
+        )
+    if kind in {"approve_grounding", "approve_baseline", "approve_resources"}:
+        if not action.artifacts and kind != "approve_resources":
+            raise RuntimeError("native approval action omitted its evidence artifact")
+        ref = action.artifacts[0] if action.artifacts else None
+        evidence_value = json.loads(artifacts.get_bytes(ref)) if ref else {}
+        if kind == "approve_grounding":
+            sources = evidence_value.get("sources", [])
+            synthetic = (
+                evidence_value.get("source_count") == 0
+                and "synthetic" in str(evidence_value.get("description", "")).lower()
+            )
+            sourced = (
+                isinstance(sources, list)
+                and bool(sources)
+                and all(
+                    isinstance(source, dict)
+                    and isinstance(source.get("origin_uri"), str)
+                    and bool(source["origin_uri"].strip())
+                    and isinstance(source.get("license"), str)
+                    and bool(source["license"].strip())
+                    for source in sources
+                )
+            )
+            checks = [
+                {
+                    "name": "coverage_present",
+                    "passed": int(evidence_value.get("task_count", 0)) > 0
+                    and bool(evidence_value.get("coverage_dimensions")),
+                },
+                {"name": "provenance_valid", "passed": synthetic or sourced},
+            ]
+            extras = {"task_count": int(evidence_value.get("task_count", 0))}
+        elif kind == "approve_baseline":
+            samples = evidence_value.get("sample_results", [])
+            checks = [
+                {
+                    "name": "dry_run_passed",
+                    "passed": bool(samples)
+                    and all(item.get("outcome") == "succeeded" for item in samples),
+                },
+                {
+                    "name": "pipeline_checks_passed",
+                    "passed": evidence_value.get("schema")
+                    == "autodata.baseline-review/v1"
+                    and isinstance(evidence_value.get("pipeline"), str)
+                    and bool(evidence_value["pipeline"].strip()),
+                },
+            ]
+            extras = {"sample_count": len(samples)}
+        else:
+            controls = request["controls"]
+            checks = [
+                # Reaching resources_review means the immediately preceding
+                # native readiness attempt failed. Static configuration is not
+                # evidence that the runtime has recovered, so unattended policy
+                # must fail closed instead of manufacturing a retry approval.
+                {"name": "resource_profile_verified", "passed": False},
+                {"name": "budget_scope_verified", "passed": True},
+            ]
+            extras = {
+                "resource_profile_sha256": controls["resource_profile_sha256"],
+                "budget_scope_id": controls["budget_scope_id"],
+            }
+        value["evidence"] = {
+            "schema": "aar.autodata.approval-evidence/v1",
+            "artifact_digest": (
+                ref.digest
+                if ref
+                else "sha256:" + hashlib.sha256(_canonical_json(extras)).hexdigest()
+            ),
+            "checks": checks,
+            **extras,
+        }
+    return value
+
+
+def _protocol_create(args: argparse.Namespace) -> dict[str, Any]:
+    from autodata.artifacts import FileArtifactStore
+    from autodata.models import load_workspace
+    from autodata.sqlite_store import SQLiteStateStore
+    from autodata.workspace import WorkspaceEngine
+
+    request = _protocol_request(args)
+    if request.get("spec", {}).get("training_view") != "sft":
+        raise RuntimeError("the live recipe supports only the sft training view")
+    paths = _protocol_paths(args)
+    paths["root"].mkdir(parents=True, exist_ok=True)
+    if paths["state"].is_file():
+        state = json.loads(paths["state"].read_text())
+        return {
+            "state": "active",
+            "phase": state["phase"],
+            "workspace_id": state["workspace_id"],
+        }
+    required_rows = int(request["controls"]["required_retained_rows"])
+    source_count = _source_task_count(required_rows)
+    checkout = Path(_required_env("AUTODATA_SOURCE_ROOT")).resolve()
+    if _git_head(checkout) != request["pipeline_sha"]:
+        raise RuntimeError("canonical AutoData checkout does not match the request pin")
+    recipe_source = Path(
+        os.environ.get(
+            "AAR_AUTODATA_RECIPE_ROOT",
+            Path(__file__).resolve().parents[1]
+            / "aar"
+            / "autodata_recipes"
+            / "dishonest_sycophancy_concealing",
+        )
+    ).resolve()
+    shutil.copytree(
+        recipe_source,
+        paths["staging"],
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    _write_json(
+        paths["staging"] / "recipe" / "request.json",
+        {
+            "schema": "aar.autodata.recipe-request/v1",
+            "safety_axis": request["spec"]["safety_axis"],
+            "training_mechanism": request["spec"]["training_mechanism"],
+            "goal": request["spec"]["goal"],
+        },
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(paths["staging"] / "grounding" / "build_manifest.py"),
+            "--count",
+            str(source_count),
+            "--seed",
+            str(request["spec"]["seed"]),
+            "--output",
+            str(paths["staging"] / "grounding" / "manifest.json"),
+        ],
+        check=True,
+    )
+    runtime_executor = _runtime_executor(args)
+    workspace_raw = json.loads(
+        (paths["staging"] / "autodata.workspace.json").read_text()
+    )
+    workspace_raw["authoring_executor"] = runtime_executor
+    workspace_raw["execution_defaults"]["executor"] = runtime_executor
+    workspace_raw["execution_defaults"]["concurrency"] = int(
+        os.environ.get("AAR_AUTODATA_MAX_CONCURRENCY", "4")
+    )
+    max_attempts = _maximum_model_task_attempts(source_count) + 64
+    workspace_raw["execution_defaults"]["budget"] = {
+        "max_iterations": 1,
+        "max_task_attempts": max_attempts,
+        "max_wall_seconds": int(os.environ.get("AAR_AUTODATA_MAX_WALL_SECONDS", "10800")),
+    }
+    paths["draft"].mkdir()
+    _write_json(paths["draft"] / "autodata.workspace.json", workspace_raw)
+    store = SQLiteStateStore(paths["database"])
+    artifacts = FileArtifactStore(paths["artifacts"])
+    usage = _UsageLedger(paths["usage"])
+    workspace_spec = load_workspace(paths["draft"] / "autodata.workspace.json")
+    executor = _make_executor(
+        workspace_spec.execution_defaults.executor, store, artifacts, usage
+    )
+    workspace = WorkspaceEngine.create(
+        store,
+        artifacts,
+        executor,
+        executor,
+        workspace_spec,
+        root=paths["draft"],
+        internal_root=paths["workspaces"] / "authoring",
+        idempotency_key=f"{request['run_id']}:workspace",
+    )
+    state = {
+        "schema": "aar.autodata.live-driver-state/v1",
+        "phase": "workspace",
+        "workspace_id": workspace.workspace_id,
+        "source_count": source_count,
+        "required_rows": required_rows,
+        "max_attempts": max_attempts,
+    }
+    _write_json(paths["state"], state)
+    return {"state": "active", "phase": "workspace", "workspace_id": workspace.workspace_id}
+
+
+def _protocol_workspace_engine(store: Any, artifacts: Any, executor: Any, state: Mapping[str, Any]):
+    from autodata.models import WorkspaceSpec
+    from autodata.workspace import WorkspaceEngine
+
+    row = store.get_workspace(str(state["workspace_id"]))
+    spec = WorkspaceSpec.from_dict(json.loads(str(row["specJson"])))
+    return WorkspaceEngine(
+        store, artifacts, executor, executor, str(state["workspace_id"])
+    ), spec
+
+
+def _protocol_create_meta(
+    store: Any,
+    artifacts: Any,
+    executor: Any,
+    paths: Mapping[str, Path],
+    state: dict[str, Any],
+    request: Mapping[str, Any],
+    frozen: Mapping[str, Any],
+) -> None:
+    from autodata.engine import ExecutionEngine
+    from autodata.models import ExecutionSpec, GroundingRef, load_pipeline, load_workspace
+
+    store.cancel_execution(str(frozen["execution_id"]))
+    snapshot = store.latest_snapshot(str(state["workspace_id"]))
+    snapshot_root = Path(str(snapshot["root"]))
+    source_count = int(state["source_count"])
+    task_ids = [f"safety-sft-{index + 1:04d}" for index in range(source_count)]
+    grounding_path = snapshot_root / "grounding" / "manifest.json"
+    workspace_spec = load_workspace(paths["draft"] / "autodata.workspace.json")
+    meta_spec = ExecutionSpec(
+        grounding=GroundingRef(
+            "grounding/manifest.json",
+            "sha256:" + hashlib.sha256(grounding_path.read_bytes()).hexdigest(),
+        ),
+        mode="meta_optimize",
+        tuning_task_ids=tuple(task_ids[:TUNING_COUNT]),
+        validation_task_ids=tuple(task_ids[TUNING_COUNT : TUNING_COUNT + VALIDATION_COUNT]),
+        test_grounding=None,
+        split_seed=int(request["spec"]["seed"]),
+        executor=workspace_spec.execution_defaults.executor,
+        budget=workspace_spec.execution_defaults.budget,
+        concurrency=workspace_spec.execution_defaults.concurrency,
+        secret_references=(),
+    )
+    meta = ExecutionEngine.create(
+        store,
+        artifacts,
+        executor,
+        load_pipeline(snapshot_root / "autodata.pipeline.json"),
+        meta_spec,
+        pipeline_root=snapshot_root,
+        workspace_root=paths["workspaces"] / "executions",
+        idempotency_key=f"{request['run_id']}:meta-explicit-64",
+        study_id=store.study_for_subject("workspace", str(state["workspace_id"])),
+        workspace_id=str(state["workspace_id"]),
+        snapshot_id=str(snapshot["id"]),
+    )
+    state.update(
+        phase="meta_optimize",
+        meta_execution_id=meta.execution_id,
+        snapshot_root=str(snapshot_root),
+    )
+    _write_json(paths["state"], state)
+
+
+def _protocol_create_production(
+    store: Any,
+    artifacts: Any,
+    executor: Any,
+    paths: Mapping[str, Path],
+    state: dict[str, Any],
+    request: Mapping[str, Any],
+    completed: Mapping[str, Any],
+) -> None:
+    from autodata.engine import ExecutionEngine
+    from autodata.models import ExecutionSpec, load_pipeline
+
+    meta_row = store.get_execution(str(state["meta_execution_id"]))
+    meta_spec = ExecutionSpec.from_dict(json.loads(str(meta_row["executionJson"])))
+    winner = store.get_candidate(str(completed["winner_candidate_id"]))
+    winner_root = Path(str(winner["workspace"]))
+    production_spec = replace(
+        meta_spec,
+        mode="production",
+        tuning_task_ids=(),
+        validation_task_ids=(),
+        budget=replace(meta_spec.budget, max_task_attempts=int(state["max_attempts"])),
+    )
+    production = ExecutionEngine.create(
+        store,
+        artifacts,
+        executor,
+        load_pipeline(winner_root / "autodata.pipeline.json"),
+        production_spec,
+        pipeline_root=winner_root,
+        workspace_root=paths["workspaces"] / "production",
+        idempotency_key=f"{request['run_id']}:production",
+        study_id=store.study_for_subject("workspace", str(state["workspace_id"])),
+    )
+    state.update(
+        phase="production",
+        production_execution_id=production.execution_id,
+        winner_root=str(winner_root),
+    )
+    _write_json(paths["state"], state)
+
+
+def _protocol_final_result(
+    store: Any,
+    artifacts: Any,
+    paths: Mapping[str, Path],
+    state: Mapping[str, Any],
+) -> dict[str, Any]:
+    meta_dataset = _final_dataset(store, artifacts, str(state["meta_execution_id"]))
+    production_dataset = _final_dataset(
+        store, artifacts, str(state["production_execution_id"])
+    )
+    meta_valid = _require_valid_aggregate(meta_dataset, execution_label="meta-optimize")
+    production_valid = _require_valid_aggregate(
+        production_dataset, execution_label="production"
+    )
+    raw_rows = production_dataset.get("items")
+    if not isinstance(raw_rows, list):
+        raise RuntimeError("native production dataset omitted items")
+    accepted = []
+    for raw in raw_rows:
+        if not isinstance(raw, dict):
+            continue
+        row = dict(raw)
+        row.pop("_autodata_usage", None)
+        metadata = row.get("metadata")
+        if (
+            isinstance(metadata, dict)
+            and metadata.get("judge_accepted") is True
+            and all(
+                isinstance(row.get(key), str) and row[key].strip()
+                for key in ("prompt", "response")
+            )
+        ):
+            accepted.append(row)
+    required = int(state["required_rows"])
+    if len(accepted) < required:
+        raise RuntimeError(
+            f"production retained {len(accepted)} accepted rows; required {required}"
+        )
+    rows = sorted(accepted, key=lambda row: str(row.get("id")))[:required]
+    winner_root = Path(str(state["winner_root"]))
+    return {
+        "state": "complete",
+        "rows": rows,
+        "manifest_fields": {
+            "study_id": store.study_for_subject("workspace", str(state["workspace_id"])),
+            "execution_id": state["production_execution_id"],
+            "workspace_id": state["workspace_id"],
+            "meta_optimize_execution_id": state["meta_execution_id"],
+            "production_execution_id": state["production_execution_id"],
+            "recipe_digest": _tree_digest(paths["draft"]),
+            "pipeline_digest": hashlib.sha256(
+                (winner_root / "autodata.pipeline.json").read_bytes()
+            ).hexdigest(),
+            "meta_optimize_source_task_count": len(meta_dataset["source_task_ids"]),
+            "meta_optimize_tuning_task_count": TUNING_COUNT,
+            "meta_optimize_validation_task_count": VALIDATION_COUNT,
+            "production_source_task_count": len(production_dataset["source_task_ids"]),
+            "meta_optimize_valid_rate": meta_valid,
+            "production_valid_rate": production_valid,
+            "counts": {
+                "generated": len(raw_rows),
+                "rejected": len(raw_rows) - len(accepted),
+                "retained": len(rows),
+            },
+            "modes_completed_in_order": ["meta_optimize", "production"],
+            "approval_principal": INTEGRITY_MONITOR,
+            "approval_policy_sha256": APPROVAL_POLICY_DIGEST,
+            "action_provider": "aar-visible-agent-and-integrity-monitor",
+            "action_audit": (
+                json.loads(paths["audit"].read_text())
+                if paths["audit"].is_file()
+                else []
+            ),
+            "sandoq_executor": "SandoQFirecrackerExecutor",
+            "unattended": True,
+        },
+        "status_fields": {
+            "workspace_id": state["workspace_id"],
+            "meta_execution_id": state["meta_execution_id"],
+            "production_execution_id": state["production_execution_id"],
+            "retained_rows": len(rows),
+        },
+    }
+
+
+def _protocol_step(args: argparse.Namespace) -> dict[str, Any]:
+    from autodata.engine import ExecutionEngine
+
+    store, artifacts, executor, _, paths, state = _protocol_runtime(args)
+    request = state.pop("request")
+    if paths["pending"].is_file():
+        saved = json.loads(paths["pending"].read_text())
+        return {"state": "waiting_action", "phase": state["phase"], "action": saved["public"]}
+    if state["phase"] == "workspace":
+        engine, _ = _protocol_workspace_engine(store, artifacts, executor, state)
+        value = engine.step()
+        if hasattr(value, "kind"):
+            public = _public_action(value, artifacts, request)
+            _write_json(paths["pending"], {"native": value.to_dict(), "public": public})
+            return {"state": "waiting_action", "phase": "workspace", "action": public}
+        if value.get("status") != "frozen":
+            return dict(value)
+        _protocol_create_meta(store, artifacts, executor, paths, state, request, value)
+        return {
+            "state": "active",
+            "phase": "meta_optimize",
+            "workspace_id": state["workspace_id"],
+            "execution_id": state["meta_execution_id"],
+        }
+    execution_id = (
+        state["meta_execution_id"]
+        if state["phase"] == "meta_optimize"
+        else state["production_execution_id"]
+    )
+    engine = ExecutionEngine(store, artifacts, executor, str(execution_id))
+    value = engine.step()
+    if hasattr(value, "kind"):
+        public = _public_action(value, artifacts, request)
+        _write_json(paths["pending"], {"native": value.to_dict(), "public": public})
+        return {"state": "waiting_action", "phase": state["phase"], "action": public}
+    if value.get("status") != "completed":
+        return dict(value)
+    if state["phase"] == "meta_optimize":
+        _protocol_create_production(
+            store, artifacts, executor, paths, state, request, value
+        )
+        return {
+            "state": "active",
+            "phase": "production",
+            "execution_id": state["production_execution_id"],
+        }
+    return _protocol_final_result(store, artifacts, paths, state)
+
+
+def _copy_authored_tree(source: Path, destination: Path, *, grounding_only: bool) -> None:
+    """Materialize operator-staged files only when the agent completes authoring."""
+
+    for path in sorted(source.rglob("*")):
+        if path.is_symlink():
+            raise RuntimeError("operator recipe must not contain symbolic links")
+        relative = path.relative_to(source)
+        is_grounding = bool(relative.parts) and relative.parts[0] == "grounding"
+        if grounding_only != is_grounding:
+            continue
+        if not grounding_only and relative.as_posix() == "autodata.workspace.json":
+            # The draft already contains the operator-bound runtime executor and budget.
+            continue
+        target = destination / relative
+        if path.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+        elif path.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+
+
+def _agent_action_result(
+    action: Any,
+    supplied: Mapping[str, Any],
+    paths: Mapping[str, Path],
+) -> dict[str, Any]:
+    """Validate and apply the semantic contribution made by the AAR agent."""
+
+    kind = action.kind
+    if kind in {"clarify_design", "author_grounding", "author_pipeline"}:
+        summary = supplied.get("summary")
+        decisions = supplied.get("decisions")
+        if not isinstance(summary, str) or not summary.strip():
+            raise RuntimeError(f"{kind} requires a non-empty agent summary")
+        if not isinstance(decisions, list) or not decisions or any(
+            not isinstance(item, str) or not item.strip() for item in decisions
+        ):
+            raise RuntimeError(f"{kind} requires non-empty agent decisions")
+        if kind == "author_grounding":
+            _copy_authored_tree(paths["staging"], paths["draft"], grounding_only=True)
+        elif kind == "author_pipeline":
+            _copy_authored_tree(paths["staging"], paths["draft"], grounding_only=False)
+        return {"summary": summary.strip(), "decisions": list(decisions)}
+    if kind == "analyze_results":
+        proposal = supplied.get("proposal")
+        dashboard = supplied.get("dashboard_summary")
+        if not isinstance(proposal, str) or not proposal.strip():
+            raise RuntimeError("analyze_results requires a non-empty agent proposal")
+        if not isinstance(dashboard, dict) or any(
+            not isinstance(dashboard.get(key), str) or not dashboard[key].strip()
+            for key in ("headline", "summary", "next_step")
+        ):
+            raise RuntimeError(
+                "analyze_results requires headline, summary, and next_step strings"
+            )
+        return {"proposal": proposal.strip(), "dashboard_summary": dict(dashboard)}
+    if kind == "mutate_candidate":
+        variant = supplied.get("prompt_variant")
+        if variant not in {"baseline_v1", "contrastive_v2"}:
+            raise RuntimeError(
+                "mutate_candidate requires an allowlisted prompt_variant"
+            )
+        if not action.editable_root:
+            raise RuntimeError("native mutation action omitted editable_root")
+        _write_json(
+            Path(action.editable_root) / "recipe" / "prompt_variant.json",
+            {"variant": variant},
+        )
+        summary = supplied.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            summary = f"The AAR agent selected the allowlisted {variant} prompt variant."
+        return {"summary": summary.strip()}
+    if kind in {"approve_grounding", "approve_baseline", "approve_resources"}:
+        # AutoData v1 calls this field user_acknowledged. In this unattended
+        # integration it is an integrity-monitor acknowledgement, retained for
+        # native contract compatibility rather than evidence of a human action.
+        result = dict(supplied)
+        result["user_acknowledged"] = True
+        return result
+    raise RuntimeError(f"unsupported native action kind: {kind}")
+
+
+def _protocol_action(args: argparse.Namespace) -> dict[str, Any]:
+    from autodata.models import ActionSpec
+
+    store, _, _, _, paths, state = _protocol_runtime(args)
+    state.pop("request")
+    if not paths["pending"].is_file():
+        raise RuntimeError("no native action is pending")
+    pending = json.loads(paths["pending"].read_text())
+    action = ActionSpec.from_dict(pending["native"])
+    if args.action_id != action.id:
+        raise RuntimeError("action id does not match the pending native action")
+    payload = json.loads(args.payload.read_text())
+    if args.kind == "action_complete":
+        supplied = payload.get("result")
+        if not isinstance(supplied, dict):
+            raise RuntimeError("action completion requires an object result")
+        result = _agent_action_result(action, supplied, paths)
+        begun = store.begin_action(action.id, expected_revision=action.scope.revision)
+        token = str(begun["leaseToken"])
+        store.complete_action(action.id, lease_token=token, result=result)
+        audit = json.loads(paths["audit"].read_text()) if paths["audit"].is_file() else []
+        audit.append(
+            {
+                "action_id": action.id,
+                "scope_kind": action.scope.kind,
+                "scope_id": action.scope.id,
+                "scope_revision": action.scope.revision,
+                "kind": action.kind,
+                "actor": (
+                    INTEGRITY_MONITOR
+                    if action.kind
+                    in {"approve_grounding", "approve_baseline", "approve_resources"}
+                    else RESEARCH_AGENT
+                ),
+                "result_sha256": hashlib.sha256(_canonical_json(result)).hexdigest(),
+            }
+        )
+        _write_json(paths["audit"], audit)
+    elif args.kind == "action_fail":
+        reason = payload.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise RuntimeError("action failure requires a non-empty reason")
+        begun = store.begin_action(action.id, expected_revision=action.scope.revision)
+        token = str(begun["leaseToken"])
+        store.fail_action(action.id, lease_token=token, reason=reason.strip())
+    else:
+        raise RuntimeError(f"unsupported action operation: {args.kind}")
+    paths["pending"].unlink()
+    return {
+        "state": "active",
+        "phase": state["phase"],
+        "workspace_id": state["workspace_id"],
+    }
+
+
+def _protocol_step_model_tasks(args: argparse.Namespace) -> int:
+    """Return a conservative task ceiling for exactly one native step call."""
+
+    if args.kind != "step":
+        return 0
+    paths = _protocol_paths(args)
+    if not paths["state"].is_file() or paths["pending"].is_file():
+        return 0
+    from autodata.sqlite_store import SQLiteStateStore
+
+    state = json.loads(paths["state"].read_text())
+    store = SQLiteStateStore(paths["database"])
+    source_count = int(state["source_count"])
+    if state["phase"] == "workspace":
+        row = store.get_workspace(str(state["workspace_id"]))
+        phase = str(row["phase"])
+        reaches_dry_run = phase == "dry_run_pending"
+        if phase == "pipeline_pending":
+            reaches_dry_run = store.completed_action(
+                "workspace",
+                str(state["workspace_id"]),
+                "author_pipeline",
+                int(row["revision"]),
+            ) is not None
+        if phase == "resources_review":
+            reaches_dry_run = store.completed_action(
+                "workspace",
+                str(state["workspace_id"]),
+                "approve_resources",
+                int(row["revision"]),
+            ) is not None
+        if not reaches_dry_run:
+            return 0
+        manifest = paths["draft"] / "grounding" / "manifest.json"
+        if not manifest.is_file():
+            return 3
+        grounding = json.loads(manifest.read_text())
+        dry_ids = grounding.get("dry_run_task_ids", [])
+        return len(dry_ids) if isinstance(dry_ids, list) and dry_ids else 3
+    execution_id = (
+        state["meta_execution_id"]
+        if state["phase"] == "meta_optimize"
+        else state["production_execution_id"]
+    )
+    row = store.get_execution(str(execution_id))
+    phase = str(row["phase"])
+    if phase == "baseline_pending":
+        return (
+            TUNING_COUNT + VALIDATION_COUNT
+            if state["phase"] == "meta_optimize"
+            else source_count
+        )
+    if phase == "awaiting_mutation":
+        selection = VALIDATION_COUNT if state["phase"] == "meta_optimize" else source_count
+        # One paired comparison and a final full-corpus run which may retry once.
+        return 2 * selection + 2 * source_count
+    if phase == "final_pending":
+        return 2 * source_count
+    return 0
+
+
+def _protocol_prepare(args: argparse.Namespace) -> dict[str, Any]:
+    tasks = _protocol_step_model_tasks(args)
+    maximum = Decimal(tasks) * _positive_decimal_env(
+        "AAR_AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD"
+    ) if tasks else Decimal(0)
+    return {
+        "maximum_cost_usd": format(maximum, "f"),
+        "performs_model_call": tasks > 0,
+        "maximum_model_tasks": tasks,
+    }
+
+
+def _protocol_execute(args: argparse.Namespace) -> dict[str, Any]:
+    paths = _protocol_paths(args)
+    before = _UsageLedger(paths["usage"]).calls()
+    try:
+        if args.kind == "create_workspace":
+            result = _protocol_create(args)
+        elif args.kind == "step":
+            result = _protocol_step(args)
+        elif args.kind in {"action_complete", "action_fail"}:
+            result = _protocol_action(args)
+        else:
+            raise RuntimeError(f"unsupported protocol operation kind: {args.kind}")
+    except Exception as exc:
+        after = _UsageLedger(paths["usage"]).calls()
+        _write_json(
+            args.output,
+            {
+                "state": "failed",
+                "error": str(exc),
+                "usage": _protocol_usage_delta(before, after),
+            },
+        )
+        raise
+    after = _UsageLedger(paths["usage"]).calls()
+    return {**result, "usage": _protocol_usage_delta(before, after)}
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(description=__doc__)
+    result.add_argument("--operation", choices=("prepare", "execute"), required=True)
+    result.add_argument(
+        "--kind",
+        choices=("create_workspace", "step", "action_complete", "action_fail"),
+        required=True,
+    )
+    result.add_argument("--request", type=Path, required=True)
+    result.add_argument("--output", type=Path, required=True)
+    result.add_argument("--state-root", type=Path)
+    result.add_argument("--payload", type=Path)
+    result.add_argument("--action-id", default="")
+    result.add_argument("--reservation-id", default="")
+    result.add_argument("--generator-model")
+    result.add_argument("--generator-url")
+    result.add_argument("--judge-model")
+    result.add_argument("--judge-url")
+    result.add_argument("--generator-token-env")
+    result.add_argument("--judge-token-env")
+    return result
+
+
+def main() -> int:
+    args = parser().parse_args()
+    checkout = Path(_required_env("AUTODATA_SOURCE_ROOT")).resolve()
+    _install_autodata(checkout)
+    if not args.state_root or not args.payload:
+        raise RuntimeError("protocol mode requires --state-root and --payload")
+    if args.operation == "prepare":
+        value = _protocol_prepare(args)
+    else:
+        for name in (
+            "generator_model",
+            "generator_url",
+            "judge_model",
+            "judge_url",
+            "generator_token_env",
+            "judge_token_env",
+        ):
+            if not getattr(args, name):
+                raise RuntimeError(f"protocol execution requires --{name.replace('_', '-')}")
+        if not os.environ.get(args.generator_token_env):
+            raise RuntimeError("configured generator credential environment variable is unset")
+        if not os.environ.get(args.judge_token_env):
+            raise RuntimeError("configured judge credential environment variable is unset")
+        value = _protocol_execute(args)
+    _write_json(args.output, value)
+    print(json.dumps({"status": value.get("state", "prepared")}, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

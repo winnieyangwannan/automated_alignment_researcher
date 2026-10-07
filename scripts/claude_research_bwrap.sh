@@ -1,0 +1,163 @@
+#!/bin/bash
+# Execute the Claude Code research subprocess in a fail-closed mount/PID
+# namespace.  The trusted Python parent stays outside this namespace so its
+# integrity monitor and in-process MCP servers can retain purpose-specific
+# credentials.  Claude Bash gets the checkout and run artifacts, but not the
+# user's remaining home, operator env files, or run secret files.
+
+set -euo pipefail
+
+fail() {
+  echo "claude_research_bwrap: $*" >&2
+  exit 2
+}
+
+[ "${AAR_RESEARCH_ENV_ISOLATION:-0}" = 1 ] || \
+  fail "AAR_RESEARCH_ENV_ISOLATION=1 is required"
+command -v bwrap >/dev/null || fail "bwrap is required"
+
+real_cli="${AAR_CLAUDE_REAL_CLI_PATH:?missing real Claude CLI path}"
+repo="${AAR_REPO:?missing repository path}"
+runtime_root="${AAR_RUNTIME_ROOT:?missing run root}"
+sandbox_home="${HOME:?missing HOME}"
+storage_home="${AAR_RESEARCH_STORAGE_HOME:-/storage/home/${USER:?missing USER}}"
+
+[ -x "${real_cli}" ] || fail "real Claude CLI is not executable"
+[ -d "${repo}" ] || fail "repository does not exist"
+[ -d "${runtime_root}" ] || fail "run root does not exist"
+
+real_cli="$(realpath -e -- "${real_cli}")"
+repo="$(realpath -e -- "${repo}")"
+runtime_root="$(realpath -e -- "${runtime_root}")"
+sandbox_home="$(realpath -e -- "${sandbox_home}")"
+case "${sandbox_home}" in /|/home|/storage|/storage/home) fail "unsafe HOME";; esac
+
+declare -a hidden_roots=("${sandbox_home}")
+if [ -d "${storage_home}" ]; then
+  storage_home="$(realpath -e -- "${storage_home}")"
+  case "${storage_home}" in /|/home|/storage|/storage/home) fail "unsafe storage home";; esac
+  [ "${storage_home}" = "${sandbox_home}" ] || hidden_roots+=("${storage_home}")
+fi
+
+declare -a bwrap_args=(
+  --die-with-parent
+  --new-session
+  --unshare-pid
+  --ro-bind / /
+  --proc /proc
+  --dev /dev
+  --tmpfs /tmp
+  --tmpfs /var/tmp
+)
+for hidden_root in "${hidden_roots[@]}"; do
+  bwrap_args+=(--tmpfs "${hidden_root}")
+done
+bwrap_args+=(--setenv HOME "${sandbox_home}" --setenv TMPDIR /tmp)
+declare -A made_dirs=()
+
+# A tmpfs over each possible home root removes all original descendants.
+# Recreate only the mountpoint hierarchy needed for an approved bind.
+add_hidden_mountpoint() {
+  local destination="$1" root="" candidate relative component current
+  for candidate in "${hidden_roots[@]}"; do
+    case "${destination}" in
+      "${candidate}"/*)
+        # Prefer a nested/more-specific hidden root if roots ever overlap.
+        [ "${#candidate}" -gt "${#root}" ] && root="${candidate}"
+        ;;
+    esac
+  done
+  [ -n "${root}" ] || return
+  relative="${destination#"${root}"/}"
+  current="${root}"
+  IFS=/ read -r -a components <<< "${relative}"
+  for component in "${components[@]}"; do
+    [ -n "${component}" ] || continue
+    current="${current}/${component}"
+    if [[ ! -v "made_dirs[${current}]" ]]; then
+      bwrap_args+=(--dir "${current}")
+      made_dirs["${current}"]=1
+    fi
+  done
+}
+
+bind_visible_dir() {
+  local source="$1" mode="$2"
+  add_hidden_mountpoint "${source}"
+  if [ "${mode}" = rw ]; then
+    bwrap_args+=(--bind "${source}" "${source}")
+  else
+    bwrap_args+=(--ro-bind "${source}" "${source}")
+  fi
+}
+
+# The source checkout is an immutable input to the research subprocess. Generated
+# methods belong under the retained run's TEAM_DIR, never in the checkout.
+bind_visible_dir "${repo}" ro
+case "${runtime_root}" in
+  "${repo}") fail "runtime root must not equal the read-only source checkout" ;;
+  "${repo}"/*) fail "runtime root must not be nested in the read-only source checkout" ;;
+  *) bind_visible_dir "${runtime_root}" rw ;;
+esac
+
+# Worktree Git metadata commonly lives in a sibling checkout hidden by the
+# HOME tmpfs.  Restore only the Git database, read-only, rather than its parent.
+git_common=""
+if [ -e "${repo}/.git" ]; then
+  git_common="$(git -C "${repo}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+fi
+if [ -n "${git_common}" ] && [ -d "${git_common}" ]; then
+  git_common="$(realpath -e -- "${git_common}")"
+  case "${git_common}" in
+    "${repo}"|"${repo}"/*|"${runtime_root}"|"${runtime_root}"/*) ;;
+    *) bind_visible_dir "${git_common}" ro ;;
+  esac
+fi
+
+# A home-installed Claude binary may have adjacent runtime files.  Restore its
+# containing directory read-only.  System installations remain in the root
+# read-only view and need no extra mount.
+cli_dir="$(dirname -- "${real_cli}")"
+for hidden_root in "${hidden_roots[@]}"; do
+  case "${cli_dir}" in
+    "${hidden_root}"|"${hidden_root}"/*)
+    case "${cli_dir}" in
+      "${repo}"|"${repo}"/*|"${runtime_root}"|"${runtime_root}"/*) ;;
+      *) bind_visible_dir "${cli_dir}" ro ;;
+    esac
+    break
+    ;;
+  esac
+done
+
+# Rebinding the checkout/run also restores their credential files, so mask
+# those last. /dev/null preserves a harmless file-shaped mountpoint without
+# exposing content; the secret directory becomes an empty private tmpfs.
+for masked_file in \
+  "${repo}/.env" \
+  "${repo}/.sandoq-firecracker-token" \
+  "${runtime_root}/metadata/autodata_services.env" \
+  /opt/aar/eval-user/.env; do
+  [ -e "${masked_file}" ] || continue
+  bwrap_args+=(--ro-bind /dev/null "${masked_file}")
+done
+if [ -d "${runtime_root}/secrets" ]; then
+  bwrap_args+=(--tmpfs "${runtime_root}/secrets")
+fi
+
+# Do not reveal wrapper-control values to Claude.  The SDK-side spawn guard has
+# already removed raw keys/token paths; repeat the rule here so this boundary
+# remains fail-closed if a future caller bypasses the Python helper.
+unset AAR_CLAUDE_REAL_CLI_PATH AAR_RESEARCH_STORAGE_HOME
+unset git_common cli_dir masked_file hidden_root storage_home
+while IFS= read -r env_name; do
+  upper_name="${env_name^^}"
+  case "${upper_name}" in
+    HARNESS_ENV|ANTHROPIC_API_KEY|ANT_HIGH_PRIO_API|ANT_API_KEY|MODEL_API_KEY|LLAMA_API_KEY|HF_TOKEN|HUGGING_FACE_HUB_TOKEN|OAI_API|OPENAI_API_KEY|*_API_KEY|*_TOKEN|*_TOKEN_FILE|*_SECRET|*_SECRET_FILE|*CREDENTIAL*)
+      unset "${env_name}"
+      ;;
+  esac
+done < <(compgen -e)
+unset env_name upper_name
+
+exec bwrap "${bwrap_args[@]}" -- "${real_cli}" "$@"

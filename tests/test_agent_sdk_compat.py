@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import os
 import sys
@@ -53,6 +54,115 @@ def _load_agent_module(options_class: type) -> types.ModuleType:
 
 
 class AgentSdkCompatibilityTest(unittest.TestCase):
+    def test_research_subprocess_environment_hides_operator_secrets(self) -> None:
+        class Options:
+            def __init__(self) -> None:
+                pass
+
+        agent_module = _load_agent_module(Options)
+        operator_env = {
+            "AAR_RESEARCH_ENV_ISOLATION": "1",
+            "AAR_AUTODATA_URL": "http://adapter.example:8123",
+            "AAR_AUTODATA_TOKEN_FILE": "/operator/adapter.token",
+            "HARNESS_ENV": "/operator/harness.env",
+            "MODEL_API_KEY": "model-secret",
+            "AAR_MONITOR_MODEL_API_KEY": "monitor-secret",
+            "AAR_RUN8_EXECSIDECAR_TOKEN_FILE": "/operator/execsidecar.token",
+            "AAR_RUN8_BROKER_TOKEN_FILE": "/operator/broker.token",
+        }
+        with patch.dict(os.environ, operator_env, clear=True):
+            with agent_module._sanitized_research_subprocess_environment():
+                self.assertEqual(
+                    os.environ.get("AAR_AUTODATA_URL"),
+                    "http://adapter.example:8123",
+                )
+                for name in operator_env:
+                    if name not in {
+                        "AAR_RESEARCH_ENV_ISOLATION",
+                        "AAR_AUTODATA_URL",
+                    }:
+                        self.assertNotIn(name, os.environ)
+
+            # The trusted parent retains adapter access for its in-process MCP
+            # callback and the integrity monitor after the subprocess spawn.
+            self.assertEqual(
+                os.environ["AAR_AUTODATA_TOKEN_FILE"],
+                "/operator/adapter.token",
+            )
+            self.assertEqual(
+                os.environ["AAR_MONITOR_MODEL_API_KEY"], "monitor-secret"
+            )
+
+    def test_secret_name_filter_covers_provider_and_token_path_variants(self) -> None:
+        class Options:
+            def __init__(self) -> None:
+                pass
+
+        agent_module = _load_agent_module(Options)
+        for name in (
+            "SOME_NEW_PROVIDER_API_KEY",
+            "SOME_SERVICE_TOKEN",
+            "SOME_SERVICE_TOKEN_FILE",
+            "CUSTOM_CREDENTIAL_PATH",
+            "AAR_AUTODATA_TOKEN_FILE",
+        ):
+            self.assertTrue(agent_module._is_research_child_secret_name(name), name)
+        self.assertFalse(
+            agent_module._is_research_child_secret_name("AAR_AUTODATA_URL")
+        )
+
+    def test_sdk_client_is_spawned_inside_sanitized_boundary(self) -> None:
+        class Options:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+        agent_module = _load_agent_module(Options)
+        observed: dict[str, str] = {}
+
+        class Client:
+            def __init__(self, *, options) -> None:
+                self.options = options
+
+            async def __aenter__(self):
+                observed.update(os.environ)
+                return self
+
+            async def __aexit__(self, *_args) -> None:
+                return None
+
+            async def query(self, _task: str) -> None:
+                return None
+
+            async def receive_response(self):
+                result = agent_module.ResultMessage()
+                result.is_error = False
+                result.result = "ok"
+                yield result
+
+        agent_module.ClaudeSDKClient = Client
+        base = agent_module.BaseAgent(
+            name="isolated",
+            allowed_tools=[],
+            workspace=Path("/tmp/workspace"),
+            mcp_servers={},
+        )
+        operator_env = {
+            "AAR_RESEARCH_ENV_ISOLATION": "1",
+            "AAR_AUTODATA_URL": "http://adapter.example:8123",
+            "AAR_AUTODATA_TOKEN_FILE": "/operator/adapter.token",
+            "MODEL_API_KEY": "operator-secret",
+        }
+        with patch.dict(os.environ, operator_env, clear=True):
+            result = asyncio.run(base._execute_once("test", 0.0))
+            self.assertIn("AAR_AUTODATA_TOKEN_FILE", os.environ)
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            observed["AAR_AUTODATA_URL"], "http://adapter.example:8123"
+        )
+        self.assertNotIn("AAR_AUTODATA_TOKEN_FILE", observed)
+        self.assertNotIn("MODEL_API_KEY", observed)
+
     def test_restrictive_options_are_forwarded_only_when_explicit(self) -> None:
         class Options:
             def __init__(self) -> None:

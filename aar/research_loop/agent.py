@@ -14,6 +14,7 @@ import shutil
 import time
 import traceback
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from dataclasses import dataclass
 from enum import Enum
@@ -49,6 +50,75 @@ from aar.phase_timing import phase
 from .tools.server_api_tools import create_server_api_tools_server
 from .tools.prior_work_tools import create_prior_work_tools_server
 from .tools.findings_sync import FindingsSync
+
+
+# These values belong to the operator-side integrity monitor and in-process MCP
+# servers.  Claude Code (and therefore its Bash tool) must not inherit them.
+_RESEARCH_CHILD_SECRET_NAMES = frozenset(
+    {
+        "HARNESS_ENV",
+        "ANTHROPIC_API_KEY",
+        "ANT_high_prio_API",
+        "ANT_API_KEY",
+        "MODEL_API_KEY",
+        "LLAMA_API_KEY",
+        "HF_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "OAI_API",
+        "OPENAI_API_KEY",
+        "AAR_MONITOR_MODEL_API_KEY",
+        "AAR_MONITOR_ANTHROPIC_API_KEY",
+        "AAR_AUTODATA_TOKEN",
+        "AAR_AUTODATA_TOKEN_FILE",
+        "AAR_AUTODATA_BROKER_AUTH_TOKEN",
+        "AUTODATA_BROKER_AUTH_TOKEN",
+        "AAR_RUN8_EXECSIDECAR_TOKEN_FILE",
+        "AAR_RUN8_ADAPTER_TOKEN_FILE",
+        "AAR_RUN8_BROKER_TOKEN_FILE",
+    }
+)
+
+
+def _is_research_child_secret_name(name: str) -> bool:
+    """Return whether an environment entry is credential material/reference."""
+    upper = name.upper()
+    return (
+        upper in _RESEARCH_CHILD_SECRET_NAMES
+        or upper.endswith("_API_KEY")
+        or upper.endswith("_TOKEN")
+        or upper.endswith("_TOKEN_FILE")
+        or upper.endswith("_SECRET")
+        or upper.endswith("_SECRET_FILE")
+        or "CREDENTIAL" in upper
+    )
+
+
+@contextmanager
+def _sanitized_research_subprocess_environment():
+    """Temporarily remove secrets while the SDK spawns Claude Code.
+
+    Claude Agent SDK merges ``ClaudeAgentOptions.env`` over ``os.environ``;
+    passing a smaller mapping therefore does *not* isolate the child.  The SDK
+    subprocess is created by ``ClaudeSDKClient.__aenter__``, so temporarily
+    removing sensitive entries during that operation gives the child a clean
+    environment, then restores the trusted Python parent's monitor/MCP access.
+    """
+    if os.getenv("AAR_RESEARCH_ENV_ISOLATION", "0").lower() not in {
+        "1", "true", "yes", "on"
+    }:
+        yield
+        return
+    removed = {
+        name: value
+        for name, value in list(os.environ.items())
+        if _is_research_child_secret_name(name)
+    }
+    for name in removed:
+        os.environ.pop(name, None)
+    try:
+        yield
+    finally:
+        os.environ.update(removed)
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +237,13 @@ def resolve_prompt(template_path: str | Path, output_path: str | Path) -> str:
         autodata=autodata,
         autodata_sha=os.getenv("AAR_AUTODATA_SHA", ""),
         autodata_contract_smoke=os.getenv("AAR_AUTODATA_CONTRACT_SMOKE", "0") == "1",
+        autodata_required=os.getenv("AAR_AUTODATA_REQUIRED", "0").lower()
+        in ("1", "true", "yes", "on"),
+        autodata_resource_profile=os.getenv("AAR_AUTODATA_RESOURCE_PROFILE", ""),
+        autodata_required_retained_rows=os.getenv(
+            "AAR_AUTODATA_REQUIRED_RETAINED_ROWS", ""
+        ),
+        autodata_training_view=os.getenv("AAR_AUTODATA_TRAINING_VIEW", ""),
     )
 
     with open(output_path, 'w') as f:
@@ -381,7 +458,14 @@ class BaseAgent:
         if True:
             options = ClaudeAgentOptions(**self._build_options_dict())
 
-            async with ClaudeSDKClient(options=options) as client:
+            # The in-process MCP callbacks need their purpose-specific adapter
+            # credential, while Claude Code and its Bash descendants must not
+            # receive it.  Restrict only the subprocess-spawn window; after
+            # __aenter__, restoring the parent does not change the child's env.
+            with _sanitized_research_subprocess_environment():
+                client_context = ClaudeSDKClient(options=options)
+                client = await client_context.__aenter__()
+            try:
                 await client.query(task)
                 result_message = None
 
@@ -417,6 +501,8 @@ class BaseAgent:
                     duration=time.time() - start_time,
                     iteration_count=iteration_count,
                 )
+            finally:
+                await client_context.__aexit__(None, None, None)
 
     def _format_message(self, message) -> Optional[str]:
         ts = datetime.now().strftime("%H:%M:%S")
@@ -511,7 +597,13 @@ class AutonomousAgentLoop:
                 self.mcp_servers["prior-work-tools"] = create_prior_work_tools_server()
             except Exception as e:
                 print(f"[Init] Warning: prior work tools unavailable: {e}")
-        if os.getenv("AAR_AUTODATA", "0").lower() in ("1", "true", "yes"):
+        autodata_enabled = os.getenv("AAR_AUTODATA", "0").lower() in ("1", "true", "yes")
+        autodata_required = os.getenv("AAR_AUTODATA_REQUIRED", "0").lower() in (
+            "1", "true", "yes", "on"
+        )
+        if autodata_required and not autodata_enabled:
+            raise RuntimeError("AAR_AUTODATA_REQUIRED=1 requires AAR_AUTODATA=1")
+        if autodata_enabled:
             try:
                 from .tools.autodata_tools import create_autodata_tools_server
 
@@ -565,6 +657,10 @@ class AutonomousAgentLoop:
             allowed_tools.extend([
                 "mcp__autodata-tools__autodata_generate",
                 "mcp__autodata-tools__autodata_status",
+                "mcp__autodata-tools__autodata_step",
+                "mcp__autodata-tools__autodata_action_begin",
+                "mcp__autodata-tools__autodata_action_complete",
+                "mcp__autodata-tools__autodata_action_fail",
                 "mcp__autodata-tools__autodata_fetch",
             ])
 

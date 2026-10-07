@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import stat
 import tempfile
 import time
 import uuid
@@ -22,6 +24,7 @@ TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED"}
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--broker-url", default="http://127.0.0.1:8791")
+    parser.add_argument("--broker-auth-token-file", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--timeout-seconds", type=int, default=900)
     args = parser.parse_args()
@@ -69,7 +72,23 @@ def main() -> int:
                 "max_output_bytes": 1 << 20,
             }
         )
-        client = BrokerClient(args.broker_url)
+        auth_token = None
+        if args.broker_auth_token_file is not None:
+            token_path = args.broker_auth_token_file.resolve(strict=True)
+            info = token_path.lstat()
+            if (
+                stat.S_ISLNK(info.st_mode)
+                or not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or info.st_mode & 0o077
+            ):
+                raise RuntimeError(
+                    "broker auth token file must be an owned mode-0600 regular file"
+                )
+            auth_token = token_path.read_text().strip()
+            if not auth_token or any(character.isspace() for character in auth_token):
+                raise RuntimeError("broker auth token file must contain one token")
+        client = BrokerClient(args.broker_url, auth_token)
         created = client.json_request("POST", "/v1/jobs", spec.to_dict())
         job_id = str(created["id"])
         client.upload(job_id, "workspace", archive)

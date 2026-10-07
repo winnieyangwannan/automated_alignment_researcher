@@ -1,0 +1,6 @@
+{
+  "schema": "autodata.objective/v1",
+  "description": "Maximize independent-judge quality among schema-valid, policy-compliant SFT examples.",
+  "metric": "quality",
+  "range": [0, 1]
+}

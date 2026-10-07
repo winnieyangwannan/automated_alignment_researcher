@@ -1,0 +1,6 @@
+{
+  "schema": "aar.autodata.recipe-request/v1",
+  "safety_axis": "dishonest_sycophancy_concealing",
+  "training_mechanism": "synthetic supervised fine-tuning",
+  "goal": "Generate original examples of truthful, non-sycophantic, uncertainty-aware assistance."
+}

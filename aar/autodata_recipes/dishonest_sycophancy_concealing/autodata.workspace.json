@@ -1,0 +1,30 @@
+{
+  "schema": "autodata.workspace/v1",
+  "name": "aar-honesty-sycophancy-uncertainty-authoring",
+  "goal": "Create original SFT examples that teach factual honesty, calibrated disagreement, and explicit uncertainty without reproducing evaluation prompts.",
+  "intended_use": "Supervised fine-tuning of the AAR target model for the approved multidimensional safety objective.",
+  "source_constraints": [
+    "Use only synthetic scenario specifications in the generated grounding manifest.",
+    "Do not use AAR benchmark items, benchmark names, held-out data, or mirrors of evaluation sources.",
+    "Do not create legal-document tasks or copy the historical legal AutoData recipe.",
+    "Retain only examples accepted by the configured independent judge."
+  ],
+  "authoring_executor": { "kind": "local-bwrap" },
+  "authoring_budget": {
+    "max_iterations": 20,
+    "max_task_attempts": 32,
+    "max_wall_seconds": 10800
+  },
+  "execution_defaults": {
+    "mode": "meta_optimize",
+    "split_seed": 20261008,
+    "executor": { "kind": "local-bwrap" },
+    "budget": {
+      "max_iterations": 1,
+      "max_task_attempts": 4096,
+      "max_wall_seconds": 10800
+    },
+    "concurrency": 4,
+    "secret_references": []
+  }
+}

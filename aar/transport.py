@@ -20,9 +20,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from aar import config
 
@@ -152,26 +153,88 @@ def validate_model_submission(model_path: str) -> Path:
 
 
 # --- model handoff (research -> eval) --------------------------------------
-def put_model(model_path: str, run_id: str) -> str:
+def _submission_metadata(metadata: Mapping[str, Any] | None, run_id: str) -> dict[str, Any] | None:
+    if metadata is None:
+        return None
+    value = dict(metadata)
+    if value.get("schema") != "aar.model-submission/v1":
+        raise ValueError("model submission metadata has an unsupported schema")
+    if value.get("run_id") != run_id:
+        raise ValueError("model submission metadata run_id mismatch")
+    # Round-trip now so non-JSON values fail before the model is advertised.
+    return json.loads(json.dumps(value, sort_keys=True))
+
+
+def put_model(
+    model_path: str,
+    run_id: str,
+    *,
+    metadata: Mapping[str, Any] | None = None,
+) -> str:
     """Research side: publish the trained model for run_id. Returns its ref."""
     source = validate_model_submission(model_path)
+    submission_metadata = _submission_metadata(metadata, run_id)
     if _fs():
         dest = Path(config.SUBMISSIONS_DIR) / run_id / "model"
         dest.parent.mkdir(parents=True, exist_ok=True)
+        marker = dest.parent / ".submitted"
+        marker.unlink(missing_ok=True)
+        (dest.parent / "submission_metadata.json").unlink(missing_ok=True)
         if dest.exists():
             shutil.rmtree(dest)
         _copytree_retry(source, dest)
         # Check the actual staged tree, rather than assuming every shared-FS
         # copy retained all files, before advertising it to a worker.
         validate_model_submission(str(dest))
+        if submission_metadata is not None:
+            metadata_path = dest.parent / "submission_metadata.json"
+            temporary = metadata_path.with_suffix(".json.tmp")
+            temporary.write_text(json.dumps(submission_metadata, indent=2, sort_keys=True) + "\n")
+            os.replace(temporary, metadata_path)
         # Atomicity marker: the eval worker only picks up run_ids once this exists
         # (so it never scores a half-copied model).
-        (dest.parent / ".submitted").touch()
+        marker.touch()
         return str(dest)
     from aar.infrastructure import s3_utils
     prefix = f"{config.SUBMISSION_PREFIX}{run_id}/model"
     s3_utils.upload_directory_to_s3(source, prefix, config.S3_BUCKET)
+    if submission_metadata is not None:
+        with tempfile.TemporaryDirectory(prefix="aar-submission-metadata-") as temporary:
+            metadata_path = Path(temporary) / "submission_metadata.json"
+            metadata_path.write_text(
+                json.dumps(submission_metadata, indent=2, sort_keys=True) + "\n"
+            )
+            s3_utils.upload_file_to_s3(
+                metadata_path,
+                f"{config.SUBMISSION_PREFIX}{run_id}/submission_metadata.json",
+                config.S3_BUCKET,
+                content_type="application/json",
+            )
     return f"s3://{config.S3_BUCKET}/{prefix}"
+
+
+def get_model_submission_metadata(run_id: str) -> dict[str, Any] | None:
+    """Eval side: read the metadata atomically published with a model."""
+    if _fs():
+        path = Path(config.SUBMISSIONS_DIR) / run_id / "submission_metadata.json"
+        if not path.is_file() or path.is_symlink():
+            return None
+        value = json.loads(path.read_text())
+    else:
+        from aar.infrastructure import s3_utils
+
+        client = s3_utils.get_s3_client()
+        try:
+            obj = client.get_object(
+                Bucket=config.S3_BUCKET,
+                Key=f"{config.SUBMISSION_PREFIX}{run_id}/submission_metadata.json",
+            )
+        except Exception:
+            return None
+        value = json.loads(obj["Body"].read())
+    if not isinstance(value, dict):
+        raise ValueError("model submission metadata is not an object")
+    return _submission_metadata(value, run_id)
 
 
 def get_model(run_id: str, dest_dir: Optional[str] = None) -> str:

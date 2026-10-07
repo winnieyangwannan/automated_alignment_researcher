@@ -229,11 +229,19 @@ from `reasoning`. Use only `answer` as a label.
 **Autodata is enabled** at operator-pinned pipeline revision `{{ autodata_sha }}`.
 For nontrivial synthetic training data, define exactly one literal Python dictionary
 named `AUTODATA_SPEC` in your method package before submitting the proposal. It must
-fully identify source/task selection, seed/count, generator and judge model roles
-(Kimi and other strong generators are allowed), prompts/procedure, sampling, acceptance
-rules, filtering, and the exported training view. Do not put a Git ref, branch, commit,
-SHA, path, URL, or credential in this dictionary; those are operator-controlled.
-The integrity monitor reviews and hashes this literal with your method code.
+contain only scientific intent; do not put a Git ref, branch, commit, SHA, path, URL,
+credential, model, budget, concurrency, timeout, or retained-row limit in it. Those are
+operator-controlled. The integrity monitor reviews and hashes this literal with your
+method code.
+{% if autodata_required %}This run requires the v1 request shape:
+`{"schema": "aar.autodata.request/v1", "resource_profile": "{{ autodata_resource_profile }}",
+"safety_axis": "{{ suite_name }}", "training_mechanism": <mechanism>, "training_view":
+{% if autodata_training_view %}`"{{ autodata_training_view }}"`{% else %}`"sft"` or `"preference"`{% endif %},
+"seed": <integer>, "goal": <specific scientific goal>}`. The locked
+profile requires at least {{ autodata_required_retained_rows }} final accepted rows.
+Models and their exact roles must still be disclosed in the proposal's paper fields,
+but they are selected and enforced by the operator profile rather than this dictionary.
+{% endif %}
 {% if autodata_contract_smoke %}This run is an **integration-only contract smoke**.
 Set `AUTODATA_SPEC["generator"] = "programmatic_contract_smoke"`; the service emits
 16 deterministic arithmetic rows with `prompt` and `response` fields. Use them only
@@ -242,9 +250,19 @@ scientific safety result from this smoke.{% endif %}
 
 Only after `submit_idea_proposal` approves that exact code, call
 `autodata_generate` with the approved `idea_name` and proposal-issued `run_id`.
-Poll `autodata_status`, then call `autodata_fetch`. The fetched rows and manifest are
+This creates the run's idempotent workspace. Repeatedly call `autodata_step`; when it
+returns a semantic authoring action, lease it with `autodata_action_begin`, perform only
+the requested allowed authoring work, then call `autodata_action_complete` (or
+`autodata_action_fail`). Never complete an approval action yourself: grounding,
+baseline, and resource approvals are issued by the independent delegated policy. Poll
+`autodata_status` as needed. After the execution completes, call `autodata_fetch`. The fetched rows and manifest are
 stored at `$TEAM_DIR/autodata/<run_id>/`; training reads that directory using
-`AAR_CURRENT_RUN_ID`. Do not edit `AUTODATA_SPEC` after approval. The service keeps
+`AAR_CURRENT_RUN_ID`. Your approved method's `run_experiment` **must** import and call
+`aar.infrastructure.autodata.load_autodata_dataset()` before training and train on
+the returned rows. Merely reading files directly, mentioning the path, or fetching
+the dataset is insufficient: the loader verifies the manifest and writes the
+run-bound consumption receipt required by the training wrapper. Do not edit
+`AUTODATA_SPEC` after approval. The service keeps
 model, SandoQ, and gateway credentials outside your sandbox and binds every artifact
 to the operator-pinned pipeline revision.
 {% endif %}
@@ -373,15 +391,20 @@ without an approval.** Once approved → train + `evaluate_model` **that approve
    (so it can never collide with another chain's run — the cause of cross-chain score mix-ups) AND your
      mini-paper is already frozen to it. Persist it, then submit ONE training job:
 {% if autodata %}   Before submitting training, launch the approved method's Autodata job with
-   `autodata_generate(idea_name=<your approved method>, run_id=$RUN_ID)`, poll
-   `autodata_status` until complete, and call `autodata_fetch`. If generation or
+   `autodata_generate(idea_name=<your approved method>, run_id=$RUN_ID)`, drive the
+   returned native workspace/execution with `autodata_step` and the action tools, poll
+   `autodata_status` until complete, and call `autodata_fetch`. Do not complete approval
+   actions; wait for the delegated policy to attest them. If generation or
    provenance verification fails, do not train; record the failure and end the session.
+   Confirm that the approved method code calls `load_autodata_dataset()` and actually
+   uses its returned rows for training; the training wrapper fails closed if the
+   loader's digest-bound consumption receipt is absent.
 {% endif %}
    ```
    RUN_ID="<the run_id returned by your approved submit_idea_proposal>"
-   echo "$RUN_ID" > /tmp/run_id_current                # persist the id (shell vars do NOT survive across Bash calls)
+   echo "$RUN_ID" > "$TEAM_DIR/logs/run_id_current"   # persist the id (shell vars do NOT survive across Bash calls)
    jobid=$(scripts/submit_train_job.sh <your_idea_module> "$RUN_ID")
-   echo "$jobid" > "/tmp/jobid_$RUN_ID"   # PERSIST it too
+   echo "$jobid" > "$TEAM_DIR/logs/jobid_$RUN_ID"     # PERSIST it too
    ```
    **Submit this EXACTLY ONCE.** Do not run the sbatch again for the same method.
    (The script also enforces the chain prefix as a safety net.)
@@ -397,7 +420,7 @@ without an approval.** Once approved → train + `evaluate_model` **that approve
    ```
    until [ -f "$SCORES_DIR/$RUN_ID.json" ] || [ -f "$SCORES_DIR/$RUN_ID.failed.json" ]; do
      sleep 60
-     st=$(sacct -j "$(cat /tmp/jobid_$RUN_ID)" --format=State -n 2>/dev/null | head -1)
+     st=$(sacct -j "$(cat "$TEAM_DIR/logs/jobid_$RUN_ID")" --format=State -n 2>/dev/null | head -1)
      case "$st" in *FAIL*|*CANCEL*|*TIMEOUT*|*OUT_OF*)
        echo "TRAIN JOB DIED ($st) — do NOT resubmit; read $TEAM_DIR/logs/train-*.out, fix the method NEXT iteration"; break;; esac
    done

@@ -1,0 +1,7 @@
+{
+  "schema": "autodata.comparator/v1",
+  "metric": "quality",
+  "direction": "maximize",
+  "minimum_meaningful_delta": 0.01,
+  "constraints": { "valid": { "minimum": 0.75 } }
+}

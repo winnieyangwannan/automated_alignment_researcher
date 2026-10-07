@@ -87,9 +87,21 @@ fi
 # overwrites (one marker per IDEA_UID). We snapshot THIS chain's currently-approved proposal paper to
 # the run NOW, before training, while the marker still holds this run's paper. share_finding reads
 # this run-keyed snapshot first (its lookup is keyed by run_id), restoring both the freeze guarantee
-# and the per-run audit trail. Fail-open (|| true): a stamp failure must never block training.
-PYTHONUNBUFFERED=1 "${PY}" -c "from aar.research_loop.tools.server_api_tools import _stamp_run_proposal as s; print('[train] per-run frozen-paper stamp ->', s('${RUN_ID}'))" \
-  || echo "[train] WARN: per-run frozen-paper stamp errored (continuing)"
+# and the per-run audit trail. Required Autodata mode fails closed because the
+# fetched dataset is bound to this exact proposal snapshot.
+case "${AAR_AUTODATA_REQUIRED:-0}" in 1|true|yes|on) _autodata_required=1;; *) _autodata_required=0;; esac
+if [ "${_autodata_required}" = "1" ]; then
+  PYTHONUNBUFFERED=1 "${PY}" -c \
+    'import sys; from aar.research_loop.tools.server_api_tools import _stamp_run_proposal as s; ok=s(sys.argv[1]); print("[train] per-run frozen-paper stamp ->", ok); raise SystemExit(0 if ok else 2)' \
+    "${RUN_ID}"
+  PYTHONUNBUFFERED=1 "${PY}" -c \
+    'import json, sys; from aar.infrastructure.autodata import verify_autodata_dataset; print("[train] verified required Autodata dataset ->", json.dumps(verify_autodata_dataset(sys.argv[1]), sort_keys=True))' \
+    "${RUN_ID}"
+else
+  PYTHONUNBUFFERED=1 "${PY}" -c \
+    'import sys; from aar.research_loop.tools.server_api_tools import _stamp_run_proposal as s; print("[train] per-run frozen-paper stamp ->", s(sys.argv[1]))' \
+    "${RUN_ID}" || echo "[train] WARN: per-run frozen-paper stamp errored (continuing)"
+fi
 
 echo "[train] ${IDEA} -> stage model + submit (run ${RUN_ID})"
 PYTHONUNBUFFERED=1 "${PY}" -u - <<PY
@@ -99,12 +111,32 @@ except ModuleNotFoundError:
     from aar.ideas.${IDEA}.run import run_experiment, MethodConfig   # repo seed library
 from aar import transport
 from aar.phase_timing import phase, require_successful_phases
+import os
 with phase("train.method_total"):
     out = run_experiment(MethodConfig(output_dir="${STAGING}"))
 if "${AAR_REQUIRE_PHASE_TIMINGS:-0}".lower() in {"1", "true", "yes", "on"}:
     require_successful_phases("${AAR_PHASE_TIMINGS_PATH}")
+if os.getenv("AAR_AUTODATA_REQUIRED", "0").lower() in {"1", "true", "yes", "on"}:
+    from aar.infrastructure.autodata import (
+        autodata_training_link,
+        record_autodata_training_link,
+    )
+    training_link = autodata_training_link("${RUN_ID}")
+    out["autodata_dataset_sha256"] = training_link["dataset_sha256"]
+    print("[train] method consumed required Autodata dataset ->", training_link["dataset_sha256"])
+else:
+    training_link = None
 with phase("train.model_submission"):
-    transport.put_model(out["model_path"], "${RUN_ID}")
+    submission_metadata = ({
+        "schema": "aar.model-submission/v1",
+        "run_id": "${RUN_ID}",
+        "training_data": training_link,
+    } if training_link is not None else None)
+    model_ref = transport.put_model(
+        out["model_path"], "${RUN_ID}", metadata=submission_metadata
+    )
+if training_link is not None:
+    record_autodata_training_link(training_link, model_submission_ref=model_ref)
 print("[train] submitted ${RUN_ID}; waiting for eval worker to score it")
 PY
 

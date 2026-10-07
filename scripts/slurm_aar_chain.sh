@@ -142,6 +142,38 @@ elif [ -z "${ANTHROPIC_API_KEY:-}" ]; then
 fi
 unset _requested_web _detected_web
 
+# Run 8's research model has Bash/Read access, so same-UID environment
+# scrubbing is insufficient by itself.  Put Claude Code in a mount/PID
+# namespace that cannot see the operator's home or the run secret directory.
+# The trusted Python parent remains outside for monitor and MCP credentials.
+if [ "${AAR_RESEARCH_ENV_ISOLATION:-0}" = 1 ]; then
+  command -v bwrap >/dev/null || {
+    echo "[aar] ERROR: research environment isolation requires bwrap" >&2
+    exit 2
+  }
+  [ -x "${REPO}/scripts/claude_research_bwrap.sh" ] || {
+    echo "[aar] ERROR: Claude research sandbox wrapper is not executable" >&2
+    exit 2
+  }
+  export AAR_CLAUDE_REAL_CLI_PATH="${CLAUDE_CLI_PATH:?missing real Claude CLI}"
+  export CLAUDE_CLI_PATH="${REPO}/scripts/claude_research_bwrap.sh"
+  # Fail before spending an agent call if the production mount boundary cannot
+  # be constructed.  /bin/bash stands in for Claude only for this canary.
+  # shellcheck disable=SC2016  # variables intentionally expand inside sandbox
+  AAR_CLAUDE_REAL_CLI_PATH=/bin/bash "${CLAUDE_CLI_PATH}" -c '
+    set -eu
+    [ ! -s "$AAR_REPO/.env" ]
+    [ ! -s "$AAR_REPO/.sandoq-firecracker-token" ]
+    [ ! -e "$HOME/.ssh" ]
+    if [ -d "$AAR_RUNTIME_ROOT/secrets" ]; then
+      [ -z "$(find "$AAR_RUNTIME_ROOT/secrets" -mindepth 1 -print -quit)" ]
+    fi
+    touch "$AAR_RUNTIME_ROOT/.research-sandbox-write-canary"
+    rm -f "$AAR_RUNTIME_ROOT/.research-sandbox-write-canary"
+  '
+  echo "[aar] Claude research mount/PID namespace verified"
+fi
+
 PY="${HARNESS_PY}"
 [ -x "${PY}" ] || { echo "[aar] ERROR: Python is not executable: ${PY}" >&2; exit 2; }
 cd "${REPO}"
@@ -224,9 +256,15 @@ echo "[aar] launching chain seed=${SEED} suite=${SUITE_NAME} target=${TARGET_MOD
 IDEA_UID="${MODEL:-qwen}-${SEED}-$(date +%s)"
 export IDEA_UID
 export IDEA_NAME="${MODEL:-qwen}-${SEED}"
-# Training/evaluation jobs reload their own credentials from HARNESS_ENV. Keep
-# unrelated secrets out of the internet-enabled Claude child.
+# The evaluator was launched by the operator before this research job and
+# retains its credential environment.  Training needs no provider credential.
+# Keep raw credentials and every operator credential-file path out of the
+# internet-enabled Claude child; agent.py independently enforces the same rule
+# at the SDK subprocess boundary for purpose-specific monitor/MCP secrets.
 unset MODEL_API_KEY LLAMA_API_KEY HF_TOKEN HUGGING_FACE_HUB_TOKEN OAI_API OPENAI_API_KEY
+unset ANTHROPIC_API_KEY ANT_high_prio_API ANT_API_KEY HARNESS_ENV
+unset AAR_RUN8_EXECSIDECAR_TOKEN_FILE AAR_RUN8_BROKER_TOKEN_FILE
+unset AAR_AUTODATA_BROKER_AUTH_TOKEN AUTODATA_BROKER_AUTH_TOKEN
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN RUNPOD_API_KEY WANDB_API_KEY
 if [ "${AAR_HIDE_EVAL_CONFIG:-0}" = "1" ]; then
   # The evaluator has already inherited what it needs. Do not advertise the
@@ -236,7 +274,14 @@ fi
 PYTHONUNBUFFERED=1 "${PY}" -u run.py agent --idea-uid "${IDEA_UID}" --idea-name "${IDEA_NAME}" \
   --max-iterations "${MAX_ITERS}" --max-runtime "${FULL_AUTO_MAX_RUNTIME_SECONDS}" --local
 if [ "${AAR_VERIFY_TWO_ITERATION_ARTIFACTS:-0}" = 1 ]; then
-  "${PY}" "${REPO}/replication/verify_two_iteration_multidimensional.py" \
-    --team-dir "${TEAM_DIR}" --expected-iterations 2
+  if [ "${AAR_VERIFY_RUN8_AUTODATA:-0}" = 1 ]; then
+    "${PY}" "${REPO}/replication/verify_run8_autodata.py" \
+      --team-dir "${TEAM_DIR}" --expected-iterations 2 \
+      --minimum-rows "${AAR_AUTODATA_REQUIRED_RETAINED_ROWS:?missing retained row requirement}" \
+      --output "${TEAM_DIR}/logs/run8_completion_verification.json"
+  else
+    "${PY}" "${REPO}/replication/verify_two_iteration_multidimensional.py" \
+      --team-dir "${TEAM_DIR}" --expected-iterations 2
+  fi
 fi
 echo "=== DONE ==="

@@ -228,7 +228,14 @@ fi
 #   LITREVIEW_SKIP=1     skip the survey entirely
 #   LITREVIEW_MIN=<n>    target entry count (default 30)
 LIT_AXIS="${LIT_AXIS_DIR}"
-mkdir -p "${LIT_AXIS}"
+if [ "${AAR_LIT_AXIS_READ_ONLY:-0}" = "1" ]; then
+  [ -d "${LIT_AXIS}" ] || {
+    echo "[team] FATAL: read-only literature baseline is missing: ${LIT_AXIS}" >&2
+    exit 2
+  }
+else
+  mkdir -p "${LIT_AXIS}"
+fi
 _lit_count_dir() {
   LIT_AXIS_DIR="$1" LIT_FORUM_DIR='' PYTHONPATH="${PYTHONPATH}" "${PY}" -c \
     'from aar.research_loop.tools.lit_forum import count; print(count())'
@@ -240,11 +247,15 @@ _lit_ready_dir() {
 }
 _lit_n="$(_lit_count_dir "${LIT_AXIS}")"
 _lit_ready="$(_lit_ready_dir "${LIT_AXIS}")"
+if [ "${AAR_LIT_AXIS_READ_ONLY:-0}" = "1" ] && [ "${_lit_ready}" != "1" ]; then
+  echo "[team] FATAL: immutable literature baseline is not ready: ${LIT_AXIS}" >&2
+  exit 2
+fi
 # RECOVERY: a prior run may have surveyed this axis under a legacy location (the old per-axis
 # _cache/<axis>/, an old per-team aar_litreview/<axis>-*/ forum, or a prior team's
 # aar_teams/<axis>-*/litreview/). Reuse it rather than re-survey — a survey is ~40 min and is
 # identical per axis. [[lit-cache-vs-forum]]
-if [ "${LITREVIEW_SKIP:-0}" != "1" ] && [ "${LITREVIEW_REFRESH:-0}" != "1" ] && [ "${_lit_ready}" != "1" ]; then
+if [ "${AAR_LIT_AXIS_READ_ONLY:-0}" != "1" ] && [ "${LITREVIEW_SKIP:-0}" != "1" ] && [ "${LITREVIEW_REFRESH:-0}" != "1" ] && [ "${_lit_ready}" != "1" ]; then
   shopt -s nullglob
   _lit_candidates=(
     "${RUNTIME_ROOT}/litreview/_cache/${SUITE}"
@@ -265,7 +276,9 @@ if [ "${LITREVIEW_SKIP:-0}" != "1" ] && [ "${LITREVIEW_REFRESH:-0}" != "1" ] && 
     fi
   done
 fi
-if [ "${LITREVIEW_SKIP:-0}" = "1" ]; then
+if [ "${AAR_LIT_AXIS_READ_ONLY:-0}" = "1" ]; then
+  echo "[team] reusing immutable AXIS baseline literature for '${SUITE}' (${_lit_n} entries, ${LIT_AXIS})"
+elif [ "${LITREVIEW_SKIP:-0}" = "1" ]; then
   echo "[team] LITREVIEW_SKIP=1 — skipping the literature survey"
 elif [ "${LITREVIEW_REFRESH:-0}" != "1" ] && [ "${_lit_ready}" = "1" ]; then
   echo "[team] reusing AXIS baseline literature for '${SUITE}' (${_lit_n} entries, ${LIT_AXIS}) — no re-survey (LITREVIEW_REFRESH=1 to rebuild)"
@@ -324,11 +337,30 @@ for s in ${SEEDS}; do
   # mishandled by this cluster's Slurm — it mangles the job's environment, so the chain shows
   # RUNNING but the agent hangs at init with NO output (no .out, no session log). TEAM_ID is
   # also passed positionally below, so nothing axis-specific depends on the env alone.
+  _chain_export_args=()
+  if [ "${AAR_CHAIN_SANITIZE_ENV:-0}" = "1" ]; then
+    # Slurm normally exports the submitter's entire environment.  The team
+    # launcher still has evaluator/service credentials at this point, so use a
+    # positive allowlist for the research job.  Do not use ALL,VAR=...: besides
+    # being unsafe, that form is broken on the production cluster.
+    _chain_export_names=()
+    for _chain_name in "${AAR_RESEARCH_CHAIN_ENV_ALLOWLIST[@]}"; do
+      [[ -v "${_chain_name}" ]] && _chain_export_names+=("${_chain_name}")
+    done
+    [ "${#_chain_export_names[@]}" -gt 0 ] || {
+      echo "[team] FATAL: sanitized chain export allowlist is empty" >&2
+      exit 2
+    }
+    _chain_export_csv="$(IFS=,; printf '%s' "${_chain_export_names[*]}")"
+    _chain_export_args=(--export="${_chain_export_csv}")
+    echo "[team] research-chain Slurm environment is credential-file-free and allowlisted"
+  fi
   jid=$(sbatch --parsable \
         --account="${AAR_SLURM_ACCOUNT}" --partition="${AAR_SLURM_PARTITION}" --qos="${AAR_AGENT_QOS}" \
         --time="${MAX_H}:30:00" \
         --job-name="aar-${SUITE}-${MODEL}-${s}" \
         -o "${TEAM_DIR}/logs/%x_%j.out" \
+        "${_chain_export_args[@]}" \
         "${REPO}/scripts/slurm_aar_chain.sh" "explore-${s}" "${MAX_H}" "${MAX_ITERS}" "${TEAM_ID}")
   echo "[team] chain ${s} -> job ${jid}"
 done

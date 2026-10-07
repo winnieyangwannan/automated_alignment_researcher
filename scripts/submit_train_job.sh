@@ -23,6 +23,16 @@ mkdir -p "${TEAM_DIR}/logs"
 AAR_TRAIN_SUBMITTED_AT_NS="$(date +%s%N)"
 export AAR_TRAIN_SUBMITTED_AT_NS
 
+case "${AAR_AUTODATA_REQUIRED:-0}" in
+  1|true|yes|on)
+    [ -x "${HARNESS_PY}" ] || { echo "submit_train_job: HARNESS_PY is not executable" >&2; exit 2; }
+    PYTHONPATH="${REPO}${PYTHONPATH:+:${PYTHONPATH}}" AAR_CURRENT_RUN_ID="${RUN_ID}" \
+      "${HARNESS_PY}" -c \
+      'import json, sys; from aar.infrastructure.autodata import verify_autodata_dataset; print("[submit] verified required Autodata dataset ->", json.dumps(verify_autodata_dataset(sys.argv[1]), sort_keys=True))' \
+      "${RUN_ID}"
+    ;;
+esac
+
 _limit="${AAR_MAX_CONCURRENT_TRAIN_JOBS:-0}"
 case "${_limit}" in ''|*[!0-9]*) echo "submit_train_job: AAR_MAX_CONCURRENT_TRAIN_JOBS must be an integer" >&2; exit 2;; esac
 

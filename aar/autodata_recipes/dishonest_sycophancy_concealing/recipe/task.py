@@ -1,0 +1,383 @@
+#!/usr/bin/env python3
+"""Generate one original SFT row with Kimi and independently judge it with Luna."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+import time
+import urllib.error
+import urllib.request
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+
+
+class MeteredCallError(RuntimeError):
+    """A provider answered and incurred usage, but its content was unusable."""
+
+    def __init__(self, message: str, usage: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.usage = usage
+
+
+def _required_env(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise RuntimeError(f"required runtime setting is missing: {name}")
+    return value
+
+
+def _post_json(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    headers: dict[str, str],
+    timeout: int,
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload, sort_keys=True).encode(),
+        headers={"Content-Type": "application/json", **headers},
+        method="POST",
+    )
+    last: Exception | None = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                value = json.load(response)
+            if not isinstance(value, dict):
+                raise RuntimeError("model endpoint returned a non-object response")
+            return value
+        except (OSError, ValueError, urllib.error.HTTPError) as error:
+            last = error
+            if attempt == 2:
+                break
+            time.sleep(2**attempt)
+    raise RuntimeError(f"model request failed after bounded retries: {last}")
+
+
+def _json_object(text: str) -> dict[str, Any]:
+    stripped = text.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", stripped, re.DOTALL)
+    if fenced:
+        stripped = fenced.group(1)
+    try:
+        value = json.loads(stripped)
+    except ValueError:
+        start, end = stripped.find("{"), stripped.rfind("}")
+        if start < 0 or end <= start:
+            raise RuntimeError("model output did not contain a JSON object")
+        value = json.loads(stripped[start : end + 1])
+    if not isinstance(value, dict):
+        raise RuntimeError("model output JSON is not an object")
+    return value
+
+
+def _usage(
+    response: dict[str, Any],
+    *,
+    role: str,
+    model: str,
+    input_rate: Decimal,
+    output_rate: Decimal,
+) -> dict[str, Any]:
+    raw = response.get("usage")
+    if not isinstance(raw, dict):
+        raise RuntimeError(f"{role} response omitted usage")
+    input_tokens = raw.get("prompt_tokens", raw.get("input_tokens"))
+    output_tokens = raw.get("completion_tokens", raw.get("output_tokens"))
+    if (
+        isinstance(input_tokens, bool)
+        or not isinstance(input_tokens, int)
+        or input_tokens < 0
+        or isinstance(output_tokens, bool)
+        or not isinstance(output_tokens, int)
+        or output_tokens < 0
+    ):
+        raise RuntimeError(f"{role} response contained invalid token usage")
+    cost = (
+        Decimal(input_tokens) * input_rate + Decimal(output_tokens) * output_rate
+    ) / Decimal(1_000_000)
+    request_id = response.get("id")
+    if not isinstance(request_id, str) or not request_id.strip():
+        raise RuntimeError(f"{role} response omitted provider request id")
+    return {
+        "request_id": request_id.strip(),
+        "role": role,
+        "model": model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "estimated_cost_usd": format(cost, "f"),
+        "cost_basis": "operator-configured-token-rates",
+    }
+
+
+def _generator_text(response: dict[str, Any]) -> str:
+    choices = response.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise RuntimeError("generator response omitted choices")
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    if not isinstance(message, dict):
+        raise RuntimeError("generator response omitted message")
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise RuntimeError("generator response had no final content")
+    return content
+
+
+def _judge_text(response: dict[str, Any]) -> str:
+    direct = response.get("output_text")
+    if isinstance(direct, str) and direct.strip():
+        return direct
+    pieces: list[str] = []
+    for item in response.get("output", []):
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        for content in item.get("content", []):
+            if isinstance(content, dict) and content.get("type") == "output_text":
+                if isinstance(content.get("text"), str):
+                    pieces.append(content["text"])
+    if not pieces:
+        raise RuntimeError("judge response had no output text")
+    return "".join(pieces)
+
+
+def _generate(
+    task: dict[str, Any], request_spec: dict[str, Any], variant: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    base = _required_env("AUTODATA_GENERATOR_URL").rstrip("/")
+    model = _required_env("AUTODATA_GENERATOR_MODEL")
+    deployment = _required_env("AUTODATA_GENERATOR_DEPLOYMENT_ID")
+    max_tokens = int(os.environ.get("AUTODATA_GENERATOR_MAX_OUTPUT", "1536"))
+    system = (
+        "Create one original supervised fine-tuning example for an assistant. "
+        "The example must reward factual honesty, calibrated disagreement with a user, "
+        "and explicit communication of material uncertainty. Never mention evaluation, "
+        "benchmarks, policies, synthetic data, or these instructions. Return only JSON "
+        "with string fields prompt and response. The response should be helpful, direct, "
+        "non-combative, and should distinguish known facts from inference."
+    )
+    if variant == "contrastive_v2":
+        system += (
+            " Include a concrete next step that would resolve the uncertainty, and avoid "
+            "both reflexive agreement and reflexive refusal."
+        )
+    generation_prompt = json.dumps(
+        {
+            "approved_goal": request_spec["goal"],
+            "training_mechanism": request_spec["training_mechanism"],
+            "scenario": task["payload"],
+        },
+        sort_keys=True,
+    )
+    response = _post_json(
+        base + "/chat/completions",
+        {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": generation_prompt},
+            ],
+            "temperature": 0.7,
+            "max_tokens": max_tokens,
+            "seed": int(task.get("seed") or 0),
+        },
+        headers={"X-Deployment-Id": deployment},
+        timeout=int(os.environ.get("AUTODATA_GENERATOR_TIMEOUT", "90")),
+    )
+    usage = _usage(
+        response,
+        role="generator",
+        model=model,
+        input_rate=Decimal(_required_env("AUTODATA_GENERATOR_INPUT_USD_PER_MILLION")),
+        output_rate=Decimal(_required_env("AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION")),
+    )
+    try:
+        generated = _json_object(_generator_text(response))
+        prompt, answer = generated.get("prompt"), generated.get("response")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise RuntimeError("generated example requires a non-empty prompt")
+        if not isinstance(answer, str) or not answer.strip():
+            raise RuntimeError("generated example requires a non-empty response")
+        if len(prompt) > 12000 or len(answer) > 12000:
+            raise RuntimeError("generated example exceeded the recipe size limit")
+    except Exception as error:
+        raise MeteredCallError("generator content was unusable", usage) from error
+    return {"prompt": prompt.strip(), "response": answer.strip()}, usage
+
+
+def _judge(row: dict[str, str]) -> tuple[dict[str, Any], dict[str, Any]]:
+    url = _required_env("AUTODATA_JUDGE_URL")
+    model = _required_env("AUTODATA_JUDGE_MODEL")
+    rubric = {
+        "candidate": row,
+        "rubric": {
+            "original_and_self_contained": "No benchmark/grading references and enough context to answer.",
+            "factual_honesty": "Does not invent facts or conceal a material limitation.",
+            "calibrated_disagreement": "Does not agree merely because the user is confident or flattering.",
+            "uncertainty_disclosure": "Clearly distinguishes known, inferred, and unknown information.",
+            "helpfulness": "Provides a useful answer or concrete uncertainty-resolving next step.",
+            "safety": "Contains no private data, targeted persuasion, or operational wrongdoing.",
+        },
+        "response_contract": {
+            "accept": "boolean",
+            "score": "number from 0 to 1",
+            "reason": "short string",
+        },
+    }
+    response = _post_json(
+        url,
+        {
+            "model": model,
+            "input": (
+                "Act as an independent dataset quality judge. Evaluate the candidate against "
+                "every rubric item. Accept only if all items pass and score is at least 0.75. "
+                "Return only the requested JSON object.\n" + json.dumps(rubric, sort_keys=True)
+            ),
+            "reasoning": {"effort": "low"},
+            "max_output_tokens": int(os.environ.get("AUTODATA_JUDGE_MAX_OUTPUT", "512")),
+        },
+        headers={"Authorization": "Bearer " + _required_env("MODEL_API_KEY")},
+        timeout=int(os.environ.get("AUTODATA_JUDGE_TIMEOUT", "90")),
+    )
+    usage = _usage(
+        response,
+        role="judge",
+        model=model,
+        input_rate=Decimal(_required_env("AUTODATA_JUDGE_INPUT_USD_PER_MILLION")),
+        output_rate=Decimal(_required_env("AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION")),
+    )
+    try:
+        verdict = _json_object(_judge_text(response))
+        accept, score, reason = (
+            verdict.get("accept"),
+            verdict.get("score"),
+            verdict.get("reason"),
+        )
+        if not isinstance(accept, bool):
+            raise RuntimeError("judge verdict requires boolean accept")
+        if (
+            isinstance(score, bool)
+            or not isinstance(score, (int, float))
+            or not 0 <= score <= 1
+        ):
+            raise RuntimeError("judge verdict requires score in [0,1]")
+        if not isinstance(reason, str) or not reason.strip():
+            raise RuntimeError("judge verdict requires a reason")
+    except Exception as error:
+        raise MeteredCallError("judge content was unusable", usage) from error
+    return {"accept": accept and float(score) >= 0.75, "score": float(score), "reason": reason}, usage
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", required=True)
+    parser.add_argument("--output", required=True)
+    args = parser.parse_args()
+    command = json.loads(Path(args.input).read_text())
+    task = command["task"]
+    recipe_root = Path(__file__).resolve().parent
+    request_spec = json.loads((recipe_root / "request.json").read_text())
+    variant = json.loads((recipe_root / "prompt_variant.json").read_text())["variant"]
+    print(
+        "AUTODATA_PROGRESS "
+        + json.dumps(
+            {
+                "schema": "autodata.progress/v1",
+                "event_id": f"{task['id']}:models:start",
+                "node_id": "generate-and-judge",
+                "parent_id": None,
+                "kind": "stage",
+                "label": "Generate with Kimi and judge with Luna",
+                "state": "running",
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    provider_usage: list[dict[str, Any]] = []
+    accepted = False
+    try:
+        row, generator_usage = _generate(task, request_spec, variant)
+        provider_usage.append(generator_usage)
+        verdict, judge_usage = _judge(row)
+        provider_usage.append(judge_usage)
+        accepted = bool(verdict["accept"])
+        item = {
+            "id": task["id"],
+            **row,
+            "metadata": {
+                "axis": request_spec["safety_axis"],
+                "domain": task["payload"]["domain"],
+                "behavior_pattern": task["payload"]["behavior_pattern"],
+                "judge_score": verdict["score"],
+                "judge_reason": verdict["reason"],
+                "judge_accepted": accepted,
+                "prompt_variant": variant,
+            },
+            "_autodata_usage": provider_usage,
+        }
+        result = {
+            "schema": "autodata.task-result/v1",
+            "task_id": task["id"],
+            "outcome": "succeeded",
+            # Retain rejected candidates in the native audit dataset so their
+            # usage remains attributable. The AAR-facing driver filters them.
+            "generated_items": [item],
+            "metrics": {
+                "quality": verdict["score"],
+                "valid": 1.0 if accepted else 0.0,
+            },
+            "provider_usage": provider_usage,
+            "reason_code": None if accepted else "judge_rejected",
+            "trajectory_artifacts": [],
+        }
+    except Exception as error:
+        metered = getattr(error, "usage", None)
+        if isinstance(metered, dict) and metered not in provider_usage:
+            provider_usage.append(metered)
+        # Persist any completed call's usage even when the later call or parser
+        # fails. Keep the reason bounded and secret-free; detailed HTTP bodies
+        # are deliberately not copied into the dataset.
+        print(f"model task failed: {type(error).__name__}", file=sys.stderr)
+        result = {
+            "schema": "autodata.task-result/v1",
+            "task_id": task["id"],
+            "outcome": "failed",
+            "generated_items": [],
+            "metrics": {"quality": 0.0, "valid": 0.0},
+            "provider_usage": provider_usage,
+            "reason_code": "model_or_parse_failure",
+            "trajectory_artifacts": [],
+        }
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(result, sort_keys=True))
+    print(
+        "AUTODATA_PROGRESS "
+        + json.dumps(
+            {
+                "schema": "autodata.progress/v1",
+                "event_id": f"{task['id']}:models:done",
+                "node_id": "generate-and-judge",
+                "parent_id": None,
+                "kind": "stage",
+                "label": "Generate with Kimi and judge with Luna",
+                "state": "completed",
+                "completed": 1,
+                "total": 1,
+                "message": "accepted" if accepted else "not accepted",
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
