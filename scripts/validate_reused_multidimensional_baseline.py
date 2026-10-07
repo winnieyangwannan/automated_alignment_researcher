@@ -49,7 +49,21 @@ def _read(path: Path) -> dict:
     return value
 
 
-def validate(path: Path) -> dict:
+def _recovered_source(
+    original: Path, recovered_source_dir: Path | None, index: int
+) -> Path:
+    if recovered_source_dir is not None:
+        recovered = recovered_source_dir / f"{index:02d}_{original.name}"
+        if not recovered.is_file():
+            raise SystemExit(
+                "hash-bound recovery copy is missing for retained source: "
+                f"{original}"
+            )
+        return recovered
+    return original
+
+
+def validate(path: Path, recovered_source_dir: Path | None = None) -> dict:
     actual_sha = _digest(path)
     if actual_sha != BASELINE_SHA256:
         raise SystemExit(
@@ -102,11 +116,12 @@ def validate(path: Path) -> dict:
 
     source_scores = {}
     source_suites = set()
-    for source_path in result_paths:
+    for index, source_path in enumerate(result_paths, start=1):
+        readable_source = _recovered_source(source_path, recovered_source_dir, index)
         expected_sha = recorded_hashes.get(str(source_path))
-        if not expected_sha or _digest(source_path) != expected_sha:
+        if not expected_sha or _digest(readable_source) != expected_sha:
             raise SystemExit(f"source result hash mismatch: {source_path}")
-        source = _read(source_path)
+        source = _read(readable_source)
         if source.get("error"):
             raise SystemExit(f"source evaluation recorded an error: {source_path}")
         if source.get("model") != MODEL_PATH:
@@ -132,11 +147,14 @@ def validate(path: Path) -> dict:
     source_commits = set((baseline.get("source_commits") or {}).values())
     manifest_commits = set()
     manifest_benchmarks = set()
-    for manifest_path in manifest_paths:
+    for index, manifest_path in enumerate(manifest_paths, start=1 + len(result_paths)):
+        readable_manifest = _recovered_source(
+            manifest_path, recovered_source_dir, index
+        )
         expected_sha = recorded_hashes.get(str(manifest_path))
-        if not expected_sha or _digest(manifest_path) != expected_sha:
+        if not expected_sha or _digest(readable_manifest) != expected_sha:
             raise SystemExit(f"source manifest hash mismatch: {manifest_path}")
-        manifest = _read(manifest_path)
+        manifest = _read(readable_manifest)
         if manifest.get("model_identity") != MODEL:
             raise SystemExit(f"source manifest used a different model: {manifest_path}")
         if manifest.get("judge") != {"backend": "model_api", "model": "gpt-5-6-luna"}:
@@ -159,14 +177,21 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("baseline", type=Path)
     parser.add_argument("--provenance-output", type=Path)
+    parser.add_argument("--recovered-source-dir", type=Path)
     args = parser.parse_args()
     baseline_path = args.baseline.resolve(strict=True)
-    baseline = validate(baseline_path)
+    recovered_source_dir = None
+    if args.recovered_source_dir:
+        recovered_source_dir = args.recovered_source_dir.resolve(strict=True)
+    baseline = validate(baseline_path, recovered_source_dir)
     provenance = {
         "validated_utc": datetime.now(timezone.utc).isoformat(),
         "launch_git_commit": os.environ.get("AAR_BASELINE_GIT_COMMIT"),
         "retained_baseline_path": str(baseline_path),
         "retained_baseline_sha256": BASELINE_SHA256,
+        "recovered_source_dir": (
+            str(recovered_source_dir) if recovered_source_dir else None
+        ),
         "model_identity": MODEL,
         "score_count": len(EXPECTED_BENCHMARKS),
         "scores": baseline["scores"][MODEL],

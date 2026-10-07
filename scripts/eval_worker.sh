@@ -163,6 +163,37 @@ chmod 700 "${EVAL_TEAM_DIR}" "${EVAL_TEAM_DIR}/heldout_scores" \
   "${EVAL_TEAM_DIR}/_evalwork" "${EVAL_TEAM_DIR}/timings" 2>/dev/null || true
 export HELDOUT_SCORES_DIR="${HELDOUT_SCORES_DIR:-${EVAL_TEAM_DIR}/heldout_scores}"
 export HARNESS_RUNS_DIR="${EVAL_TEAM_DIR}"
+
+# Recovery runs may keep durable state on /storage/home while placing each
+# 62.5-GB merged serving checkpoint on the evaluator node. The root is derived
+# here after Slurm assigns the job id, never supplied as an arbitrary deletion
+# target. A marker and free-space gate make later cleanup fail closed.
+if [ "${EVAL_INFERENCE_BACKEND:-transformers}" = vllm ] && \
+   [ "${AAR_VLLM_EPHEMERAL_MERGED:-0}" = 1 ]; then
+  _aar_local_parent="${SLURM_TMPDIR:-/tmp}"
+  [ -d "${_aar_local_parent}" ] || {
+    echo "[worker] ERROR: node-local merge parent is missing: ${_aar_local_parent}" >&2
+    exit 2
+  }
+  _aar_local_parent="$(realpath -e -- "${_aar_local_parent}")"
+  export AAR_VLLM_MERGED_ROOT="${_aar_local_parent}/aar-vllm-merged-${WORKER_ID}"
+  mkdir -m 700 -- "${AAR_VLLM_MERGED_ROOT}"
+  printf '%s\n' "${WORKER_ID}" > "${AAR_VLLM_MERGED_ROOT}/.aar-ephemeral-merged-root"
+  chmod 600 "${AAR_VLLM_MERGED_ROOT}/.aar-ephemeral-merged-root"
+  _aar_free_bytes="$(df -B1 --output=avail -- "${AAR_VLLM_MERGED_ROOT}" | awk 'NR == 2 {gsub(/[[:space:]]/, ""); print}')"
+  _aar_min_free_bytes="${AAR_VLLM_EPHEMERAL_MIN_FREE_BYTES:-75161927680}"
+  case "${_aar_free_bytes}:${_aar_min_free_bytes}" in
+    *[!0-9:]*|:*|*:) echo "[worker] ERROR: invalid node-local free-space values" >&2; exit 2;;
+  esac
+  [ "${_aar_free_bytes}" -ge "${_aar_min_free_bytes}" ] || {
+    echo "[worker] ERROR: node-local merge root has ${_aar_free_bytes} bytes free; need ${_aar_min_free_bytes}" >&2
+    exit 2
+  }
+  mkdir -p -- "${EVAL_TEAM_DIR}/merge_manifests"
+  chmod 700 "${EVAL_TEAM_DIR}/merge_manifests"
+  echo "[worker ${WORKER_ID}] ephemeral_merged_root=${AAR_VLLM_MERGED_ROOT} free_bytes=${_aar_free_bytes}"
+  unset _aar_local_parent _aar_free_bytes _aar_min_free_bytes
+fi
 exec >> "${EVAL_TEAM_DIR}/eval_worker_${WORKER_ID}.out" 2>&1
 echo "[worker ${WORKER_ID}] eval runtime: ${EVAL_TEAM_DIR}"
 echo "[worker ${WORKER_ID}] explicit HOLDOUT_DIR=${HOLDOUT_DIR}"
@@ -195,6 +226,29 @@ publish_terminal_failure() {
     --reason "${failure_reason}" \
     --eval-job-id "${WORKER_ID}"
   rmdir "${CLAIMS}/${failure_run_id}" 2>/dev/null || true
+}
+cleanup_ephemeral_merge() {
+  local cleanup_run_id="$1"
+  local cleanup_root="${AAR_VLLM_MERGED_ROOT:-}"
+  local cleanup_parent cleanup_expected cleanup_target cleanup_staging
+  [ "${AAR_VLLM_EPHEMERAL_MERGED:-0}" = 1 ] || return 0
+  case "${cleanup_run_id}" in ''|*/*|.|..) echo "[worker] REFUSING unsafe cleanup run id" >&2; return 1;; esac
+  cleanup_parent="$(realpath -e -- "${SLURM_TMPDIR:-/tmp}")" || return 1
+  cleanup_expected="${cleanup_parent}/aar-vllm-merged-${WORKER_ID}"
+  [ "${cleanup_root}" = "${cleanup_expected}" ] || {
+    echo "[worker] REFUSING cleanup outside derived node-local root: ${cleanup_root}" >&2
+    return 1
+  }
+  if [ -L "${cleanup_root}" ] || \
+     [ "$(cat -- "${cleanup_root}/.aar-ephemeral-merged-root" 2>/dev/null)" != "${WORKER_ID}" ]; then
+    echo "[worker] REFUSING cleanup without the evaluator root marker" >&2
+    return 1
+  fi
+  cleanup_target="${cleanup_root}/${cleanup_run_id}"
+  cleanup_staging="${cleanup_target}.incomplete"
+  case "${cleanup_target}" in "${cleanup_root}"/*) ;; *) return 1;; esac
+  rm -rf --one-file-system -- "${cleanup_target}" "${cleanup_staging}"
+  echo "[worker ${WORKER_ID}] removed ephemeral merged checkpoint for ${cleanup_run_id}"
 }
 last_work=$(date +%s)
 while true; do
@@ -238,6 +292,7 @@ while true; do
         echo "[worker ${WORKER_ID}] FAILED merge ${rid}"
         publish_terminal_failure "${rid}" \
           "adapter merge failed; candidate checkpoint is invalid; inspect the evaluator log"
+        cleanup_ephemeral_merge "${rid}" || exit 2
         did=1; last_work=$(date +%s)
         continue
       fi
@@ -245,9 +300,18 @@ while true; do
         echo "[worker ${WORKER_ID}] FAILED missing merge manifest ${rid}"
         publish_terminal_failure "${rid}" \
           "adapter merge did not produce a complete checkpoint; inspect the evaluator log"
+        cleanup_ephemeral_merge "${rid}" || exit 2
         did=1; last_work=$(date +%s)
         continue
       }
+      if [ "${AAR_VLLM_EPHEMERAL_MERGED:-0}" = 1 ]; then
+        manifest_copy="${EVAL_TEAM_DIR}/merge_manifests/${rid}.json"
+        manifest_tmp="${manifest_copy}.tmp.${WORKER_ID}"
+        cp -- "${merged_model}/.merge-complete.json" "${manifest_tmp}"
+        chmod 600 "${manifest_tmp}"
+        mv -- "${manifest_tmp}" "${manifest_copy}"
+        echo "[worker ${WORKER_ID}] retained merge manifest ${manifest_copy}"
+      fi
       export EVAL_MODEL_PATH_OVERRIDE="${merged_model}"
       export EVAL_VLLM_LORA_STRATEGY=merged_checkpoint
       export EVAL_VLLM_REQUIRE_MERGED=1
@@ -267,6 +331,14 @@ while true; do
       # rejected iteration and pivot to a new method.
       publish_terminal_failure "${rid}" \
         "evaluator rejected the candidate; inspect the evaluator job log"
+    fi
+    if [ "${AAR_VLLM_EPHEMERAL_MERGED:-0}" = 1 ]; then
+      if [ ! -f "${SCORES_DIR}/${rid}.json" ] && \
+         [ ! -f "${SCORES_DIR}/${rid}.failed.json" ]; then
+        echo "[worker] ERROR: refusing cleanup before terminal handoff for ${rid}" >&2
+        exit 2
+      fi
+      cleanup_ephemeral_merge "${rid}" || exit 2
     fi
     did=1; last_work=$(date +%s)
   done
