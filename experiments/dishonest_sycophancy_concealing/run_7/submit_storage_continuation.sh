@@ -87,6 +87,8 @@ mkdir -p "${attempt_parent}"
 mkdir "${attempt_dir}" "${attempt_dir}/metadata" "${attempt_dir}/logs"
 chmod 700 "${attempt_dir}" "${attempt_dir}/metadata" "${attempt_dir}/logs"
 cp -- "${CANARY_PROOF}" "${attempt_dir}/metadata/canary_passed.json"
+"${SCRIPT_DIR}/snapshot_vllm_runtime.sh" "${attempt_dir}" \
+  > "${attempt_dir}/metadata/vllm_runtime_path.txt"
 printf 'export AAR_RUNTIME_ROOT=%q\n' "${attempt_dir}" > "${attempt_dir}/attempt.env"
 
 export AAR_RUNTIME_ROOT="${attempt_dir}"

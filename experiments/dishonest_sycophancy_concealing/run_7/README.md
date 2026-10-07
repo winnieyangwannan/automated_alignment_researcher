@@ -38,8 +38,13 @@ child IDs in `metadata/children.env`, and the full launcher transcript in
 The original Run 7 attempt under `/checkpoint/ram` became inaccessible through
 NFS. The active continuation therefore writes to durable `/storage/home`
 instead of that old namespace. As of 2026-10-07 20:43 UTC, all five continuation
-chains and all five evaluators are running from commit
-`a8fdf5b066294089e974e2e979c04bb60b3139d5`.
+chains are running. Three original evaluators remain healthy; the two malformed
+multi-node evaluator allocations were replaced by single-node jobs `1751149`
+and `1751150`. The launcher correction is commit
+`45d78f2e4650b734f978f0eafd6417611ff75090`.
+
+The comprehensive original-attempt and continuation incident audit is in
+[`FAILURE_INVESTIGATION.md`](FAILURE_INVESTIGATION.md).
 
 The canonical continuation attempt is:
 
@@ -72,7 +77,9 @@ Within that team directory:
 The attempt-level metadata is under `metadata/`. In particular,
 `metadata/submission.txt` records launch job `1750282`, and
 `metadata/children.env` records evaluator jobs `1750344` through `1750348` and
-chain jobs `1750349` through `1750353` in alpha-to-epsilon order.
+chain jobs `1750349` through `1750353` in alpha-to-epsilon order. Files named
+`metadata/evaluator_replacement_*.txt` record replacement evaluator IDs and
+their one-node/four-GPU topology.
 
 To inspect new durable results on `fair-cw-use2-1`:
 
@@ -88,7 +95,7 @@ find "$RUN7_TEAM/forum" -maxdepth 1 -type f -name '*.json' -printf '%TY-%Tm-%Td 
 
 # Per-chain progress and live Slurm state.
 tail -n 80 "$RUN7_TEAM/logs"/AGENT_LOG_gemma4_31b_explore_*.md
-squeue -j 1750344,1750345,1750346,1750347,1750348,1750349,1750350,1750351,1750352,1750353
+squeue -j 1750345,1750346,1750348,1751149,1751150,1750349,1750350,1750351,1750352,1750353
 ```
 
 The exact 14-entry reconstructed pre-continuation history is also preserved

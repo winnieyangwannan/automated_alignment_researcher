@@ -70,3 +70,22 @@ def test_eval_workers_are_single_node_and_storage_recoverable() -> None:
     assert "AAR_VLLM_EPHEMERAL_MERGED=1" in replacement
     assert "single_node_evaluator_replacement" in replacement
     assert 'AAR_EVAL_WORKERS="${WORKERS}"' in replacement
+
+
+def test_storage_attempt_snapshots_the_vllm_launcher_runtime() -> None:
+    snapshotter = (RUN7 / "snapshot_vllm_runtime.sh").read_text()
+    canary_submitter = (RUN7 / "submit_storage_recovery_canary.sh").read_text()
+    full_submitter = (RUN7 / "submit_storage_continuation.sh").read_text()
+    canary = (RUN7 / "storage_recovery_canary.sbatch").read_text()
+    full = (RUN7 / "storage_continuation.sbatch").read_text()
+    replacement = (RUN7 / "submit_storage_evaluator_replacements.sh").read_text()
+
+    assert "EXPECTED_TREE_SHA256=" in snapshotter
+    assert "cp -a --" in snapshotter
+    assert "mv --" in snapshotter
+    assert "snapshot_vllm_runtime.sh" in canary_submitter
+    assert "snapshot_vllm_runtime.sh" in full_submitter
+    durable_worker = '${ATTEMPT_DIR}/runtime/serve_api_v2/worker/worker_vllm.sh'
+    assert durable_worker in canary
+    assert durable_worker in full
+    assert durable_worker in replacement
