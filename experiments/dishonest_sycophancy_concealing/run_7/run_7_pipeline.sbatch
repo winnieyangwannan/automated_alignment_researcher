@@ -46,7 +46,8 @@ export EVAL_VLLM_GPU_MEMORY_UTILIZATION=0.90
 export EVAL_VLLM_ENABLE_PREFIX_CACHING=1
 export EVAL_VLLM_ENFORCE_EAGER=0
 export AAR_VLLM_CONTAINER_IMAGE=docker.io/vllm/vllm-openai:v0.25.1
-export AAR_VLLM_WORKER_SH=/checkpoint/ram/shared/vllm_deployments_v2/aar-gemma-4-31b-it/src/serve_api_v2/worker/worker_vllm.sh
+export AAR_VLLM_WORKER_SH=/checkpoint/ram/shared/vllm_deployments_v2/eval-gemma-4-31b-it/src/serve_api_v2/worker/worker_vllm.sh
+export AAR_VLLM_WORKER_SHA256=913c3286e237ed2231c64de200a4bcfc65729292a05c6aa3a88100f8c0248361
 export AAR_VLLM_MERGE_PY=/storage/home/winnieyangwn/envs/steerability-client/bin/python
 export AAR_VLLM_CONTAINER_RW_MOUNT="${ATTEMPT_DIR}"
 export AAR_VLLM_MERGED_ROOT="${ATTEMPT_DIR}/merged_candidates"
@@ -80,6 +81,11 @@ for required in "${REUSED_BASELINE}" "${TARGET_MODEL_PATH}" "${LIT_AXIS_DIR}/man
   "${LLM_UNCERTAINTY_SOURCE_MANIFEST}" "${HARNESS_ENV}"; do
   [ -e "${required}" ] || { echo "required artifact missing: ${required}" >&2; exit 2; }
 done
+[ "$(sha256sum "${AAR_VLLM_WORKER_SH}" | awk '{print $1}')" = \
+  "${AAR_VLLM_WORKER_SHA256}" ] || {
+  echo "vLLM worker snapshot hash mismatch" >&2
+  exit 2
+}
 for secret_name in HF_TOKEN MODEL_API_KEY ANTHROPIC_API_KEY; do
   [ -n "${!secret_name:-}" ] || {
     echo "required runtime credential is empty: ${secret_name}" >&2

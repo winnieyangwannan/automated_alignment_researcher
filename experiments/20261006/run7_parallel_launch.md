@@ -56,3 +56,22 @@ with no pre-existing lane file. Validate the focused launch tests and Bash
 syntax, commit on `multi_vllm`, then fast-forward the exact commit from the
 devserver worktree to the isolated HPC worktree through a temporary SSH Git
 ref. Preserve the active Run 7 attempt and all machine-local state.
+
+## Evaluator worker-snapshot recovery
+
+At 01:40 UTC, the first two valid adapters merged successfully but failed
+closed before vLLM startup because the configured shared deployment snapshot
+`aar-gemma-4-31b-it` had been removed externally at approximately 01:35 UTC.
+The Alpha and Epsilon failure JSON files and their completed merged checkpoints
+remain retained. Cancel only the five evaluator jobs so later submissions wait
+instead of receiving the same infrastructure failure; leave all five research
+chains running.
+
+Use the surviving `eval-gemma-4-31b-it` snapshot only after verifying its full
+worker directory is readable and its `worker_vllm.sh` SHA-256 is
+`913c3286e237ed2231c64de200a4bcfc65729292a05c6aa3a88100f8c0248361`, identical
+to the other retained Gemma snapshots. Add a hash-pinned evaluator-only Run 7
+recovery launcher that reuses the existing team queue, starts five new
+four-GPU evaluators, and never removes or overwrites terminal candidate
+artifacts. Fresh research iterations, not evaluator mutation, supply new run
+IDs after the infrastructure failure.

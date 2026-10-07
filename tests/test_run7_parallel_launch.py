@@ -40,3 +40,18 @@ def test_run7_submitter_records_iteration_contract() -> None:
     assert "max_iterations_per_chain=50" in submitter
     assert "research_chains=5" in submitter
     assert "evaluator_jobs=5" in submitter
+
+
+def test_run7_evaluator_recovery_replaces_five_workers_fail_closed() -> None:
+    recovery = (RUN7 / "run_7_eval_recovery.sbatch").read_text()
+
+    assert "eval-gemma-4-31b-it" in recovery
+    assert "AAR_VLLM_WORKER_SHA256=" in recovery
+    assert 'sha256sum "${AAR_VLLM_WORKER_SH}"' in recovery
+    assert "export EVAL_INFERENCE_BACKEND=vllm" in recovery
+    assert "export EVAL_VLLM_LORA_STRATEGY=merged_checkpoint" in recovery
+    assert "export EVAL_VLLM_REQUIRE_MERGED=1" in recovery
+    assert "export AAR_EVAL_WORKERS=5" in recovery
+    assert "export AAR_EVAL_GPUS=4" in recovery
+    assert "expected five evaluator recovery job IDs" in recovery
+    assert "evaluator recovery job IDs are not distinct" in recovery

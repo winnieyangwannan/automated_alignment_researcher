@@ -33,6 +33,19 @@ The attempt retains the parent launch ID in `metadata/submission.txt`, all ten
 child IDs in `metadata/children.env`, and the full launcher transcript in
 `metadata/launch_run7_vllm_submission.txt`.
 
+If only the evaluator pool must be replaced after an external deployment
+snapshot disappears, preserve the attempt and its terminal failure artifacts,
+then launch the committed recovery path with the exact attempt directory:
+
+```bash
+bash experiments/dishonest_sycophancy_concealing/run_7/submit_eval_recovery.sh \
+  /checkpoint/ram/aar/$USER/honesty-sycophancy-concealing-gemma4-31b-vllm-v0/run7_attempts/<attempt-id>
+```
+
+The recovery validates the pinned worker snapshot hash and launches five new
+four-GPU evaluators against the existing shared queue. It does not retry or
+overwrite terminal candidate failures; research chains must use fresh run IDs.
+
 ## Phase timing contract
 
 Every generated method must record successful `data_generation`,
