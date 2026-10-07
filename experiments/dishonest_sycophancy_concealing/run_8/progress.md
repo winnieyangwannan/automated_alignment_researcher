@@ -307,3 +307,25 @@ standalone dataset does not by itself satisfy this criterion.
   live user-owned, no-timeout `winnieyangwn-gemma-4-31B-it` deployment snapshot
   and validates that deployment before an attempt is created. This snapshot is
   a read-only execution input; new Run 8 outputs remain under user storage.
+
+### 2026-10-07 — Real production services and AAR chain launched
+
+- The first model-backed canary reached Kimi but exhausted its 1,536-token
+  allowance in reasoning before emitting parseable JSON. The deployed
+  Kimi-K2.6 checkpoint's own README and chat template document instant mode as
+  `chat_template_kwargs: {"thinking": false}`. A live gateway probe confirmed
+  normal completion in 91 output tokens, and the production recipe now pins
+  that documented setting for structured generation.
+- Fresh attempt
+  `/storage/home/winnieyangwn/aar-runs/honesty-sycophancy-concealing-gemma4-31b-vllm-v0/run8_attempts/20261007T195117Z-aa76e1f43e1c`
+  passed both mandatory production canaries. The native broker canary leased a
+  real `oci-runner-firecracker-small` session and executed the pinned image;
+  the model-backed canary then retained proof of one Kimi-K2.6 call and one
+  `gpt-5-6-luna` call with an accepted schema-valid item.
+- Launcher `1749668` emitted distinct production children only after those
+  gates passed: AutoData services `1749738`, the four-GPU merged-checkpoint
+  vLLM evaluator `1749774`, and one sequential two-iteration AAR chain
+  `1749775`. The child manifest is retained in the attempt metadata.
+- At this milestone the AutoData service is live; evaluator and research chain
+  are submitted and waiting for Slurm placement. Completion still requires two
+  atomic score/result pairs and the Run 8 linkage verifier.
