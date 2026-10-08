@@ -28,9 +28,10 @@ async def verify(workspace: Path) -> dict[str, object]:
     tool_ok = any(name == "get_leaderboard" or name.endswith("get_leaderboard") for name in tools)
     response_ok = any("KIMI_MCP_CANARY_OK" in text for text in texts)
     if not result.success or not tool_ok or not response_ok:
+        stderr_tail = str(result.output.get("stderr", ""))[-2000:]
         raise RuntimeError(
             f"Kimi MCP round trip failed: success={result.success}, tools={tools}, "
-            f"response_ok={response_ok}, error={result.error}"
+            f"response_ok={response_ok}, error={result.error}, stderr={stderr_tail}"
         )
     return {
         "status": "passed",

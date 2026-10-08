@@ -146,6 +146,8 @@ class KimiAgent:
 
                 return_code = await process.wait()
                 stderr = (await stderr_task).decode("utf-8", errors="replace").strip()
+                if stderr:
+                    output["stderr"] = stderr
             except BaseException:
                 if process.returncode is None:
                     process.kill()

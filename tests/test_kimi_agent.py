@@ -113,6 +113,7 @@ class KimiAgentTest(unittest.TestCase):
                 result.output["raw_stdout"], ["terminal output that is not JSON"]
             )
             self.assertIsInstance(callbacks[0].content[1], KimiToolUseBlock)
+            self.assertNotIn("stderr", result.output)
 
             observed = json.loads(capture.read_text())
             self.assertEqual(
