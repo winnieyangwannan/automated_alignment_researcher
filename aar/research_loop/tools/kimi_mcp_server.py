@@ -78,17 +78,17 @@ def create_server(name: str) -> Server:
         raise ValueError(f"Unknown MCP server: {name}")
     tools = {tool.name: tool for tool in SERVER_TOOLS[name]}
 
-    async def list_tools(_context, _params) -> types.ListToolsResult:
-        return types.ListToolsResult(
-            tools=[
-                types.Tool(
-                    name=tool.name,
-                    description=tool.description,
-                    inputSchema=_json_schema(tool.input_schema),
-                )
-                for tool in tools.values()
-            ]
+    tool_definitions = [
+        types.Tool(
+            name=tool.name,
+            description=tool.description,
+            inputSchema=_json_schema(tool.input_schema),
         )
+        for tool in tools.values()
+    ]
+
+    async def list_tools(_context, _params) -> types.ListToolsResult:
+        return types.ListToolsResult(tools=tool_definitions)
 
     async def call_tool(_context, params) -> types.CallToolResult:
         tool = tools.get(params.name)
@@ -106,12 +106,34 @@ def create_server(name: str) -> Server:
             )
         return types.CallToolResult(content=_text_content(result))
 
-    return Server(
-        name,
-        version="1.0.0",
-        on_list_tools=list_tools,
-        on_call_tool=call_tool,
-    )
+    try:
+        # MCP SDK versions used by Claude-compatible development environments.
+        return Server(
+            name,
+            version="1.0.0",
+            on_list_tools=list_tools,
+            on_call_tool=call_tool,
+        )
+    except TypeError as error:
+        if "on_list_tools" not in str(error):
+            raise
+
+    # MCP SDK 1.x registers handlers through decorators instead of constructor
+    # callbacks. The ARM64 locked evaluation environment uses this API.
+    server = Server(name, version="1.0.0")
+
+    @server.list_tools()
+    async def list_tools_v1() -> list[types.Tool]:
+        return tool_definitions
+
+    @server.call_tool()
+    async def call_tool_v1(
+        tool_name: str, arguments: dict[str, Any]
+    ) -> types.CallToolResult:
+        params = types.CallToolRequestParams(name=tool_name, arguments=arguments)
+        return await call_tool(None, params)
+
+    return server
 
 
 async def serve(name: str) -> None:
