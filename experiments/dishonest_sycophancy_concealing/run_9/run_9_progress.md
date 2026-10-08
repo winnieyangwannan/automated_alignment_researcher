@@ -387,3 +387,18 @@ evaluation score, or result finding was produced, so this attempt does not
 count as an outer AAR iteration. All artifacts remain preserved under the
 attempt root. A fresh launch must wait until the patched AutoData commit and
 matching AAR pin/plugin bundle pass HPC synchronization and validation.
+
+## 2026-10-08 — retry-safe, cross-architecture plugin validated
+
+Canonical AutoData `main` is now synchronized and clean on both the x86_64
+devserver and ARM64 HPC at commit
+`61304d889dee6c0ced007322540998a36d85f664`. This includes the native
+interrupted-attempt retry fix and a deterministic plugin-wheel builder.
+
+The wheel now stores entries without DEFLATE, avoiding architecture-dependent
+zlib byte streams. Rebuilding it independently on both machines produced the
+same SHA-256 digest:
+`3d4cc03a6194920f25875555f2fd96ccca95ca1949f76db435a0c400e0bdf1d6`.
+Both complete AutoData test runs passed 68 tests with one skipped, and the HPC
+rebuild left no Git diff. The fresh AAR launch may therefore pin and verify one
+identical native framework and plugin payload across both architectures.
