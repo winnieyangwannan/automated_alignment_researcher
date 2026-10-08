@@ -1366,6 +1366,15 @@ def _proposal_approved():
         return False, f"proposal gate error: {e}"
 
 
+def _requires_explicit_proposal_run_id() -> bool:
+    """Whether approval must mint the run id used by decoupled execution."""
+    truthy = {"1", "true", "yes", "on"}
+    return any(
+        os.getenv(name, "").strip().lower() in truthy
+        for name in ("AAR_NO_LOCAL_GPU", "AAR_AUTODATA")
+    )
+
+
 def _missing_method_timing_phases(code: str) -> list[str]:
     """Return required literal ``with phase(...)`` names absent from method code."""
     from aar.phase_timing import REQUIRED_METHOD_PHASES
@@ -1515,7 +1524,7 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
         # evaluate_model, so approval is the only race-free freeze point. The inline flow keeps minting its
         # run_id inside evaluate_model (sequential: marker can't be overwritten before it scores), so we skip
         # here to avoid orphan run-stamps for ids the inline agent won't use.
-        if verdict.get("approved") and os.getenv("AAR_NO_LOCAL_GPU"):
+        if verdict.get("approved") and _requires_explicit_proposal_run_id():
             try:
                 _uid = os.getenv("IDEA_UID") or os.getenv("IDEA_NAME") or "run"
                 _safe_idea = "".join(c if (c.isalnum() or c in "_.-") else "_"

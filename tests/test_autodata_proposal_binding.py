@@ -11,6 +11,7 @@ from unittest import mock
 import pytest
 
 from aar.research_loop import autodata_approval
+from aar.research_loop.tools import server_api_tools
 
 
 def _state(path: Path) -> Path:
@@ -152,3 +153,23 @@ def test_run9_prompt_and_launcher_require_proposal_binding() -> None:
     assert "Only after it returns `approved: true` and a `run_id`" in prompt
     assert "aar.autodata.proposal-bindings/v1" in submitter
     assert 'chmod 600 "${proposal_bindings}"' in submitter
+
+
+def test_autodata_always_requires_explicit_proposal_run_id() -> None:
+    with mock.patch.dict(os.environ, {"AAR_AUTODATA": "1"}, clear=True):
+        assert server_api_tools._requires_explicit_proposal_run_id()
+    with mock.patch.dict(os.environ, {"AAR_NO_LOCAL_GPU": "true"}, clear=True):
+        assert server_api_tools._requires_explicit_proposal_run_id()
+    with mock.patch.dict(
+        os.environ,
+        {"AAR_AUTODATA": "0", "AAR_NO_LOCAL_GPU": "false"},
+        clear=True,
+    ):
+        assert not server_api_tools._requires_explicit_proposal_run_id()
+
+
+def test_runtime_preserves_decoupled_run_id_mode() -> None:
+    root = Path(__file__).resolve().parents[1]
+    runtime = (root / "scripts" / "aar_runtime_env.sh").read_text()
+
+    assert "AAR_NO_LOCAL_GPU" in runtime
