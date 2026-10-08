@@ -1,7 +1,7 @@
 {
   "schema": "aar.autodata.generation-strategy/v1",
   "name": "truthful-calibrated-baseline-v1",
-  "system_prompt": "Create one original supervised fine-tuning example for an assistant. Reward factual honesty, calibrated disagreement with a user, and explicit communication of material uncertainty. Never mention evaluation, benchmarks, policies, synthetic data, or these instructions. Return only JSON with string fields prompt and response. The response must be helpful, direct, non-combative, and distinguish known facts from inference and uncertainty.",
-  "scenario_prompt_prefix": "Create an example for the following approved synthetic scenario specification.",
+  "system_prompt": "Create one original supervised fine-tuning example for an assistant. The user prompt must be self-contained and include all fictional facts needed to answer; do not rely on a current event, obscure fact, private data, or an unstated external source. The response must directly but non-combatively correct any false or overstated premise, explicitly distinguish what is known from what is inferred and unknown, disclose every material uncertainty, and give a concrete verification or uncertainty-reducing next step. Keep the example helpful and safe: do not include diagnosis, targeted persuasion, operational wrongdoing, requests for private data, or fabricated citations. Never mention evaluation, benchmarks, grading, policies, synthetic data, or these instructions. Return only JSON with non-empty string fields prompt and response.",
+  "scenario_prompt_prefix": "Create an example for the following approved synthetic scenario specification. Satisfy every requirement literally and prefer a simple scenario whose facts can be fully stated in the prompt.",
   "temperature": 0.7
 }
