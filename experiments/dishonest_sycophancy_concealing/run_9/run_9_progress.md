@@ -283,3 +283,33 @@ No relaunch is allowed until trusted code enforces both conditions rather than
 depending on agent instructions: production creation requires a terminal
 successful meta execution and its selected winner, and production must bind the
 approved 1,250-task production grounding plus the 1,000-row retention target.
+
+## 2026-10-08 — trusted lifecycle gate ready for relaunch
+
+The relaunch prerequisite above is now implemented at the training boundary.
+The new read-only verifier authenticates the native AutoData SQLite state and
+refuses both training submission and model upload unless all of the following
+are true:
+
+- meta-optimization is natively completed with exactly 64 tuning, 32 hidden
+  validation, and 32 disjoint test tasks, using 3--10 iterations, minimum 3,
+  and early-stop patience 3;
+- the finalized meta winner and its canonical tree digest match a pristine
+  native `execution export-winner` export;
+- production was created only after that finalization, remains in the same
+  native study, uses fixed-winner production mode with zero optimization
+  iterations, and differs from the winner only by its dedicated manifest;
+- that manifest has exactly 1,250 fresh task IDs disjoint from all meta/test
+  IDs, and the finalized production dataset contains at least 1,000 unique
+  Luna-accepted rows bound by the native artifact digest;
+- the approved training method loads exactly 1,000 rows through the
+  receipt-producing AutoData loader, and the receipt is created by the active
+  training process before the model can enter evaluation.
+
+The research prompt now also forbids duplicate/background steppers, tells the
+agent to resume rather than skip a slow native execution, and distinguishes the
+pristine winner export from the production copy. The grounding builder supports
+fresh `safety-prod-*` IDs. The complete devserver suite passed 250 tests plus 35
+subtests; Python compilation, shell syntax checks, and `git diff --check` also
+passed. The exact commit and fresh Slurm IDs will be recorded after synchronization
+and submission.

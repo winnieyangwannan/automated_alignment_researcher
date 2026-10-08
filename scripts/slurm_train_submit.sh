@@ -71,6 +71,10 @@ export AAR_PHASE_TIMINGS_PATH="${TIMINGS_DIR}/${RUN_ID}.research.jsonl"
 export AAR_CURRENT_RUN_ID="${RUN_ID}"
 cd "${REPO}"
 
+if [ "${AAR_AUTODATA:-0}" = 1 ]; then
+  "${PY}" -m aar.infrastructure.autodata_lifecycle preflight --run-id "${RUN_ID}"
+fi
+
 if [ -n "${AAR_TRAIN_SUBMITTED_AT_NS:-}" ]; then
   _train_started_at_ns="$(date +%s%N)"
   _train_queue_seconds="$(awk -v start="${AAR_TRAIN_SUBMITTED_AT_NS}" -v end="${_train_started_at_ns}" 'BEGIN { printf "%.6f", (end-start)/1000000000 }')"
@@ -103,6 +107,9 @@ from aar import transport
 from aar.phase_timing import phase, require_successful_phases
 with phase("train.method_total"):
     out = run_experiment(MethodConfig(output_dir="${STAGING}"))
+if "${AAR_AUTODATA:-0}" == "1":
+    from aar.infrastructure.autodata_lifecycle import verify_consumption
+    verify_consumption("${RUN_ID}")
 if "${AAR_REQUIRE_PHASE_TIMINGS:-0}".lower() in {"1", "true", "yes", "on"}:
     require_successful_phases("${AAR_PHASE_TIMINGS_PATH}")
 with phase("train.model_submission"):

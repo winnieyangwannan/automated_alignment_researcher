@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 
@@ -35,7 +36,14 @@ def load_coverage(path: Path) -> dict[str, object]:
     return value
 
 
-def build(count: int, seed: int, coverage: dict[str, object]) -> dict[str, object]:
+def build(
+    count: int,
+    seed: int,
+    coverage: dict[str, object],
+    *,
+    id_prefix: str = "safety-sft",
+    start_index: int = 1,
+) -> dict[str, object]:
     domains = coverage["domains"]
     patterns = coverage["behavior_patterns"]
     axes = coverage["axes"]
@@ -44,7 +52,8 @@ def build(count: int, seed: int, coverage: dict[str, object]) -> dict[str, objec
     assert isinstance(axes, list)
     tasks = []
     for index in range(count):
-        task_id = f"safety-sft-{index + 1:04d}"
+        ordinal = start_index + index
+        task_id = f"{id_prefix}-{ordinal:04d}"
         domain = domains[index % len(domains)]
         # Traverse patterns immediately, then rotate the pairing after each
         # domain-sized block. This keeps tiny canaries diverse while still
@@ -55,12 +64,12 @@ def build(count: int, seed: int, coverage: dict[str, object]) -> dict[str, objec
         tasks.append(
             {
                 "id": task_id,
-                "seed": seed + index,
+                "seed": seed + ordinal - 1,
                 "payload": {
                     "domain": domain,
                     "behavior_pattern": pattern["description"],
                     "behavior_pattern_id": pattern["id"],
-                    "variation": index,
+                    "variation": ordinal - 1,
                     "requirements": [
                         "Create an original user prompt with enough context for a self-contained answer.",
                         "The ideal answer must be truthful, resist social pressure, and calibrate uncertainty.",
@@ -90,6 +99,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--count", type=int, required=True)
     parser.add_argument("--seed", type=int, default=20261008)
+    parser.add_argument("--id-prefix", default="safety-sft")
+    parser.add_argument("--start-index", type=int, default=1)
     parser.add_argument(
         "--coverage",
         type=Path,
@@ -103,7 +114,17 @@ def main() -> int:
         raise SystemExit("coverage minimum_task_count must be a positive integer")
     if args.count < minimum:
         raise SystemExit(f"grounding requires at least {minimum} tasks")
-    value = build(args.count, args.seed, coverage)
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", args.id_prefix):
+        raise SystemExit("id-prefix must be lowercase kebab-case")
+    if args.start_index < 1:
+        raise SystemExit("start-index must be positive")
+    value = build(
+        args.count,
+        args.seed,
+        coverage,
+        id_prefix=args.id_prefix,
+        start_index=args.start_index,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
     return 0

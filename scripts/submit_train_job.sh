@@ -20,6 +20,9 @@ source "${REPO}/scripts/aar_runtime_env.sh"
 
 [ -n "${TEAM_DIR:-}" ] || { echo "submit_train_job: TEAM_DIR is required" >&2; exit 2; }
 mkdir -p "${TEAM_DIR}/logs"
+if [ "${AAR_AUTODATA:-0}" = 1 ]; then
+  "${HARNESS_PY}" -m aar.infrastructure.autodata_lifecycle preflight --run-id "${RUN_ID}"
+fi
 AAR_TRAIN_SUBMITTED_AT_NS="$(date +%s%N)"
 export AAR_TRAIN_SUBMITTED_AT_NS
 

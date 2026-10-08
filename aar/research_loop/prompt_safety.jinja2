@@ -281,6 +281,32 @@ production, retain exactly 1,000 accepted unique rows, begin with 1,250 fresh
 source tasks, and stop unsuccessfully at 1,500 total attempts rather than
 weakening the judge. Use concurrency `$AAR_AUTODATA_CONCURRENCY`.
 
+These are hard completion requirements, not suggestions to shrink when SandoQ is
+slow. Cold Firecracker starts and multi-hour generation are expected. Never cancel,
+skip, or replace an incomplete `meta_optimize` execution merely to fit one agent
+turn, and never start production until native status says that execution is
+`completed` with a finalized winner. Persist its IDs in your memory file and resume
+the same execution in a later session if necessary.
+
+Drive each native workspace or execution with exactly one foreground
+`workspace step` or `execution step` caller at a time. Do not launch background
+steppers, duplicate a timed-out step, or run two controllers against one subject.
+A long tool call does not imply that the native task failed: inspect native status
+and broker progress before retrying.
+
+After meta-optimization completes, use native `execution export-winner` to create a
+pristine, digest-bound winner export and never modify it. Copy that export to a
+separate production pipeline root, then build a dedicated production grounding
+manifest there with 1,250 IDs that are disjoint from every tuning, validation, and
+test ID (the checked-in builder supports `--id-prefix safety-prod`). The production
+execution must use that manifest and production copy of the exported winning
+pipeline, must share the native study with the workspace/meta execution, and must have
+`mode: production` and `max_iterations: 0`. Do not run production from the original
+baseline snapshot or the 96-task meta manifest. Keep the production execution JSON
+and handoff outside both pipeline roots; only
+`grounding/production-manifest.json` may differ between the pristine winner export
+and production pipeline root.
+
 In AutoData terminology, you are the visible **host agent**, not the approval
 principal. References to the "user" or "operator" in the AutoData skill mean the
 human or trusted AAR control process that supplied an explicit, scope-bound decision.
@@ -305,8 +331,21 @@ workspace in place.
 Your proposal must still disclose every external model, its role, the generation
 procedure, and the filtering or judging procedure. If your method trains on an
 AutoData export, its code must load the native `autodata.dataset/v1` export and use its
-`items` as training data. Merely running AutoData without consuming the exported items
-does not satisfy the proposed method.
+`items` as training data through
+`aar.infrastructure.autodata_dataset.load_autodata_campaign_datasets`, passing the
+verified production dataset/execution as one-element lists, with
+`required_rows=1000` and the fixed receipt path
+`$TEAM_DIR/autodata/<run_id>/training-consumption.json`. Merely running AutoData or
+parsing the JSON directly does not satisfy the proposed method.
+
+Before calling `scripts/submit_train_job.sh`, write
+`$TEAM_DIR/autodata/<run_id>/training-handoff.json` with the native state database,
+workspace/study ID, completed meta execution ID, exported winner root, completed
+production execution ID, dedicated production manifest, and exported production
+dataset. The submitter independently treats this file as untrusted and verifies the
+complete winner-to-production lineage, exact source IDs, 1,000 accepted rows, and
+dataset digest. Training is also rejected unless the method creates the verified
+consumption receipt before its model is submitted.
 {% endif %}
 
 **Where your methods live:** write every method package to your team's methods

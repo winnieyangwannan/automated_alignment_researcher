@@ -173,3 +173,33 @@ def test_runtime_preserves_decoupled_run_id_mode() -> None:
     runtime = (root / "scripts" / "aar_runtime_env.sh").read_text()
 
     assert "AAR_NO_LOCAL_GPU" in runtime
+    assert "AAR_AUTODATA_STATE" in runtime
+
+
+def test_autodata_proposal_requires_receipt_producing_loader() -> None:
+    direct_json = "payload = json.load(open(dataset_path))\n"
+    assert "load_autodata_campaign_datasets" in (
+        server_api_tools._autodata_method_contract_error(direct_json) or ""
+    )
+
+    wrong_size = """
+load_autodata_campaign_datasets(
+    [dataset_path],
+    receipt_path=receipt_path,
+    required_rows=64,
+    expected_execution_ids=[execution_id],
+)
+"""
+    assert server_api_tools._autodata_method_contract_error(wrong_size) == (
+        "AutoData loader must use literal required_rows=1000"
+    )
+
+    valid = """
+load_autodata_campaign_datasets(
+    [dataset_path],
+    receipt_path=receipt_path,
+    required_rows=1000,
+    expected_execution_ids=[execution_id],
+)
+"""
+    assert server_api_tools._autodata_method_contract_error(valid) is None

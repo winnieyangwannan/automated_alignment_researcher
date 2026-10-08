@@ -62,6 +62,27 @@ def test_grounding_builder_keeps_small_canary_behaviorally_diverse() -> None:
     assert len({task["facets"]["pattern"] for task in manifest["tasks"]}) == 4
 
 
+def test_grounding_builder_can_namespace_fresh_production_tasks() -> None:
+    builder = _load_module(
+        "aar_autodata_grounding_builder_production",
+        RECIPE / "grounding" / "build_manifest.py",
+    )
+    coverage = builder.load_coverage(RECIPE / "grounding" / "coverage.json")
+    meta = builder.build(96, 20261008, coverage)
+    production = builder.build(
+        1250,
+        20262008,
+        coverage,
+        id_prefix="safety-prod",
+    )
+
+    meta_ids = {task["id"] for task in meta["tasks"]}
+    production_ids = {task["id"] for task in production["tasks"]}
+    assert len(production_ids) == 1250
+    assert not meta_ids & production_ids
+    assert production["tasks"][0]["id"] == "safety-prod-0001"
+
+
 def test_checked_in_recipe_configuration_passes_local_check() -> None:
     completed = subprocess.run(
         [sys.executable, str(RECIPE / "recipe" / "check.py")],
@@ -165,3 +186,8 @@ def test_aar_prompt_defines_outer_loop_freedom_and_approval_roles() -> None:
     assert "you are the visible **host agent**, not the approval" in prompt
     assert "workspace fork --edit grounding|pipeline|both" in prompt
     assert "Between AAR iterations" in prompt
+    assert "Never cancel,\nskip, or replace an incomplete `meta_optimize`" in prompt
+    assert "exactly one foreground" in prompt
+    assert "execution export-winner" in prompt
+    assert "training-handoff.json" in prompt
+    assert "load_autodata_campaign_datasets" in prompt

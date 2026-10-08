@@ -1375,6 +1375,37 @@ def _requires_explicit_proposal_run_id() -> bool:
     )
 
 
+def _autodata_method_contract_error(code: str) -> str | None:
+    """Require approved AutoData methods to use the receipt-producing loader."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as error:
+        return f"method is not valid Python: {error}"
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        function = node.func
+        name = function.id if isinstance(function, ast.Name) else (
+            function.attr if isinstance(function, ast.Attribute) else ""
+        )
+        if name != "load_autodata_campaign_datasets":
+            continue
+        keywords = {item.arg: item.value for item in node.keywords if item.arg}
+        required = keywords.get("required_rows")
+        if not isinstance(required, ast.Constant) or required.value != 1000:
+            return "AutoData loader must use literal required_rows=1000"
+        if "receipt_path" not in keywords:
+            return "AutoData loader must write a training consumption receipt"
+        expected = "expected_execution_ids"
+        if expected not in keywords:
+            return f"AutoData loader must bind {expected}"
+        return None
+    return (
+        "method must call aar.infrastructure.autodata_dataset."
+        "load_autodata_campaign_datasets"
+    )
+
+
 def _missing_method_timing_phases(code: str) -> list[str]:
     """Return required literal ``with phase(...)`` names absent from method code."""
     from aar.phase_timing import REQUIRED_METHOD_PHASES
@@ -1474,6 +1505,16 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
                         "Method must use `from aar.phase_timing import phase` and wrap "
                         "these phases before approval: " + ", ".join(missing_timings)
                     ),
+                }, indent=2)}]}
+        if code is not None and os.getenv("AAR_AUTODATA", "0").lower() in (
+            "1", "true", "yes", "on"
+        ):
+            contract_error = _autodata_method_contract_error(code)
+            if contract_error:
+                return {"content": [{"type": "text", "text": json.dumps({
+                    "approved": False,
+                    "violations": ["AUTODATA_CONSUMPTION: unverified training handoff"],
+                    "error": contract_error,
                 }, indent=2)}]}
         # (B) Validate the paper FIRST (depth, >=5 citations, RULE 1 self-containment, RULE 2 no
         # outcome). A leaky/thin paper is rejected without spending the integrity-monitor call.
