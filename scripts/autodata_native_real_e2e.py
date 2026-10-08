@@ -245,7 +245,12 @@ class Driver:
             + Decimal(768 + 512) * Decimal(4)
         ) / Decimal(1_000_000)
         # Authoring dry run + conservative meta attempt limit + fixed production.
-        authorized_attempts = self.args.task_count + 20 + self.args.task_count
+        authorized_attempts = (
+            self.args.task_count
+            + 20
+            + self.args.task_count
+            + self.args.task_count
+        )
         maximum = per_task * authorized_attempts
         if maximum > self.args.max_cost_usd:
             raise RuntimeError(
@@ -413,7 +418,11 @@ class Driver:
             "executor": self.executor(),
             "budget": {
                 "max_iterations": 1 if mode == "meta_optimize" else 0,
-                "max_task_attempts": 20 if mode == "meta_optimize" else self.args.task_count,
+                "max_task_attempts": (
+                    20 + self.args.task_count
+                    if mode == "meta_optimize"
+                    else self.args.task_count
+                ),
                 "max_wall_seconds": self.args.timeout_seconds,
             },
             "concurrency": self.args.concurrency,
