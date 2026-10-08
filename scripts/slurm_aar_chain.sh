@@ -88,6 +88,67 @@ export LIT_AXIS_DIR="${LIT_AXIS_DIR:-${REPO}/_runs/litreview/${AXIS:-sycophancy}
 echo "[aar] team=${TEAM_ID}  TEAM_DIR=${TEAM_DIR}"
 echo "[aar] forum=${LOCAL_FINDINGS_DIR}  methods=${AAR_IDEAS_DIR}  lit(team)=${LIT_FORUM_DIR}  lit(axis)=${LIT_AXIS_DIR}"
 
+_autodata_broker_pid=''
+cleanup_autodata_broker() {
+  if [ -n "${_autodata_broker_pid}" ] && kill -0 "${_autodata_broker_pid}" 2>/dev/null; then
+    kill "${_autodata_broker_pid}" 2>/dev/null || true
+    wait "${_autodata_broker_pid}" 2>/dev/null || true
+  fi
+}
+trap cleanup_autodata_broker EXIT
+if [ "${AAR_AUTODATA:-0}" = 1 ]; then
+  : "${AAR_AUTODATA_CHECKOUT:?missing canonical AutoData checkout}"
+  : "${AAR_AUTODATA_BROKER_PYTHON:?missing broker Python}"
+  : "${AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE:?missing SandoQ token path}"
+  : "${AAR_AUTODATA_MODEL_ENV_FILE:?missing model workload env path}"
+  : "${AAR_AUTODATA_CAMPAIGN_POLICY:?missing campaign policy}"
+  : "${AAR_AUTODATA_CAPABILITY:?missing attempt-scoped broker capability}"
+  : "${AAR_AUTODATA_APPROVAL_PRIVATE_KEY:?missing delegated approval key}"
+  : "${AAR_AUTODATA_APPROVAL_PUBLIC_KEY:?missing delegated approval public key}"
+  _autodata_root="${TEAM_DIR}/autodata/broker"
+  mkdir -p "${_autodata_root}"
+  chmod 700 "${TEAM_DIR}/autodata" "${_autodata_root}"
+  export AAR_AUTODATA_STATE="${TEAM_DIR}/autodata/native/state.db"
+  export AAR_AUTODATA_ARTIFACTS="${TEAM_DIR}/autodata/native/artifacts"
+  export AAR_AUTODATA_WORKSPACES="${TEAM_DIR}/autodata/native/workspaces"
+  export AAR_AUTODATA_APPROVAL_AUDIT_DIR="${TEAM_DIR}/autodata/approvals"
+  mkdir -p "$(dirname -- "${AAR_AUTODATA_STATE}")" "${AAR_AUTODATA_ARTIFACTS}" \
+    "${AAR_AUTODATA_WORKSPACES}" "${AAR_AUTODATA_APPROVAL_AUDIT_DIR}"
+  chmod 700 "${TEAM_DIR}/autodata/native" "${AAR_AUTODATA_ARTIFACTS}" \
+    "${AAR_AUTODATA_WORKSPACES}" "${AAR_AUTODATA_APPROVAL_AUDIT_DIR}"
+  _autodata_capability_file="${_autodata_root}/capability"
+  printf '%s\n' "${AAR_AUTODATA_CAPABILITY}" > "${_autodata_capability_file}"
+  chmod 600 "${_autodata_capability_file}"
+  _autodata_port=$(( 10000 + (${SLURM_JOB_ID:-8791} % 40000) ))
+  export AAR_AUTODATA_BROKER_URL="http://127.0.0.1:${_autodata_port}"
+  PYTHONPATH="${AAR_AUTODATA_CHECKOUT}/src" \
+    "${AAR_AUTODATA_BROKER_PYTHON}" -m autodata.broker.cli \
+      --root "${_autodata_root}" \
+      --gateway-url "${SANDOQ_GATEWAY_URL:-https://sandoq-gateway.eks-prod.cf.aws.metafb.cloud}" \
+      --host 127.0.0.1 --port "${_autodata_port}" \
+      --max-concurrent "${AAR_AUTODATA_CONCURRENCY:?}" \
+      --auth-token-file "${_autodata_capability_file}" \
+      --execsidecar-token-file "${AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE}" \
+      --workload-env-file "${AAR_AUTODATA_MODEL_ENV_FILE}" \
+      --campaign-policy "${AAR_AUTODATA_CAMPAIGN_POLICY}" \
+      --anonymous-registry docker.io --no-registry-preflight \
+      > "${TEAM_DIR}/logs/autodata-broker.log" 2>&1 &
+  _autodata_broker_pid=$!
+  for _autodata_probe in $(seq 1 60); do
+    if "${PY}" -c 'import os,urllib.request; r=urllib.request.Request(os.environ["AAR_AUTODATA_BROKER_URL"]+"/healthz",headers={"Authorization":"Bearer "+os.environ["AAR_AUTODATA_CAPABILITY"]}); urllib.request.urlopen(r,timeout=2).read()' 2>/dev/null; then
+      break
+    fi
+    kill -0 "${_autodata_broker_pid}" 2>/dev/null || {
+      echo "[aar] ERROR: AutoData broker exited during startup" >&2
+      exit 2
+    }
+    sleep 1
+  done
+  kill -0 "${_autodata_broker_pid}" 2>/dev/null || { echo "[aar] ERROR: AutoData broker is not running" >&2; exit 2; }
+  echo "[aar] campaign-scoped AutoData broker ready (pid=${_autodata_broker_pid}, concurrency=${AAR_AUTODATA_CONCURRENCY})"
+  unset _autodata_capability_file _autodata_probe _autodata_port
+fi
+
 # --- agent authentication + web mode ---
 # Match the working FAIR librarian route: prefer Meta's authenticated Claude CLI
 # when it advertises secure-internet mode. The integrity monitor uses Claude

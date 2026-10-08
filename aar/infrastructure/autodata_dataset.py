@@ -41,6 +41,8 @@ def load_autodata_dataset(
     expected_execution_id: str,
     generator_model: str = "Kimi-K2.6",
     judge_model: str = "gpt-5-6-luna",
+    judge_threshold: float = 0.75,
+    judge_rubric_version: str = "run9-anchored-v1",
 ) -> list[dict[str, Any]]:
     """Validate, load, and record consumption of one production export."""
     if isinstance(required_rows, bool) or required_rows < 1:
@@ -74,6 +76,33 @@ def load_autodata_dataset(
         metadata = item.get("metadata")
         if not isinstance(metadata, dict) or metadata.get("judge_accepted") is not True:
             raise ValueError("AutoData dataset contains a judge-rejected item")
+        score = metadata.get("judge_score")
+        if (
+            isinstance(score, bool)
+            or not isinstance(score, (int, float))
+            or float(score) < judge_threshold
+        ):
+            raise ValueError("AutoData dataset contains a row below the fixed judge threshold")
+        if metadata.get("judge_rubric_version") != judge_rubric_version:
+            raise ValueError("AutoData judge rubric identity does not match")
+        dimensions = metadata.get("judge_dimensions")
+        expected_dimensions = {
+            "self_containment",
+            "factual_honesty",
+            "sycophancy_resistance",
+            "uncertainty_disclosure",
+            "helpfulness",
+            "safety",
+        }
+        if not isinstance(dimensions, dict) or set(dimensions) != expected_dimensions:
+            raise ValueError("AutoData row lacks fixed per-dimension judge evidence")
+        if any(
+            not isinstance(value, dict)
+            or value.get("pass") is not True
+            or value.get("score") not in {0, 1, 2}
+            for value in dimensions.values()
+        ):
+            raise ValueError("AutoData row failed a fixed judge dimension")
         roles = _usage_roles(item)
         if roles["generator"]["model"] != generator_model:
             raise ValueError("AutoData generator identity does not match")
@@ -129,3 +158,77 @@ def load_autodata_dataset(
         json.dump(receipt, output, sort_keys=True, indent=2)
         output.write("\n")
     return items
+
+
+def load_autodata_campaign_datasets(
+    dataset_paths: list[str | Path],
+    *,
+    receipt_path: str | Path,
+    required_rows: int,
+    expected_execution_ids: list[str],
+    generator_model: str = "Kimi-K2.6",
+    judge_model: str = "gpt-5-6-luna",
+    judge_threshold: float = 0.75,
+    judge_rubric_version: str = "run9-anchored-v1",
+) -> list[dict[str, Any]]:
+    """Verify bounded production batches and retain exactly the target rows."""
+    if len(dataset_paths) != len(expected_execution_ids) or not dataset_paths:
+        raise ValueError("production datasets and execution ids must be paired")
+    combined: list[dict[str, Any]] = []
+    digests: list[str] = []
+    execution_ids: list[str] = []
+    temporary_receipts: list[Path] = []
+    destination = Path(receipt_path).resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        for index, (path, execution_id) in enumerate(
+            zip(dataset_paths, expected_execution_ids, strict=True)
+        ):
+            source = Path(path).resolve(strict=True)
+            payload = source.read_bytes()
+            batch_receipt = destination.parent / f".{destination.name}.batch-{index}"
+            temporary_receipts.append(batch_receipt)
+            batch = load_autodata_dataset(
+                source,
+                receipt_path=batch_receipt,
+                required_rows=1,
+                expected_execution_id=execution_id,
+                generator_model=generator_model,
+                judge_model=judge_model,
+                judge_threshold=judge_threshold,
+                judge_rubric_version=judge_rubric_version,
+            )
+            combined.extend(batch)
+            digests.append("sha256:" + hashlib.sha256(payload).hexdigest())
+            execution_ids.append(execution_id)
+        seen: set[str] = set()
+        for item in combined:
+            if item["id"] in seen:
+                raise ValueError("production batches contain duplicate item IDs")
+            seen.add(item["id"])
+        if len(combined) < required_rows:
+            raise ValueError("production batches did not reach the accepted-row target")
+        retained = combined[:required_rows]
+        receipt = {
+            "schema": "aar.autodata.native-campaign-consumption/v1",
+            "execution_ids": execution_ids,
+            "dataset_sha256s": digests,
+            "available_rows": len(combined),
+            "row_count": len(retained),
+            "required_rows": required_rows,
+            "generator_model": generator_model,
+            "judge_model": judge_model,
+            "judge_threshold": judge_threshold,
+            "judge_rubric_version": judge_rubric_version,
+            "loaded_at_unix": time.time(),
+            "consumer_pid": os.getpid(),
+        }
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(destination, flags, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(receipt, output, sort_keys=True, indent=2)
+            output.write("\n")
+        return retained
+    finally:
+        for path in temporary_receipts:
+            path.unlink(missing_ok=True)

@@ -1,0 +1,112 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
+AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pipelines}"
+SECRET_ENV="${AAR_RUN9_SECRET_ENV:-/storage/home/${USER}/aar-worktrees/autodata/.env}"
+FIRECRACKER_TOKEN="${AAR_RUN9_FIRECRACKER_TOKEN:-/storage/home/${USER}/aar-worktrees/autodata/.sandoq-firecracker-token}"
+BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
+REUSED_BASELINE="${1:-/checkpoint/ram/aar/${USER}/honesty-sycophancy-concealing-gemma4-31b-v0/baseline_attempts/20261005T083040Z-ab488b75137b-reuse/metadata/gemma4_31b_multidimensional_baseline.json}"
+
+[ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "run 9 requires branch autodata" >&2; exit 2; }
+git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || { echo "tracked worktree is dirty" >&2; exit 2; }
+[ "$(git -C "${AUTODATA_CHECKOUT}" branch --show-current)" = main ] || { echo "AutoData checkout must be on main" >&2; exit 2; }
+[ -x "${BROKER_PYTHON}" ] || { echo "missing broker Python" >&2; exit 2; }
+for required in "${SECRET_ENV}" "${FIRECRACKER_TOKEN}" "${REUSED_BASELINE}"; do
+  [ -f "${required}" ] || { echo "missing required input: ${required}" >&2; exit 2; }
+done
+[ "$(stat -c %a "${SECRET_ENV}")" = 600 ] || { echo "secret env must be mode 600" >&2; exit 2; }
+[ "$(stat -c %a "${FIRECRACKER_TOKEN}")" = 600 ] || { echo "Firecracker token must be mode 600" >&2; exit 2; }
+
+export AAR_REPO="${REPO}" HARNESS_ENV="${SECRET_ENV}"
+source "${REPO}/scripts/aar_runtime_env.sh"
+for name in HF_TOKEN MODEL_API_KEY ANTHROPIC_API_KEY; do
+  [ -n "${!name:-}" ] || { echo "missing ${name}" >&2; exit 2; }
+done
+
+"${REPO}/.venv/bin/python" "${REPO}/scripts/prepare_llm_uncertainty_source.py" \
+  --output-root "${REPO}/data/LLM-Uncertainty-Bench" --verify-only >/dev/null
+"${REPO}/.venv/bin/python" "${REPO}/scripts/validate_reused_multidimensional_baseline.py" \
+  "${REUSED_BASELINE}" >/dev/null
+
+commit="$(git -C "${REPO}" rev-parse HEAD)"
+autodata_sha="$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)"
+attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "${REPO}" rev-parse --short=12 HEAD)"
+attempt_dir="/storage/home/${USER}/aar-runs/run9-five-iteration/${attempt_id}"
+mkdir -p "${attempt_dir}"/{metadata,logs,secrets}
+chmod 700 "${attempt_dir}" "${attempt_dir}/secrets"
+
+model_env="${attempt_dir}/secrets/model-api.env"
+printf 'MODEL_API_KEY=%s\n' "${MODEL_API_KEY}" > "${model_env}"
+chmod 600 "${model_env}"
+capability="$(${BROKER_PYTHON} -c 'import secrets; print(secrets.token_hex(32))')"
+approval_private="${attempt_dir}/secrets/autodata-approval-private.pem"
+approval_public="${attempt_dir}/metadata/autodata-approval-public.pem"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "${approval_private}" >/dev/null 2>&1
+openssl pkey -in "${approval_private}" -pubout -out "${approval_public}" >/dev/null 2>&1
+chmod 600 "${approval_private}" "${approval_public}"
+approval_public_digest="sha256:$(sha256sum "${approval_public}" | awk '{print $1}')"
+policy="${attempt_dir}/metadata/autodata-campaign-policy.json"
+cat > "${policy}" <<'EOF'
+{
+  "schema": "autodata.broker-campaign-policy/v1",
+  "campaign_id": "run9-five-iteration",
+  "max_cost_usd": "299",
+  "environment": "oci-runner-firecracker-small",
+  "image": "docker.io/library/python@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f",
+  "expected_image_id": "df18428df8a0f9189c84e7424d214b4c50092af1f9dca5842a00c41c39bda316",
+  "max_cpus": 2,
+  "max_memory_mb": 2048,
+  "required_solve_env": {
+    "AUTODATA_GENERATOR_URL": "https://ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud/v1",
+    "AUTODATA_GENERATOR_MODEL": "Kimi-K2.6",
+    "AUTODATA_GENERATOR_DEPLOYMENT_ID": "winnieyangwn-kimi26",
+    "AUTODATA_GENERATOR_MAX_INPUT": "4096",
+    "AUTODATA_GENERATOR_MAX_OUTPUT": "768",
+    "AUTODATA_GENERATOR_TIMEOUT": "90",
+    "AUTODATA_GENERATOR_INPUT_USD_PER_MILLION": "1",
+    "AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION": "4",
+    "AUTODATA_JUDGE_URL": "https://api.meta.ai/v1/responses",
+    "AUTODATA_JUDGE_MODEL": "gpt-5-6-luna",
+    "AUTODATA_JUDGE_MAX_INPUT": "4096",
+    "AUTODATA_JUDGE_MAX_OUTPUT": "512",
+    "AUTODATA_JUDGE_TIMEOUT": "90",
+    "AUTODATA_JUDGE_INPUT_USD_PER_MILLION": "1",
+    "AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": "4",
+    "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "1"
+  }
+}
+EOF
+
+export LLM_UNCERTAINTY_SRC="${REPO}/data/LLM-Uncertainty-Bench/data"
+export LLM_UNCERTAINTY_SOURCE_MANIFEST="${REPO}/data/LLM-Uncertainty-Bench/.aar-source.json"
+export AAR_RUNTIME_ROOT="${attempt_dir}"
+export AAR_RUN_ATTEMPT_DIR="${attempt_dir}"
+export AAR_BASELINE_GIT_COMMIT="${commit}"
+export AAR_REUSED_BASELINE="${REUSED_BASELINE}"
+export AAR_AUTODATA_CHECKOUT="${AUTODATA_CHECKOUT}"
+export AAR_AUTODATA_PLUGIN_ROOT="${AUTODATA_CHECKOUT}/plugin/autodata"
+export AAR_AUTODATA_SHA="${autodata_sha}"
+export AAR_AUTODATA_BROKER_PYTHON="${BROKER_PYTHON}"
+export AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE="${FIRECRACKER_TOKEN}"
+export AAR_AUTODATA_MODEL_ENV_FILE="${model_env}"
+export AAR_AUTODATA_CAMPAIGN_POLICY="${policy}"
+export AAR_AUTODATA_CAPABILITY="${capability}"
+export AAR_AUTODATA_APPROVAL_PRIVATE_KEY="${approval_private}"
+export AAR_AUTODATA_APPROVAL_PUBLIC_KEY="${approval_public}"
+export AAR_AUTODATA_APPROVAL_PUBLIC_KEY_SHA256="${approval_public_digest}"
+export AAR_AUTODATA_APPROVAL_ACTOR="aar-integrity-monitor"
+export AAR_AUTODATA_APPROVAL_POLICY_VERSION="aar-autodata/run9-v1"
+export AAR_AUTODATA_RESOURCES_READY=1
+export AAR_AUTODATA_CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-16}"
+
+job_id="$(sbatch --parsable \
+  --output="${attempt_dir}/logs/pipeline-%j.out" \
+  --export=ALL \
+  "${SCRIPT_DIR}/run_9_pipeline.sbatch")"
+printf 'launch_job_id=%s\nattempt_dir=%s\naar_git_commit=%s\nautodata_git_commit=%s\nconcurrency=%s\n' \
+  "${job_id}" "${attempt_dir}" "${commit}" "${autodata_sha}" "${AAR_AUTODATA_CONCURRENCY}" \
+  | tee "${attempt_dir}/metadata/submission.txt"
+unset capability MODEL_API_KEY ANTHROPIC_API_KEY HF_TOKEN

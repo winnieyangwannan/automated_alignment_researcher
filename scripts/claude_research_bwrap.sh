@@ -193,6 +193,15 @@ done
 if [ -d "${runtime_root}/secrets" ]; then
   bwrap_args+=(--tmpfs "${runtime_root}/secrets")
 fi
+# Same-UID functional evaluation state is additionally hidden from the research
+# namespace. The evaluator remains outside this mount namespace.
+for eval_private in \
+  "${runtime_root}/eval/holdout" \
+  "${TEAM_DIR:-${runtime_root}/aar_teams/unknown}/_eval_private"; do
+  if [ -d "${eval_private}" ]; then
+    bwrap_args+=(--tmpfs "${eval_private}")
+  fi
+done
 
 # Do not reveal wrapper-control values to Claude.  The SDK-side spawn guard has
 # already removed raw keys/token paths; repeat the rule here so this boundary
@@ -204,12 +213,13 @@ unset AAR_CLAUDE_REAL_CLI_PATH AAR_RESEARCH_STORAGE_HOME
 # version when the override cannot be materialized. Keep the trusted launcher
 # but prevent an operator-side pin from crossing this isolation boundary.
 unset META_CLAUDE_CODE_RELEASE CLAUDE_CODE_VERSION_OVERRIDE
-unset git_common cli_dir masked_file hidden_root storage_home autodata_plugin_root
+unset git_common cli_dir masked_file hidden_root storage_home autodata_plugin_root eval_private
 unset claude_native_cache dotslash_cache
 while IFS= read -r env_name; do
   upper_name="${env_name^^}"
   case "${upper_name}" in
-    HARNESS_ENV|ANTHROPIC_API_KEY|ANT_HIGH_PRIO_API|ANT_API_KEY|MODEL_API_KEY|LLAMA_API_KEY|HF_TOKEN|HUGGING_FACE_HUB_TOKEN|OAI_API|OPENAI_API_KEY|*_API_KEY|*_TOKEN|*_TOKEN_FILE|*_SECRET|*_SECRET_FILE|*CREDENTIAL*)
+    AAR_AUTODATA_CAPABILITY) continue ;;
+    AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE|AAR_AUTODATA_MODEL_ENV_FILE|AAR_AUTODATA_APPROVAL_PRIVATE_KEY|HARNESS_ENV|ANTHROPIC_API_KEY|ANT_HIGH_PRIO_API|ANT_API_KEY|MODEL_API_KEY|LLAMA_API_KEY|HF_TOKEN|HUGGING_FACE_HUB_TOKEN|OAI_API|OPENAI_API_KEY|*_API_KEY|*_TOKEN|*_TOKEN_FILE|*_SECRET|*_SECRET_FILE|*CREDENTIAL*)
       unset "${env_name}"
       ;;
   esac

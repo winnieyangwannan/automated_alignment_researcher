@@ -73,6 +73,9 @@ _RESEARCH_CHILD_SECRET_NAMES = frozenset(
         "AAR_RUN8_EXECSIDECAR_TOKEN_FILE",
         "AAR_RUN8_ADAPTER_TOKEN_FILE",
         "AAR_RUN8_BROKER_TOKEN_FILE",
+        "AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE",
+        "AAR_AUTODATA_MODEL_ENV_FILE",
+        "AAR_AUTODATA_APPROVAL_PRIVATE_KEY",
     }
 )
 
@@ -712,6 +715,9 @@ class AutonomousAgentLoop:
         stop_reason = None
         successful_sessions = 0
         failed_sessions = 0
+        target_successful_pairs = int(
+            os.getenv("AAR_TARGET_SUCCESSFUL_ITERATIONS", "0") or "0"
+        )
 
         while True:
             if self.max_iterations is not None and self.session_count >= self.max_iterations:
@@ -736,6 +742,14 @@ class AutonomousAgentLoop:
                 successful_sessions += 1
                 if not self.local_mode:
                     await self._sync_to_s3()
+                completed_pairs = self._successful_score_result_pairs()
+                if target_successful_pairs and completed_pairs >= target_successful_pairs:
+                    print(
+                        f"\n[Loop] Stopping: reached {completed_pairs} atomic "
+                        "score/result pairs"
+                    )
+                    stop_reason = "successful_iterations"
+                    break
 
             except KeyboardInterrupt:
                 print("\n[Loop] Interrupted")
@@ -781,6 +795,7 @@ class AutonomousAgentLoop:
             ),
             "successful_sessions": successful_sessions,
             "failed_sessions": failed_sessions,
+            "successful_score_result_pairs": self._successful_score_result_pairs(),
         }
 
         summary_dir = getattr(self, "logs_dir", None)
@@ -797,6 +812,35 @@ class AutonomousAgentLoop:
         print(f"{'='*60}\n")
 
         return result
+
+    def _successful_score_result_pairs(self) -> int:
+        """Count durable score/result intersections, never session completions."""
+        team_dir = Path(os.getenv("TEAM_DIR", self.logs_dir.parent))
+        score_ids: set[str] = set()
+        for path in (team_dir / "scores").glob("*.json"):
+            if path.name.endswith(".failed.json"):
+                continue
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(value, dict) and isinstance(
+                value.get("headline_pct"), (int, float)
+            ):
+                score_ids.add(path.stem)
+        result_ids: set[str] = set()
+        for path in (team_dir / "forum").glob("*.json"):
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if (
+                isinstance(value, dict)
+                and value.get("finding_type") == "result"
+                and isinstance(value.get("run_id"), str)
+            ):
+                result_ids.add(value["run_id"])
+        return len(score_ids & result_ids)
 
     async def _run_session(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -4,6 +4,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -118,6 +119,44 @@ def test_judge_rejected_row_is_not_exportable_training_data(tmp_path: Path) -> N
     assert result["generated_items"] == []
     assert result["provider_usage"] == [generator_usage, judge_usage]
     assert result["reason_code"] == "judge_rejected"
+
+
+def test_judge_uses_fixed_anchored_dimensions() -> None:
+    task = _load_module("aar_autodata_recipe_task_anchored", RECIPE / "recipe" / "task.py")
+    names = (
+        "self_containment",
+        "factual_honesty",
+        "sycophancy_resistance",
+        "uncertainty_disclosure",
+        "helpfulness",
+        "safety",
+    )
+    dimensions = {name: {"pass": True, "score": 2} for name in names}
+    dimensions["helpfulness"] = {"pass": False, "score": 1}
+    response = {
+        "id": "judge-request",
+        "usage": {"input_tokens": 10, "output_tokens": 10},
+        "output_text": json.dumps(
+            {"accept": True, "dimensions": dimensions, "reason": "one partial defect"}
+        ),
+    }
+    environment = {
+        "AUTODATA_JUDGE_URL": "https://example.invalid/v1/responses",
+        "AUTODATA_JUDGE_MODEL": "gpt-5-6-luna",
+        "AUTODATA_JUDGE_INPUT_USD_PER_MILLION": "1",
+        "AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": "4",
+        "AUTODATA_JUDGE_MAX_INPUT": "4096",
+        "AUTODATA_JUDGE_MAX_OUTPUT": "512",
+        "AUTODATA_JUDGE_TIMEOUT": "90",
+        "MODEL_API_KEY": "test-only",
+    }
+    with patch.dict(os.environ, environment, clear=False), patch.object(
+        task, "_post_json", return_value=response
+    ):
+        verdict, _ = task._judge({"prompt": "p", "response": "r"})
+    assert verdict["rubric_version"] == "run9-anchored-v1"
+    assert verdict["score"] == 11 / 12
+    assert verdict["accept"] is False
 
 
 def test_aar_prompt_defines_outer_loop_freedom_and_approval_roles() -> None:

@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from aar.infrastructure.autodata_dataset import load_autodata_dataset
+from aar.infrastructure.autodata_dataset import (
+    load_autodata_campaign_datasets,
+    load_autodata_dataset,
+)
 
 
 def _dataset(*, accepted: bool = True, mode: str = "production") -> dict:
@@ -37,7 +40,22 @@ def _dataset(*, accepted: bool = True, mode: str = "production") -> dict:
                 "id": "row-1",
                 "prompt": "Question",
                 "response": "Answer",
-                "metadata": {"judge_accepted": accepted},
+                "metadata": {
+                    "judge_accepted": accepted,
+                    "judge_score": 0.9,
+                    "judge_rubric_version": "run9-anchored-v1",
+                    "judge_dimensions": {
+                        name: {"pass": accepted, "score": 2 if accepted else 0}
+                        for name in (
+                            "self_containment",
+                            "factual_honesty",
+                            "sycophancy_resistance",
+                            "uncertainty_disclosure",
+                            "helpfulness",
+                            "safety",
+                        )
+                    },
+                },
                 "_autodata_usage": usage,
             }
         ],
@@ -81,3 +99,28 @@ def test_load_fails_closed(value: dict, error: str):
                 required_rows=1,
                 expected_execution_id="exec_test",
             )
+
+
+def test_campaign_loader_combines_batches_and_retains_exact_target():
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        paths = []
+        ids = []
+        for index in range(2):
+            value = _dataset()
+            value["execution_id"] = f"exec_{index}"
+            value["items"][0]["id"] = f"row-{index}"
+            path = root / f"dataset-{index}.json"
+            path.write_text(json.dumps(value))
+            paths.append(path)
+            ids.append(f"exec_{index}")
+        rows = load_autodata_campaign_datasets(
+            paths,
+            receipt_path=root / "campaign-receipt.json",
+            required_rows=1,
+            expected_execution_ids=ids,
+        )
+        assert len(rows) == 1
+        receipt = json.loads((root / "campaign-receipt.json").read_text())
+        assert receipt["available_rows"] == 2
+        assert receipt["row_count"] == 1

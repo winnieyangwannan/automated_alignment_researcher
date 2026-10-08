@@ -244,6 +244,34 @@ no MCP lifecycle wrapper such as `autodata_generate`, `autodata_step`, or
 workspace, pipeline, action result, method, prompt, log, or export. Do not invent an
 approval: honor the native skill's visible approval-action rules.
 
+The trusted launcher provides a campaign-scoped broker at
+`$AAR_AUTODATA_BROKER_URL` and a limited bearer capability in
+`$AAR_AUTODATA_CAPABILITY`. Configure SandoQ executors with that URL and
+`broker_auth_secret_ref: AAR_AUTODATA_CAPABILITY`; never copy the capability
+value into JSON or logs. It is restricted to the operator-approved image,
+models, token ceilings, rates, resources, concurrency, and shared campaign
+budget. Start each outer iteration from the reviewed recipe at
+`$AAR_AUTODATA_RECIPE_ROOT`, copying it into that run's writable draft before
+authoring changes.
+
+Use the shared native paths `$AAR_AUTODATA_STATE`,
+`$AAR_AUTODATA_ARTIFACTS`, and `$AAR_AUTODATA_WORKSPACES` on every plugin CLI
+call. Delegated approval uses the visible public key at
+`$AAR_AUTODATA_APPROVAL_PUBLIC_KEY`, digest
+`$AAR_AUTODATA_APPROVAL_PUBLIC_KEY_SHA256`, actor
+`$AAR_AUTODATA_APPROVAL_ACTOR`, and policy version
+`$AAR_AUTODATA_APPROVAL_POLICY_VERSION`. Copy only the public key into each
+draft and declare that relative path in `approval_policy`; the private signing
+key is unavailable to you and is used only by `review_autodata_action`.
+
+The operator envelope is available through the `AAR_AUTODATA_*` count
+variables. Use exactly 64 tuning, 32 hidden validation, and 32 untouched test
+tasks; request 3 through 10 native meta iterations with `min_iterations: 3`
+and `early_stop_patience: 3`. Use the fixed Luna threshold in the recipe. For
+production, retain exactly 1,000 accepted unique rows, begin with 1,250 fresh
+source tasks, and stop unsuccessfully at 1,500 total attempts rather than
+weakening the judge. Use concurrency `$AAR_AUTODATA_CONCURRENCY`.
+
 In AutoData terminology, you are the visible **host agent**, not the approval
 principal. References to the "user" or "operator" in the AutoData skill mean the
 human or trusted AAR control process that supplied an explicit, scope-bound decision.

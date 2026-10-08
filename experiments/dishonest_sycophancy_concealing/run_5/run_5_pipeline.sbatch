@@ -29,7 +29,7 @@ source "${REPO}/scripts/axis_env.sh"
 mkdir -p "${HF_HOME}"
 echo "[run5] isolated HF_HOME=${HF_HOME}"
 
-export AAR_EXPECTED_BRANCH=multi_vllm
+export AAR_EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-multi_vllm}"
 export AAR_RUNTIME_ROOT="${ATTEMPT_DIR}"
 export AAR_BASELINE_OVERRIDES="${ATTEMPT_DIR}/metadata/gemma4_31b_multidimensional_baseline.json"
 export HOLDOUT_DIR="${ATTEMPT_DIR}/eval/holdout/gemma4_31b"
@@ -51,14 +51,14 @@ export AAR_VLLM_MERGE_PY=/storage/home/winnieyangwn/envs/steerability-client/bin
 export AAR_VLLM_CONTAINER_RW_MOUNT="${ATTEMPT_DIR}"
 export AAR_VLLM_MERGED_ROOT="${ATTEMPT_DIR}/merged_candidates"
 
-export AAR_TEAM_ID=honesty-sycophancy-concealing-gemma4_31b-opus48-fiveiter-vllm-run5-v0
-export AAR_CLAUDE_SPEND_CAP_USD=500
-export AAR_GPT_JUDGE_SPEND_CAP_USD=500
-export AAR_CLAUDE_SESSION_BUDGET_USD=100
-export OVERLOADED_MAX_RETRIES=0
-export AAR_REQUIRE_SUCCESSFUL_ITERATIONS=1
-export AAR_VERIFY_TWO_ITERATION_ARTIFACTS=0
-export AAR_FUNCTIONAL_SMOKE=1
+export AAR_TEAM_ID="${AAR_TEAM_ID:-honesty-sycophancy-concealing-gemma4_31b-opus48-fiveiter-vllm-run5-v0}"
+export AAR_CLAUDE_SPEND_CAP_USD="${AAR_CLAUDE_SPEND_CAP_USD:-500}"
+export AAR_GPT_JUDGE_SPEND_CAP_USD="${AAR_GPT_JUDGE_SPEND_CAP_USD:-500}"
+export AAR_CLAUDE_SESSION_BUDGET_USD="${AAR_CLAUDE_SESSION_BUDGET_USD:-100}"
+export OVERLOADED_MAX_RETRIES="${OVERLOADED_MAX_RETRIES:-0}"
+export AAR_REQUIRE_SUCCESSFUL_ITERATIONS="${AAR_REQUIRE_SUCCESSFUL_ITERATIONS:-1}"
+export AAR_VERIFY_TWO_ITERATION_ARTIFACTS="${AAR_VERIFY_TWO_ITERATION_ARTIFACTS:-0}"
+export AAR_FUNCTIONAL_SMOKE="${AAR_FUNCTIONAL_SMOKE:-1}"
 export AAR_MULTIDIM_SCORING_CONFIRMED=1
 export AAR_MAX_CONCURRENT_TRAIN_JOBS=1
 export AAR_EVAL_GPUS=4
@@ -67,7 +67,7 @@ export AAR_EVAL_TIME=7-00:00:00
 export AAR_EVAL_IDLE_SECONDS=604200
 export AAR_START_EVAL_WORKER=1
 
-[ "$(git -C "${REPO}" branch --show-current)" = multi_vllm ] || { echo "wrong branch" >&2; exit 2; }
+[ "$(git -C "${REPO}" branch --show-current)" = "${AAR_EXPECTED_BRANCH}" ] || { echo "wrong branch" >&2; exit 2; }
 [ "$(git -C "${REPO}" rev-parse HEAD)" = "${EXPECTED_COMMIT}" ] || { echo "commit drift" >&2; exit 2; }
 git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || {
   echo "tracked HPC worktree is dirty" >&2
@@ -104,6 +104,6 @@ bash "${REPO}/scripts/publish_holdout.sh"
 
 export EVAL_VLLM_LORA_STRATEGY=merged_checkpoint
 export EVAL_VLLM_REQUIRE_MERGED=1
-launch_log="${ATTEMPT_DIR}/metadata/launch_run5_vllm_submission.txt"
-bash "${REPO}/scripts/launch_team.sh" "pilot" 5 167 | tee "${launch_log}"
+launch_log="${ATTEMPT_DIR}/metadata/${AAR_LAUNCH_LOG_NAME:-launch_run5_vllm_submission.txt}"
+bash "${REPO}/scripts/launch_team.sh" "${AAR_CHAIN_SEEDS:-pilot}" "${AAR_CHAIN_MAX_SESSIONS:-5}" "${AAR_CHAIN_MAX_HOURS:-167}" | tee "${launch_log}"
 echo "[run5] retained baseline validated; sequential five-iteration vLLM AAR launched"

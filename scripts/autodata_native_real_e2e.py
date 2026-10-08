@@ -40,6 +40,7 @@ def _args() -> argparse.Namespace:
     parser.add_argument("--model-api-env-file", type=Path, required=True)
     parser.add_argument("--task-count", type=int, default=4)
     parser.add_argument("--required-rows", type=int, default=1)
+    parser.add_argument("--concurrency", type=int, default=2)
     parser.add_argument("--max-cost-usd", type=Decimal, default=Decimal("1.00"))
     parser.add_argument("--timeout-seconds", type=int, default=7200)
     return parser.parse_args()
@@ -76,6 +77,8 @@ class Driver:
             raise RuntimeError("small meta canary requires at least four tasks")
         if args.required_rows < 1 or args.required_rows > args.task_count:
             raise RuntimeError("required rows must be in [1, task-count]")
+        if args.concurrency < 1 or args.concurrency > 64:
+            raise RuntimeError("concurrency must be in [1,64]")
         self.state = self.root / "native" / "state.db"
         self.artifacts = self.root / "native" / "artifacts"
         self.workspaces = self.root / "native" / "workspaces"
@@ -274,7 +277,7 @@ class Driver:
                 "max_task_attempts": 20,
                 "max_wall_seconds": self.args.timeout_seconds,
             },
-            "concurrency": 2,
+            "concurrency": self.args.concurrency,
             "secret_references": ["AUTODATA_BROKER_AUTH_TOKEN"],
         }
         brief["approval_policy"] = {
@@ -413,7 +416,7 @@ class Driver:
                 "max_task_attempts": 20 if mode == "meta_optimize" else self.args.task_count,
                 "max_wall_seconds": self.args.timeout_seconds,
             },
-            "concurrency": 2,
+            "concurrency": self.args.concurrency,
             "secret_references": ["AUTODATA_BROKER_AUTH_TOKEN"],
         }
         if mode == "meta_optimize":
@@ -532,6 +535,7 @@ class Driver:
             "production_execution_id": production_execution_id,
             "task_count": self.args.task_count,
             "required_rows": self.args.required_rows,
+            "concurrency": self.args.concurrency,
             "accepted_rows": accepted,
             "dataset": str(dataset),
             "dataset_sha256": "sha256:" + hashlib.sha256(dataset.read_bytes()).hexdigest(),
