@@ -216,3 +216,23 @@ Jobs `1763541` and `1763540` were cancelled and became terminal with Slurm state
 and 21 minutes 44 seconds, respectively. The attempt is preserved. There was no
 resubmission pending a fix that preserves the decoupled-run marker and tests
 run-ID minting through the actual scrubbed research environment.
+
+## 2026-10-08 — active proposal-bound launch
+
+Commit `4a55052` preserves the decoupled-run marker through the research
+environment and adds end-to-end coverage for proposal run-ID minting. The full
+HPC suite passed 241 tests plus 35 subtests. The exact launch checkout includes
+that fix at `cc7797c51afbd88720f7ff952e42c2b5232931a3` and is frozen while the
+jobs run.
+
+- Attempt root:
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T111258Z-cc7797c51afb`.
+- Launcher: `1764315` (`COMPLETED`, exit `0:0`).
+- Evaluator: `1764390`.
+- Sequential research chain: `1764391`.
+- Configured AutoData concurrency: 8.
+
+The launch monitor must verify this exact order before treating generation as
+admitted: an approved proposal with a nonempty minted `run_id` and immutable
+run file; a signed grounding audit containing the same `proposal_binding`; then
+the first broker job.
