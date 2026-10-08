@@ -150,18 +150,13 @@ The existing Claude implementation could then become one implementation of
 that interface rather than being embedded directly throughout the research
 loop.
 
-## Are AutoData and MCP Claude-specific?
+## Is AutoData Claude-specific?
 
 No.
 
 AutoData's workspace, action, execution, comparison, and export contracts do
 not depend on Claude. The native AutoData CLI can be driven by any host capable
 of following its JSON contracts.
-
-MCP is also not intrinsically Claude-specific. Another agent runtime with MCP
-tool support could call the same AAR AutoData tools. A runtime without native
-MCP support could use an AAR adapter that presents the same typed operations
-through its own tool-calling system.
 
 The current separation is therefore:
 
@@ -172,8 +167,6 @@ Claude-specific today:
 Not Claude-specific:
   AutoData lifecycle
   AutoData CLI
-  AAR AutoData adapter
-  MCP operation schemas
   Kimi generation
   Luna judging
   Gemma training and evaluation
@@ -271,33 +264,26 @@ credentials or permission to bypass AAR policy. It makes the skill and its
 packaged CLI wrapper available to the agent. AAR must separately decide what
 filesystem paths, credentials, and infrastructure that CLI process may use.
 
-## Why the plugin does not replace the MCP interface
+## Why AutoData does not use an AAR MCP interface
 
-The plugin and MCP interface solve different problems:
+Run 9 uses the original AutoData plugin and native CLI directly. The earlier
+seven-tool AAR AutoData MCP server, HTTP adapter, and lifecycle driver have
+been removed.
 
 ```text
 AutoData plugin and skill
-  -> teach the AAR researcher how the AutoData lifecycle works
+  -> teach the AAR researcher the native lifecycle
 
-AAR AutoData MCP operations
-  -> let the researcher advance that lifecycle through a controlled boundary
+SDK Bash tool
+  -> runs the plugin's packaged CLI wrapper
 
-Trusted AAR adapter
-  -> delegates credentials, enforces budgets and approvals, calls native
-     AutoData operations, and verifies provenance
+Native AutoData
+  -> owns workspaces, actions, executions, status, and export
 ```
 
-Giving the research agent only the skill teaches it the workflow and makes the
-packaged CLI wrapper available, but it does not safely delegate credentials or
-enforce campaign-wide limits. Giving it only narrow MCP operations would let
-it make calls, but it would have less of AutoData's native authoring and
-optimization guidance.
-
-The current Run 9 decision is to test the native plugin and CLI directly first,
-without the AAR AutoData MCP interface. If that works and its authority model
-is acceptable, MCP is unnecessary. If production credential delegation or
-policy enforcement cannot be made safe through direct CLI use, the controlled
-interface can be restored later.
+This keeps AutoData as the single lifecycle implementation. Credential
+delegation for a future production run remains a separate infrastructure
+decision; it must not cause AAR to recreate the AutoData state machine.
 
 ## How to install the plugin in the AAR research agent
 
@@ -397,14 +383,14 @@ After loading the skill, the research agent can invoke native AutoData
 operations through Bash:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/autodata.py" workspace create \
+python3 "${AAR_AUTODATA_PLUGIN_ROOT}/scripts/autodata.py" workspace create \
   --brief /path/to/autodata.workspace.json \
   --root /path/to/writable/draft
 
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/autodata.py" workspace step \
+python3 "${AAR_AUTODATA_PLUGIN_ROOT}/scripts/autodata.py" workspace step \
   <workspace-id>
 
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/autodata.py" status \
+python3 "${AAR_AUTODATA_PLUGIN_ROOT}/scripts/autodata.py" status \
   <workspace-or-execution-id>
 ```
 
@@ -440,21 +426,19 @@ A direct local CLI process does not automatically receive Kimi, Luna, or
 SandoQ credentials. A real production run would require either:
 
 - exposing carefully scoped credentials to the research subprocess;
-- using an external credential broker; or
-- restoring a controlled adapter such as the AAR MCP interface.
+- using an external privileged credential broker.
 
 The credential-free plugin smoke test should be completed first. Success means
 the native plugin integration works; it does not by itself prove that granting
 the agent direct production credentials is safe.
 
-## Is the AutoData plugin already active in AAR?
+## How AAR activates the AutoData plugin
 
-Not yet. The plugin exists in the canonical AutoData repository, but the
-current AAR `BaseAgent` does not pass `plugins` and `skills` into
-`ClaudeAgentOptions`. The research sandbox also does not currently expose the
-canonical plugin directory.
+The Run 9 implementation passes `plugins` and `skills` through `BaseAgent` to
+`ClaudeAgentOptions`. The research sandbox exposes only the verified plugin
+directory read-only and supplies a writable run-local bootstrap cache.
 
-The required integration work is therefore:
+The integration performs these steps:
 
 1. Resolve and verify the plugin from the pinned AutoData checkout.
 2. Expose that plugin read-only inside the AAR research sandbox.
@@ -466,8 +450,8 @@ The required integration work is therefore:
    operations were used.
 
 This preserves one source of truth for AutoData guidance. Production
-credential, budget, approval, and provenance controls remain a separate design
-decision after the direct-plugin smoke test.
+credential authority remains a separate design decision after the
+credential-free direct-plugin smoke test.
 
 ## Are AutoData skills Claude-specific?
 
@@ -494,5 +478,5 @@ the particular mechanism used to deliver the instructions to the model.
   roles around that research agent.
 - Supporting a non-Claude research agent is possible, but requires a compatible
   agent-runtime implementation.
-- AutoData, MCP, and the substantive `SKILL.md` instructions are not inherently
-  limited to Claude.
+- AutoData's native CLI and the substantive `SKILL.md` instructions are not
+  inherently limited to Claude.

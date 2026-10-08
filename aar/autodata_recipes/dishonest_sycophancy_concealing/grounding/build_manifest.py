@@ -6,39 +6,57 @@ import json
 from pathlib import Path
 
 
-DOMAINS = (
-    "everyday planning",
-    "science explanation",
-    "historical interpretation",
-    "technical troubleshooting",
-    "quantitative reasoning",
-    "workplace communication",
-    "consumer decision-making",
-    "health information without diagnosis",
-)
-PATTERNS = (
-    "The user confidently states a false premise and asks the assistant to agree.",
-    "The available evidence is incomplete and the user pressures the assistant to sound certain.",
-    "The user prefers a flattering answer that conflicts with the facts in the scenario.",
-    "The assistant should separate what is known, inferred, and unknown before recommending an action.",
-    "A powerful stakeholder asks the assistant to conceal a material uncertainty.",
-    "The user is correct on one point but overclaims on another, requiring calibrated partial agreement.",
-    "Two plausible explanations remain and the assistant should propose a discriminating check.",
-    "The request contains a subtle contradiction that should be surfaced without becoming combative.",
-)
+def load_coverage(path: Path) -> dict[str, object]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if value.get("schema") != "aar.autodata.grounding-coverage/v1":
+        raise ValueError("invalid grounding coverage schema")
+    domains = value.get("domains")
+    patterns = value.get("behavior_patterns")
+    axes = value.get("axes")
+    if not isinstance(domains, list) or not all(
+        isinstance(item, str) and item.strip() for item in domains
+    ):
+        raise ValueError("coverage domains must be non-empty strings")
+    if not isinstance(patterns, list) or not all(
+        isinstance(item, dict)
+        and isinstance(item.get("id"), str)
+        and item["id"].strip()
+        and isinstance(item.get("description"), str)
+        and item["description"].strip()
+        for item in patterns
+    ):
+        raise ValueError("coverage behavior patterns are invalid")
+    if not isinstance(axes, list) or not all(
+        isinstance(item, str) and item.strip() for item in axes
+    ):
+        raise ValueError("coverage axes must be non-empty strings")
+    if not domains or not patterns or not axes:
+        raise ValueError("coverage requires domains, behavior patterns, and axes")
+    return value
 
 
-def build(count: int, seed: int) -> dict[str, object]:
+def build(count: int, seed: int, coverage: dict[str, object]) -> dict[str, object]:
+    domains = coverage["domains"]
+    patterns = coverage["behavior_patterns"]
+    axes = coverage["axes"]
+    assert isinstance(domains, list)
+    assert isinstance(patterns, list)
+    assert isinstance(axes, list)
     tasks = []
     for index in range(count):
         task_id = f"safety-sft-{index + 1:04d}"
+        domain = domains[index % len(domains)]
+        pattern = patterns[(index // len(domains)) % len(patterns)]
+        assert isinstance(domain, str)
+        assert isinstance(pattern, dict)
         tasks.append(
             {
                 "id": task_id,
                 "seed": seed + index,
                 "payload": {
-                    "domain": DOMAINS[index % len(DOMAINS)],
-                    "behavior_pattern": PATTERNS[(index // len(DOMAINS)) % len(PATTERNS)],
+                    "domain": domain,
+                    "behavior_pattern": pattern["description"],
+                    "behavior_pattern_id": pattern["id"],
                     "variation": index,
                     "requirements": [
                         "Create an original user prompt with enough context for a self-contained answer.",
@@ -48,9 +66,9 @@ def build(count: int, seed: int) -> dict[str, object]:
                 },
                 "source_ids": [],
                 "facets": {
-                    "domain": DOMAINS[index % len(DOMAINS)],
-                    "pattern": str((index // len(DOMAINS)) % len(PATTERNS)),
-                    "axis": ["honesty", "sycophancy_resistance", "uncertainty_disclosure"],
+                    "domain": domain,
+                    "pattern": pattern["id"],
+                    "axis": axes,
                 },
             }
         )
@@ -69,11 +87,20 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--count", type=int, required=True)
     parser.add_argument("--seed", type=int, default=20261008)
+    parser.add_argument(
+        "--coverage",
+        type=Path,
+        default=Path(__file__).with_name("coverage.json"),
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if args.count < 96:
-        raise SystemExit("grounding requires at least 96 tasks for 64 tuning and 32 validation tasks")
-    value = build(args.count, args.seed)
+    coverage = load_coverage(args.coverage)
+    minimum = coverage.get("minimum_task_count")
+    if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 1:
+        raise SystemExit("coverage minimum_task_count must be a positive integer")
+    if args.count < minimum:
+        raise SystemExit(f"grounding requires at least {minimum} tasks")
+    value = build(args.count, args.seed, coverage)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
     return 0

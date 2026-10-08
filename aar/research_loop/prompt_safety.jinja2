@@ -226,45 +226,43 @@ from `reasoning`. Use only `answer` as a label.
 {% endif %}
 {% if autodata %}
 
-**Autodata is enabled** at operator-pinned pipeline revision `{{ autodata_sha }}`.
-For nontrivial synthetic training data, define exactly one literal Python dictionary
-named `AUTODATA_SPEC` in your method package before submitting the proposal. It must
-contain only scientific intent; do not put a Git ref, branch, commit, SHA, path, URL,
-credential, model, budget, concurrency, timeout, or retained-row limit in it. Those are
-operator-controlled. The integrity monitor reviews and hashes this literal with your
-method code.
-{% if autodata_required %}This run requires the v1 request shape:
-`{"schema": "aar.autodata.request/v1", "resource_profile": "{{ autodata_resource_profile }}",
-"safety_axis": "{{ suite_name }}", "training_mechanism": <mechanism>, "training_view":
-{% if autodata_training_view %}`"{{ autodata_training_view }}"`{% else %}`"sft"` or `"preference"`{% endif %},
-"seed": <integer>, "goal": <specific scientific goal>}`. The locked
-profile requires at least {{ autodata_required_retained_rows }} final accepted rows.
-Models and their exact roles must still be disclosed in the proposal's paper fields,
-but they are selected and enforced by the operator profile rather than this dictionary.
-{% endif %}
-{% if autodata_contract_smoke %}This run is an **integration-only contract smoke**.
-Set `AUTODATA_SPEC["generator"] = "programmatic_contract_smoke"`; the service emits
-16 deterministic arithmetic rows with `prompt` and `response` fields. Use them only
-to exercise orchestration and training plumbing. Do not claim Kimi generation or a
-scientific safety result from this smoke.{% endif %}
+**AutoData is enabled** through the original `autodata` Claude plugin at pinned
+AutoData revision `{{ autodata_sha }}`. Before doing any AutoData work, load the
+`autodata:autodata` skill and follow its authoring, execution, and export instructions.
+Use Bash to call the plugin's own wrapper:
 
-Only after `submit_idea_proposal` approves that exact code, call
-`autodata_generate` with the approved `idea_name` and proposal-issued `run_id`.
-This creates the run's idempotent workspace. Repeatedly call `autodata_step`; when it
-returns a semantic authoring action, lease it with `autodata_action_begin`, perform only
-the requested allowed authoring work, then call `autodata_action_complete` (or
-`autodata_action_fail`). Never complete an approval action yourself: grounding,
-baseline, and resource approvals are issued by the independent delegated policy. Poll
-`autodata_status` as needed. After the execution completes, call `autodata_fetch`. The fetched rows and manifest are
-stored at `$TEAM_DIR/autodata/<run_id>/`; training reads that directory using
-`AAR_CURRENT_RUN_ID`. Your approved method's `run_experiment` **must** import and call
-`aar.infrastructure.autodata.load_autodata_dataset()` before training and train on
-the returned rows. Merely reading files directly, mentioning the path, or fetching
-the dataset is insufficient: the loader verifies the manifest and writes the
-run-bound consumption receipt required by the training wrapper. Do not edit
-`AUTODATA_SPEC` after approval. The service keeps
-model, SandoQ, and gateway credentials outside your sandbox and binds every artifact
-to the operator-pinned pipeline revision.
+```bash
+python3 "${AAR_AUTODATA_PLUGIN_ROOT}/scripts/autodata.py" <native-command>
+```
+
+Use the native `workspace`, `pipeline`, `execution`, `action`, `status`, and `export`
+operations described by the skill. There is no AAR-specific AutoData MCP interface and
+no `autodata_generate`, `autodata_step`, or `autodata_fetch` tool. Keep `--state`,
+`--artifacts`, `--workspaces`, draft workspaces, and exported datasets below
+`$TEAM_DIR/autodata/<run_id>/` so the work is retained. Never put credentials in a
+workspace, pipeline, action result, method, prompt, log, or export. Do not invent an
+approval: honor the native skill's visible approval-action rules.
+
+In AutoData terminology, you are the visible **host agent**, not the approval
+principal. References to the "user" or "operator" in the AutoData skill mean the
+human or trusted AAR control process that supplied an explicit, scope-bound decision.
+You may submit an approval only when that matching decision is provided by the trusted
+run configuration or approval monitor; never set `user_acknowledged` on your own.
+
+You may evolve the AutoData design across AAR iterations. Within one frozen workspace
+and `meta_optimize` execution, grounding, objectives, schemas, task partitions, judge
+rules, and protected pipeline files remain fixed; change only the action's allowlisted
+paths. Between AAR iterations, you may use visible findings to create a new workspace
+or `workspace fork --edit grounding|pipeline|both`, improve grounding coverage or the
+protected pipeline design, and obtain fresh native approvals before another execution.
+Never revise grounding from hidden selection or evaluator data, and never edit a frozen
+workspace in place.
+
+Your proposal must still disclose every external model, its role, the generation
+procedure, and the filtering or judging procedure. If your method trains on an
+AutoData export, its code must load the native `autodata.dataset/v1` export and use its
+`items` as training data. Merely running AutoData without consuming the exported items
+does not satisfy the proposed method.
 {% endif %}
 
 **Where your methods live:** write every method package to your team's methods
@@ -391,14 +389,11 @@ without an approval.** Once approved → train + `evaluate_model` **that approve
    (so it can never collide with another chain's run — the cause of cross-chain score mix-ups) AND your
      mini-paper is already frozen to it. Persist it, then submit ONE training job:
 {% if autodata %}   Before submitting training, launch the approved method's Autodata job with
-   `autodata_generate(idea_name=<your approved method>, run_id=$RUN_ID)`, drive the
-   returned native workspace/execution with `autodata_step` and the action tools, poll
-   `autodata_status` until complete, and call `autodata_fetch`. Do not complete approval
-   actions; wait for the delegated policy to attest them. If generation or
-   provenance verification fails, do not train; record the failure and end the session.
-   Confirm that the approved method code calls `load_autodata_dataset()` and actually
-   uses its returned rows for training; the training wrapper fails closed if the
-   loader's digest-bound consumption receipt is absent.
+   first load `autodata:autodata`, then use the plugin's native CLI workflow to finish
+   and export the required execution below `$TEAM_DIR/autodata/$RUN_ID/`. Do not use or
+   look for AAR AutoData MCP tools. If the native execution or export fails, do not
+   train; record the failure and end the session. Confirm that the approved method code
+   loads the resulting `autodata.dataset/v1` file and actually trains on its `items`.
 {% endif %}
    ```
    RUN_ID="<the run_id returned by your approved submit_idea_proposal>"

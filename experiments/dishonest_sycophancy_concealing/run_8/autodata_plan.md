@@ -1,5 +1,9 @@
 # Run 8 Autodata integration plan
 
+> Historical record: this plan describes the retired adapter/MCP integration.
+> The executable Run 8 launchers were removed. The current native-plugin plan
+> is [`../run_9/autodata_plugin_plan.md`](../run_9/autodata_plugin_plan.md).
+
 ## Goal
 
 Run 8 will use Autodata for synthetic training-data generation inside the AAR

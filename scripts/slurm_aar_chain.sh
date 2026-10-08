@@ -142,10 +142,10 @@ elif [ -z "${ANTHROPIC_API_KEY:-}" ]; then
 fi
 unset _requested_web _detected_web
 
-# Run 8's research model has Bash/Read access, so same-UID environment
+# The research model has Bash/Read access, so same-UID environment
 # scrubbing is insufficient by itself.  Put Claude Code in a mount/PID
 # namespace that cannot see the operator's home or the run secret directory.
-# The trusted Python parent remains outside for monitor and MCP credentials.
+# The trusted Python parent remains outside for monitor credentials.
 if [ "${AAR_RESEARCH_ENV_ISOLATION:-0}" = 1 ]; then
   command -v bwrap >/dev/null || {
     echo "[aar] ERROR: research environment isolation requires bwrap" >&2
@@ -186,43 +186,6 @@ fi
 PY="${HARNESS_PY}"
 [ -x "${PY}" ] || { echo "[aar] ERROR: Python is not executable: ${PY}" >&2; exit 2; }
 cd "${REPO}"
-
-# Explicit functional-test backend for the Autodata MCP contract. Production
-# runs point AAR_AUTODATA_URL at the operator-managed service and leave this off.
-_autodata_smoke_pid=""
-if [ "${AAR_AUTODATA_CONTRACT_SMOKE:-0}" = "1" ]; then
-  [ "${AAR_FUNCTIONAL_SMOKE:-0}" = "1" ] || {
-    echo "[aar] ERROR: AAR_AUTODATA_CONTRACT_SMOKE is allowed only with AAR_FUNCTIONAL_SMOKE=1" >&2
-    exit 2
-  }
-  export AAR_AUTODATA=1
-  _autodata_smoke_port="${AAR_AUTODATA_SMOKE_PORT:-8792}"
-  export AAR_AUTODATA_URL="http://127.0.0.1:${_autodata_smoke_port}"
-  "${PY}" -u scripts/autodata_contract_smoke_server.py \
-    --port "${_autodata_smoke_port}" \
-    --state-root "${TEAM_DIR}/autodata_service" \
-    > "${TEAM_DIR}/logs/autodata-contract-smoke.log" 2>&1 &
-  _autodata_smoke_pid=$!
-  trap 'if [ -n "${_autodata_smoke_pid:-}" ]; then kill "${_autodata_smoke_pid}" 2>/dev/null || true; fi' EXIT
-  _autodata_smoke_ready=0
-  for _attempt in $(seq 1 50); do
-    if "${PY}" -c "import urllib.request; urllib.request.urlopen('${AAR_AUTODATA_URL}/health', timeout=1)" 2>/dev/null; then
-      _autodata_smoke_ready=1
-      break
-    fi
-    kill -0 "${_autodata_smoke_pid}" 2>/dev/null || {
-      echo "[aar] ERROR: Autodata contract smoke server exited" >&2
-      cat "${TEAM_DIR}/logs/autodata-contract-smoke.log" >&2
-      exit 2
-    }
-    sleep 0.1
-  done
-  [ "${_autodata_smoke_ready}" = "1" ] || {
-    echo "[aar] ERROR: Autodata contract smoke server did not become ready" >&2
-    exit 2
-  }
-  echo "[aar] Autodata contract smoke enabled at ${AAR_AUTODATA_URL}"
-fi
 
 # Per-chain MEMORY file (NOT shared between chains), under THIS team's logs/ folder.
 # Parallel chains must not read or append each other's AGENT_LOG. Seed an explicit
@@ -269,11 +232,10 @@ export IDEA_NAME="${MODEL:-qwen}-${SEED}"
 # retains its credential environment.  Training needs no provider credential.
 # Keep raw credentials and every operator credential-file path out of the
 # internet-enabled Claude child; agent.py independently enforces the same rule
-# at the SDK subprocess boundary for purpose-specific monitor/MCP secrets.
+# at the SDK subprocess boundary for purpose-specific monitor secrets.
 unset MODEL_API_KEY LLAMA_API_KEY HF_TOKEN HUGGING_FACE_HUB_TOKEN OAI_API OPENAI_API_KEY
 unset ANTHROPIC_API_KEY ANT_high_prio_API ANT_API_KEY HARNESS_ENV
 unset AAR_RUN8_EXECSIDECAR_TOKEN_FILE AAR_RUN8_BROKER_TOKEN_FILE
-unset AAR_AUTODATA_BROKER_AUTH_TOKEN AUTODATA_BROKER_AUTH_TOKEN
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN RUNPOD_API_KEY WANDB_API_KEY
 if [ "${AAR_HIDE_EVAL_CONFIG:-0}" = "1" ]; then
   # The evaluator has already inherited what it needs. Do not advertise the
@@ -283,14 +245,7 @@ fi
 PYTHONUNBUFFERED=1 "${PY}" -u run.py agent --idea-uid "${IDEA_UID}" --idea-name "${IDEA_NAME}" \
   --max-iterations "${MAX_ITERS}" --max-runtime "${FULL_AUTO_MAX_RUNTIME_SECONDS}" --local
 if [ "${AAR_VERIFY_TWO_ITERATION_ARTIFACTS:-0}" = 1 ]; then
-  if [ "${AAR_VERIFY_RUN8_AUTODATA:-0}" = 1 ]; then
-    "${PY}" "${REPO}/replication/verify_run8_autodata.py" \
-      --team-dir "${TEAM_DIR}" --expected-iterations 2 \
-      --minimum-rows "${AAR_AUTODATA_REQUIRED_RETAINED_ROWS:?missing retained row requirement}" \
-      --output "${TEAM_DIR}/logs/run8_completion_verification.json"
-  else
-    "${PY}" "${REPO}/replication/verify_two_iteration_multidimensional.py" \
-      --team-dir "${TEAM_DIR}" --expected-iterations 2
-  fi
+  "${PY}" "${REPO}/replication/verify_two_iteration_multidimensional.py" \
+    --team-dir "${TEAM_DIR}" --expected-iterations 2
 fi
 echo "=== DONE ==="

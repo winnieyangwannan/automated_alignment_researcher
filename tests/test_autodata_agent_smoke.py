@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import ast
 import importlib.util
+import json
+import tempfile
 from pathlib import Path
 from unittest import TestCase
 
@@ -18,37 +19,84 @@ def _module():
 
 
 class AutoDataAgentSmokeTest(TestCase):
-    def test_fixture_contains_one_literal_strict_spec_and_loader(self):
+    def test_prompt_uses_skill_bash_and_native_cli_only(self):
         module = _module()
-        tree = ast.parse(module._method_source())
-        assignments = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == "AUTODATA_SPEC"
-                    for target in node.targets)
-        ]
-        self.assertEqual(len(assignments), 1)
-        self.assertEqual(ast.literal_eval(assignments[0].value), module.AUTODATA_SPEC)
-        self.assertIn("load_autodata_dataset()", module._method_source())
+        root = Path("/retained/run")
+        prompt = module._agent_prompt(root, root / "fixture/toy", "a" * 64)
 
-    def test_prompt_is_bounded_and_requires_full_agent_tool_path(self):
-        module = _module()
-        prompt = module._agent_prompt("run-1", "method-1")
-        self.assertIn("autodata_generate exactly once", prompt)
-        self.assertIn("autodata_step", prompt)
-        self.assertIn("autodata_status", prompt)
-        self.assertIn("autodata_fetch", prompt)
-        self.assertIn("Do not train or evaluate", prompt)
-        self.assertNotIn("evaluate_model", prompt)
+        self.assertIn("load the `autodata:autodata` skill", prompt)
+        self.assertIn('${AAR_AUTODATA_PLUGIN_ROOT}/scripts/autodata.py', prompt)
+        self.assertIn("Do not recompute", prompt)
+        self.assertIn("workspace", prompt)
+        self.assertIn("execution", prompt)
+        self.assertIn("action", prompt)
+        self.assertIn("export", prompt)
+        self.assertIn("never call a tool", prompt)
+        for old_name in (
+            "autodata_generate",
+            "autodata_step",
+            "autodata_status",
+            "autodata_fetch",
+        ):
+            self.assertNotIn(old_name, prompt)
 
-    def test_live_agent_has_no_training_or_evaluation_tools(self):
+    def test_required_tools_are_sdk_skill_and_bash_not_mcp(self):
         module = _module()
-        self.assertEqual(
-            module.REQUIRED_AGENT_TOOLS,
-            {
-                "mcp__autodata-tools__autodata_generate",
-                "mcp__autodata-tools__autodata_step",
-                "mcp__autodata-tools__autodata_fetch",
-            },
+        self.assertEqual(module.REQUIRED_AGENT_TOOLS, frozenset({"Skill", "Bash"}))
+        self.assertFalse(any(name.startswith("mcp__") for name in module.REQUIRED_AGENT_TOOLS))
+
+        source = SCRIPT.read_text()
+        self.assertIn(
+            'tools=["Skill", "Bash", "Read", "Write", "Edit", "Glob", "Grep"]',
+            source,
         )
+
+    def test_fixed_approvals_are_bound_to_fixture_digest(self):
+        module = _module()
+        document = module._approval_document("b" * 64)
+
+        self.assertEqual(document["fixture_sha256"], "b" * 64)
+        self.assertEqual(
+            set(document["decisions"]), {"approve_grounding", "approve_baseline"}
+        )
+        self.assertTrue(
+            all(value["user_acknowledged"] for value in document["decisions"].values())
+        )
+
+    def test_verifier_accepts_native_export_and_rejects_autodata_mcp(self):
+        module = _module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            export = root / "export" / "dataset.json"
+            export.parent.mkdir()
+            export.write_text(json.dumps(
+                {
+                    "schema": "autodata.dataset/v1",
+                    "execution_id": "exec_1",
+                    "items": [{"value": 2}],
+                }
+            ))
+            (root / "completion.json").write_text(json.dumps(
+                {
+                    "workspace_id": "ws_1",
+                    "execution_id": "exec_1",
+                    "workspace_status": "frozen",
+                    "execution_status": "completed",
+                    "export_path": str(export),
+                }
+            ))
+
+            report = module._verify_result(
+                root,
+                {"successful_sessions": 1},
+                ["Skill", "Bash"],
+            )
+            self.assertEqual(report["dataset_item_count"], 1)
+            self.assertEqual(report["autodata_mcp_calls"], [])
+
+            with self.assertRaisesRegex(RuntimeError, "forbidden"):
+                module._verify_result(
+                    root,
+                    {"successful_sessions": 1},
+                    ["Skill", "Bash", "mcp__autodata-tools__autodata_step"],
+                )

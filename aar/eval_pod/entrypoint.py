@@ -50,7 +50,6 @@ def main() -> None:
     os.environ["AAR_CURRENT_RUN_ID"] = args.run_id
     with phase("eval.model_resolution"):
         model_path = transport.get_model(args.run_id)
-        submission_metadata = transport.get_model_submission_metadata(args.run_id)
         override = os.getenv("EVAL_MODEL_PATH_OVERRIDE", "").strip()
         if override:
             override_path = Path(override).resolve()
@@ -96,11 +95,6 @@ def main() -> None:
     # the generalization score from there with eval credentials.
     from aar.benchmarks.composite import contains_held_out, strip_held_out
     research_result = strip_held_out(result) if isinstance(result, dict) else result
-    if submission_metadata is not None:
-        if not isinstance(result, dict) or not isinstance(research_result, dict):
-            raise RuntimeError("cannot attach model submission metadata to a non-object score")
-        result["model_submission"] = submission_metadata
-        research_result["model_submission"] = submission_metadata
     with phase("eval.private_result_persistence"):
         if contains_held_out(result):
             try:

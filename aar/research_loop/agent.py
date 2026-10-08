@@ -47,13 +47,15 @@ from aar.config import (
     AAR_MODE,
 )
 from aar.phase_timing import phase
+from .autodata_plugin import resolve_autodata_plugin
 from .tools.server_api_tools import create_server_api_tools_server
 from .tools.prior_work_tools import create_prior_work_tools_server
 from .tools.findings_sync import FindingsSync
 
 
-# These values belong to the operator-side integrity monitor and in-process MCP
-# servers.  Claude Code (and therefore its Bash tool) must not inherit them.
+# These values belong to the operator-side integrity monitor and other trusted
+# parent services. Claude Code (and therefore its Bash tool) must not inherit
+# them.
 _RESEARCH_CHILD_SECRET_NAMES = frozenset(
     {
         "HARNESS_ENV",
@@ -68,10 +70,6 @@ _RESEARCH_CHILD_SECRET_NAMES = frozenset(
         "OPENAI_API_KEY",
         "AAR_MONITOR_MODEL_API_KEY",
         "AAR_MONITOR_ANTHROPIC_API_KEY",
-        "AAR_AUTODATA_TOKEN",
-        "AAR_AUTODATA_TOKEN_FILE",
-        "AAR_AUTODATA_BROKER_AUTH_TOKEN",
-        "AUTODATA_BROKER_AUTH_TOKEN",
         "AAR_RUN8_EXECSIDECAR_TOKEN_FILE",
         "AAR_RUN8_ADAPTER_TOKEN_FILE",
         "AAR_RUN8_BROKER_TOKEN_FILE",
@@ -101,7 +99,7 @@ def _sanitized_research_subprocess_environment():
     passing a smaller mapping therefore does *not* isolate the child.  The SDK
     subprocess is created by ``ClaudeSDKClient.__aenter__``, so temporarily
     removing sensitive entries during that operation gives the child a clean
-    environment, then restores the trusted Python parent's monitor/MCP access.
+    environment, then restores the trusted Python parent's access.
     """
     if os.getenv("AAR_RESEARCH_ENV_ISOLATION", "0").lower() not in {
         "1", "true", "yes", "on"
@@ -236,14 +234,6 @@ def resolve_prompt(template_path: str | Path, output_path: str | Path) -> str:
         paper_search_helper=paper_search_helper,
         autodata=autodata,
         autodata_sha=os.getenv("AAR_AUTODATA_SHA", ""),
-        autodata_contract_smoke=os.getenv("AAR_AUTODATA_CONTRACT_SMOKE", "0") == "1",
-        autodata_required=os.getenv("AAR_AUTODATA_REQUIRED", "0").lower()
-        in ("1", "true", "yes", "on"),
-        autodata_resource_profile=os.getenv("AAR_AUTODATA_RESOURCE_PROFILE", ""),
-        autodata_required_retained_rows=os.getenv(
-            "AAR_AUTODATA_REQUIRED_RETAINED_ROWS", ""
-        ),
-        autodata_training_view=os.getenv("AAR_AUTODATA_TRAINING_VIEW", ""),
     )
 
     with open(output_path, 'w') as f:
@@ -379,6 +369,8 @@ class BaseAgent:
         tools: Optional[List[str]] = None,
         setting_sources: Optional[List[str]] = None,
         strict_mcp_config: Optional[bool] = None,
+        plugins: Optional[List[Dict[str, str]]] = None,
+        skills: Optional[List[str]] = None,
     ):
         self.name = name
         self.allowed_tools = allowed_tools
@@ -392,6 +384,8 @@ class BaseAgent:
         self.tools = tools
         self.setting_sources = setting_sources
         self.strict_mcp_config = strict_mcp_config
+        self.plugins = plugins
+        self.skills = skills
 
     def _build_options_dict(self) -> Dict[str, Any]:
         """Build SDK options, including restrictive knobs only when requested."""
@@ -410,6 +404,14 @@ class BaseAgent:
             options["setting_sources"] = self.setting_sources
         if self.strict_mcp_config is not None:
             options["strict_mcp_config"] = self.strict_mcp_config
+        if self.plugins is not None:
+            if not _agent_sdk_supports_option("plugins"):
+                raise RuntimeError("installed Claude Agent SDK does not support plugins")
+            options["plugins"] = self.plugins
+        if self.skills is not None:
+            if not _agent_sdk_supports_option("skills"):
+                raise RuntimeError("installed Claude Agent SDK does not support skills")
+            options["skills"] = self.skills
         _add_supported_reasoning_options(options)
         _add_supported_budget_options(options)
         if self.cli_path:
@@ -458,10 +460,10 @@ class BaseAgent:
         if True:
             options = ClaudeAgentOptions(**self._build_options_dict())
 
-            # The in-process MCP callbacks need their purpose-specific adapter
-            # credential, while Claude Code and its Bash descendants must not
-            # receive it.  Restrict only the subprocess-spawn window; after
-            # __aenter__, restoring the parent does not change the child's env.
+            # Trusted parent services may need purpose-specific credentials,
+            # while Claude Code and its Bash descendants must not receive them.
+            # Restrict only the subprocess-spawn window; after __aenter__,
+            # restoring the parent does not change the child's environment.
             with _sanitized_research_subprocess_environment():
                 client_context = ClaudeSDKClient(options=options)
                 client = await client_context.__aenter__()
@@ -597,19 +599,10 @@ class AutonomousAgentLoop:
                 self.mcp_servers["prior-work-tools"] = create_prior_work_tools_server()
             except Exception as e:
                 print(f"[Init] Warning: prior work tools unavailable: {e}")
-        autodata_enabled = os.getenv("AAR_AUTODATA", "0").lower() in ("1", "true", "yes")
-        autodata_required = os.getenv("AAR_AUTODATA_REQUIRED", "0").lower() in (
-            "1", "true", "yes", "on"
-        )
-        if autodata_required and not autodata_enabled:
-            raise RuntimeError("AAR_AUTODATA_REQUIRED=1 requires AAR_AUTODATA=1")
-        if autodata_enabled:
-            try:
-                from .tools.autodata_tools import create_autodata_tools_server
-
-                self.mcp_servers["autodata-tools"] = create_autodata_tools_server()
-            except Exception as e:
-                raise RuntimeError(f"AAR_AUTODATA is enabled but unavailable: {e}") from e
+        # AutoData is an upstream local Claude plugin. AAR verifies the pinned
+        # checkout, then lets the agent use the plugin's own skill and CLI.
+        # No AAR-specific AutoData MCP server or lifecycle wrapper is created.
+        self.autodata_plugin = resolve_autodata_plugin()
 
         # Findings sync: disabled in local mode (no other workers)
         self.findings_sync = None
@@ -636,6 +629,7 @@ class AutonomousAgentLoop:
 
     def _create_agent(self, session_id: str, message_callback=None) -> BaseAgent:
         meta_secure_web = os.getenv("AAR_WEB_MODE", "native_web") == "meta_secure"
+        autodata_plugin = getattr(self, "autodata_plugin", None)
         allowed_tools = [
             "Read", "Write", "Edit", "Bash", "Glob", "Grep",
             "mcp__server-api-tools__evaluate_model",
@@ -653,16 +647,20 @@ class AutonomousAgentLoop:
             allowed_tools.extend(["WebSearch", "WebFetch"])
         if not self.local_mode:
             allowed_tools.append("mcp__prior-work-tools__download_snapshot")
-        if "autodata-tools" in self.mcp_servers:
-            allowed_tools.extend([
-                "mcp__autodata-tools__autodata_generate",
-                "mcp__autodata-tools__autodata_status",
-                "mcp__autodata-tools__autodata_step",
-                "mcp__autodata-tools__autodata_action_begin",
-                "mcp__autodata-tools__autodata_action_complete",
-                "mcp__autodata-tools__autodata_action_fail",
-                "mcp__autodata-tools__autodata_fetch",
-            ])
+
+        system_parts = []
+        if meta_secure_web:
+            system_parts.append(
+                "Use the repository's bounded arXiv helper for internet research. "
+                "Do not use curl, wget, or arbitrary network URLs."
+            )
+        if autodata_plugin is not None:
+            system_parts.append(
+                "Load the autodata:autodata skill before any AutoData work. "
+                "Use only the native CLI wrapper shipped by that plugin; no "
+                "AAR-specific AutoData MCP interface exists. Keep all state, "
+                "workspaces, and exports below the writable run directory."
+            )
 
         return BaseAgent(
             name=f"autonomous-{session_id}",
@@ -673,15 +671,17 @@ class AutonomousAgentLoop:
             cli_path=os.getenv("CLAUDE_CLI_PATH") or shutil.which("claude"),
             message_callback=message_callback,
             permission_mode="dontAsk" if meta_secure_web else "bypassPermissions",
-            system_prompt=(
-                "Use the repository's bounded arXiv helper for internet research. "
-                "Do not use curl, wget, or arbitrary network URLs."
-                if meta_secure_web else None
-            ),
-            tools=["Bash", "Read", "Write", "Edit", "Glob", "Grep"]
+            system_prompt="\n\n".join(system_parts) or None,
+            tools=["Skill", "Bash", "Read", "Write", "Edit", "Glob", "Grep"]
             if meta_secure_web else None,
             setting_sources=[] if meta_secure_web else ["project"],
             strict_mcp_config=True if meta_secure_web else None,
+            plugins=(
+                [autodata_plugin.sdk_config()]
+                if autodata_plugin is not None
+                else None
+            ),
+            skills=["autodata:autodata"] if autodata_plugin is not None else None,
         )
 
     async def run(self) -> Dict[str, Any]:

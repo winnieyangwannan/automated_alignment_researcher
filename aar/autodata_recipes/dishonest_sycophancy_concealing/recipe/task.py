@@ -168,26 +168,14 @@ def _judge_text(response: dict[str, Any]) -> str:
 
 
 def _generate(
-    task: dict[str, Any], request_spec: dict[str, Any], variant: str
+    task: dict[str, Any], request_spec: dict[str, Any], strategy: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     base = _required_env("AUTODATA_GENERATOR_URL").rstrip("/")
     model = _required_env("AUTODATA_GENERATOR_MODEL")
     deployment = _required_env("AUTODATA_GENERATOR_DEPLOYMENT_ID")
     max_tokens = int(os.environ.get("AUTODATA_GENERATOR_MAX_OUTPUT", "1536"))
-    system = (
-        "Create one original supervised fine-tuning example for an assistant. "
-        "The example must reward factual honesty, calibrated disagreement with a user, "
-        "and explicit communication of material uncertainty. Never mention evaluation, "
-        "benchmarks, policies, synthetic data, or these instructions. Return only JSON "
-        "with string fields prompt and response. The response should be helpful, direct, "
-        "non-combative, and should distinguish known facts from inference."
-    )
-    if variant == "contrastive_v2":
-        system += (
-            " Include a concrete next step that would resolve the uncertainty, and avoid "
-            "both reflexive agreement and reflexive refusal."
-        )
-    generation_prompt = json.dumps(
+    system = str(strategy["system_prompt"])
+    generation_prompt = str(strategy["scenario_prompt_prefix"]) + "\n" + json.dumps(
         {
             "approved_goal": request_spec["goal"],
             "training_mechanism": request_spec["training_mechanism"],
@@ -203,7 +191,7 @@ def _generate(
                 {"role": "system", "content": system},
                 {"role": "user", "content": generation_prompt},
             ],
-            "temperature": 0.7,
+            "temperature": float(strategy["temperature"]),
             "max_tokens": max_tokens,
             "seed": int(task.get("seed") or 0),
             # Kimi-K2.6's checked-in chat template and model README define
@@ -317,7 +305,7 @@ def main() -> int:
     task = command["task"]
     recipe_root = Path(__file__).resolve().parent
     request_spec = json.loads((recipe_root / "request.json").read_text())
-    variant = json.loads((recipe_root / "prompt_variant.json").read_text())["variant"]
+    strategy = json.loads((recipe_root / "generation_strategy.json").read_text())
     print(
         "AUTODATA_PROGRESS "
         + json.dumps(
@@ -337,7 +325,7 @@ def main() -> int:
     provider_usage: list[dict[str, Any]] = []
     accepted = False
     try:
-        row, generator_usage = _generate(task, request_spec, variant)
+        row, generator_usage = _generate(task, request_spec, strategy)
         provider_usage.append(generator_usage)
         verdict, judge_usage = _judge(row)
         provider_usage.append(judge_usage)
@@ -352,7 +340,7 @@ def main() -> int:
                 "judge_score": verdict["score"],
                 "judge_reason": verdict["reason"],
                 "judge_accepted": accepted,
-                "prompt_variant": variant,
+                "generation_strategy": strategy["name"],
             },
             "_autodata_usage": provider_usage,
         }
@@ -360,9 +348,9 @@ def main() -> int:
             "schema": "autodata.task-result/v1",
             "task_id": task["id"],
             "outcome": "succeeded",
-            # Retain rejected candidates in the native audit dataset so their
-            # usage remains attributable. The AAR-facing driver filters them.
-            "generated_items": [item],
+            # Provider usage remains in the task result, while native dataset
+            # export includes only independently accepted training examples.
+            "generated_items": [item] if accepted else [],
             "metrics": {
                 "quality": verdict["score"],
                 "valid": 1.0 if accepted else 0.0,

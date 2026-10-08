@@ -1,9 +1,9 @@
 #!/bin/bash
 # Execute the Claude Code research subprocess in a fail-closed mount/PID
-# namespace.  The trusted Python parent stays outside this namespace so its
-# integrity monitor and in-process MCP servers can retain purpose-specific
-# credentials.  Claude Bash gets the checkout and run artifacts, but not the
-# user's remaining home, operator env files, or run secret files.
+# namespace. The trusted Python parent stays outside this namespace so its
+# integrity monitor and other services can retain purpose-specific credentials.
+# Claude Bash gets the checkout, run artifacts, and an optional pinned AutoData
+# plugin, but not the user's remaining home, operator env files, or run secrets.
 
 set -euo pipefail
 
@@ -21,6 +21,7 @@ repo="${AAR_REPO:?missing repository path}"
 runtime_root="${AAR_RUNTIME_ROOT:?missing run root}"
 sandbox_home="${HOME:?missing HOME}"
 storage_home="${AAR_RESEARCH_STORAGE_HOME:-/storage/home/${USER:?missing USER}}"
+autodata_plugin_root="${AAR_AUTODATA_PLUGIN_ROOT:-}"
 
 [ -x "${real_cli}" ] || fail "real Claude CLI is not executable"
 [ -d "${repo}" ] || fail "repository does not exist"
@@ -30,6 +31,16 @@ real_cli="$(realpath -e -- "${real_cli}")"
 repo="$(realpath -e -- "${repo}")"
 runtime_root="$(realpath -e -- "${runtime_root}")"
 sandbox_home="$(realpath -e -- "${sandbox_home}")"
+if [ -n "${autodata_plugin_root}" ]; then
+  [ -d "${autodata_plugin_root}" ] || fail "AutoData plugin does not exist"
+  autodata_plugin_root="$(realpath -e -- "${autodata_plugin_root}")"
+  [ -f "${autodata_plugin_root}/.claude-plugin/plugin.json" ] || \
+    fail "AutoData plugin manifest is missing"
+  [ -f "${autodata_plugin_root}/skills/autodata/SKILL.md" ] || \
+    fail "AutoData skill is missing"
+  [ -f "${autodata_plugin_root}/scripts/autodata.py" ] || \
+    fail "AutoData CLI wrapper is missing"
+fi
 case "${sandbox_home}" in /|/home|/storage|/storage/home) fail "unsafe HOME";; esac
 
 declare -a hidden_roots=("${sandbox_home}")
@@ -108,6 +119,20 @@ case "${runtime_root}" in
   *) bind_visible_dir "${runtime_root}" rw ;;
 esac
 
+# The trusted parent has already verified the plugin's checkout, branch, SHA,
+# manifest, and symlink policy. Restore only that plugin directory read-only;
+# never expose the rest of the otherwise hidden user home.
+if [ -n "${autodata_plugin_root}" ]; then
+  case "${autodata_plugin_root}" in
+    "${repo}"|"${repo}"/*|"${runtime_root}"|"${runtime_root}"/*) ;;
+    *) bind_visible_dir "${autodata_plugin_root}" ro ;;
+  esac
+  bwrap_args+=(
+    --setenv AAR_AUTODATA_PLUGIN_ROOT "${autodata_plugin_root}"
+    --setenv AUTODATA_CACHE_DIR "${runtime_root}/autodata/plugin-cache"
+  )
+fi
+
 # Worktree Git metadata commonly lives in a sibling checkout hidden by the
 # HOME tmpfs.  Restore only the Git database, read-only, rather than its parent.
 git_common=""
@@ -161,7 +186,6 @@ fi
 for masked_file in \
   "${repo}/.env" \
   "${repo}/.sandoq-firecracker-token" \
-  "${runtime_root}/metadata/autodata_services.env" \
   /opt/aar/eval-user/.env; do
   [ -e "${masked_file}" ] || continue
   bwrap_args+=(--ro-bind /dev/null "${masked_file}")
@@ -180,7 +204,7 @@ unset AAR_CLAUDE_REAL_CLI_PATH AAR_RESEARCH_STORAGE_HOME
 # version when the override cannot be materialized. Keep the trusted launcher
 # but prevent an operator-side pin from crossing this isolation boundary.
 unset META_CLAUDE_CODE_RELEASE CLAUDE_CODE_VERSION_OVERRIDE
-unset git_common cli_dir masked_file hidden_root storage_home
+unset git_common cli_dir masked_file hidden_root storage_home autodata_plugin_root
 unset claude_native_cache dotslash_cache
 while IFS= read -r env_name; do
   upper_name="${env_name^^}"

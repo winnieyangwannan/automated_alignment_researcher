@@ -137,54 +137,6 @@ class SmokeOrchestrationTest(TestCase):
             self.assertTrue((staged / "tokenizer.json").is_file())
             self.assertTrue((staged.parent / ".submitted").is_file())
 
-    def test_put_model_publishes_validated_metadata_before_marker(self):
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            source = root / "source"
-            _write_submission(source)
-            metadata = {
-                "schema": "aar.model-submission/v1",
-                "run_id": "smoke-run",
-                "training_data": {
-                    "schema": "aar.autodata.training-link/v1",
-                    "dataset_sha256": "a" * 64,
-                },
-            }
-            with (
-                patch.object(config, "HARNESS_TRANSPORT", "fs"),
-                patch.object(config, "SUBMISSIONS_DIR", str(root / "submissions")),
-            ):
-                staged = Path(
-                    transport.put_model(str(source), "smoke-run", metadata=metadata)
-                )
-                self.assertEqual(
-                    transport.get_model_submission_metadata("smoke-run"), metadata
-                )
-
-            self.assertTrue((staged.parent / "submission_metadata.json").is_file())
-            self.assertTrue((staged.parent / ".submitted").is_file())
-
-    def test_put_model_rejects_metadata_for_another_run(self):
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            source = root / "source"
-            _write_submission(source)
-            with (
-                patch.object(config, "HARNESS_TRANSPORT", "fs"),
-                patch.object(config, "SUBMISSIONS_DIR", str(root / "submissions")),
-            ):
-                with self.assertRaisesRegex(ValueError, "run_id mismatch"):
-                    transport.put_model(
-                        str(source),
-                        "smoke-run",
-                        metadata={
-                            "schema": "aar.model-submission/v1",
-                            "run_id": "other-run",
-                        },
-                    )
-
-            self.assertFalse((root / "submissions" / "smoke-run" / ".submitted").exists())
-
     def test_put_model_rejects_missing_tokenizer_without_marker(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

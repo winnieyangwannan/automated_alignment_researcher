@@ -1,5 +1,9 @@
 # How AutoData works in Run 8
 
+> Historical record: this document describes the retired adapter/MCP design.
+> Run 9 loads the original AutoData plugin and uses its native CLI directly.
+> See [`../run_9/autodata_plugin.md`](../run_9/autodata_plugin.md).
+
 ## Workspace and pipeline authoring
 
 In Autodata, creating a workspace means starting a draft area where the visible

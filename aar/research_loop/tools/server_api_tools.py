@@ -239,26 +239,7 @@ async def evaluate_model(args: Dict[str, Any]) -> Dict[str, Any]:
 
         # Publish the trained model for this run (fs: copy to SUBMISSIONS_DIR;
         # s3: upload). The eval side reads it; we never see the benchmark.
-        submission_metadata = None
-        training_link = None
-        if os.getenv("AAR_AUTODATA_REQUIRED", "0").lower() in ("1", "true", "yes", "on"):
-            from aar.infrastructure.autodata import autodata_training_link
-
-            training_link = autodata_training_link(run_id)
-            submission_metadata = {
-                "schema": "aar.model-submission/v1",
-                "run_id": run_id,
-                "training_data": training_link,
-            }
-        model_ref = transport.put_model(
-            model_path, run_id, metadata=submission_metadata
-        )
-        if training_link is not None:
-            from aar.infrastructure.autodata import record_autodata_training_link
-
-            record_autodata_training_link(
-                training_link, model_submission_ref=model_ref
-            )
+        transport.put_model(model_path, run_id)
 
         if config.HARNESS_TRANSPORT == "fs":
             # Cluster-native: submit the eval Slurm job + poll the shared FS in
@@ -826,7 +807,7 @@ async def share_finding(args: Dict[str, Any]) -> Dict[str, Any]:
             for k in ("suite", "model", "headline_pct", "passes_filter",
                       "passes_regression", "closed_pct", "dimension_scores_pct",
                       "dimension_coverage", "aggregation", "regression_detail",
-                      "per_benchmark", "filter_detail", "run_id", "model_submission"):
+                      "per_benchmark", "filter_detail", "run_id"):
                 if _auth.get(k) is not None:
                     merged[k] = _auth[k]
             merged["_authoritative"] = True
@@ -944,13 +925,6 @@ async def share_finding(args: Dict[str, Any]) -> Dict[str, Any]:
             "weak_model": os.environ.get("WEAK_MODEL"),
             "strong_model": os.environ.get("STRONG_MODEL"),
             "finding_type": finding_type,
-            "autodata_dataset_sha256": (
-                ((resolved_metrics.get("model_submission") or {}).get("training_data") or {}).get(
-                    "dataset_sha256"
-                )
-                if isinstance(resolved_metrics.get("model_submission"), dict)
-                else None
-            ),
             # Multi-benchmark composite (from evaluate_model). Supersedes pgr.
             "suite": resolved_metrics.get("suite") or os.environ.get("SUITE_NAME"),
             "headline_pct": resolved_metrics.get("headline_pct"),
@@ -1320,14 +1294,8 @@ def _stamp_run_proposal(run_id: str) -> bool:
         import time as _t
         rp.write_text(json.dumps({
             "run_id": run_id, "idea_name": m.get("idea_name"), "proposal_ts": m.get("ts"),
-            "code_hash": m.get("code_hash"),
-            "autodata_spec_sha256": m.get("autodata_spec_sha256"),
-            "autodata_resource_profile": m.get("autodata_resource_profile"),
-            "autodata_resource_profile_sha256": m.get("autodata_resource_profile_sha256"),
-            "autodata_budget_scope_id": m.get("autodata_budget_scope_id"),
-            "autodata_max_cost_usd": m.get("autodata_max_cost_usd"),
-            "autodata_required_retained_rows": m.get("autodata_required_retained_rows"),
-            "stamped_ts": _t.time(), "paper": m["paper"]}, indent=2))
+            "code_hash": m.get("code_hash"), "stamped_ts": _t.time(),
+            "paper": m["paper"]}, indent=2))
         return True
     except Exception as e:
         print(f"[stamp] per-run proposal stamp failed: {e}")
@@ -1485,20 +1453,6 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
                 "approved": False, "violations": [],
                 "error": f"No code at $AAR_IDEAS_DIR/{idea_name}/run.py — write your method package FIRST, then submit (the monitor judges the actual code).",
             }, indent=2)}]}
-        autodata_spec_sha256 = None
-        if os.getenv("AAR_AUTODATA_REQUIRED", "0").lower() in ("1", "true", "yes", "on"):
-            try:
-                if os.getenv("AAR_AUTODATA", "0").lower() not in ("1", "true", "yes"):
-                    raise ValueError("AAR_AUTODATA_REQUIRED=1 requires AAR_AUTODATA=1")
-                from .autodata_tools import _spec_digest, validate_autodata_method_code
-
-                autodata_spec_sha256 = _spec_digest(validate_autodata_method_code(code or ""))
-            except (SyntaxError, ValueError) as error:
-                return {"content": [{"type": "text", "text": json.dumps({
-                    "approved": False,
-                    "violations": ["REPRODUCIBILITY: invalid required AUTODATA_SPEC"],
-                    "error": f"Required Autodata method contract failed: {error}",
-                }, indent=2)}]}
         if code is not None and os.getenv("AAR_REQUIRE_PHASE_TIMINGS", "0").lower() in (
             "1", "true", "yes", "on"
         ):
@@ -1542,16 +1496,6 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
                 "code_hash": code_hash,
                 "ts": time.time(),
                 "idea_uid": os.getenv("IDEA_UID"),
-                "autodata_spec_sha256": autodata_spec_sha256,
-                "autodata_resource_profile": os.getenv("AAR_AUTODATA_RESOURCE_PROFILE"),
-                "autodata_resource_profile_sha256": os.getenv(
-                    "AAR_AUTODATA_RESOURCE_PROFILE_SHA256"
-                ),
-                "autodata_budget_scope_id": os.getenv("AAR_AUTODATA_BUDGET_SCOPE_ID"),
-                "autodata_max_cost_usd": os.getenv("AAR_AUTODATA_MAX_COST_USD"),
-                "autodata_required_retained_rows": os.getenv(
-                    "AAR_AUTODATA_REQUIRED_RETAINED_ROWS"
-                ),
                 "declaration": decl,
                 "verdict": verdict,
                 # Persist the validated, results-free paper so share_finding reuses it verbatim

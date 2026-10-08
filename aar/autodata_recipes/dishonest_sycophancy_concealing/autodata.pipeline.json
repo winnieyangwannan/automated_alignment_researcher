@@ -22,7 +22,7 @@
   "output_schemas": {
     "task_result": "schemas/task-result.schema.json"
   },
-  "mutable_paths": ["recipe/prompt_variant.json"],
+  "mutable_paths": ["recipe/generation_strategy.json"],
   "protected_paths": [
     "autodata.pipeline.json",
     "autodata.workspace.json",

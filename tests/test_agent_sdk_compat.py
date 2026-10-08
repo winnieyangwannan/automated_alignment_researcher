@@ -62,8 +62,8 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
         agent_module = _load_agent_module(Options)
         operator_env = {
             "AAR_RESEARCH_ENV_ISOLATION": "1",
-            "AAR_AUTODATA_URL": "http://adapter.example:8123",
-            "AAR_AUTODATA_TOKEN_FILE": "/operator/adapter.token",
+            "SERVICE_STATUS_URL": "http://service.example:8123",
+            "SANDOQ_FLEET_AUTH_TOKEN": "sandoq-secret",
             "HARNESS_ENV": "/operator/harness.env",
             "MODEL_API_KEY": "model-secret",
             "AAR_MONITOR_MODEL_API_KEY": "monitor-secret",
@@ -73,21 +73,21 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
         with patch.dict(os.environ, operator_env, clear=True):
             with agent_module._sanitized_research_subprocess_environment():
                 self.assertEqual(
-                    os.environ.get("AAR_AUTODATA_URL"),
-                    "http://adapter.example:8123",
+                    os.environ.get("SERVICE_STATUS_URL"),
+                    "http://service.example:8123",
                 )
                 for name in operator_env:
                     if name not in {
                         "AAR_RESEARCH_ENV_ISOLATION",
-                        "AAR_AUTODATA_URL",
+                        "SERVICE_STATUS_URL",
                     }:
                         self.assertNotIn(name, os.environ)
 
-            # The trusted parent retains adapter access for its in-process MCP
-            # callback and the integrity monitor after the subprocess spawn.
+            # The trusted parent regains its services and integrity-monitor
+            # credentials after the research subprocess is spawned.
             self.assertEqual(
-                os.environ["AAR_AUTODATA_TOKEN_FILE"],
-                "/operator/adapter.token",
+                os.environ["SANDOQ_FLEET_AUTH_TOKEN"],
+                "sandoq-secret",
             )
             self.assertEqual(
                 os.environ["AAR_MONITOR_MODEL_API_KEY"], "monitor-secret"
@@ -104,11 +104,11 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
             "SOME_SERVICE_TOKEN",
             "SOME_SERVICE_TOKEN_FILE",
             "CUSTOM_CREDENTIAL_PATH",
-            "AAR_AUTODATA_TOKEN_FILE",
+            "SANDOQ_FLEET_AUTH_TOKEN",
         ):
             self.assertTrue(agent_module._is_research_child_secret_name(name), name)
         self.assertFalse(
-            agent_module._is_research_child_secret_name("AAR_AUTODATA_URL")
+            agent_module._is_research_child_secret_name("SERVICE_STATUS_URL")
         )
 
     def test_sdk_client_is_spawned_inside_sanitized_boundary(self) -> None:
@@ -148,19 +148,19 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
         )
         operator_env = {
             "AAR_RESEARCH_ENV_ISOLATION": "1",
-            "AAR_AUTODATA_URL": "http://adapter.example:8123",
-            "AAR_AUTODATA_TOKEN_FILE": "/operator/adapter.token",
+            "SERVICE_STATUS_URL": "http://service.example:8123",
+            "SANDOQ_FLEET_AUTH_TOKEN": "sandoq-secret",
             "MODEL_API_KEY": "operator-secret",
         }
         with patch.dict(os.environ, operator_env, clear=True):
             result = asyncio.run(base._execute_once("test", 0.0))
-            self.assertIn("AAR_AUTODATA_TOKEN_FILE", os.environ)
+            self.assertIn("SANDOQ_FLEET_AUTH_TOKEN", os.environ)
 
         self.assertTrue(result.success)
         self.assertEqual(
-            observed["AAR_AUTODATA_URL"], "http://adapter.example:8123"
+            observed["SERVICE_STATUS_URL"], "http://service.example:8123"
         )
-        self.assertNotIn("AAR_AUTODATA_TOKEN_FILE", observed)
+        self.assertNotIn("SANDOQ_FLEET_AUTH_TOKEN", observed)
         self.assertNotIn("MODEL_API_KEY", observed)
 
     def test_restrictive_options_are_forwarded_only_when_explicit(self) -> None:
@@ -196,6 +196,35 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
         self.assertNotIn("tools", ordinary)
         self.assertNotIn("setting_sources", ordinary)
         self.assertNotIn("strict_mcp_config", ordinary)
+
+    def test_local_plugin_and_skill_are_forwarded_when_supported(self) -> None:
+        class Options:
+            def __init__(
+                self,
+                *,
+                plugins: list[dict[str, str]] | None = None,
+                skills: list[str] | None = None,
+            ) -> None:
+                self.plugins = plugins
+                self.skills = skills
+
+        agent_module = _load_agent_module(Options)
+        base = agent_module.BaseAgent(
+            name="plugin",
+            allowed_tools=["Bash"],
+            workspace=Path("/tmp/workspace"),
+            mcp_servers={},
+            plugins=[{"type": "local", "path": "/pinned/plugin/autodata"}],
+            skills=["autodata:autodata"],
+        )
+
+        options = base._build_options_dict()
+
+        self.assertEqual(
+            options["plugins"],
+            [{"type": "local", "path": "/pinned/plugin/autodata"}],
+        )
+        self.assertEqual(options["skills"], ["autodata:autodata"])
 
     def test_older_sdk_omits_unsupported_reasoning_options(self) -> None:
         class OldOptions:
