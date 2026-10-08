@@ -46,7 +46,10 @@ def build(count: int, seed: int, coverage: dict[str, object]) -> dict[str, objec
     for index in range(count):
         task_id = f"safety-sft-{index + 1:04d}"
         domain = domains[index % len(domains)]
-        pattern = patterns[(index // len(domains)) % len(patterns)]
+        # Traverse patterns immediately, then rotate the pairing after each
+        # domain-sized block. This keeps tiny canaries diverse while still
+        # covering every domain/pattern pairing in a full 64-row cycle.
+        pattern = patterns[(index + index // len(domains)) % len(patterns)]
         assert isinstance(domain, str)
         assert isinstance(pattern, dict)
         tasks.append(

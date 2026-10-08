@@ -49,6 +49,18 @@ def test_grounding_builder_uses_explicit_coverage() -> None:
     }
 
 
+def test_grounding_builder_keeps_small_canary_behaviorally_diverse() -> None:
+    builder = _load_module(
+        "aar_autodata_grounding_builder_small",
+        RECIPE / "grounding" / "build_manifest.py",
+    )
+    coverage = builder.load_coverage(RECIPE / "grounding" / "coverage.json")
+    manifest = builder.build(4, 20261008, coverage)
+
+    assert len({task["facets"]["domain"] for task in manifest["tasks"]}) == 4
+    assert len({task["facets"]["pattern"] for task in manifest["tasks"]}) == 4
+
+
 def test_checked_in_recipe_configuration_passes_local_check() -> None:
     completed = subprocess.run(
         [sys.executable, str(RECIPE / "recipe" / "check.py")],
