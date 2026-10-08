@@ -815,7 +815,9 @@ class AutonomousAgentLoop:
 
     def _successful_score_result_pairs(self) -> int:
         """Count durable score/result intersections, never session completions."""
-        team_dir = Path(os.getenv("TEAM_DIR", self.logs_dir.parent))
+        configured = os.getenv("TEAM_DIR")
+        fallback_logs = getattr(self, "logs_dir", Path.cwd() / "logs")
+        team_dir = Path(configured) if configured else Path(fallback_logs).parent
         score_ids: set[str] = set()
         for path in (team_dir / "scores").glob("*.json"):
             if path.name.endswith(".failed.json"):
