@@ -402,3 +402,26 @@ same SHA-256 digest:
 Both complete AutoData test runs passed 68 tests with one skipped, and the HPC
 rebuild left no Git diff. The fresh AAR launch may therefore pin and verify one
 identical native framework and plugin payload across both architectures.
+
+## 2026-10-08 — retry-safe fresh launch
+
+The matching AAR source and HPC execution worktrees were clean at exact commit
+`7c5310ce17f012afc6b9987d91d6c981a4be2ca4`. The HPC AAR suite passed 250
+tests plus 35 subtests before submission. The committed Run 9 submitter was
+launched at AutoData concurrency 8 and recorded:
+
+- Attempt root:
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T141415Z-7c5310ce17f0`.
+- Launcher: `1768037`.
+- Evaluator: `1768082`.
+- One sequential research chain: `1768083`.
+- AAR commit: `7c5310ce17f012afc6b9987d91d6c981a4be2ca4`.
+- Native AutoData commit: `61304d889dee6c0ced007322540998a36d85f664`.
+- AutoData concurrency: 8.
+- Target: five durable score/result pairs in one sequential chain.
+
+The launcher published the complete retained suite and emitted distinct
+evaluator and chain IDs before completing. At this checkpoint both child jobs
+were pending placement; proposal approval, bound grounding approval, native
+meta-optimization, production, training consumption, and evaluation remained
+to be observed.
