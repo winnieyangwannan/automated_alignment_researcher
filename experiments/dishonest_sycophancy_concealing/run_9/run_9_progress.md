@@ -495,3 +495,25 @@ runner for this fixed question-only recipe. The research agent still receives
 only the attempt-scoped broker capability. A concurrency-16 real Kimi/Luna
 canary is required before a fresh full launch; concurrency 32 may be admitted
 only after a separate successful load test.
+
+## 2026-10-08 — local Bubblewrap canary passed
+
+The first local-runner probes, jobs `1777762` and `1777833`, showed that the
+external inference-gateway hostname was not reachable from the HPC host after
+Bubblewrap correctly removed inherited proxy variables. Those probes produced
+no provider usage and are retained as routing failures rather than evidence
+against Kimi capacity.
+
+AAR commit `583673b8cc892dd8b1e2435e1059dde3c7d99487` routes local-runner Kimi
+requests through the cluster-internal FAIR ingress while preserving the
+required host and deployment headers. The corrected one-task probe `1777931`
+completed in 55 seconds and retained one accepted Kimi/Luna sample.
+
+The corrected concurrency-16 probe `1777949` completed in 2 minutes 3 seconds.
+All 16 broker jobs reached `SUCCEEDED`, all 16 task envelopes reported
+`outcome=succeeded`, and every task recorded both Kimi generation and Luna
+judgment usage. Ten samples were accepted and six were deliberately filtered
+with `reason_code=judge_rejected`; there were no model, parsing, broker, lease,
+or routing failures. This satisfies the production admission gate for the
+local Bubblewrap runner at concurrency 16 without resizing the one-endpoint
+`winnieyangwn-kimi26` deployment.
