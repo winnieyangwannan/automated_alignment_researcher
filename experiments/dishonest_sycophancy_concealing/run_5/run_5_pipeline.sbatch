@@ -73,11 +73,23 @@ git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || {
   echo "tracked HPC worktree is dirty" >&2
   exit 2
 }
-for required in "${REUSED_BASELINE}" "${TARGET_MODEL_PATH}" "${LIT_AXIS_DIR}/manifest.json" \
-  "${AAR_VLLM_WORKER_SH}" "${AAR_VLLM_MERGE_PY}" "${HARNESS_PY}" \
-  "${LLM_UNCERTAINTY_SOURCE_MANIFEST}" "${HARNESS_ENV}"; do
+required_artifacts=(
+  "${REUSED_BASELINE}"
+  "${TARGET_MODEL_PATH}"
+  "${LIT_AXIS_DIR}/manifest.json"
+  "${AAR_VLLM_WORKER_SH}"
+  "${AAR_VLLM_MERGE_PY}"
+  "${HARNESS_PY}"
+  "${LLM_UNCERTAINTY_SOURCE_MANIFEST}"
+)
+case "${AAR_RUNTIME_ENV_DISABLE_FILE:-0}" in
+  1|true|yes|on) ;;
+  *) required_artifacts+=("${HARNESS_ENV:?missing harness environment path}") ;;
+esac
+for required in "${required_artifacts[@]}"; do
   [ -e "${required}" ] || { echo "required artifact missing: ${required}" >&2; exit 2; }
 done
+unset required_artifacts
 for secret_name in HF_TOKEN MODEL_API_KEY ANTHROPIC_API_KEY; do
   [ -n "${!secret_name:-}" ] || {
     echo "required runtime credential is empty: ${secret_name}" >&2
