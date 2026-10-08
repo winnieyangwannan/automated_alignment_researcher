@@ -41,7 +41,12 @@ GENERATOR_MODEL = "Kimi-K2.6"
 GENERATOR_DEPLOYMENT_ID = "winnieyangwn-kimi26"
 JUDGE_URL = "https://api.meta.ai/v1/responses"
 JUDGE_MODEL = "gpt-5-6-luna"
-ENVIRONMENT = "oci-runner-firecracker-small"
+FIRECRACKER_ENVIRONMENTS = (
+    "oci-runner-firecracker-small",
+    "oci-runner-firecracker-medium",
+    "oci-runner-firecracker-large",
+    "oci-runner-firecracker-xlarge",
+)
 TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED"}
 SAFE_USAGE_FIELDS = {
     "request_id",
@@ -101,6 +106,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--image", default=DEFAULT_IMAGE)
     parser.add_argument("--expected-image-id", default=DEFAULT_IMAGE_ID)
+    parser.add_argument(
+        "--environment",
+        choices=FIRECRACKER_ENVIRONMENTS,
+        default="oci-runner-firecracker-small",
+    )
     parser.add_argument("--generator-url", default=DEFAULT_GENERATOR_URL)
     parser.add_argument("--generator-deployment-id", default=GENERATOR_DEPLOYMENT_ID)
     parser.add_argument("--generator-max-input-tokens", type=_positive_integer, default=4096)
@@ -509,7 +519,7 @@ def run(args: argparse.Namespace, *, runtime: _Runtime | None = None) -> dict[st
                 "schema": "autodata.broker-job/v1",
                 "idempotency_key": f"run8-model-canary:{uuid.uuid4().hex}",
                 "task": "Run one approved Run 8 Kimi generation and Luna judgment",
-                "environment": ENVIRONMENT,
+                "environment": args.environment,
                 "image": args.image,
                 "expected_image_id": args.expected_image_id,
                 "workspace": {
@@ -570,7 +580,7 @@ def run(args: argparse.Namespace, *, runtime: _Runtime | None = None) -> dict[st
             "broker_job_id": job_id,
             "broker_status": status.get("status"),
             "sandoq_session_id": status.get("session_id"),
-            "environment": ENVIRONMENT,
+            "environment": args.environment,
             "image": args.image,
             "expected_image_id": args.expected_image_id,
             "workspace_sha256": identity.sha256,

@@ -279,7 +279,8 @@ tasks; request 3 through 10 native meta iterations with `min_iterations: 3`
 and `early_stop_patience: 3`. Use the fixed Luna threshold in the recipe. For
 production, retain exactly 1,000 accepted unique rows, begin with 1,250 fresh
 source tasks, and stop unsuccessfully at 1,500 total attempts rather than
-weakening the judge. Use concurrency `$AAR_AUTODATA_CONCURRENCY`.
+weakening the judge. Use Firecracker tier `$AAR_AUTODATA_ENVIRONMENT` and
+concurrency `$AAR_AUTODATA_CONCURRENCY`.
 
 These are hard completion requirements, not suggestions to shrink when SandoQ is
 slow. Cold Firecracker starts and multi-hour generation are expected. Never cancel,

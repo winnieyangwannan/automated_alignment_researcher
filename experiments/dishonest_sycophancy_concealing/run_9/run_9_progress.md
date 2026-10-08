@@ -425,3 +425,27 @@ evaluator and chain IDs before completing. At this checkpoint both child jobs
 were pending placement; proposal approval, bound grounding approval, native
 meta-optimization, production, training consumption, and evaluation remained
 to be observed.
+
+## 2026-10-08 — Firecracker capacity failure and stabilization
+
+The retry-safe attempt never reached an outer AAR result. The SandoQ
+`oci-runner-firecracker-small` warm pool repeatedly returned HTTP 429 because
+no pod was available. Broker requests then outlived the client's 60-second
+HTTP timeout, producing ambiguous disconnects, broken-pipe noise, and repeated
+`could not reach AutoData broker` failures. No production dataset, training
+submission, score, or result finding was produced; the attempt therefore has
+zero durable score/result pairs.
+
+Evaluator `1768082` and chain `1768083` were cancelled at 2026-10-08
+19:17:52Z and reached terminal Slurm state `CANCELLED`. The complete attempt is
+preserved at
+`/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T141415Z-7c5310ce17f0`.
+
+The stabilization path keeps SandoQ Firecracker—the only supported isolated,
+model-backed executor—but no longer assumes the `small` warm pool. Run 9 now
+accepts an explicitly validated Firecracker tier, records it in submission
+metadata, and defaults to `medium` with concurrency 4. AutoData transport now
+replays bounded transient disconnects and 429/5xx responses under the original
+idempotency key, suppresses harmless response-write disconnects, and serializes
+broker SQLite writes in-process. A fresh attempt remains gated on an HPC
+model-backed canary of the selected tier and exact synchronized commits.

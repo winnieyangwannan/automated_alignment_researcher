@@ -33,6 +33,18 @@ def test_run9_uses_safe_ephemeral_merged_checkpoints() -> None:
     assert 'rm -rf --one-file-system -- "${cleanup_target}" "${cleanup_staging}"' in worker
 
 
+def test_run9_pins_a_configurable_firecracker_tier_and_safe_concurrency() -> None:
+    submitter = (RUN9 / "submit_run_9.sh").read_text()
+    pipeline = (RUN9 / "run_9_pipeline.sbatch").read_text()
+    runtime = (ROOT / "scripts" / "aar_runtime_env.sh").read_text()
+
+    assert "AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-medium" in submitter
+    assert "AAR_AUTODATA_CONCURRENCY:-4" in submitter
+    assert '"environment": "${AAR_AUTODATA_ENVIRONMENT}"' in submitter
+    assert 'export AAR_AUTODATA_ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:?}"' in pipeline
+    assert "AAR_AUTODATA_ENVIRONMENT" in runtime
+
+
 def test_generic_launchers_include_run7_first_use_fixes() -> None:
     trainer = (ROOT / "scripts" / "submit_train_job.sh").read_text()
     evaluator = (ROOT / "scripts" / "launch_eval_worker.sh").read_text()

@@ -28,6 +28,12 @@ DEFAULT_RECIPE = (
 )
 IMAGE = "docker.io/library/python@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f"
 IMAGE_ID = "df18428df8a0f9189c84e7424d214b4c50092af1f9dca5842a00c41c39bda316"
+FIRECRACKER_ENVIRONMENTS = (
+    "oci-runner-firecracker-small",
+    "oci-runner-firecracker-medium",
+    "oci-runner-firecracker-large",
+    "oci-runner-firecracker-xlarge",
+)
 
 
 def _args() -> argparse.Namespace:
@@ -41,6 +47,11 @@ def _args() -> argparse.Namespace:
     parser.add_argument("--task-count", type=int, default=4)
     parser.add_argument("--required-rows", type=int, default=1)
     parser.add_argument("--concurrency", type=int, default=2)
+    parser.add_argument(
+        "--environment",
+        choices=FIRECRACKER_ENVIRONMENTS,
+        default="oci-runner-firecracker-small",
+    )
     parser.add_argument("--max-cost-usd", type=Decimal, default=Decimal("1.00"))
     parser.add_argument("--timeout-seconds", type=int, default=7200)
     return parser.parse_args()
@@ -224,7 +235,7 @@ class Driver:
     def executor(self) -> dict[str, Any]:
         return {
             "kind": "sandoq-firecracker",
-            "environment": "oci-runner-firecracker-small",
+            "environment": self.args.environment,
             "image": IMAGE,
             "expected_image_id": IMAGE_ID,
             "broker_url": self.args.broker_url,
@@ -563,6 +574,7 @@ class Driver:
             "task_count": self.args.task_count,
             "required_rows": self.args.required_rows,
             "concurrency": self.args.concurrency,
+            "environment": self.args.environment,
             "accepted_rows": accepted,
             "dataset": str(dataset),
             "dataset_sha256": "sha256:" + hashlib.sha256(dataset.read_bytes()).hexdigest(),

@@ -8,6 +8,8 @@ AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pip
 SECRET_ENV="${AAR_RUN9_SECRET_ENV:-/storage/home/${USER}/aar-worktrees/autodata/.env}"
 FIRECRACKER_TOKEN="${AAR_RUN9_FIRECRACKER_TOKEN:-/storage/home/${USER}/aar-worktrees/autodata/.sandoq-firecracker-token}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
+AAR_AUTODATA_ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-medium}"
+AAR_AUTODATA_CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-4}"
 VLLM_WORKER_SHA256="913c3286e237ed2231c64de200a4bcfc65729292a05c6aa3a88100f8c0248361"
 REUSED_BASELINE="${1:-/checkpoint/ram/aar/${USER}/honesty-sycophancy-concealing-gemma4-31b-v0/baseline_attempts/20261005T083040Z-ab488b75137b-reuse/metadata/gemma4_31b_multidimensional_baseline.json}"
 
@@ -15,6 +17,13 @@ REUSED_BASELINE="${1:-/checkpoint/ram/aar/${USER}/honesty-sycophancy-concealing-
 git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || { echo "tracked worktree is dirty" >&2; exit 2; }
 [ "$(git -C "${AUTODATA_CHECKOUT}" branch --show-current)" = main ] || { echo "AutoData checkout must be on main" >&2; exit 2; }
 [ -x "${BROKER_PYTHON}" ] || { echo "missing broker Python" >&2; exit 2; }
+case "${AAR_AUTODATA_ENVIRONMENT}" in
+  oci-runner-firecracker-small|oci-runner-firecracker-medium|oci-runner-firecracker-large|oci-runner-firecracker-xlarge) ;;
+  *) echo "unsupported AutoData Firecracker environment: ${AAR_AUTODATA_ENVIRONMENT}" >&2; exit 2 ;;
+esac
+case "${AAR_AUTODATA_CONCURRENCY}" in
+  ''|*[!0-9]*|0) echo "AutoData concurrency must be a positive integer" >&2; exit 2 ;;
+esac
 for required in "${SECRET_ENV}" "${FIRECRACKER_TOKEN}" "${REUSED_BASELINE}" "${SCRIPT_DIR}/snapshot_vllm_runtime.sh"; do
   [ -f "${required}" ] || { echo "missing required input: ${required}" >&2; exit 2; }
 done
@@ -58,12 +67,12 @@ openssl pkey -in "${approval_private}" -pubout -out "${approval_public}" >/dev/n
 chmod 600 "${approval_private}" "${approval_public}"
 approval_public_digest="sha256:$(sha256sum "${approval_public}" | awk '{print $1}')"
 policy="${attempt_dir}/metadata/autodata-campaign-policy.json"
-cat > "${policy}" <<'EOF'
+cat > "${policy}" <<EOF
 {
   "schema": "autodata.broker-campaign-policy/v1",
   "campaign_id": "run9-five-iteration",
   "max_cost_usd": "299",
-  "environment": "oci-runner-firecracker-small",
+  "environment": "${AAR_AUTODATA_ENVIRONMENT}",
   "image": "docker.io/library/python@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f",
   "expected_image_id": "df18428df8a0f9189c84e7424d214b4c50092af1f9dca5842a00c41c39bda316",
   "max_cpus": 2,
@@ -110,14 +119,14 @@ export AAR_AUTODATA_APPROVAL_ACTOR="aar-integrity-monitor"
 export AAR_AUTODATA_APPROVAL_POLICY_VERSION="aar-autodata/run9-v1"
 export AAR_AUTODATA_PROPOSAL_BINDINGS="${proposal_bindings}"
 export AAR_AUTODATA_RESOURCES_READY=1
-export AAR_AUTODATA_CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-16}"
+export AAR_AUTODATA_ENVIRONMENT AAR_AUTODATA_CONCURRENCY
 export AAR_VLLM_WORKER_SH="${vllm_worker}"
 
 job_id="$(sbatch --parsable \
   --output="${attempt_dir}/logs/pipeline-%j.out" \
   --export=ALL \
   "${SCRIPT_DIR}/run_9_pipeline.sbatch")"
-printf 'launch_job_id=%s\nattempt_dir=%s\naar_git_commit=%s\nautodata_git_commit=%s\nconcurrency=%s\nvllm_worker_sha256=%s\n' \
-  "${job_id}" "${attempt_dir}" "${commit}" "${autodata_sha}" "${AAR_AUTODATA_CONCURRENCY}" "${VLLM_WORKER_SHA256}" \
+printf 'launch_job_id=%s\nattempt_dir=%s\naar_git_commit=%s\nautodata_git_commit=%s\nenvironment=%s\nconcurrency=%s\nvllm_worker_sha256=%s\n' \
+  "${job_id}" "${attempt_dir}" "${commit}" "${autodata_sha}" "${AAR_AUTODATA_ENVIRONMENT}" "${AAR_AUTODATA_CONCURRENCY}" "${VLLM_WORKER_SHA256}" \
   | tee "${attempt_dir}/metadata/submission.txt"
 unset capability MODEL_API_KEY ANTHROPIC_API_KEY HF_TOKEN

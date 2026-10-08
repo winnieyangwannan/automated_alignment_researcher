@@ -155,6 +155,8 @@ class ModelBrokerCanaryTest(unittest.TestCase):
                     str(RECIPE),
                     "--output",
                     str(output),
+                    "--environment",
+                    "oci-runner-firecracker-medium",
                 ]
             )
             report = self.module.run(args, runtime=runtime)
@@ -168,6 +170,7 @@ class ModelBrokerCanaryTest(unittest.TestCase):
         self.assertEqual(len(client.uploads), 1)
         job = _FakeBrokerJobSpec.captured
         self.assertTrue(job["model_backed"])
+        self.assertEqual(job["environment"], "oci-runner-firecracker-medium")
         self.assertEqual(job["solve"]["network"], "host")
         self.assertEqual(job["solve"]["env"]["AUTODATA_GENERATOR_MODEL"], "Kimi-K2.6")
         self.assertEqual(
@@ -178,6 +181,7 @@ class ModelBrokerCanaryTest(unittest.TestCase):
         self.assertNotIn("MODEL_API_KEY", job["solve"]["env"])
         self.assertNotIn("broker-secret", json.dumps(job))
         self.assertEqual(report["provider_call_count"], 2)
+        self.assertEqual(report["environment"], "oci-runner-firecracker-medium")
         self.assertEqual(
             [call["role"] for call in report["provider_usage"]],
             ["generator", "judge"],

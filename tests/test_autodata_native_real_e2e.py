@@ -26,11 +26,15 @@ def test_meta_execution_budget_includes_replenishment_headroom(tmp_path: Path) -
     driver.args = argparse.Namespace(
         task_count=8,
         concurrency=8,
+        environment="oci-runner-firecracker-medium",
         timeout_seconds=3600,
     )
     driver.input = tmp_path / "input"
     driver.input.mkdir()
-    driver.executor = lambda: {"kind": "test"}
+    driver.executor = lambda: {
+        "kind": "test",
+        "environment": driver.args.environment,
+    }
 
     pipeline = tmp_path / "pipeline"
     grounding = pipeline / "grounding"
@@ -49,6 +53,7 @@ def test_meta_execution_budget_includes_replenishment_headroom(tmp_path: Path) -
     # for eight tasks; four extra slots permit bounded quality replenishment.
     assert value["budget"]["max_task_attempts"] == 33
     assert value["concurrency"] == 8
+    assert value["executor"]["environment"] == "oci-runner-firecracker-medium"
 
 
 def test_cli_retries_ambiguous_broker_reachability_failure(tmp_path: Path) -> None:
