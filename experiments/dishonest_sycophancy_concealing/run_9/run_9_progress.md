@@ -95,3 +95,43 @@ The full campaign launch is active:
   priority. The launcher emitted distinct evaluator and chain IDs, so the full
   campaign is submitted; evaluator vLLM fail-closed startup markers must still
   be verified when job `1763015` starts.
+
+## 2026-10-08 — final audited launch
+
+The earlier child pairs were cancelled before useful work after progressively
+finding fail-closed launch issues. All attempt directories remain preserved:
+
+- `1763015` / `1763016` were cancelled while pending after the post-launch
+  documentation commit advanced the shared checkout beyond their pinned source
+  commit.
+- `1763032` / `1763033` were cancelled while pending when audit showed that a
+  staged `worker_vllm.sh` was not standalone; it also requires its sibling
+  `container.sh` and `engine_common.sh`.
+- In the next audited attempt, evaluator `1763107` started but was cancelled
+  after chain `1763108` failed before research startup because its AutoData
+  broker health probe referenced `PY` before initialization.
+
+The final tested source commit is
+`6dd1758073ccbb9e6ce6db27ac3f5c93a768709f`. The execution worktree is frozen at
+that commit while the jobs run. Its launcher stages a hash-verified full vLLM
+runtime snapshot, initializes the training lane, submits the evaluator with an
+explicit single node, and initializes the trusted harness Python before the
+AutoData broker health probe.
+
+- Attempt root:
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T100912Z-6dd1758073cc`.
+- Team directory:
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T100912Z-6dd1758073cc/aar_teams/run9-gemma4-31b-opus48-autodata-five-success-v1`.
+- Completed launcher: `1763156` (`COMPLETED`, exit `0:0`).
+- Running evaluator: `1763166`, one node.
+- Running sequential AAR chain: `1763167`.
+- Evaluator log:
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T100912Z-6dd1758073cc/aar_teams/run9-gemma4-31b-opus48-autodata-five-success-v1/logs/aar-eval-honesty_sycophancy_concealing_uncertainty-1763166.out`.
+- Chain log:
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T100912Z-6dd1758073cc/aar_teams/run9-gemma4-31b-opus48-autodata-five-success-v1/logs/aar-honesty_sycophancy_concealing_uncertainty-gemma4_31b-pilot_1763167.out`.
+- Confirmed chain health markers: campaign-scoped AutoData broker ready at
+  concurrency 8, research mount/PID namespace verified, secure-internet Claude
+  launcher started, and research process entered its jail.
+- Evaluator startup confirmed its attempt-local ephemeral merged-checkpoint
+  root. Image/version/checkpoint markers are emitted fail-closed when the first
+  candidate arrives; no candidate had reached evaluation at this checkpoint.
