@@ -76,6 +76,7 @@ class KimiAgentTest(unittest.TestCase):
                 "  'mcp': json.loads((home / 'mcp.json').read_text()),\n"
                 "  'config_is_link': (home / 'config.toml').is_symlink(),\n"
                 "}))\n"
+                "print('terminal output that is not JSON')\n"
                 "print(json.dumps({'role': 'assistant', 'content': 'working', "
                 "'tool_calls': [{'function': {'name': 'Bash', "
                 "'arguments': '{\\\"command\\\": \\\"pwd\\\"}'}}]}))\n"
@@ -108,6 +109,9 @@ class KimiAgentTest(unittest.TestCase):
             self.assertTrue(result.success, result.error)
             self.assertEqual(result.iteration_count, 1)
             self.assertEqual(result.output["text_outputs"], ["working", "done"])
+            self.assertEqual(
+                result.output["raw_stdout"], ["terminal output that is not JSON"]
+            )
             self.assertIsInstance(callbacks[0].content[1], KimiToolUseBlock)
 
             observed = json.loads(capture.read_text())
@@ -129,6 +133,69 @@ class KimiAgentTest(unittest.TestCase):
                 {"existing", "server-api-tools", "prior-work-tools"},
             )
             self.assertEqual(json.loads((kimi_home / "mcp.json").read_text()), original_mcp)
+
+    def test_serve_api_provider_is_resolved_for_each_session(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            serve_root = root / "serve_api_v2"
+            serve_root.mkdir()
+            serve = serve_root / "serve.sh"
+            serve.write_text(
+                f"#!{sys.executable}\n"
+                "import json, sys\n"
+                "assert sys.argv[1:] == ['generate-opencode-config', 'test-deployment']\n"
+                "print(json.dumps({'provider': {'test': {\n"
+                "  'options': {'baseURL': 'http://proxy.example/v1', 'apiKey': 'secret'},\n"
+                "  'models': {'Kimi-K2.6': {}}\n"
+                "}}}))\n"
+            )
+            serve.chmod(0o755)
+            agent = KimiAgent("test-agent", root, cli_path="/bin/true")
+            with patch.dict(
+                os.environ,
+                {
+                    "AAR_KIMI_SERVE_DEPLOYMENT": "test-deployment",
+                    "AAR_KIMI_EXPECTED_MODEL": "Kimi-K2.6",
+                    "AAR_SERVE_API_V2_ROOT": str(serve_root),
+                },
+                clear=False,
+            ):
+                env = agent._build_environment(root)
+
+            self.assertEqual(env["KIMI_MODEL_NAME"], "Kimi-K2.6")
+            self.assertEqual(env["KIMI_MODEL_PROVIDER_TYPE"], "openai")
+            self.assertEqual(env["KIMI_MODEL_BASE_URL"], "http://proxy.example/v1")
+            self.assertEqual(env["KIMI_MODEL_API_KEY"], "secret")
+            self.assertEqual(env["KIMI_MODEL_MAX_CONTEXT_SIZE"], "262144")
+            self.assertEqual(env["KIMI_MODEL_MAX_OUTPUT_SIZE"], "16384")
+            self.assertEqual(env["KIMI_MODEL_CAPABILITIES"], "thinking,tool_use")
+            self.assertEqual(env["KIMI_MODEL_REASONING_KEY"], "reasoning_content")
+
+    def test_serve_api_provider_rejects_unexpected_model(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            serve = root / "serve.sh"
+            serve.write_text(
+                f"#!{sys.executable}\n"
+                "import json\n"
+                "print(json.dumps({'provider': {'test': {\n"
+                "  'options': {'baseURL': 'http://proxy.example/v1', 'apiKey': 'secret'},\n"
+                "  'models': {'wrong-model': {}}\n"
+                "}}}))\n"
+            )
+            serve.chmod(0o755)
+            agent = KimiAgent("test-agent", root, cli_path="/bin/true")
+            with patch.dict(
+                os.environ,
+                {
+                    "AAR_KIMI_SERVE_DEPLOYMENT": "test-deployment",
+                    "AAR_KIMI_EXPECTED_MODEL": "Kimi-K2.6",
+                    "AAR_SERVE_API_V2_ROOT": str(root),
+                },
+                clear=False,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "model mismatch"):
+                    agent._build_environment(root)
 
     def test_nonzero_cli_exit_is_a_failed_agent_result(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

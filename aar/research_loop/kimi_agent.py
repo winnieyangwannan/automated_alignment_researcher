@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -92,6 +94,7 @@ class KimiAgent:
             "text_outputs": [],
             "tool_uses": [],
             "raw_messages": [],
+            "raw_stdout": [],
         }
         iteration_count = 0
 
@@ -116,10 +119,13 @@ class KimiAgent:
                         continue
                     try:
                         event = json.loads(line)
-                    except json.JSONDecodeError as error:
-                        raise RuntimeError(
-                            f"Kimi emitted invalid stream-json output: {line[:200]}"
-                        ) from error
+                    except json.JSONDecodeError:
+                        # Kimi Code 2.1.1 can mirror terminal-tool output to
+                        # stdout before emitting the corresponding JSON tool
+                        # event. Preserve it without corrupting the JSONL
+                        # session parser.
+                        output["raw_stdout"].append(line)
+                        continue
                     output["raw_messages"].append(event)
                     message = self._assistant_message(event)
                     if message is None:
@@ -222,7 +228,88 @@ class KimiAgent:
         )
         env["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{env.get('PATH', '')}"
         env["KIMI_CODE_HOME"] = str(overlay_home)
+        self._apply_serve_api_provider(env)
         return env
+
+    def _apply_serve_api_provider(self, env: dict[str, str]) -> None:
+        """Resolve a live serve_api_v2 proxy without exposing its API key."""
+        deployment = env.get("AAR_KIMI_SERVE_DEPLOYMENT", "").strip()
+        if not deployment:
+            return
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", deployment):
+            raise RuntimeError("AAR_KIMI_SERVE_DEPLOYMENT is invalid")
+
+        root = Path(
+            env.get("AAR_SERVE_API_V2_ROOT")
+            or Path(env.get("RAM_COMMON_ROOT", str(Path.home() / "ram_common")))
+            / "vllm_tools"
+            / "serve_api_v2"
+        ).expanduser()
+        serve = root / "serve.sh"
+        if not serve.is_file():
+            raise RuntimeError(f"serve_api_v2 launcher not found at {serve}")
+        result = subprocess.run(
+            [str(serve), "generate-opencode-config", deployment],
+            cwd=root,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"serve_api_v2 could not resolve deployment {deployment}"
+            )
+        try:
+            config = json.loads(result.stdout)
+            providers = config["provider"]
+            if not isinstance(providers, dict) or len(providers) != 1:
+                raise ValueError("expected exactly one provider")
+            provider = next(iter(providers.values()))
+            options = provider["options"]
+            models = provider["models"]
+            if not isinstance(models, dict) or len(models) != 1:
+                raise ValueError("expected exactly one served model")
+            model = next(iter(models))
+            base_url = options["baseURL"]
+            api_key = options["apiKey"]
+            if not isinstance(base_url, str) or not base_url.startswith(
+                ("http://", "https://")
+            ):
+                raise ValueError("invalid proxy base URL")
+            if not isinstance(api_key, str) or not api_key:
+                raise ValueError("missing proxy API key")
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise RuntimeError(
+                f"serve_api_v2 returned invalid config for {deployment}"
+            ) from error
+
+        expected_model = env.get("AAR_KIMI_EXPECTED_MODEL", "").strip()
+        if expected_model and model != expected_model:
+            raise RuntimeError(
+                f"serve_api_v2 model mismatch: expected {expected_model}, got {model}"
+            )
+        env.update(
+            {
+                "KIMI_MODEL_NAME": model,
+                "KIMI_MODEL_PROVIDER_TYPE": "openai",
+                "KIMI_MODEL_BASE_URL": base_url,
+                "KIMI_MODEL_API_KEY": api_key,
+                "KIMI_MODEL_MAX_CONTEXT_SIZE": env.get(
+                    "KIMI_MODEL_MAX_CONTEXT_SIZE", "262144"
+                ),
+                "KIMI_MODEL_MAX_OUTPUT_SIZE": env.get(
+                    "KIMI_MODEL_MAX_OUTPUT_SIZE", "16384"
+                ),
+                "KIMI_MODEL_CAPABILITIES": env.get(
+                    "KIMI_MODEL_CAPABILITIES", "thinking,tool_use"
+                ),
+                "KIMI_MODEL_REASONING_KEY": env.get(
+                    "KIMI_MODEL_REASONING_KEY", "reasoning_content"
+                ),
+            }
+        )
 
     @staticmethod
     def _assistant_message(event: Any) -> Optional[KimiAssistantMessage]:

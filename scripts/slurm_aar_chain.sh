@@ -215,6 +215,9 @@ export IDEA_NAME="${MODEL:-qwen}-${SEED}"
 # unrelated secrets out of the internet-enabled research-agent child.
 unset MODEL_API_KEY LLAMA_API_KEY HF_TOKEN HUGGING_FACE_HUB_TOKEN OAI_API OPENAI_API_KEY
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN RUNPOD_API_KEY WANDB_API_KEY
+if [ "${AAR_AGENT_BACKEND:-claude}" = kimi ]; then
+  unset ANTHROPIC_API_KEY ANT_high_prio_API ANT_API_KEY CLAUDE_CLI_PATH
+fi
 if [ "${AAR_HIDE_EVAL_CONFIG:-0}" = "1" ]; then
   # The evaluator has already inherited what it needs. Do not advertise the
   # run-specific full suite selection or baseline override to the researcher.
