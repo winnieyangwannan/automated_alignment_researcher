@@ -364,3 +364,26 @@ had exactly one controller/step process and remained in native
 `baseline_pending`. The upstream interrupted-attempt retry bug remains a
 separate resilience issue; this run did not patch its state database or skip
 the required meta stage.
+
+## 2026-10-08 — attempt stopped for the upstream retry fix
+
+The clean recovery execution began making progress without duplicate
+controllers, but the run was intentionally stopped once the underlying native
+AutoData retry/resume defect had been fixed and tested upstream. Continuing
+with the attempt-local no-timeout workaround would have left production
+dependent on an obsolete plugin build.
+
+Canonical AutoData `main` now contains the retry/resume fix at commit
+`f334c19`; its complete upstream suite passed 68 tests with one skipped, and
+the plugin wheel was rebuilt and hash-verified. The active HPC attempt remained
+pinned to the older native commit and was not modified in place.
+
+Chain `1766342` and evaluator `1766341` were cancelled at 2026-10-08
+14:07:24Z. Both reached terminal Slurm state `CANCELLED`, exit `0:0`; their
+elapsed times were 1:28:36 and 1:20:37 respectively. The broker log stabilized
+at 87 accepted job admissions and 106 result downloads over a 30-second
+post-stop observation. No production execution, training submission, model
+evaluation score, or result finding was produced, so this attempt does not
+count as an outer AAR iteration. All artifacts remain preserved under the
+attempt root. A fresh launch must wait until the patched AutoData commit and
+matching AAR pin/plugin bundle pass HPC synchronization and validation.
