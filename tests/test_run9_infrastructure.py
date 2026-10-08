@@ -33,31 +33,37 @@ def test_run9_uses_safe_ephemeral_merged_checkpoints() -> None:
     assert 'rm -rf --one-file-system -- "${cleanup_target}" "${cleanup_staging}"' in worker
 
 
-def test_run9_pins_a_configurable_firecracker_tier_and_safe_concurrency() -> None:
+def test_run9_pins_a_configurable_broker_runner_and_safe_concurrency() -> None:
     submitter = (RUN9 / "submit_run_9.sh").read_text()
     pipeline = (RUN9 / "run_9_pipeline.sbatch").read_text()
     runtime = (ROOT / "scripts" / "aar_runtime_env.sh").read_text()
 
+    assert "AAR_AUTODATA_BROKER_RUNNER:-local-bwrap" in submitter
     assert "AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-large" in submitter
-    assert "AAR_AUTODATA_CONCURRENCY:-4" in submitter
+    assert "AAR_AUTODATA_CONCURRENCY:-16" in submitter
+    assert '"runner": "${AAR_AUTODATA_BROKER_RUNNER}"' in submitter
     assert '"environment": "${AAR_AUTODATA_ENVIRONMENT}"' in submitter
+    assert 'export AAR_AUTODATA_BROKER_RUNNER="${AAR_AUTODATA_BROKER_RUNNER:?}"' in pipeline
     assert 'export AAR_AUTODATA_ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:?}"' in pipeline
+    assert "AAR_AUTODATA_BROKER_RUNNER" in runtime
     assert "AAR_AUTODATA_ENVIRONMENT" in runtime
 
 
-def test_run9_capacity_canary_uses_four_real_model_backed_jobs() -> None:
+def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
     submitter = (RUN9 / "submit_run_9_capacity_canary.sh").read_text()
     canary = (RUN9 / "run_9_capacity_canary.sbatch").read_text()
 
     assert '--max-concurrent "${CONCURRENCY}"' in canary
-    assert "for index in 1 2 3 4" in canary
+    assert 'for index in $(seq 1 "${CONCURRENCY}")' in canary
     assert "autodata_model_broker_canary.py" in canary
+    assert '--runner "${RUNNER}"' in canary
     assert '--environment "${ENVIRONMENT}"' in canary
     assert '"concurrency": concurrency' in canary
     assert 'job["status"] != "SUCCEEDED"' in canary
     assert '"audited_sample_count": len(reports)' in canary
     assert "--campaign-policy" in canary
     assert '"environment": "${ENVIRONMENT}"' in submitter
+    assert '"runner": "${RUNNER}"' in submitter
     assert 'export AAR_AUTODATA_CONCURRENCY="${CONCURRENCY}"' in submitter
     assert "--export=ALL" in submitter
 

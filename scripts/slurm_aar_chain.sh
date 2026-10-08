@@ -104,7 +104,7 @@ trap cleanup_autodata_broker EXIT
 if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   : "${AAR_AUTODATA_CHECKOUT:?missing canonical AutoData checkout}"
   : "${AAR_AUTODATA_BROKER_PYTHON:?missing broker Python}"
-  : "${AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE:?missing SandoQ token path}"
+  : "${AAR_AUTODATA_BROKER_RUNNER:?missing broker runner}"
   : "${AAR_AUTODATA_MODEL_ENV_FILE:?missing model workload env path}"
   : "${AAR_AUTODATA_CAMPAIGN_POLICY:?missing campaign policy}"
   : "${AAR_AUTODATA_CAPABILITY:?missing attempt-scoped broker capability}"
@@ -126,17 +126,30 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   chmod 600 "${_autodata_capability_file}"
   _autodata_port=$(( 10000 + (${SLURM_JOB_ID:-8791} % 40000) ))
   export AAR_AUTODATA_BROKER_URL="http://127.0.0.1:${_autodata_port}"
+  _autodata_broker_args=(
+    --runner "${AAR_AUTODATA_BROKER_RUNNER}"
+    --root "${_autodata_root}"
+    --host 127.0.0.1 --port "${_autodata_port}"
+    --max-concurrent "${AAR_AUTODATA_CONCURRENCY:?}"
+    --auth-token-file "${_autodata_capability_file}"
+    --workload-env-file "${AAR_AUTODATA_MODEL_ENV_FILE}"
+    --campaign-policy "${AAR_AUTODATA_CAMPAIGN_POLICY}"
+    --anonymous-registry docker.io
+  )
+  if [ "${AAR_AUTODATA_BROKER_RUNNER}" = sandoq-firecracker ]; then
+    : "${AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE:?missing SandoQ token path}"
+    _autodata_broker_args+=(
+      --gateway-url "${SANDOQ_GATEWAY_URL:-https://sandoq-gateway.eks-prod.cf.aws.metafb.cloud}"
+      --execsidecar-token-file "${AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE}"
+      --no-registry-preflight
+    )
+  elif [ "${AAR_AUTODATA_BROKER_RUNNER}" != local-bwrap ]; then
+    echo "[aar] ERROR: unsupported AutoData broker runner: ${AAR_AUTODATA_BROKER_RUNNER}" >&2
+    exit 2
+  fi
   PYTHONPATH="${AAR_AUTODATA_CHECKOUT}/src" \
     "${AAR_AUTODATA_BROKER_PYTHON}" -m autodata.broker.cli \
-      --root "${_autodata_root}" \
-      --gateway-url "${SANDOQ_GATEWAY_URL:-https://sandoq-gateway.eks-prod.cf.aws.metafb.cloud}" \
-      --host 127.0.0.1 --port "${_autodata_port}" \
-      --max-concurrent "${AAR_AUTODATA_CONCURRENCY:?}" \
-      --auth-token-file "${_autodata_capability_file}" \
-      --execsidecar-token-file "${AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE}" \
-      --workload-env-file "${AAR_AUTODATA_MODEL_ENV_FILE}" \
-      --campaign-policy "${AAR_AUTODATA_CAMPAIGN_POLICY}" \
-      --anonymous-registry docker.io --no-registry-preflight \
+      "${_autodata_broker_args[@]}" \
       > "${TEAM_DIR}/logs/autodata-broker.log" 2>&1 &
   _autodata_broker_pid=$!
   for _autodata_probe in $(seq 1 60); do
@@ -150,8 +163,8 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
     sleep 1
   done
   kill -0 "${_autodata_broker_pid}" 2>/dev/null || { echo "[aar] ERROR: AutoData broker is not running" >&2; exit 2; }
-  echo "[aar] campaign-scoped AutoData broker ready (pid=${_autodata_broker_pid}, concurrency=${AAR_AUTODATA_CONCURRENCY})"
-  unset _autodata_capability_file _autodata_probe _autodata_port
+  echo "[aar] campaign-scoped AutoData broker ready (pid=${_autodata_broker_pid}, runner=${AAR_AUTODATA_BROKER_RUNNER}, concurrency=${AAR_AUTODATA_CONCURRENCY})"
+  unset _autodata_broker_args _autodata_capability_file _autodata_probe _autodata_port
 fi
 
 # --- agent authentication + web mode ---

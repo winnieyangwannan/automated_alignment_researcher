@@ -8,8 +8,9 @@ AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pip
 SECRET_ENV="${AAR_RUN9_SECRET_ENV:-/storage/home/${USER}/aar-worktrees/autodata/.env}"
 FIRECRACKER_TOKEN="${AAR_RUN9_FIRECRACKER_TOKEN:-/storage/home/${USER}/aar-worktrees/autodata/.sandoq-firecracker-token}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
+RUNNER="${AAR_AUTODATA_BROKER_RUNNER:-local-bwrap}"
 ENVIRONMENT="${1:-oci-runner-firecracker-medium}"
-CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-4}"
+CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-16}"
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "canary requires branch autodata" >&2; exit 2; }
 git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || { echo "tracked AAR worktree is dirty" >&2; exit 2; }
@@ -19,14 +20,22 @@ case "${ENVIRONMENT}" in
   oci-runner-firecracker-small|oci-runner-firecracker-medium|oci-runner-firecracker-large|oci-runner-firecracker-xlarge) ;;
   *) echo "unsupported AutoData Firecracker environment: ${ENVIRONMENT}" >&2; exit 2 ;;
 esac
-case "${CONCURRENCY}" in
-  1|2|3|4) ;;
-  *) echo "capacity-canary concurrency must be in [1,4]" >&2; exit 2 ;;
+case "${RUNNER}" in
+  local-bwrap|sandoq-firecracker) ;;
+  *) echo "unsupported AutoData broker runner: ${RUNNER}" >&2; exit 2 ;;
 esac
-for required in "${SECRET_ENV}" "${FIRECRACKER_TOKEN}"; do
+case "${CONCURRENCY}" in
+  ''|*[!0-9]*|0) echo "capacity-canary concurrency must be in [1,64]" >&2; exit 2 ;;
+esac
+[ "${CONCURRENCY}" -le 64 ] || { echo "capacity-canary concurrency must be in [1,64]" >&2; exit 2; }
+for required in "${SECRET_ENV}"; do
   [ -f "${required}" ] || { echo "missing required input: ${required}" >&2; exit 2; }
   [ "$(stat -c %a "${required}")" = 600 ] || { echo "secret input must be mode 600: ${required}" >&2; exit 2; }
 done
+if [ "${RUNNER}" = sandoq-firecracker ]; then
+  [ -f "${FIRECRACKER_TOKEN}" ] || { echo "missing Firecracker token" >&2; exit 2; }
+  [ "$(stat -c %a "${FIRECRACKER_TOKEN}")" = 600 ] || { echo "Firecracker token must be mode 600" >&2; exit 2; }
+fi
 [ -x "${BROKER_PYTHON}" ] || { echo "missing broker Python" >&2; exit 2; }
 
 export AAR_REPO="${REPO}" HARNESS_ENV="${SECRET_ENV}"
@@ -47,8 +56,9 @@ policy="${root}/policy.json"
 cat > "${policy}" <<EOF
 {
   "schema": "autodata.broker-campaign-policy/v1",
-  "campaign_id": "run9-firecracker-capacity-canary",
+  "campaign_id": "run9-${RUNNER}-capacity-canary",
   "max_cost_usd": "2",
+  "runner": "${RUNNER}",
   "environment": "${ENVIRONMENT}",
   "image": "docker.io/library/python@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f",
   "expected_image_id": "df18428df8a0f9189c84e7424d214b4c50092af1f9dca5842a00c41c39bda316",
@@ -77,6 +87,7 @@ EOF
 
 export AAR_RUN9_CANARY_ROOT="${root}"
 export AAR_AUTODATA_CHECKOUT="${AUTODATA_CHECKOUT}"
+export AAR_AUTODATA_BROKER_RUNNER="${RUNNER}"
 export AAR_AUTODATA_ENVIRONMENT="${ENVIRONMENT}"
 export AAR_AUTODATA_CONCURRENCY="${CONCURRENCY}"
 export AAR_AUTODATA_BROKER_PYTHON="${BROKER_PYTHON}"
@@ -86,7 +97,7 @@ export AAR_AUTODATA_MODEL_ENV_FILE="${model_env}"
 export AAR_AUTODATA_CAMPAIGN_POLICY="${policy}"
 
 job_id="$(sbatch --parsable --output="${root}/slurm-%j.out" --export=ALL "${SCRIPT_DIR}/run_9_capacity_canary.sbatch")"
-printf 'job_id=%s\nroot=%s\nenvironment=%s\nconcurrency=%s\naar_git_commit=%s\nautodata_git_commit=%s\n' \
-  "${job_id}" "${root}" "${ENVIRONMENT}" "${CONCURRENCY}" "$(git -C "${REPO}" rev-parse HEAD)" "$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)" \
+printf 'job_id=%s\nroot=%s\nbroker_runner=%s\nenvironment=%s\nconcurrency=%s\naar_git_commit=%s\nautodata_git_commit=%s\n' \
+  "${job_id}" "${root}" "${RUNNER}" "${ENVIRONMENT}" "${CONCURRENCY}" "$(git -C "${REPO}" rev-parse HEAD)" "$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)" \
   | tee "${root}/submission.txt"
 unset MODEL_API_KEY

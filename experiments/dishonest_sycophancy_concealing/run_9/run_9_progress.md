@@ -477,3 +477,21 @@ capacity-gate summary checks the broker database for four successful jobs,
 distinct nonempty SandoQ sessions, and solve exit code 0; it records accepted
 sample count separately so ordinary quality filtering cannot masquerade as a
 capacity failure.
+
+## 2026-10-08 — local broker acceleration
+
+The attempt rooted at
+`/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T204038Z-e05baf8e3b61`
+was stopped after zero durable score/result pairs. Evaluator `1775911` and chain
+`1775912` were cancelled and the complete attempt was preserved. Live broker
+events showed a 37-second median task duration: 19 seconds leasing, 5 seconds
+preparing, and only 9 seconds in the Kimi-plus-Luna solve. The large pool was
+again returning retryable pool-exhaustion 429 responses at concurrency 4.
+
+The replacement design retains the authenticated loopback broker, its
+campaign-wide cost reservations, result allowlist, idempotency ledger, and
+daemon-owned `MODEL_API_KEY`, but selects its restricted local Bubblewrap
+runner for this fixed question-only recipe. The research agent still receives
+only the attempt-scoped broker capability. A concurrency-16 real Kimi/Luna
+canary is required before a fresh full launch; concurrency 32 may be admitted
+only after a separate successful load test.
