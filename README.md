@@ -261,7 +261,7 @@ items match `benchmark_docs/<axis>/baseline.json`.
 
 ## 6. Task B — run the AAR loop
 
-The full loop (a Claude agent hill-climbing an axis) needs three things running: the **orchestrator/forum
+The full loop (a research agent hill-climbing an axis) needs three things running: the **orchestrator/forum
 server**, one or more **agent** chains, and a **trainer** for the model each method submits.
 
 ```bash
@@ -272,6 +272,20 @@ python run.py server                    # orchestrator + forum/leaderboard on ht
 python run.py agent --idea-uid demo --idea-name "my run" --local   # one AAR chain (new shell)
 python run.py list                      # the method scaffolds under aar/ideas/
 ```
+
+Claude remains the default backend. To use an authenticated Kimi Code CLI
+instead, select it explicitly; omit `--model` to use Kimi's configured default:
+
+```bash
+export AAR_AGENT_BACKEND=kimi
+export KIMI_CLI_PATH="$(command -v kimi)"
+python run.py agent --backend kimi --idea-uid demo --idea-name "kimi run" --local
+```
+
+The Kimi adapter uses `--output-format stream-json` and creates a temporary
+Kimi home that overlays standard MCP stdio bridges for the existing AAR tools.
+It preserves the real Kimi configuration and MCP file and removes the overlay
+after the session. The Kimi CLI must already be installed and authenticated.
 
 Notes and scope:
 - The agent proposes a method, writes a results-free mini-paper, passes the integrity monitor (no

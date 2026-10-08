@@ -89,23 +89,35 @@ echo "[aar] team=${TEAM_ID}  TEAM_DIR=${TEAM_DIR}"
 echo "[aar] forum=${LOCAL_FINDINGS_DIR}  methods=${AAR_IDEAS_DIR}  lit(team)=${LIT_FORUM_DIR}  lit(axis)=${LIT_AXIS_DIR}"
 
 # --- agent authentication + web mode ---
-# Match the working FAIR librarian route: prefer Meta's authenticated Claude CLI
-# when it advertises secure-internet mode. The integrity monitor uses Claude
-# Opus 4.8 through FAIR Model API by default; its key is moved to a
-# monitor-specific name so the internet-enabled agent child cannot use it.
-if [ -z "${CLAUDE_CLI_PATH:-}" ]; then
-  CLAUDE_CLI_PATH="$(command -v claude || true)"
-fi
+# Claude remains the default. Kimi is selected only through
+# AAR_AGENT_BACKEND=kimi and uses the Kimi CLI's own configured authentication.
+_agent_backend="${AAR_AGENT_BACKEND:-claude}"
 _requested_web="${AAR_WEB_MODE:-auto}"
 case "${_requested_web}" in auto|meta_secure|native_web) ;; *)
   echo "[aar] ERROR: AAR_WEB_MODE must be auto, meta_secure, or native_web" >&2; exit 2;;
 esac
 _detected_web=native_web
-if [ -n "${CLAUDE_CLI_PATH:-}" ] && [ -x "${CLAUDE_CLI_PATH}" ]; then
-  _cli_help="$("${CLAUDE_CLI_PATH}" --help 2>&1 || true)"
-  case "${_cli_help}" in *--secure-internet-mode*) _detected_web=meta_secure;; esac
-  unset _cli_help
-fi
+case "${_agent_backend}" in
+  claude)
+    if [ -z "${CLAUDE_CLI_PATH:-}" ]; then
+      CLAUDE_CLI_PATH="$(command -v claude || true)"
+    fi
+    if [ -n "${CLAUDE_CLI_PATH:-}" ] && [ -x "${CLAUDE_CLI_PATH}" ]; then
+      _cli_help="$("${CLAUDE_CLI_PATH}" --help 2>&1 || true)"
+      case "${_cli_help}" in *--secure-internet-mode*) _detected_web=meta_secure;; esac
+      unset _cli_help
+    fi
+    ;;
+  kimi)
+    if [ -z "${KIMI_CLI_PATH:-}" ]; then
+      KIMI_CLI_PATH="$(command -v kimi || true)"
+    fi
+    [ -x "${KIMI_CLI_PATH:-}" ] || { echo "[aar] ERROR: Kimi backend requires KIMI_CLI_PATH or kimi on PATH" >&2; exit 2; }
+    [ "${_requested_web}" != meta_secure ] || { echo "[aar] ERROR: meta_secure web mode is Claude-only" >&2; exit 2; }
+    export KIMI_CLI_PATH
+    ;;
+  *) echo "[aar] ERROR: AAR_AGENT_BACKEND must be claude or kimi" >&2; exit 2;;
+esac
 if [ "${_requested_web}" = auto ]; then
   export AAR_WEB_MODE="${_detected_web}"
 else
@@ -131,16 +143,16 @@ case "${AAR_MONITOR_BACKEND}" in
     ;;
   *) echo "[aar] ERROR: AAR_MONITOR_BACKEND must be model_api or anthropic" >&2; exit 2;;
 esac
-if [ "${AAR_WEB_MODE}" = meta_secure ]; then
+if [ "${_agent_backend}" = claude ] && [ "${AAR_WEB_MODE}" = meta_secure ]; then
   [ -x "${CLAUDE_CLI_PATH:-}" ] || { echo "[aar] ERROR: meta_secure requires an executable Claude CLI" >&2; exit 2; }
   [ -x "${REPO}/scripts/aar-paper-search" ] || { echo "[aar] ERROR: paper-search helper is not executable" >&2; exit 2; }
   export CLAUDE_CLI_PATH META_CLAUDE_SECURE_INTERNET_MODE=1
   unset ANTHROPIC_API_KEY
-elif [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+elif [ "${_agent_backend}" = claude ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   echo "[aar] ERROR: native_web mode requires ANTHROPIC_API_KEY" >&2
   exit 2
 fi
-unset _requested_web _detected_web
+unset _agent_backend _requested_web _detected_web
 
 PY="${HARNESS_PY}"
 [ -x "${PY}" ] || { echo "[aar] ERROR: Python is not executable: ${PY}" >&2; exit 2; }
@@ -200,7 +212,7 @@ IDEA_UID="${MODEL:-qwen}-${SEED}-$(date +%s)"
 export IDEA_UID
 export IDEA_NAME="${MODEL:-qwen}-${SEED}"
 # Training/evaluation jobs reload their own credentials from HARNESS_ENV. Keep
-# unrelated secrets out of the internet-enabled Claude child.
+# unrelated secrets out of the internet-enabled research-agent child.
 unset MODEL_API_KEY LLAMA_API_KEY HF_TOKEN HUGGING_FACE_HUB_TOKEN OAI_API OPENAI_API_KEY
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN RUNPOD_API_KEY WANDB_API_KEY
 if [ "${AAR_HIDE_EVAL_CONFIG:-0}" = "1" ]; then

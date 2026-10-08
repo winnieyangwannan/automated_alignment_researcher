@@ -1,9 +1,17 @@
 # Launching an autonomous AAR chain
 
-The agent (Claude, via `claude_agent_sdk`) iteratively designs safety-improvement
+The research agent iteratively designs safety-improvement
 methods, trains + evaluates each via the submit-model loop, and shares findings
 on a leaderboard the other chains can read. The **safety axis is configurable**
 (default: sycophancy) — see the swap note below.
+
+Claude via `claude_agent_sdk` remains the default and retains its existing
+launch path. Set `AAR_AGENT_BACKEND=kimi` to opt into an installed,
+authenticated Kimi Code CLI. `KIMI_CLI_PATH` can select the executable and
+`KIMI_AGENT_MODEL` or `--model` can select a model; when neither is set, Kimi
+uses its configured default. The Kimi path exposes the
+same AAR evaluator, forum, literature, proposal, and prior-work tools over a
+temporary standard MCP configuration without modifying the user's Kimi files.
 
 ## Librarian only
 

@@ -73,7 +73,12 @@ MAX_H="${3:-47}"
 # Agent-model tag (claude-opus-4-8 -> opus48): records WHICH research model produced this team —
 # invaluable when a model is retired mid-fleet (cf. claude-fable-5). Hyphen-free so the positional
 # parsers (dashboard.sh cut -f1/-f2; live_dashboard) keep axis=field1, model=field2, agent=field3.
-_AGENT_TAG="$(printf '%s' "${AAR_AGENT_MODEL:-claude-opus-4-8}" | sed 's/^claude-//; s/[^A-Za-z0-9]//g')"
+if [ "${AAR_AGENT_BACKEND:-claude}" = kimi ]; then
+  _AGENT_LABEL="${KIMI_AGENT_MODEL:-kimi-default}"
+else
+  _AGENT_LABEL="${AAR_AGENT_MODEL:-claude-opus-4-8}"
+fi
+_AGENT_TAG="$(printf '%s' "${_AGENT_LABEL}" | sed 's/^claude-//; s/[^A-Za-z0-9]//g')"
 if [ -n "${AAR_TEAM_ID:-}" ]; then
   TEAM_ID="$(printf '%s' "${AAR_TEAM_ID}" | tr -c 'A-Za-z0-9._-' '_')"
   [ "${TEAM_ID}" = "${AAR_TEAM_ID}" ] || {

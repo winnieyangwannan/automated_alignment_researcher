@@ -1,5 +1,5 @@
 """
-Autonomous W2S research agent using Claude Agent SDK.
+Autonomous W2S research agent with Claude and Kimi backends.
 
 Merges agent_loop, base_agent, and stop_conditions into a single file.
 """
@@ -49,6 +49,7 @@ from aar.phase_timing import phase
 from .tools.server_api_tools import create_server_api_tools_server
 from .tools.prior_work_tools import create_prior_work_tools_server
 from .tools.findings_sync import FindingsSync
+from .kimi_agent import KimiAgent
 
 
 # ---------------------------------------------------------------------------
@@ -456,7 +457,7 @@ class AutonomousAgentLoop:
     """
     Main agent loop for autonomous W2S research.
 
-    Each iteration is a fresh Claude session. Agent reads/writes findings.json
+    Each iteration is a fresh agent session. Agent reads/writes findings.json
     directly. Only stop condition: timeout.
     """
 
@@ -469,7 +470,8 @@ class AutonomousAgentLoop:
         max_iterations: Optional[int] = None,
         logs_dir: Optional[Path] = None,
         s3_bucket: Optional[str] = None,
-        model: str = os.getenv("AAR_AGENT_MODEL", "claude-opus-4-8"),
+        model: Optional[str] = None,
+        backend: str = os.getenv("AAR_AGENT_BACKEND", "claude"),
         local_mode: bool = False,
     ):
         if not idea_uid:
@@ -492,21 +494,30 @@ class AutonomousAgentLoop:
             int(os.getenv("MAX_ITERATIONS")) if os.getenv("MAX_ITERATIONS") else None)
         self.s3_bucket = s3_bucket or S3_BUCKET
         self.s3_prefix = f"{S3_IDEAS_PREFIX}{idea_uid}/{self.run_id}/"
-        self.model = model
+        self.backend = backend.strip().lower()
+        if self.backend not in ("claude", "kimi"):
+            raise ValueError("backend must be 'claude' or 'kimi'")
+        self.model = model or (
+            os.getenv("AAR_AGENT_MODEL", "claude-opus-4-8")
+            if self.backend == "claude"
+            else os.getenv("KIMI_AGENT_MODEL")
+        )
 
         self.stop_checker = _StopChecker(max_runtime=self.max_runtime_seconds)
 
-        # Create MCP servers (server API tools always needed — in local mode, server runs on localhost)
+        # Claude uses SDK-local MCP servers. Kimi starts standard stdio MCP
+        # bridges in its isolated CLI configuration.
         self.mcp_servers = {}
-        try:
-            self.mcp_servers["server-api-tools"] = create_server_api_tools_server()
-        except Exception as e:
-            print(f"[Init] Warning: server API tools unavailable: {e}")
-        if not local_mode:
+        if self.backend == "claude":
             try:
-                self.mcp_servers["prior-work-tools"] = create_prior_work_tools_server()
+                self.mcp_servers["server-api-tools"] = create_server_api_tools_server()
             except Exception as e:
-                print(f"[Init] Warning: prior work tools unavailable: {e}")
+                print(f"[Init] Warning: server API tools unavailable: {e}")
+            if not local_mode:
+                try:
+                    self.mcp_servers["prior-work-tools"] = create_prior_work_tools_server()
+                except Exception as e:
+                    print(f"[Init] Warning: prior work tools unavailable: {e}")
 
         # Findings sync: disabled in local mode (no other workers)
         self.findings_sync = None
@@ -531,8 +542,23 @@ class AutonomousAgentLoop:
             self._prompt = resolve_prompt(template_path, resolved_path)
         return self._prompt
 
-    def _create_agent(self, session_id: str, message_callback=None) -> BaseAgent:
+    def _create_agent(self, session_id: str, message_callback=None):
         meta_secure_web = os.getenv("AAR_WEB_MODE", "native_web") == "meta_secure"
+        if getattr(self, "backend", "claude") == "kimi":
+            return KimiAgent(
+                name=f"autonomous-{session_id}",
+                workspace=self.workspace,
+                model=self.model,
+                cli_path=os.getenv("KIMI_CLI_PATH") or shutil.which("kimi"),
+                message_callback=message_callback,
+                system_prompt=(
+                    "Use the repository's bounded arXiv helper for internet research. "
+                    "Do not use curl, wget, or arbitrary network URLs."
+                    if meta_secure_web else None
+                ),
+                include_prior_work=not self.local_mode,
+            )
+
         allowed_tools = [
             "Read", "Write", "Edit", "Bash", "Glob", "Grep",
             "mcp__server-api-tools__evaluate_model",
@@ -578,6 +604,10 @@ class AutonomousAgentLoop:
         print(f"Autonomous Agent Loop ({mode_str} mode)")
         print(f"  Run ID: {self.run_id}")
         print(f"  Idea: {self.idea_name} ({self.idea_uid})")
+        backend = getattr(self, "backend", "claude")
+        model = getattr(self, "model", "claude-opus-4-8")
+        print(f"  Backend: {backend}")
+        print(f"  Model: {model or 'Kimi configured default'}")
         print(f"  Max Runtime: {self.max_runtime_seconds/3600:.1f}h")
         print(f"  Max Iterations: {self.max_iterations if self.max_iterations is not None else 'unbounded'}")
         print(f"{'='*60}\n")
