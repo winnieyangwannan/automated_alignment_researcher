@@ -181,3 +181,38 @@ state `CANCELLED` and exit code `0:0`. The complete attempt remains preserved at
 `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T100912Z-6dd1758073cc`.
 There was no resubmission. The next launch must fail closed at broker admission
 unless an approved proposal is cryptographically bound to the run and method.
+
+## 2026-10-08 — proposal-binding fail-closed attempt
+
+Commit `231f60f4f5df7ad0a5548c66a8c1a9ba58926bcb` added code-hash and
+run-ID proposal binding to delegated AutoData approvals. Its full HPC test suite
+passed before a fresh concurrency-8 attempt was submitted.
+
+- Attempt root:
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T104046Z-231f60f4f5df`.
+- Completed launcher: `1763514` (`COMPLETED`, exit `0:0`).
+- Evaluator: `1763540`.
+- Sequential research chain: `1763541`.
+
+The researcher wrote and successfully submitted proposal
+`gemma4_31b_explore_pilot__epistemic_sft_v1`. The integrity review approved its
+code hash
+`e55cbc3a1c6d907fba49ca8799d1252ad31677678093edf8aaf7d55da070ee5d`.
+However, the proposal marker contained `run_id: null` and no immutable run
+proposal file was created. The cause was that `AAR_NO_LOCAL_GPU` had been
+scrubbed from the research runtime, so the decoupled proposal code did not mint
+the required run ID. The agent noticed the missing ID and invented a fallback
+string, but the trusted binding code did not accept that substitute.
+
+The new gate therefore failed closed correctly:
+
+- proposal marker: approved, but missing `run_id`;
+- signed AutoData approvals: 0;
+- broker job admissions: 0;
+- generated model rows: 0.
+
+Jobs `1763541` and `1763540` were cancelled and became terminal with Slurm state
+`CANCELLED` and exit code `0:0`. Their elapsed times were 24 minutes 16 seconds
+and 21 minutes 44 seconds, respectively. The attempt is preserved. There was no
+resubmission pending a fix that preserves the decoupled-run marker and tests
+run-ID minting through the actual scrubbed research environment.
