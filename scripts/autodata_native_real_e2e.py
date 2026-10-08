@@ -244,11 +244,14 @@ class Driver:
             Decimal(4096 + 4096) * Decimal(1)
             + Decimal(768 + 512) * Decimal(4)
         ) / Decimal(1_000_000)
-        # Authoring dry run + conservative meta attempt limit + fixed production.
+        # Authoring dry run + meta phases/check with replenishment headroom +
+        # fixed production. A one-iteration meta run executes tuning evidence,
+        # paired parent/candidate evidence, hidden selection, post-mutation
+        # tuning, the final corpus, and one checker attempt.
+        meta_attempts = 1 + 4 * self.args.task_count
         authorized_attempts = (
             self.args.task_count
-            + 20
-            + self.args.task_count
+            + meta_attempts
             + self.args.task_count
         )
         maximum = per_task * authorized_attempts
@@ -419,7 +422,7 @@ class Driver:
             "budget": {
                 "max_iterations": 1 if mode == "meta_optimize" else 0,
                 "max_task_attempts": (
-                    20 + self.args.task_count
+                    1 + 4 * self.args.task_count
                     if mode == "meta_optimize"
                     else self.args.task_count
                 ),

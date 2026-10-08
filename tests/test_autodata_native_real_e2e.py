@@ -43,5 +43,7 @@ def test_meta_execution_budget_includes_replenishment_headroom(tmp_path: Path) -
     )
 
     value = json.loads(path.read_text(encoding="utf-8"))
-    assert value["budget"]["max_task_attempts"] == 28
+    # The one-iteration native lifecycle requires 29 deterministic attempts
+    # for eight tasks; four extra slots permit bounded quality replenishment.
+    assert value["budget"]["max_task_attempts"] == 33
     assert value["concurrency"] == 8
