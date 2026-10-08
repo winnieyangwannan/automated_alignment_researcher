@@ -60,7 +60,38 @@ All retained outputs are under `/storage/home/winnieyangwn/aar-runs`; shared
 
 ## Live job handoff
 
-The full campaign is ready for submission at concurrency 8. Append the attempt
-root, launch job, evaluator job, chain job, logs, and exact launch commit below
-after submission. A launch wrapper alone is not evidence that the AAR chain is
-running.
+Two fail-closed launcher attempts were preserved before child-job creation:
+
+- Launch `1762839`, attempt
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T094719Z-1d7f01490829`,
+  failed because fileless runtime mode removed a legacy `HARNESS_ENV` path that
+  the Run 5 preflight still required. No evaluator or chain job was created.
+- Launch `1762890`, attempt
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T095150Z-822af77bc04c`,
+  passed that check and then failed because the old shared deployment worker
+  path had been archived. No evaluator or chain job was created.
+- The final launcher stages the previously validated generic vLLM worker into
+  the retained attempt after enforcing SHA-256
+  `913c3286e237ed2231c64de200a4bcfc65729292a05c6aa3a88100f8c0248361`.
+
+The full campaign launch is active:
+
+- AAR commit: `07346c202fcb99abb2db1de138258b389471d153`.
+- AutoData commit: `f6da400ed9bd03e89919f95656213433a6a93405`.
+- Attempt root:
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T095530Z-07346c202fcb`.
+- Team directory:
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T095530Z-07346c202fcb/aar_teams/run9-gemma4-31b-opus48-autodata-five-success-v1`.
+- Completed launcher job: `1762982` (`COMPLETED`, exit `0:0`).
+- Evaluator job: `1763015`.
+- Sequential AAR chain job: `1763016`.
+- Launcher log:
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T095530Z-07346c202fcb/logs/pipeline-1762982.out`.
+- Evaluator log:
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T095530Z-07346c202fcb/aar_teams/run9-gemma4-31b-opus48-autodata-five-success-v1/logs/aar-eval-honesty_sycophancy_concealing_uncertainty-1763015.out`.
+- Chain log:
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T095530Z-07346c202fcb/aar_teams/run9-gemma4-31b-opus48-autodata-five-success-v1/logs/aar-honesty_sycophancy_concealing_uncertainty-gemma4_31b-pilot_1763016.out`.
+- At the durable handoff checkpoint, both child jobs were pending for Slurm
+  priority. The launcher emitted distinct evaluator and chain IDs, so the full
+  campaign is submitted; evaluator vLLM fail-closed startup markers must still
+  be verified when job `1763015` starts.
