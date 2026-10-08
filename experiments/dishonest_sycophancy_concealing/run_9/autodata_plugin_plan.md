@@ -56,11 +56,11 @@ The successful smoke report is retained at:
 ### Not completed
 
 - a real Kimi/Luna/SandoQ recipe execution;
-- delegated native approval enforced beyond prompting;
+- a real HPC run of the newly implemented delegated approval path;
 - exact 64-tuning/32-validation execution configuration;
 - campaign-wide model-call, token, and dollar enforcement;
-- a clean native handoff from the meta-optimization winner to a separate
-  production execution;
+- an HPC run of the new native digest-bound winner handoff and fixed-winner
+  production mode;
 - an accepted-row production target and verifier;
 - training and evaluation that consume the native export;
 - a complete two-iteration AAR chain.
@@ -712,17 +712,16 @@ The first complete iteration succeeds only when:
 
 ## Immediate next actions
 
-1. Finish recipe contract tests and exact framework pinning.
-2. Specify the operator profile schema and campaign budget ledger.
-3. Implement the single trusted AutoData approval operation by reusing native
-   review artifacts and the existing monitor call infrastructure.
-4. Add delegated approval enforcement and tamper/replay tests upstream in
-   AutoData.
-5. Decide and implement the smallest native winner-to-production contract.
-6. Configure the SandoQ broker profile and run one real Kimi/Luna Firecracker
-   canary.
-7. Run a small real-recipe workspace/meta canary.
-8. Launch Stage 4 only after every prerequisite fails closed in tests.
+1. Synchronize AAR and the pinned AutoData commit to HPC.
+2. Start the native broker with isolated Firecracker and Luna credential files.
+3. Run the model-backed Firecracker canary.
+4. Run `scripts/autodata_native_real_e2e.py` with four tasks, a 2/2 explicit
+   meta partition, digest-bound winner export, fixed-winner production, at
+   least one accepted row, and a verified training-consumption receipt.
+5. Inspect the retained native state, signed approval audits, provider usage,
+   dataset digest, and report before increasing scale.
+6. Add the campaign-wide broker ledger and run a complete outer AAR training /
+   evaluation iteration before claiming Stage 4.
 
 ## Explicit non-goals
 

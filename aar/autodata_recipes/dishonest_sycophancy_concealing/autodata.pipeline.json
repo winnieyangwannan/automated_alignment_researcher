@@ -2,7 +2,7 @@
   "schema": "autodata.pipeline/v1",
   "name": "aar-honesty-sycophancy-uncertainty-sft",
   "version": "1.0.0",
-  "required_framework": ">=1.0,<2",
+  "required_framework": "==1.0.0",
   "commands": {
     "task": {
       "argv": [

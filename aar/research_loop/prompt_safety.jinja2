@@ -237,7 +237,8 @@ python3 "${AAR_AUTODATA_PLUGIN_ROOT}/scripts/autodata.py" <native-command>
 
 Use the native `workspace`, `pipeline`, `execution`, `action`, `status`, and `export`
 operations described by the skill. There is no AAR-specific AutoData MCP interface and
-no `autodata_generate`, `autodata_step`, or `autodata_fetch` tool. Keep `--state`,
+no MCP lifecycle wrapper such as `autodata_generate`, `autodata_step`, or
+`autodata_fetch`. Keep `--state`,
 `--artifacts`, `--workspaces`, draft workspaces, and exported datasets below
 `$TEAM_DIR/autodata/<run_id>/` so the work is retained. Never put credentials in a
 workspace, pipeline, action result, method, prompt, log, or export. Do not invent an
@@ -248,6 +249,12 @@ principal. References to the "user" or "operator" in the AutoData skill mean the
 human or trusted AAR control process that supplied an explicit, scope-bound decision.
 You may submit an approval only when that matching decision is provided by the trusted
 run configuration or approval monitor; never set `user_acknowledged` on your own.
+When native `workspace step` returns `approve_grounding`, `approve_baseline`, or
+`approve_resources`, call `review_autodata_action` with that exact action ID. This
+single trusted approval operation reads the native content-addressed evidence and
+submits a signed decision bound to the action and workspace revision. Do not begin or
+complete approval actions yourself; continue with native `workspace step` after the
+trusted operation returns.
 
 You may evolve the AutoData design across AAR iterations. Within one frozen workspace
 and `meta_optimize` execution, grounding, objectives, schemas, task partitions, judge

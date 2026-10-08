@@ -236,6 +236,31 @@ Reply with ONLY a JSON object, no prose:
   "violations": [{{"desideratum": "FAITHFULNESS|REPRODUCIBILITY", "explanation": "..."}}],
   "reasoning": "1-3 sentence justification"}}"""
 
+_AUTODATA_APPROVAL_PROMPT = """You are the delegated approval principal for one
+native AutoData workspace action. You have no tools and must judge only the
+immutable native review evidence below. Fail closed on missing or inconsistent
+evidence.
+
+For approve_grounding, approve only if the synthetic grounding meaningfully
+covers the stated scientific goal, includes useful behavioral variation and
+provenance, and avoids evaluation/held-out sources or close imitation.
+
+For approve_baseline, approve only if the native dry-run results succeeded, the
+generator and independent judge roles are credible, the mutable surface is
+narrow, and protected scientific/infrastructure controls cannot be edited by
+the researcher.
+
+Native review package:
+<autodata_review>
+{review}
+</autodata_review>
+
+Reply with ONLY one JSON object:
+{{"approved": true or false,
+  "target": "grounding" or "pipeline",
+  "feedback": "concise evidence-based approval or revision feedback",
+  "reasoning": "1-3 sentence justification"}}"""
+
 
 def _extract(s: str) -> str:
     m = re.search(r"<proposed_idea>(.*?)</proposed_idea>", s or "", re.S | re.I)
@@ -354,6 +379,35 @@ def check_faithfulness_repro(idea_text: str, code_text: str | None) -> dict[str,
     v.setdefault("violations", [])
     v["approved"] = (not diverges) and repro and (v.get("error") is None)
     return v
+
+
+def check_autodata_action(review_package: dict[str, Any]) -> dict[str, Any]:
+    """Semantically review one immutable native AutoData approval package."""
+    try:
+        review = json.dumps(review_package, sort_keys=True, indent=2)
+    except (TypeError, ValueError) as error:
+        return {
+            "approved": False,
+            "target": "pipeline",
+            "feedback": "Native review package was not valid JSON.",
+            "reasoning": f"fail-closed: {error}",
+        }
+    value = _call_monitor(
+        _AUTODATA_APPROVAL_PROMPT.format(review=_clip(review, CODE_CHARS)),
+        max_tokens=1024,
+    )
+    value["approved"] = value.get("approved") is True
+    if value.get("target") not in {"grounding", "pipeline"}:
+        value["target"] = (
+            "grounding"
+            if review_package.get("action_kind") == "approve_grounding"
+            else "pipeline"
+        )
+    feedback = value.get("feedback")
+    if not isinstance(feedback, str) or not feedback.strip():
+        feedback = str(value.get("reasoning") or "Monitor did not approve.")
+    value["feedback"] = feedback[:4000]
+    return value
 
 
 def check_proposal(idea_text: str, code_text: str | None = None,

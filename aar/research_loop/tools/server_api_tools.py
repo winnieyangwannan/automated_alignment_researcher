@@ -1531,6 +1531,41 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"content": [{"type": "text", "text": json.dumps({"approved": False, "error": str(e)}, indent=2)}]}
 
 
+@tool(
+    "review_autodata_action",
+    "DELEGATED AUTODATA APPROVAL — review and complete exactly one pending native "
+    "AutoData approval action using its immutable review artifacts. This is the only "
+    "AutoData-related MCP operation: lifecycle work remains in the original plugin/CLI. "
+    "Use it for approve_grounding, approve_baseline, or approve_resources; never complete "
+    "those approval actions yourself.",
+    {
+        "type": "object",
+        "properties": {
+            "action_id": {
+                "type": "string",
+                "pattern": "^act_[0-9a-f]{24}$",
+                "description": "Exact pending native AutoData approval action ID.",
+            }
+        },
+        "required": ["action_id"],
+        "additionalProperties": False,
+    },
+)
+@timed_async_phase("research.autodata_approval")
+async def review_autodata_action(args: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from aar.research_loop.autodata_approval import review_and_complete_action
+
+        result = review_and_complete_action(str(args.get("action_id") or ""))
+    except Exception as error:
+        result = {"approved": False, "error": str(error)}
+    return {
+        "content": [
+            {"type": "text", "text": json.dumps(result, indent=2, sort_keys=True)}
+        ]
+    }
+
+
 def create_server_api_tools_server():
     """Create MCP server with all server API tools."""
     return create_sdk_mcp_server(
@@ -1544,6 +1579,7 @@ def create_server_api_tools_server():
             get_literature,        # shared literature-review forum (read)
             share_literature,      # shared literature-review forum (append)
             submit_idea_proposal,  # pre-training integrity monitor (Opus)
+            review_autodata_action,  # signed native workspace approval only
         ],
     )
 

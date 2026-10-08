@@ -639,6 +639,7 @@ class AutonomousAgentLoop:
             "mcp__server-api-tools__get_literature",
             "mcp__server-api-tools__share_literature",
             "mcp__server-api-tools__submit_idea_proposal",
+            "mcp__server-api-tools__review_autodata_action",
         ]
         if meta_secure_web:
             helper = (self.workspace / "scripts" / "aar-paper-search").resolve()

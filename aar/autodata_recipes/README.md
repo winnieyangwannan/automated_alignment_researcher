@@ -3,8 +3,10 @@
 ## Purpose
 
 AAR uses the original AutoData Claude plugin and native AutoData CLI directly.
-There is no AAR-specific AutoData MCP server, HTTP adapter, lifecycle wrapper,
-or replacement state machine.
+There is no AAR-specific AutoData lifecycle MCP server, HTTP adapter, or
+replacement state machine. One narrow trusted AAR operation,
+`review_autodata_action`, reviews and signs native approval actions; it does
+not create, step, mutate, execute, or export AutoData state.
 
 The integration is:
 
@@ -116,6 +118,7 @@ workspace export
 
 execution create
 execution step
+execution export-winner
 
 action begin
 action complete
@@ -163,7 +166,10 @@ clarify_design
 
 The research agent may edit only the `editable_root` and `allowed_paths`
 returned by a native action. It must not invent approval. Approval actions must
-use an explicit operator decision whose scope matches the exact workspace.
+be sent to `review_autodata_action`. The monitor reads the native review
+artifact and signs a decision over the exact action ID, workspace revision, and
+artifact digests. Native AutoData rejects a plain researcher-supplied
+`user_acknowledged` result in delegated mode.
 
 Once frozen, AutoData creates the native execution. The agent continues with
 `execution step` and the same native action lease protocol.
@@ -176,6 +182,17 @@ by the execution JSON. AAR does not implement either loop.
 In `meta_optimize`, visible tuning evidence can guide candidate mutation while
 selection inputs remain hidden. AutoData evaluates candidates and selects the
 winner through its native comparator.
+
+The agent then uses the native integrity-checked handoff:
+
+```bash
+autodata execution export-winner <meta-execution-id> --output <winner-root>
+```
+
+The operation refuses a winner whose tree no longer matches the digest bound at
+finalization. A separate production execution is created from this exported
+root. Setting its `budget.max_iterations` to `0` performs fixed-winner mass
+generation without another mutation loop.
 
 In `production`, AutoData generates, audits, revises, and reruns the same source
 corpus within the execution budget. It emits the final dataset after the native
@@ -215,7 +232,7 @@ It contains:
 - `recipe/request.json`: runtime scientific request;
 - `objective.json` and `comparator.json`: quality objective and comparison;
 - `schemas/task-result.schema.json`: strict native task-result contract;
-- `framework.lock.json`: compatible AutoData framework range.
+- `framework.lock.json`: exact AutoData framework version.
 
 These files are recipe inputs, not SDK registrations. The source checkout is
 read-only to the research subprocess, so a run must copy the approved starting
@@ -232,10 +249,13 @@ credentials are inherited by the research process, its Bash tool can read
 them. Keeping a token in an HPC environment does not isolate it from the agent
 when the same process inherits that variable.
 
-Safe production therefore requires one of the credential mechanisms supported
-by the deployment environment, such as service-side secret references,
-workload identity, or a privileged broker. This security decision does not
-change how the original AutoData plugin or CLI works.
+The real recipe uses the native AutoData Firecracker broker. The broker holds
+the Firecracker and Luna credentials and injects only the Luna workload key
+inside model-backed tasks. The trusted small-scale driver receives the broker
+capability; it does not expose the underlying credentials to a researcher.
+Restricting that broker capability for a full autonomous AAR session remains a
+production-hardening item. The scientific lifecycle still uses the original
+plugin and CLI.
 
 ## Plugin smoke test
 
@@ -271,4 +291,5 @@ AAR integration should remain limited to:
 - making the plugin readable in the research sandbox;
 - providing writable run storage;
 - supplying scientific recipe inputs;
+- signing only native approval actions through the trusted monitor;
 - observing that the native workflow and export completed.
