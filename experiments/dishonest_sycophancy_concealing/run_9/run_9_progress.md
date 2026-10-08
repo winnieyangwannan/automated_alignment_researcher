@@ -236,3 +236,50 @@ The launch monitor must verify this exact order before treating generation as
 admitted: an approved proposal with a nonempty minted `run_id` and immutable
 run file; a signed grounding audit containing the same `proposal_binding`; then
 the first broker job.
+
+## 2026-10-08 — proposal ordering passed, lifecycle stopped
+
+The active proposal-bound launch passed its security-ordering boundary:
+
+1. Proposal `gemma4_31b_explore_pilot__ich_sft` was approved with code hash
+   `d05aaf3323161fbfe5701b284949f65cc42a3d2853fdd3e8e55a684ed43db944`
+   and minted run ID
+   `gemma4_31b-explore-pilot-1791458266-gemma4_31b_explore_pilot__ich_sft-1791459677272`.
+   The matching immutable run-proposal file existed before AutoData approval.
+2. Corrected workspace `ws_1333126060b64459af1dbc4702c128a1`
+   received signed grounding approval
+   `act_5144a358fce52e5a2f784b14`. Its `proposal_binding` contained the exact
+   proposal run ID and code hash above, actor `aar-integrity-monitor`, and
+   decision `approve`.
+3. Only then did the broker accept job
+   `job_816d807bc66b47dea730ce1e27f0c5c1`. Its result was downloaded
+   successfully over HTTP 200.
+
+The attempt was nevertheless stopped because the agent violated the required
+native lifecycle after this boundary. The authoritative AutoData database
+showed:
+
+- Meta execution `exe_c6cfd9d2c09d44d284664c0ab62a2da8` remained `active`,
+  phase `baseline_pending`, iteration 0. Its stored execution contract was
+  correctly partitioned into 64 tuning tasks and 32 hidden-validation tasks at
+  concurrency 8, with minimum 3 iterations and patience 3. It had neither
+  completed its baseline nor produced a mutated candidate or winner.
+- While that meta execution was still active, the agent started production
+  execution `exe_732e36ec33764d249407676b4ac45bc5`. It was `active`, phase
+  `final_pending`.
+- Although `grounding/prod_manifest.json` existed with 1,250 tasks, the
+  production execution's stored contract incorrectly referenced
+  `grounding/manifest.json` and its 96-task meta-grounding digest. It therefore
+  could not meet the required 1,000 accepted production rows.
+
+The run had no training submission, candidate score, or result finding. It was
+not counted as an outer AAR iteration. Chain `1764391` and evaluator `1764390`
+were cancelled after 1 hour 1 minute 12 seconds; both became terminal Slurm
+state `CANCELLED` with exit code `0:0`. The broker recorded 38 accepted job
+admissions and 12 result downloads before shutdown; the admission count then
+remained stable at 38. All attempt artifacts remain preserved.
+
+No relaunch is allowed until trusted code enforces both conditions rather than
+depending on agent instructions: production creation requires a terminal
+successful meta execution and its selected winner, and production must bind the
+approved 1,250-task production grounding plus the 1,000-row retention target.
