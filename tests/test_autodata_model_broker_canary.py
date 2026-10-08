@@ -243,7 +243,8 @@ class ModelBrokerCanaryTest(unittest.TestCase):
         self.assertIn('"model_backed": True', canary_source)
         self.assertIn("ram-inference-gateway.ingress.fair-cw-use2-1", canary_source)
         self.assertNotIn('"MODEL_API_KEY":', canary_source)
-        self.assertIn('headers={"X-Deployment-Id": deployment}', recipe_source)
+        self.assertIn('headers = {"X-Deployment-Id": deployment}', recipe_source)
+        self.assertIn('headers["Host"] = host_header', recipe_source)
         self.assertIn('_required_env("MODEL_API_KEY")', recipe_source)
 
 

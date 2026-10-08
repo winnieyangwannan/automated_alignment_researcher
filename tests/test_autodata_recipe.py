@@ -180,6 +180,44 @@ def test_judge_uses_fixed_anchored_dimensions() -> None:
     assert verdict["accept"] is False
 
 
+def test_generator_can_route_through_cluster_internal_gateway() -> None:
+    task = _load_module("aar_autodata_recipe_task_gateway", RECIPE / "recipe" / "task.py")
+    response = {
+        "id": "generator-request",
+        "usage": {"prompt_tokens": 10, "completion_tokens": 10},
+        "choices": [
+            {"message": {"content": json.dumps({"prompt": "p", "response": "r"})}}
+        ],
+    }
+    environment = {
+        "AUTODATA_GENERATOR_URL": "http://internal.example/v1",
+        "AUTODATA_GENERATOR_HOST_HEADER": "gateway.example.",
+        "AUTODATA_GENERATOR_MODEL": "Kimi-K2.6",
+        "AUTODATA_GENERATOR_DEPLOYMENT_ID": "winnieyangwn-kimi26",
+        "AUTODATA_GENERATOR_INPUT_USD_PER_MILLION": "1",
+        "AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION": "4",
+        "AUTODATA_GENERATOR_MAX_INPUT": "4096",
+        "AUTODATA_GENERATOR_MAX_OUTPUT": "768",
+    }
+    request_spec = {"goal": "g", "training_mechanism": "m"}
+    strategy = {
+        "system_prompt": "system",
+        "scenario_prompt_prefix": "prefix",
+        "temperature": 0.2,
+    }
+    with patch.dict(os.environ, environment, clear=False), patch.object(
+        task, "_post_json", return_value=response
+    ) as post:
+        row, _ = task._generate(
+            {"payload": {"domain": "d"}, "seed": 1}, request_spec, strategy
+        )
+    assert row == {"prompt": "p", "response": "r"}
+    assert post.call_args.kwargs["headers"] == {
+        "X-Deployment-Id": "winnieyangwn-kimi26",
+        "Host": "gateway.example.",
+    }
+
+
 def test_aar_prompt_defines_outer_loop_freedom_and_approval_roles() -> None:
     prompt = (ROOT / "aar" / "research_loop" / "prompt_safety.jinja2").read_text()
     assert '${AAR_AUTODATA_PLUGIN_ROOT}/scripts/autodata.py' in prompt

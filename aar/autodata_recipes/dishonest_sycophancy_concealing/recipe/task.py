@@ -174,6 +174,10 @@ def _generate(
     model = _required_env("AUTODATA_GENERATOR_MODEL")
     deployment = _required_env("AUTODATA_GENERATOR_DEPLOYMENT_ID")
     max_tokens = int(os.environ.get("AUTODATA_GENERATOR_MAX_OUTPUT", "1536"))
+    headers = {"X-Deployment-Id": deployment}
+    host_header = os.environ.get("AUTODATA_GENERATOR_HOST_HEADER", "").strip()
+    if host_header:
+        headers["Host"] = host_header
     system = str(strategy["system_prompt"])
     generation_prompt = str(strategy["scenario_prompt_prefix"]) + "\n" + json.dumps(
         {
@@ -201,7 +205,7 @@ def _generate(
             # its JSON answer.
             "chat_template_kwargs": {"thinking": False},
         },
-        headers={"X-Deployment-Id": deployment},
+        headers=headers,
         timeout=int(os.environ.get("AUTODATA_GENERATOR_TIMEOUT", "90")),
     )
     usage = _usage(

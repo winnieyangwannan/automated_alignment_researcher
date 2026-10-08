@@ -78,6 +78,8 @@ for index in $(seq 1 "${CONCURRENCY}"); do
     --recipe-root "${REPO}/aar/autodata_recipes/dishonest_sycophancy_concealing" \
     --output "${ROOT}/reports/canary-${index}.json" \
     --environment "${ENVIRONMENT}" \
+    --generator-url "${AAR_AUTODATA_GENERATOR_URL:?}" \
+    --generator-host-header "${AAR_AUTODATA_GENERATOR_HOST_HEADER:?}" \
     --generator-max-output-tokens 768 \
     --model-request-max-attempts 1 \
     --timeout-seconds 1800 \

@@ -112,6 +112,7 @@ def _parser() -> argparse.ArgumentParser:
         default="oci-runner-firecracker-small",
     )
     parser.add_argument("--generator-url", default=DEFAULT_GENERATOR_URL)
+    parser.add_argument("--generator-host-header", default="")
     parser.add_argument("--generator-deployment-id", default=GENERATOR_DEPLOYMENT_ID)
     parser.add_argument("--generator-max-input-tokens", type=_positive_integer, default=4096)
     parser.add_argument("--generator-max-output-tokens", type=_positive_integer, default=1536)
@@ -291,7 +292,7 @@ def _task_input() -> dict[str, Any]:
 
 
 def _model_environment(args: argparse.Namespace) -> dict[str, str]:
-    return {
+    environment = {
         "AUTODATA_GENERATOR_URL": args.generator_url.rstrip("/"),
         "AUTODATA_GENERATOR_MODEL": GENERATOR_MODEL,
         "AUTODATA_GENERATOR_DEPLOYMENT_ID": args.generator_deployment_id,
@@ -313,6 +314,9 @@ def _model_environment(args: argparse.Namespace) -> dict[str, str]:
         "AUTODATA_JUDGE_INPUT_USD_PER_MILLION": str(args.judge_input_usd_per_million),
         "AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": str(args.judge_output_usd_per_million),
     }
+    if args.generator_host_header:
+        environment["AUTODATA_GENERATOR_HOST_HEADER"] = args.generator_host_header
+    return environment
 
 
 def _validate_task_result(

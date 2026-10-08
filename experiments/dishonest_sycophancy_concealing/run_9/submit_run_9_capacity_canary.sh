@@ -28,6 +28,13 @@ case "${CONCURRENCY}" in
   ''|*[!0-9]*|0) echo "capacity-canary concurrency must be in [1,64]" >&2; exit 2 ;;
 esac
 [ "${CONCURRENCY}" -le 64 ] || { echo "capacity-canary concurrency must be in [1,64]" >&2; exit 2; }
+if [ "${RUNNER}" = local-bwrap ]; then
+  GENERATOR_URL="http://fair-cw-use2-1-ingress-slurm-ingress/v1"
+  GENERATOR_HOST_HEADER="ram-inference-gateway.ingress."
+else
+  GENERATOR_URL="https://ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud/v1"
+  GENERATOR_HOST_HEADER="ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud"
+fi
 for required in "${SECRET_ENV}"; do
   [ -f "${required}" ] || { echo "missing required input: ${required}" >&2; exit 2; }
   [ "$(stat -c %a "${required}")" = 600 ] || { echo "secret input must be mode 600: ${required}" >&2; exit 2; }
@@ -65,7 +72,8 @@ cat > "${policy}" <<EOF
   "max_cpus": 2,
   "max_memory_mb": 2048,
   "required_solve_env": {
-    "AUTODATA_GENERATOR_URL": "https://ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud/v1",
+    "AUTODATA_GENERATOR_URL": "${GENERATOR_URL}",
+    "AUTODATA_GENERATOR_HOST_HEADER": "${GENERATOR_HOST_HEADER}",
     "AUTODATA_GENERATOR_MODEL": "Kimi-K2.6",
     "AUTODATA_GENERATOR_DEPLOYMENT_ID": "winnieyangwn-kimi26",
     "AUTODATA_GENERATOR_MAX_INPUT": "4096",
@@ -88,6 +96,8 @@ EOF
 export AAR_RUN9_CANARY_ROOT="${root}"
 export AAR_AUTODATA_CHECKOUT="${AUTODATA_CHECKOUT}"
 export AAR_AUTODATA_BROKER_RUNNER="${RUNNER}"
+export AAR_AUTODATA_GENERATOR_URL="${GENERATOR_URL}"
+export AAR_AUTODATA_GENERATOR_HOST_HEADER="${GENERATOR_HOST_HEADER}"
 export AAR_AUTODATA_ENVIRONMENT="${ENVIRONMENT}"
 export AAR_AUTODATA_CONCURRENCY="${CONCURRENCY}"
 export AAR_AUTODATA_BROKER_PYTHON="${BROKER_PYTHON}"

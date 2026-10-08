@@ -29,6 +29,13 @@ esac
 case "${AAR_AUTODATA_CONCURRENCY}" in
   ''|*[!0-9]*|0) echo "AutoData concurrency must be a positive integer" >&2; exit 2 ;;
 esac
+if [ "${AAR_AUTODATA_BROKER_RUNNER}" = local-bwrap ]; then
+  AUTODATA_GENERATOR_URL="http://fair-cw-use2-1-ingress-slurm-ingress/v1"
+  AUTODATA_GENERATOR_HOST_HEADER="ram-inference-gateway.ingress."
+else
+  AUTODATA_GENERATOR_URL="https://ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud/v1"
+  AUTODATA_GENERATOR_HOST_HEADER="ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud"
+fi
 for required in "${SECRET_ENV}" "${REUSED_BASELINE}" "${SCRIPT_DIR}/snapshot_vllm_runtime.sh"; do
   [ -f "${required}" ] || { echo "missing required input: ${required}" >&2; exit 2; }
 done
@@ -87,7 +94,8 @@ cat > "${policy}" <<EOF
   "max_cpus": 2,
   "max_memory_mb": 2048,
   "required_solve_env": {
-    "AUTODATA_GENERATOR_URL": "https://ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud/v1",
+    "AUTODATA_GENERATOR_URL": "${AUTODATA_GENERATOR_URL}",
+    "AUTODATA_GENERATOR_HOST_HEADER": "${AUTODATA_GENERATOR_HOST_HEADER}",
     "AUTODATA_GENERATOR_MODEL": "Kimi-K2.6",
     "AUTODATA_GENERATOR_DEPLOYMENT_ID": "winnieyangwn-kimi26",
     "AUTODATA_GENERATOR_MAX_INPUT": "4096",
