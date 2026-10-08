@@ -313,3 +313,23 @@ fresh `safety-prod-*` IDs. The complete devserver suite passed 250 tests plus 35
 subtests; Python compilation, shell syntax checks, and `git diff --check` also
 passed. The exact commit and fresh Slurm IDs will be recorded after synchronization
 and submission.
+
+## 2026-10-08 — trusted-lifecycle-gate launch
+
+The trusted lifecycle guard was synchronized to HPC at exact source commit
+`6045c49eaad746a85c7e29fd983c87db9630c27c`. The pinned native AutoData commit
+is `f6da400ed9bd03e89919f95656213433a6a93405`. The complete HPC suite passed
+250 tests plus 35 subtests before submission.
+
+- Attempt root:
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T123357Z-6045c49eaad7`.
+- Launcher: `1766326` (`COMPLETED`, exit `0:0`).
+- Evaluator: `1766341`.
+- One sequential research chain: `1766342`.
+- AutoData concurrency: 8.
+- Target: five durable score/result pairs in one sequential chain.
+
+The HPC execution checkout is frozen at the exact source commit above while
+the child jobs run. At this checkpoint the launcher had emitted both distinct
+child IDs; their proposal, native meta-optimization, production, training, and
+evaluation gates remained to be observed.
