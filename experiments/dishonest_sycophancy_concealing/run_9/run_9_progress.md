@@ -333,3 +333,34 @@ The HPC execution checkout is frozen at the exact source commit above while
 the child jobs run. At this checkpoint the launcher had emitted both distinct
 child IDs; their proposal, native meta-optimization, production, training, and
 evaluation gates remained to be observed.
+
+## 2026-10-08 — native proposal boundary and meta recovery
+
+The live chain passed the required ordering boundary before any model-backed
+generation: `submit_idea_proposal` approved a nonempty minted run ID, the
+immutable proposal run file was present, and the integrity monitor signed the
+grounding approval with the exact proposal run ID and code hash. Only then did
+the broker admit the three successful Kimi/Luna dry-run jobs.
+
+The first explicit meta execution,
+`exe_16876e9520a34af2a02c0db6943f86e8`, had the required 64 tuning, 32 hidden
+validation, and 32 disjoint test tasks at concurrency 8, with minimum 3,
+maximum 3, and early-stop patience 3. It reached 61 completed baseline tasks
+and three infrastructure failures before exposing a native retry defect:
+interrupted physical attempts reused stable logical idempotency keys, so a
+cancelled broker handle could not be retried and AutoData raised
+`idempotency key reused for a different event`. No production execution or
+training was started. The execution is preserved in terminal `cancelled`
+state with 64 task attempts recorded.
+
+The research agent recovered only through native lifecycle operations. It
+created a fresh execution with an explicit unique idempotency key and changed
+its attempt-local driver so a native `execution step` is never killed by a
+short wrapper timeout. The clean recovery execution is
+`exe_a96c544b2eb048ee863572261bcfc5e2`; its stored contract was independently
+checked as `meta_optimize`, concurrency 8, 64 tuning, 32 validation, the
+32-task test manifest, and budget `min=3`, `max=3`, `patience=3`. At launch it
+had exactly one controller/step process and remained in native
+`baseline_pending`. The upstream interrupted-attempt retry bug remains a
+separate resilience issue; this run did not patch its state database or skip
+the required meta stage.
