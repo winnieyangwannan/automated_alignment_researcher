@@ -13,6 +13,8 @@ Run 10 changes only the research-agent backend from Claude to Kimi-K2.6. The Gem
 
 Fifty iterations means 50 research sessions started per chain. A session that fails before scoring still consumes an iteration, so completion is reported with both started-session and successful score/result counts.
 
+The Kimi provider reserves up to 65,536 completion tokens. The initial 16,384-token setting was insufficient for the long AAR prompt after its first parallel MCP-tool batch and produced a thinking-only terminal response.
+
 ## Monitoring and recovery
 
 The durable attempts live under `/storage/home/winnieyangwn/aar-runs/run10_kimi/`. Monitoring checks Slurm state, `metadata/children.env`, session counts, score/finding pairs, evaluator fail-closed markers, merge manifests, and free space. A failed evaluator may be replaced against the same queue; research-chain history and retained results are never deleted or overwritten.

@@ -302,7 +302,10 @@ class KimiAgent:
                     "KIMI_MODEL_MAX_CONTEXT_SIZE", "262144"
                 ),
                 "KIMI_MODEL_MAX_OUTPUT_SIZE": env.get(
-                    "KIMI_MODEL_MAX_OUTPUT_SIZE", "16384"
+                    "KIMI_MODEL_MAX_OUTPUT_SIZE", "65536"
+                ),
+                "KIMI_MODEL_MAX_COMPLETION_TOKENS": env.get(
+                    "KIMI_MODEL_MAX_COMPLETION_TOKENS", "65536"
                 ),
                 "KIMI_MODEL_CAPABILITIES": env.get(
                     "KIMI_MODEL_CAPABILITIES", "thinking,tool_use"

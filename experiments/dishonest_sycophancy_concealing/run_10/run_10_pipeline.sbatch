@@ -49,7 +49,8 @@ export KIMI_CLI_PATH="${AAR_RUN10_KIMI_ROOT:-/storage/home/${USER}/tools/kimi-co
 export PATH="${AAR_RUN10_NODE_ROOT:-/storage/home/${USER}/tools/node-v22.22.0-linux-arm64}/bin:${PATH}"
 export AAR_KIMI_SERVE_DEPLOYMENT=steerability_8-kimi26 AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
 export AAR_SERVE_API_V2_ROOT="/storage/home/${USER}/ram_common/vllm_tools/serve_api_v2"
-export KIMI_MODEL_MAX_CONTEXT_SIZE=262144 KIMI_MODEL_MAX_OUTPUT_SIZE=16384
+export KIMI_MODEL_MAX_CONTEXT_SIZE=262144 KIMI_MODEL_MAX_OUTPUT_SIZE=65536
+export KIMI_MODEL_MAX_COMPLETION_TOKENS=65536
 export KIMI_MODEL_CAPABILITIES=thinking,tool_use KIMI_MODEL_REASONING_KEY=reasoning_content
 unset KIMI_AGENT_MODEL
 

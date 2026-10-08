@@ -168,7 +168,8 @@ class KimiAgentTest(unittest.TestCase):
             self.assertEqual(env["KIMI_MODEL_BASE_URL"], "http://proxy.example/v1")
             self.assertEqual(env["KIMI_MODEL_API_KEY"], "secret")
             self.assertEqual(env["KIMI_MODEL_MAX_CONTEXT_SIZE"], "262144")
-            self.assertEqual(env["KIMI_MODEL_MAX_OUTPUT_SIZE"], "16384")
+            self.assertEqual(env["KIMI_MODEL_MAX_OUTPUT_SIZE"], "65536")
+            self.assertEqual(env["KIMI_MODEL_MAX_COMPLETION_TOKENS"], "65536")
             self.assertEqual(env["KIMI_MODEL_CAPABILITIES"], "thinking,tool_use")
             self.assertEqual(env["KIMI_MODEL_REASONING_KEY"], "reasoning_content")
 
