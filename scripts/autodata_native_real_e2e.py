@@ -451,7 +451,7 @@ class Driver:
         self.complete(
             analysis,
             {
-                "proposal": "Reduce sampling temperature from 0.7 to 0.6 to improve consistency while preserving scenario diversity.",
+                "proposal": "Reduce sampling temperature from 0.2 to 0.1 to improve consistency while preserving scenario diversity.",
                 "dashboard_summary": "Test a single bounded sampling change.",
             },
         )
@@ -459,11 +459,11 @@ class Driver:
         begun = self.cli("action", "begin", str(mutation["id"]))
         strategy_path = Path(str(mutation["editable_root"])) / "recipe" / "generation_strategy.json"
         strategy = json.loads(strategy_path.read_text())
-        strategy["name"] = "truthful-calibrated-temperature-06-v1"
-        strategy["temperature"] = 0.6
+        strategy["name"] = "truthful-calibrated-temperature-01-v1"
+        strategy["temperature"] = 0.1
         strategy_path.write_text(json.dumps(strategy, sort_keys=True, indent=2) + "\n")
         result_path = self.root / ".meta-mutation.json"
-        result_path.write_text(json.dumps({"summary": "Reduced temperature to 0.6"}))
+        result_path.write_text(json.dumps({"summary": "Reduced temperature to 0.1"}))
         try:
             self.cli(
                 "action",
