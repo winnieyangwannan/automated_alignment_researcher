@@ -11,7 +11,7 @@ RECOVERY_BUNDLE="${AAR_RUN10_RECOVERY_BUNDLE:-/storage/home/winnieyangwn/aar-rec
 RECOVERY_BUNDLE="$(realpath -e -- "${RECOVERY_BUNDLE}")"
 REUSED_BASELINE="${RECOVERY_BUNDLE}/gemma4_31b_multidimensional_baseline.json"
 RECOVERED_SOURCES="${RECOVERY_BUNDLE}/source_artifacts"
-SECRET_ENV="$(realpath -e -- "${AAR_RUN10_SECRET_ENV:-/storage/home/winnieyangwn/aar-worktrees/uv/.env}")"
+SECRET_ENV="$(realpath -e -- "${AAR_RUN10_SECRET_ENV:-${REPO}/.env}")"
 KIMI_ROOT="${AAR_RUN10_KIMI_ROOT:-/storage/home/${USER:?}/tools/kimi-code-2.1.1}"
 NODE_ROOT="${AAR_RUN10_NODE_ROOT:-/storage/home/${USER}/tools/node-v22.22.0-linux-arm64}"
 
