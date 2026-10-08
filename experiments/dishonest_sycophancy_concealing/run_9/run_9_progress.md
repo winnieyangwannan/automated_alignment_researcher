@@ -444,8 +444,36 @@ preserved at
 The stabilization path keeps SandoQ Firecracker—the only supported isolated,
 model-backed executor—but no longer assumes the `small` warm pool. Run 9 now
 accepts an explicitly validated Firecracker tier, records it in submission
-metadata, and defaults to `medium` with concurrency 4. AutoData transport now
+metadata, and defaults to `large` with concurrency 4. AutoData transport now
 replays bounded transient disconnects and 429/5xx responses under the original
 idempotency key, suppresses harmless response-write disconnects, and serializes
 broker SQLite writes in-process. A fresh attempt remains gated on an HPC
 model-backed canary of the selected tier and exact synchronized commits.
+
+## 2026-10-08 — Firecracker tier capacity evidence
+
+AutoData transport hardening is committed at
+`6dcf7aee84948a7924d7a725218029a75cfb20c3`; its plugin wheel SHA-256 is
+`78552d5ba639237bee41b97f2b1e8117702c62c23586b7da6ccf5f457c863fa9`.
+Independent x86_64 and ARM64 builds matched, and the complete AutoData suite
+passed 71 tests with one skipped on both hosts.
+
+Two preserved four-way model-backed capacity probes distinguish the available
+SandoQ tiers:
+
+- Medium job `1774433` admitted three distinct Firecracker sessions, but its
+  fourth broker job exhausted the bounded lease wait with `TimeoutError` after
+  repeated pool-exhaustion 429s. Its root is
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/capacity-20261008T192714Z-86071a7b2169`.
+- Large job `1775619` admitted four distinct Firecracker sessions. All four
+  broker jobs reached `SUCCEEDED` with solve exit code 0. Three canary clients
+  retained schema-valid accepted samples; the fourth client rejected a
+  zero-item task result after the broker job succeeded. That is sample-quality
+  filtering, not an infrastructure failure. Its root is
+  `/storage/home/winnieyangwn/aar-runs/run9-five-iteration/capacity-20261008T202259Z-86071a7b2169`.
+
+Run 9 therefore pins `oci-runner-firecracker-large` at concurrency 4. The
+capacity-gate summary checks the broker database for four successful jobs,
+distinct nonempty SandoQ sessions, and solve exit code 0; it records accepted
+sample count separately so ordinary quality filtering cannot masquerade as a
+capacity failure.

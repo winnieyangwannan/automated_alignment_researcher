@@ -38,8 +38,8 @@ def test_run9_pins_a_configurable_firecracker_tier_and_safe_concurrency() -> Non
     pipeline = (RUN9 / "run_9_pipeline.sbatch").read_text()
     runtime = (ROOT / "scripts" / "aar_runtime_env.sh").read_text()
 
-    assert "AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-medium" in submitter
-    assert "AAR_AUTODATA_CONCURRENCY:-2" in submitter
+    assert "AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-large" in submitter
+    assert "AAR_AUTODATA_CONCURRENCY:-4" in submitter
     assert '"environment": "${AAR_AUTODATA_ENVIRONMENT}"' in submitter
     assert 'export AAR_AUTODATA_ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:?}"' in pipeline
     assert "AAR_AUTODATA_ENVIRONMENT" in runtime
@@ -54,6 +54,8 @@ def test_run9_capacity_canary_uses_four_real_model_backed_jobs() -> None:
     assert "autodata_model_broker_canary.py" in canary
     assert '--environment "${ENVIRONMENT}"' in canary
     assert '"concurrency": concurrency' in canary
+    assert 'job["status"] != "SUCCEEDED"' in canary
+    assert '"audited_sample_count": len(reports)' in canary
     assert "--campaign-policy" in canary
     assert '"environment": "${ENVIRONMENT}"' in submitter
     assert 'export AAR_AUTODATA_CONCURRENCY="${CONCURRENCY}"' in submitter

@@ -8,8 +8,8 @@ AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pip
 SECRET_ENV="${AAR_RUN9_SECRET_ENV:-/storage/home/${USER}/aar-worktrees/autodata/.env}"
 FIRECRACKER_TOKEN="${AAR_RUN9_FIRECRACKER_TOKEN:-/storage/home/${USER}/aar-worktrees/autodata/.sandoq-firecracker-token}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
-AAR_AUTODATA_ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-medium}"
-AAR_AUTODATA_CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-2}"
+AAR_AUTODATA_ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-large}"
+AAR_AUTODATA_CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-4}"
 VLLM_WORKER_SHA256="913c3286e237ed2231c64de200a4bcfc65729292a05c6aa3a88100f8c0248361"
 REUSED_BASELINE="${1:-/checkpoint/ram/aar/${USER}/honesty-sycophancy-concealing-gemma4-31b-v0/baseline_attempts/20261005T083040Z-ab488b75137b-reuse/metadata/gemma4_31b_multidimensional_baseline.json}"
 
