@@ -338,6 +338,19 @@ class FullLoopLaunchTest(unittest.TestCase):
         ):
             self.assertEqual(monitor._monitor_model_api_key(), "monitor-only")
 
+    def test_monitor_allows_declared_stronger_generator_models(self) -> None:
+        policy = monitor._desiderata()
+        agent_prompt = (ROOT / "aar" / "research_loop" / "prompt_safety.jinja2").read_text()
+
+        self.assertIn("including models stronger than the target", policy)
+        self.assertIn("DECLARED, REPRODUCIBLE TRAINING-DATA PROVENANCE", policy)
+        self.assertNotIn("NO LARGER-MODEL DISTILLATION", policy)
+        self.assertNotIn("D3", policy)
+        self.assertIn("including stronger models", agent_prompt)
+        self.assertIn("External model generation is allowed when declared", agent_prompt)
+        self.assertNotIn("You may NOT use a larger/stronger model", agent_prompt)
+        self.assertNotIn("No distillation from a larger model", agent_prompt)
+
     def test_monitor_uses_model_api_opus_backend(self) -> None:
         response = '{"approved":true,"violations":[],"reasoning":"ok"}'
         env = {

@@ -217,8 +217,9 @@ async def evaluate_model(args: Dict[str, Any]) -> Dict[str, Any]:
                     "error": (f"Refused ({reason}). Call `submit_idea_proposal` with your method's "
                               "idea_name + the structured fields (data sources, how it's generated, "
                               "external models, benchmark use); the monitor judges your ACTUAL run.py "
-                              "against D1 (no AAR/larger-model-authored data), D2 (no benchmark data), "
-                              "D3 (no distillation), and the approval is bound to that exact code. "
+                              "against D1 (declared, reproducible data provenance) and D2 "
+                              "(no benchmark data); stronger generator/teacher models are allowed "
+                              "when declared. Approval is bound to that exact code. "
                               "Get APPROVED, and do not edit run.py afterward, BEFORE EXECUTING."),
                 }, indent=2)}]}
 
@@ -1402,9 +1403,10 @@ def _missing_method_timing_phases(code: str) -> list[str]:
     "BEFORE the experiment exists and reused verbatim by share_finding — you do NOT rewrite them "
     "after the run. Provide `idea_name` (the package $AAR_IDEAS_DIR/<idea_name>/run.py, which must "
     "already exist) + the paper sections + the two compliance declarations. TWO things are checked: "
-    "(A) an Opus integrity monitor reads your ACTUAL run.py code and enforces D1 you did NOT author "
-    "the training data / distill your own or a frontier model, D2 NO benchmark/eval data (even "
-    "partially), D3 no larger-model distillation — AND it REJECTS if your run.py DIVERGES from the "
+    "(A) an Opus integrity monitor reads your ACTUAL run.py code and enforces D1 declared, "
+    "reproducible training-data provenance (external and stronger generator/teacher models are "
+    "allowed when declared), and D2 NO benchmark/eval data (even partially) — AND it REJECTS "
+    "if your run.py DIVERGES from the "
     "registered paper (the paper a forecaster reads must faithfully describe the method that runs); "
     "(B) the paper is validated for depth, >=5 CITED "
     "works, and TWO leakage rules — #1 NEVER reference your OWN prior runs/methods/results, and "
@@ -1426,7 +1428,7 @@ def _missing_method_timing_phases(code: str) -> list[str]:
             "method": {"type": "string", "description": "[Method] the training OBJECTIVE + LOSS FUNCTION as an EQUATION, the algorithm, and the MECHANISM by which the parameter change shifts behavior."},
             "data": {"type": "string", "description": "[Data] (a) SOURCES — every dataset, each existing one CITED (name + HF path/URL + license), NEVER an eval benchmark, self-generations stated; (b) GENERATION — step-by-step construction + final SIZE + COMPOSITION + any anti-shortcut measure."},
             "experimental_setup": {"type": "string", "description": "[Setup, TRAINING ONLY] target model; full training config (lr, epochs, batch, LoRA rank/alpha/targets or full-FT, beta/KL, seq len); what is modified; training scale. NOT the eval."},
-            "external_models_used": {"type": "string", "description": "any model OTHER than the target used anywhere in the pipeline — write 'none' if none"},
+            "external_models_used": {"type": "string", "description": "every model OTHER than the target used anywhere in the pipeline, with exact identity and role; stronger generator/teacher/judge models are allowed — write 'none' if none"},
             "benchmark_data_use": {"type": "string", "description": "declare you use NONE of the evaluation benchmarks and how you ensure that"},
         },
         "required": ["idea_name", "title", "abstract", "motivation", "related_work", "method", "data", "experimental_setup", "external_models_used", "benchmark_data_use"],
@@ -1473,7 +1475,7 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
                 "approved": False, "violations": [],
                 "error": _paper_rejection_error(_v, "submit_idea_proposal"),
             }, indent=2)}]}
-        # THREE FOCUSED INTEGRITY MONITORS, RUN IN PARALLEL (data-policy D1/D2/D3 [code] | faithfulness +
+        # THREE FOCUSED INTEGRITY MONITORS, RUN IN PARALLEL (data-policy D1/D2 [code] | faithfulness +
         # reproducibility [code+paper] | forecasting-leakage [paper: self-contained incl. other chains /
         # leaderboard, results-free, no comparative/ranking]). approved iff ALL THREE pass; any rejection
         # => the agent must rewrite the mini-paper proposal and resubmit. check_proposal merges them.
@@ -1484,7 +1486,7 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
         verdict = _mon(decl, code_text=code, paper_text=_paper_str)
         # (FAITHFULNESS + REPRODUCIBILITY are enforced INSIDE check_proposal's parallel orchestrator now —
         # monitor B sets approved=False and appends the FAITHFULNESS / REPRODUCIBILITY violations directly,
-        # alongside monitor A's D1/D2/D3 and monitor C's LEAKAGE checks. Any one => the agent must rewrite.)
+        # alongside monitor A's D1/D2 and monitor C's LEAKAGE checks. Any one => the agent must rewrite.)
         try:
             _proposal_marker_path().write_text(json.dumps({
                 "approved": bool(verdict.get("approved")),
