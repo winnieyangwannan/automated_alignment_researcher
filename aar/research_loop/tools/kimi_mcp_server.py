@@ -67,10 +67,18 @@ def _text_content(value: Any) -> list[types.TextContent]:
             converted = []
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "text":
-                    converted.append(types.TextContent(text=str(item.get("text", ""))))
+                    converted.append(
+                        types.TextContent(
+                            type="text", text=str(item.get("text", ""))
+                        )
+                    )
             if converted:
                 return converted
-    return [types.TextContent(text=json.dumps(value, default=str))]
+    return [
+        types.TextContent(
+            type="text", text=json.dumps(value, default=str)
+        )
+    ]
 
 
 def create_server(name: str) -> Server:
@@ -94,14 +102,20 @@ def create_server(name: str) -> Server:
         tool = tools.get(params.name)
         if tool is None:
             return types.CallToolResult(
-                content=[types.TextContent(text=f"Unknown tool: {params.name}")],
+                content=[
+                    types.TextContent(
+                        type="text", text=f"Unknown tool: {params.name}"
+                    )
+                ],
                 isError=True,
             )
         try:
             result = await tool.handler(params.arguments or {})
         except Exception as error:
             return types.CallToolResult(
-                content=[types.TextContent(text=f"Tool failed: {error}")],
+                content=[
+                    types.TextContent(type="text", text=f"Tool failed: {error}")
+                ],
                 isError=True,
             )
         return types.CallToolResult(content=_text_content(result))

@@ -13,7 +13,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from aar.research_loop.kimi_agent import KimiAgent, KimiToolUseBlock
-from aar.research_loop.tools.kimi_mcp_server import SERVER_TOOLS, create_server
+from aar.research_loop.tools.kimi_mcp_server import (
+    SERVER_TOOLS,
+    _text_content,
+    create_server,
+)
 import run as launcher
 
 
@@ -218,6 +222,11 @@ class KimiAgentTest(unittest.TestCase):
         })
         options = create_server("server-api-tools").create_initialization_options()
         self.assertIsNotNone(options.capabilities.tools)
+
+    def test_standard_mcp_bridge_emits_typed_text_content(self) -> None:
+        content = _text_content({"status": "ok"})
+        self.assertEqual(content[0].type, "text")
+        self.assertIn('"status": "ok"', content[0].text)
 
 
 if __name__ == "__main__":
