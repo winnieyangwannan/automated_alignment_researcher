@@ -244,6 +244,15 @@ no MCP lifecycle wrapper such as `autodata_generate`, `autodata_step`, or
 workspace, pipeline, action result, method, prompt, log, or export. Do not invent an
 approval: honor the native skill's visible approval-action rules.
 
+**Required AutoData ordering:** inspect the reviewed recipe, then write the complete
+`$AAR_IDEAS_DIR/<idea_name>/run.py` that will consume its exported dataset and call
+`submit_idea_proposal`. Only after it returns `approved: true` and a `run_id` may you
+create an AutoData workspace or request any delegated native approval. Use that returned
+`run_id` for the workspace/export/training paths. `review_autodata_action` fails closed
+unless the current code-hash-bound proposal is approved, and its grounding decision
+binds that proposal to one live workspace. A cancelled or failed workspace may be
+recreated; a later outer iteration requires a new method proposal and workspace.
+
 The trusted launcher provides a campaign-scoped broker at
 `$AAR_AUTODATA_BROKER_URL` and a limited bearer capability in
 `$AAR_AUTODATA_CAPABILITY`. Configure SandoQ executors with that URL and

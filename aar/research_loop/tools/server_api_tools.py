@@ -1523,6 +1523,9 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
                 _minted = f"{_uid}-{_safe_idea}-{int(time.time() * 1000)}"   # ms granularity => unique per approval
                 if _stamp_run_proposal(_minted):
                     verdict["run_id"] = _minted                               # the agent reuses this id end-to-end
+                    _marker = json.loads(_proposal_marker_path().read_text())
+                    _marker["run_id"] = _minted
+                    _proposal_marker_path().write_text(json.dumps(_marker, indent=2))
                     print(f"[submit_idea_proposal] froze pre-run paper to run_id={_minted}")
             except Exception as _e:
                 print(f"[submit_idea_proposal] freeze-at-approval stamp failed (continuing): {_e}")
@@ -1536,8 +1539,9 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
     "DELEGATED AUTODATA APPROVAL — review and complete exactly one pending native "
     "AutoData approval action using its immutable review artifacts. This is the only "
     "AutoData-related MCP operation: lifecycle work remains in the original plugin/CLI. "
-    "Use it for approve_grounding, approve_baseline, or approve_resources; never complete "
-    "those approval actions yourself.",
+    "Use it for approve_grounding, approve_baseline, or approve_resources after the "
+    "current method has passed submit_idea_proposal; it binds that approved code and "
+    "run_id to this workspace. Never complete those approval actions yourself.",
     {
         "type": "object",
         "properties": {

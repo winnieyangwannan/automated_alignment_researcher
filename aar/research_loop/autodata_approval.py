@@ -9,6 +9,7 @@ same native action through the original plugin CLI.
 from __future__ import annotations
 
 import base64
+import fcntl
 import hashlib
 import json
 import os
@@ -26,8 +27,10 @@ from .monitor import check_autodata_action
 APPROVAL_SCHEMA = "autodata.delegated-approval/v1"
 APPROVAL_ALGORITHM = "rsa-pkcs1v15-sha256"
 AUDIT_SCHEMA = "aar.autodata.approval-audit/v1"
+BINDINGS_SCHEMA = "aar.autodata.proposal-bindings/v1"
 _ACTION_ID = re.compile(r"^act_[0-9a-f]{24}$")
 _APPROVAL_KINDS = {"approve_grounding", "approve_baseline", "approve_resources"}
+_WORKSPACE_ID = re.compile(r"^ws_[0-9a-f]{32}$")
 
 
 def _required_path(name: str, *, directory: bool = False) -> Path:
@@ -49,6 +52,122 @@ def _action_row(state: Path, action_id: str) -> dict[str, Any]:
     if row is None:
         raise RuntimeError("native AutoData action was not found")
     return dict(row)
+
+
+def _workspace_status(state: Path, workspace_id: str) -> str:
+    with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
+        row = connection.execute(
+            "SELECT status FROM workspaces WHERE id=?", (workspace_id,)
+        ).fetchone()
+    if row is None:
+        raise RuntimeError("proposal-bound native workspace was not found")
+    return str(row[0])
+
+
+def _current_proposal() -> dict[str, Any]:
+    # Imported lazily to avoid a module cycle: server_api_tools imports this
+    # module only when the delegated MCP operation is invoked.
+    from .tools.server_api_tools import _proposal_approved, _proposal_marker_path
+
+    approved, reason = _proposal_approved()
+    if not approved:
+        raise RuntimeError(
+            "AutoData grounding requires submit_idea_proposal approval first: "
+            + reason
+        )
+    marker = json.loads(_proposal_marker_path().read_text())
+    code_hash = marker.get("code_hash")
+    run_id = marker.get("run_id")
+    idea_name = marker.get("idea_name")
+    idea_uid = marker.get("idea_uid")
+    proposal_ts = marker.get("ts")
+    if (
+        not isinstance(code_hash, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", code_hash)
+        or not isinstance(run_id, str)
+        or not run_id
+        or not isinstance(idea_name, str)
+        or not idea_name
+        or not isinstance(idea_uid, str)
+        or idea_uid != os.getenv("IDEA_UID")
+        or not isinstance(proposal_ts, (int, float))
+    ):
+        raise RuntimeError("approved proposal lacks a complete AutoData binding")
+    key_payload = {
+        "code_hash": code_hash,
+        "idea_name": idea_name,
+        "idea_uid": idea_uid,
+        "run_id": run_id,
+        "ts": proposal_ts,
+    }
+    key = "sha256:" + hashlib.sha256(
+        json.dumps(key_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return {"proposal_key": key, **key_payload}
+
+
+def _proposal_binding(
+    state: Path, package: Mapping[str, Any]
+) -> dict[str, Any]:
+    workspace_id = str(package["scope"].get("id") or "")
+    if not _WORKSPACE_ID.fullmatch(workspace_id):
+        raise RuntimeError("approval action has an invalid workspace id")
+    proposal = _current_proposal()
+    registry_path = _required_path("AAR_AUTODATA_PROPOSAL_BINDINGS")
+    registry_info = registry_path.stat()
+    if (
+        registry_info.st_uid != os.geteuid()
+        or registry_info.st_mode & (stat.S_IRWXG | stat.S_IRWXO)
+    ):
+        raise RuntimeError("proposal binding registry must be owner-only mode 0600")
+    with registry_path.open("r+", encoding="utf-8") as registry_file:
+        fcntl.flock(registry_file.fileno(), fcntl.LOCK_EX)
+        try:
+            registry = json.load(registry_file)
+            if (
+                not isinstance(registry, dict)
+                or registry.get("schema") != BINDINGS_SCHEMA
+                or not isinstance(registry.get("proposals"), dict)
+                or not isinstance(registry.get("workspaces"), dict)
+            ):
+                raise RuntimeError("proposal binding registry is invalid")
+            proposals = registry["proposals"]
+            workspaces = registry["workspaces"]
+            existing = workspaces.get(workspace_id)
+            if existing is not None and (
+                not isinstance(existing, dict)
+                or existing.get("proposal_key") != proposal["proposal_key"]
+            ):
+                raise RuntimeError("workspace is bound to a different AAR proposal")
+            previous_workspace = proposals.get(proposal["proposal_key"])
+            if previous_workspace not in {None, workspace_id}:
+                if not isinstance(previous_workspace, str) or not _WORKSPACE_ID.fullmatch(
+                    previous_workspace
+                ):
+                    raise RuntimeError("proposal binding registry contains an invalid workspace")
+                if _workspace_status(state, previous_workspace) not in {
+                    "cancelled",
+                    "failed",
+                }:
+                    raise RuntimeError(
+                        "approved proposal is already bound to a live or completed workspace"
+                    )
+            if package["action_kind"] == "approve_grounding":
+                proposals[proposal["proposal_key"]] = workspace_id
+                workspaces[workspace_id] = proposal
+                registry_file.seek(0)
+                json.dump(registry, registry_file, sort_keys=True, indent=2)
+                registry_file.write("\n")
+                registry_file.truncate()
+                registry_file.flush()
+                os.fsync(registry_file.fileno())
+            elif existing is None:
+                raise RuntimeError(
+                    "workspace has no proposal-bound grounding approval"
+                )
+            return dict(workspaces.get(workspace_id) or proposal)
+        finally:
+            fcntl.flock(registry_file.fileno(), fcntl.LOCK_UN)
 
 
 def _artifact_bytes(root: Path, raw: Mapping[str, Any]) -> bytes:
@@ -262,6 +381,7 @@ def review_and_complete_action(action_id: str) -> dict[str, Any]:
         raise RuntimeError("native approval action is not pending")
     action = json.loads(row["specJson"])
     package = _review_package(action, artifacts)
+    proposal_binding = _proposal_binding(state, package)
     kind = action["kind"]
     if kind == "approve_resources":
         verdict = {
@@ -338,6 +458,7 @@ def review_and_complete_action(action_id: str) -> dict[str, Any]:
         "target": target,
         "feedback": feedback,
         "actor": actor,
+        "proposal_binding": proposal_binding,
         "policy_version": policy_version,
         "payload_sha256": "sha256:" + hashlib.sha256(payload).hexdigest(),
         "monitor_model": verdict.get("monitor_model"),
