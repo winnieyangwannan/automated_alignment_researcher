@@ -45,6 +45,20 @@ def test_run9_pins_a_configurable_firecracker_tier_and_safe_concurrency() -> Non
     assert "AAR_AUTODATA_ENVIRONMENT" in runtime
 
 
+def test_run9_capacity_canary_uses_four_real_model_backed_jobs() -> None:
+    submitter = (RUN9 / "submit_run_9_capacity_canary.sh").read_text()
+    canary = (RUN9 / "run_9_capacity_canary.sbatch").read_text()
+
+    assert "--max-concurrent 4" in canary
+    assert "for index in 1 2 3 4" in canary
+    assert "autodata_model_broker_canary.py" in canary
+    assert '--environment "${ENVIRONMENT}"' in canary
+    assert '"concurrency": 4' in canary
+    assert "--campaign-policy" in canary
+    assert '"environment": "${ENVIRONMENT}"' in submitter
+    assert "--export=ALL" in submitter
+
+
 def test_generic_launchers_include_run7_first_use_fixes() -> None:
     trainer = (ROOT / "scripts" / "submit_train_job.sh").read_text()
     evaluator = (ROOT / "scripts" / "launch_eval_worker.sh").read_text()
