@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 from pathlib import Path
 
 from aar.research_loop.kimi_agent import KimiAgent
@@ -16,6 +17,7 @@ async def verify(workspace: Path) -> dict[str, object]:
         "run10-preflight",
         workspace,
         model=None,
+        cli_path=os.environ.get("KIMI_CLI_PATH"),
         include_prior_work=True,
     ).execute(
         "Call the get_leaderboard MCP tool exactly once with its valid empty input. "
