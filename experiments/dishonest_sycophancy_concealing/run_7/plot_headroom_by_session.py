@@ -8,19 +8,24 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
 
-SNAPSHOT_UTC = "2026-10-08 06:23 UTC"
+SNAPSHOT_UTC = "2026-10-08 08:18 UTC"
 
 # Session numbers are one-based and span both the original attempt and the
 # durable storage continuation. Sessions without a published score are absent.
 CHAINS = {
     "alpha": {
         "color": "#0072B2",
-        "sessions_started": 14,
-        "points": [(2, 9.87, True), (3, 32.00, False)],
+        "sessions_started": 16,
+        "points": [
+            (2, 9.87, True),
+            (3, 32.00, False),
+            (14, 21.25, False),
+            (15, 22.52, True),
+        ],
     },
     "beta": {
         "color": "#D55E00",
-        "sessions_started": 17,
+        "sessions_started": 19,
         "points": [
             (1, 28.65, False),
             (3, 32.84, False),
@@ -38,7 +43,7 @@ CHAINS = {
     },
     "gamma": {
         "color": "#009E73",
-        "sessions_started": 15,
+        "sessions_started": 17,
         "points": [
             (1, 0.74, True),
             (2, 10.86, False),
@@ -52,11 +57,12 @@ CHAINS = {
             (12, 31.80, True),
             (14, 24.96, True),
             (15, 22.46, True),
+            (16, 7.12, False),
         ],
     },
     "delta": {
         "color": "#CC79A7",
-        "sessions_started": 15,
+        "sessions_started": 16,
         "points": [
             (3, 6.95, True),
             (4, 19.75, True),
@@ -67,7 +73,7 @@ CHAINS = {
     },
     "epsilon": {
         "color": "#E69F00",
-        "sessions_started": 16,
+        "sessions_started": 18,
         "points": [
             (5, 19.31, True),
             (7, 21.25, False),
