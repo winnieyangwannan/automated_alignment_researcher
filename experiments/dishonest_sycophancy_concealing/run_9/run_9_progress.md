@@ -135,3 +135,49 @@ AutoData broker health probe.
 - Evaluator startup confirmed its attempt-local ephemeral merged-checkpoint
   root. Image/version/checkpoint markers are emitted fail-closed when the first
   candidate arrives; no candidate had reached evaluation at this checkpoint.
+
+## 2026-10-08 — safety-ordering stop
+
+The final audited launch was intentionally stopped after inspecting the first
+research session's AutoData activity. The native plugin path admitted real
+generation before the AAR method had passed `submit_idea_proposal`. No proposal
+tool-call marker, approval marker, proposal file, or proposal snapshot exists in
+the retained team artifacts.
+
+Before the stop, the agent created two native workspaces:
+
+- `ws_affee2f4d11944819b2400ec473d206a` was the first workspace. It reached a
+  dry-run but its first attempt was rejected because the executor omitted the
+  campaign policy's required non-secret solve environment.
+- `ws_ab00f6c36e4c4d0bae8e24710a107c68` was the corrected workspace. It reached
+  the native dry-run after authoring and delegated grounding approval.
+
+The signed approval records are retained under the attempt's
+`autodata/approvals` directory:
+
+- `act_a189dad61e4e7aa935e3b460`: `approve_grounding`, actor
+  `aar-integrity-monitor`, decision `approve`, for the first workspace.
+- `act_30b038198dafda21da50b043`: `approve_resources`, actor
+  `aar-integrity-monitor`, decision `retry`, after the first workspace's
+  configuration mismatch.
+- `act_d72a6b5774880125771bd2ef`: `approve_grounding`, actor
+  `aar-integrity-monitor`, decision `approve`, for the corrected workspace.
+
+The corrected dry-run admitted broker jobs before proposal approval:
+
+- `job_fafa4160937a4bcfb3b166bf920c4446` completed far enough for the native
+  client to download its result (`GET .../results` returned HTTP 200).
+- `job_90af1694fbc44f8b8a8b665de4791010` was created and uploaded, then remained
+  in bounded retry after SandoQ returned retryable HTTP 429 pool exhaustion.
+
+This demonstrated that the attempt-scoped broker correctly constrained model,
+image, concurrency, and budget, but did not enforce the separate AAR
+proposal-before-generation invariant. The chain was therefore not allowed to
+continue to meta-optimization, production, training, or candidate evaluation.
+
+Jobs `1763167` (sequential research chain) and `1763166` (evaluator) were
+cancelled and became terminal after 25 minutes 28 seconds. Both report Slurm
+state `CANCELLED` and exit code `0:0`. The complete attempt remains preserved at
+`/storage/home/winnieyangwn/aar-runs/run9-five-iteration/20261008T100912Z-6dd1758073cc`.
+There was no resubmission. The next launch must fail closed at broker admission
+unless an approved proposal is cryptographically bound to the run and method.
