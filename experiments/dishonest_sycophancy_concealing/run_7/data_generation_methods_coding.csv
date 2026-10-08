@@ -1,0 +1,72 @@
+phase,method,candidate_submissions,Programmatic / templated prompt construction,Target-model self-generation / context distillation,Hard-negative / adversarial pressure variants,Matched / two-sided controls,Mode-matched anchor / replay,Verifier / gating filters,Self-consistency / confidence labels,Preference-pair generation,evidence
+original,anchored_belief_calib,2,1,1,1,1,1,1,1,0,salvaged run.py
+original,bdpa_v1,1,1,1,1,1,1,0,0,0,salvaged run.py
+original,bdpa_v2,1,1,1,1,1,1,0,0,0,salvaged session/proposal
+original,belief_calib_distill,3,1,1,1,1,1,1,0,0,salvaged run.py + finding
+original,calib_belief_distill,1,1,1,1,1,1,1,1,0,salvaged run.py + finding
+original,bdrd_v1,1,1,1,1,1,1,1,0,0,salvaged run.py + finding
+original,cdhc_v1,2,1,1,1,1,1,1,1,0,salvaged run.py + finding
+original,cshc_v1,1,1,1,1,1,1,0,1,0,salvaged run.py + finding
+original,dcc_v1,1,1,1,1,1,1,0,1,0,salvaged run.py
+original,ktcc_v1,1,1,1,1,1,1,1,1,0,salvaged run.py
+original,swap_v1,1,1,1,1,0,1,0,0,0,recovered finding
+original,caspr_v1,1,1,1,1,1,1,1,1,0,salvaged run.py + finding
+original,fsr_selfconf,1,1,1,1,0,0,0,1,0,salvaged run.py
+original,mdna_v1,1,1,1,1,1,1,0,0,0,salvaged run.py + finding
+original,pdas_v1,1,1,1,1,1,1,0,0,0,salvaged run.py + finding
+original,skca_v1,1,1,1,1,1,1,1,0,0,salvaged run.py
+original,skcfr_sft,2,1,1,1,0,0,0,1,0,salvaged run.py
+original,faithful_anchor_sft,1,1,1,1,1,1,1,1,0,salvaged run.py
+original,faithful_calib_dpo,1,1,1,1,1,1,1,1,1,salvaged run.py
+original,faithful_report_dpo,2,1,1,1,1,1,1,0,1,salvaged run.py
+original,faithful_report_sft,2,1,1,1,1,0,1,1,0,salvaged run.py + finding
+original,chac_v1,1,1,1,1,1,1,1,1,0,salvaged run.py + finding
+original,coac_v1,1,1,1,1,1,1,1,1,0,salvaged run.py + finding
+original,isca_v1,2,1,1,1,1,1,1,1,0,salvaged run.py + finding
+original,ntha_v1,1,1,1,1,1,1,0,1,0,salvaged run.py
+original,scgc_v1,1,1,1,1,1,1,1,1,0,salvaged run.py + finding
+continuation,alpha/egca_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,alpha/egca_v2,1,1,1,1,1,1,1,1,0,run.py
+continuation,alpha/egca_v3,2,1,1,1,1,1,1,1,0,run.py
+continuation,alpha/gcsa_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,alpha/gcsa_v2,1,1,1,1,1,1,1,0,0,run.py
+continuation,alpha/scec_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,alpha/scec_v2,1,1,1,1,1,1,1,1,0,run.py
+continuation,beta/clbh_v1,1,1,1,1,1,1,1,0,0,run.py
+continuation,beta/cuesc_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,beta/cvc_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,beta/dmca_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,beta/dmca_v2,1,1,1,1,1,1,1,1,0,run.py
+continuation,beta/dpsr_v1,1,1,1,1,1,1,1,0,0,run.py
+continuation,beta/fbh_v1,2,1,1,1,1,1,1,0,0,run.py
+continuation,beta/ffh_v1,1,1,1,1,1,1,1,0,0,run.py
+continuation,beta/ptsr_v1,1,1,1,1,1,1,1,0,0,run.py
+continuation,delta/ckc_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,delta/dcvc_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,delta/dmcc_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,delta/dmcc_v2,1,1,1,1,1,1,1,1,0,run.py
+continuation,delta/dvca_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,delta/gscc_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,delta/gvca_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,delta/scvc_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,epsilon/apr_v1,1,1,1,1,1,1,1,0,1,run.py
+continuation,epsilon/cfc_v1,1,1,1,1,1,1,1,0,0,run.py
+continuation,epsilon/cjc_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,epsilon/csca_v1,1,1,1,1,1,1,1,0,0,run.py
+continuation,epsilon/dvca_v1,1,1,1,1,1,1,1,0,0,run.py
+continuation,epsilon/dvca_v2,1,1,1,1,1,1,1,0,0,run.py
+continuation,epsilon/faithful_anchor_sft,1,1,1,1,1,1,1,0,0,run.py
+continuation,epsilon/ntca_v1,1,1,1,1,1,1,1,0,0,run.py
+continuation,epsilon/scgc_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,epsilon/scm_v1,1,1,1,1,1,1,1,0,0,run.py
+continuation,gamma/bhsa_v1,1,1,1,1,1,1,1,0,0,run.py
+continuation,gamma/cgpr_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,gamma/dcap_v1,1,1,1,1,1,1,1,1,0,run.py
+continuation,gamma/decsa_v1,1,1,1,1,1,1,1,0,0,run.py
+continuation,gamma/fiba_v1,1,1,1,1,1,1,1,0,0,run.py
+continuation,gamma/scpo_v1,1,1,1,1,1,1,1,0,1,run.py
+continuation,gamma/scpo_v2,1,1,1,1,1,1,1,0,1,run.py
+continuation,gamma/smca_v1,1,1,1,1,1,1,1,0,0,run.py
+continuation,gamma/smca_v2,1,1,1,1,1,1,1,0,0,run.py
+continuation,gamma/smca_v3,1,1,1,1,1,1,1,0,0,run.py
+continuation,gamma/xsca_v1,1,1,1,1,1,1,1,0,0,run.py
