@@ -88,6 +88,11 @@ export LIT_AXIS_DIR="${LIT_AXIS_DIR:-${REPO}/_runs/litreview/${AXIS:-sycophancy}
 echo "[aar] team=${TEAM_ID}  TEAM_DIR=${TEAM_DIR}"
 echo "[aar] forum=${LOCAL_FINDINGS_DIR}  methods=${AAR_IDEAS_DIR}  lit(team)=${LIT_FORUM_DIR}  lit(axis)=${LIT_AXIS_DIR}"
 
+# AutoData broker readiness is probed before the later research-agent setup, so
+# establish the trusted harness interpreter before either path can use it.
+PY="${HARNESS_PY}"
+[ -x "${PY}" ] || { echo "[aar] ERROR: Python is not executable: ${PY}" >&2; exit 2; }
+
 _autodata_broker_pid=''
 cleanup_autodata_broker() {
   if [ -n "${_autodata_broker_pid}" ] && kill -0 "${_autodata_broker_pid}" 2>/dev/null; then
@@ -244,8 +249,6 @@ if [ "${AAR_RESEARCH_ENV_ISOLATION:-0}" = 1 ]; then
   echo "[aar] Claude research launcher verified"
 fi
 
-PY="${HARNESS_PY}"
-[ -x "${PY}" ] || { echo "[aar] ERROR: Python is not executable: ${PY}" >&2; exit 2; }
 cd "${REPO}"
 
 # Per-chain MEMORY file (NOT shared between chains), under THIS team's logs/ folder.

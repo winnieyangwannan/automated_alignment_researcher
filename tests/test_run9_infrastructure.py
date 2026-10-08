@@ -39,3 +39,11 @@ def test_generic_launchers_include_run7_first_use_fixes() -> None:
 
     assert "_lanes=()" in trainer
     assert '--nodes=1 --ntasks=1 --gpus="${GPUS}"' in evaluator
+
+
+def test_chain_initializes_python_before_autodata_health_probe() -> None:
+    chain = (ROOT / "scripts" / "slurm_aar_chain.sh").read_text()
+
+    assert chain.index('PY="${HARNESS_PY}"') < chain.index(
+        'if "${PY}" -c \'import os,urllib.request'
+    )
