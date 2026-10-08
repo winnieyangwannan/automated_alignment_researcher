@@ -8,15 +8,21 @@ AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pip
 SECRET_ENV="${AAR_RUN9_SECRET_ENV:-/storage/home/${USER}/aar-worktrees/autodata/.env}"
 FIRECRACKER_TOKEN="${AAR_RUN9_FIRECRACKER_TOKEN:-/storage/home/${USER}/aar-worktrees/autodata/.sandoq-firecracker-token}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
+VLLM_WORKER_SOURCE="${AAR_RUN9_VLLM_WORKER_SOURCE:-/checkpoint/ram/shared/vllm_deployments_v2/.removed/aar-gemma-4-31b-it-20261007T005922Z/src/serve_api_v2/worker/worker_vllm.sh}"
+VLLM_WORKER_SHA256="913c3286e237ed2231c64de200a4bcfc65729292a05c6aa3a88100f8c0248361"
 REUSED_BASELINE="${1:-/checkpoint/ram/aar/${USER}/honesty-sycophancy-concealing-gemma4-31b-v0/baseline_attempts/20261005T083040Z-ab488b75137b-reuse/metadata/gemma4_31b_multidimensional_baseline.json}"
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "run 9 requires branch autodata" >&2; exit 2; }
 git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || { echo "tracked worktree is dirty" >&2; exit 2; }
 [ "$(git -C "${AUTODATA_CHECKOUT}" branch --show-current)" = main ] || { echo "AutoData checkout must be on main" >&2; exit 2; }
 [ -x "${BROKER_PYTHON}" ] || { echo "missing broker Python" >&2; exit 2; }
-for required in "${SECRET_ENV}" "${FIRECRACKER_TOKEN}" "${REUSED_BASELINE}"; do
+for required in "${SECRET_ENV}" "${FIRECRACKER_TOKEN}" "${REUSED_BASELINE}" "${VLLM_WORKER_SOURCE}"; do
   [ -f "${required}" ] || { echo "missing required input: ${required}" >&2; exit 2; }
 done
+[ "$(sha256sum "${VLLM_WORKER_SOURCE}" | awk '{print $1}')" = "${VLLM_WORKER_SHA256}" ] || {
+  echo "validated vLLM worker digest mismatch" >&2
+  exit 2
+}
 [ "$(stat -c %a "${SECRET_ENV}")" = 600 ] || { echo "secret env must be mode 600" >&2; exit 2; }
 [ "$(stat -c %a "${FIRECRACKER_TOKEN}")" = 600 ] || { echo "Firecracker token must be mode 600" >&2; exit 2; }
 
@@ -37,6 +43,12 @@ attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "${REPO}" rev-parse --short=12 H
 attempt_dir="/storage/home/${USER}/aar-runs/run9-five-iteration/${attempt_id}"
 mkdir -p "${attempt_dir}"/{metadata,logs,secrets}
 chmod 700 "${attempt_dir}" "${attempt_dir}/secrets"
+vllm_worker="${attempt_dir}/metadata/worker_vllm.sh"
+install -m 700 "${VLLM_WORKER_SOURCE}" "${vllm_worker}"
+[ "$(sha256sum "${vllm_worker}" | awk '{print $1}')" = "${VLLM_WORKER_SHA256}" ] || {
+  echo "staged vLLM worker digest mismatch" >&2
+  exit 2
+}
 
 model_env="${attempt_dir}/secrets/model-api.env"
 printf 'MODEL_API_KEY=%s\n' "${MODEL_API_KEY}" > "${model_env}"
@@ -101,12 +113,13 @@ export AAR_AUTODATA_APPROVAL_ACTOR="aar-integrity-monitor"
 export AAR_AUTODATA_APPROVAL_POLICY_VERSION="aar-autodata/run9-v1"
 export AAR_AUTODATA_RESOURCES_READY=1
 export AAR_AUTODATA_CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-16}"
+export AAR_VLLM_WORKER_SH="${vllm_worker}"
 
 job_id="$(sbatch --parsable \
   --output="${attempt_dir}/logs/pipeline-%j.out" \
   --export=ALL \
   "${SCRIPT_DIR}/run_9_pipeline.sbatch")"
-printf 'launch_job_id=%s\nattempt_dir=%s\naar_git_commit=%s\nautodata_git_commit=%s\nconcurrency=%s\n' \
-  "${job_id}" "${attempt_dir}" "${commit}" "${autodata_sha}" "${AAR_AUTODATA_CONCURRENCY}" \
+printf 'launch_job_id=%s\nattempt_dir=%s\naar_git_commit=%s\nautodata_git_commit=%s\nconcurrency=%s\nvllm_worker_sha256=%s\n' \
+  "${job_id}" "${attempt_dir}" "${commit}" "${autodata_sha}" "${AAR_AUTODATA_CONCURRENCY}" "${VLLM_WORKER_SHA256}" \
   | tee "${attempt_dir}/metadata/submission.txt"
 unset capability MODEL_API_KEY ANTHROPIC_API_KEY HF_TOKEN
