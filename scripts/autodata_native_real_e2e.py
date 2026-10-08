@@ -120,27 +120,42 @@ class Driver:
         print(f"[autodata-e2e] {name}", flush=True)
 
     def cli(self, *arguments: str, timeout: int | None = None) -> dict[str, Any]:
-        completed = subprocess.run(
-            [
-                sys.executable,
-                str(self.wrapper),
-                "--state",
-                str(self.state),
-                "--artifacts",
-                str(self.artifacts),
-                "--workspaces",
-                str(self.workspaces),
-                *arguments,
-            ],
-            cwd=self.root,
-            env=self.environment,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout or self.args.timeout_seconds,
-            check=False,
-        )
+        command = [
+            sys.executable,
+            str(self.wrapper),
+            "--state",
+            str(self.state),
+            "--artifacts",
+            str(self.artifacts),
+            "--workspaces",
+            str(self.workspaces),
+            *arguments,
+        ]
+        for attempt in range(1, 4):
+            completed = subprocess.run(
+                command,
+                cwd=self.root,
+                env=self.environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=timeout or self.args.timeout_seconds,
+                check=False,
+            )
+            if completed.returncode == 0:
+                break
+            if (
+                "could not reach AutoData broker" not in completed.stderr
+                or attempt == 3
+            ):
+                break
+            self.milestone(
+                "broker_command_retry",
+                command=" ".join(arguments[:3]),
+                attempt=attempt + 1,
+            )
+            time.sleep(float(attempt))
         if completed.returncode != 0:
             raise RuntimeError(
                 "native AutoData command failed for "

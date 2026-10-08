@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,3 +49,42 @@ def test_meta_execution_budget_includes_replenishment_headroom(tmp_path: Path) -
     # for eight tasks; four extra slots permit bounded quality replenishment.
     assert value["budget"]["max_task_attempts"] == 33
     assert value["concurrency"] == 8
+
+
+def test_cli_retries_ambiguous_broker_reachability_failure(tmp_path: Path) -> None:
+    driver_type = _load_driver()
+    driver = object.__new__(driver_type)
+    driver.args = argparse.Namespace(timeout_seconds=3600)
+    driver.wrapper = tmp_path / "autodata.py"
+    driver.state = tmp_path / "state.db"
+    driver.artifacts = tmp_path / "artifacts"
+    driver.workspaces = tmp_path / "workspaces"
+    driver.root = tmp_path
+    driver.environment = {}
+    milestones: list[tuple[str, dict[str, object]]] = []
+    driver.milestone = lambda name, **fields: milestones.append((name, fields))
+
+    transient = subprocess.CompletedProcess(
+        args=[],
+        returncode=1,
+        stdout="",
+        stderr="autodata: could not reach AutoData broker\n",
+    )
+    recovered = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout='{"status":"completed"}\n', stderr=""
+    )
+    with (
+        patch("subprocess.run", side_effect=[transient, recovered]) as run,
+        patch("time.sleep") as sleep,
+    ):
+        result = driver.cli("execution", "step", "exe_test")
+
+    assert result == {"status": "completed"}
+    assert run.call_count == 2
+    sleep.assert_called_once_with(1.0)
+    assert milestones == [
+        (
+            "broker_command_retry",
+            {"command": "execution step exe_test", "attempt": 2},
+        )
+    ]
