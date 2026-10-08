@@ -39,7 +39,7 @@ def test_run9_pins_a_configurable_firecracker_tier_and_safe_concurrency() -> Non
     runtime = (ROOT / "scripts" / "aar_runtime_env.sh").read_text()
 
     assert "AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-medium" in submitter
-    assert "AAR_AUTODATA_CONCURRENCY:-4" in submitter
+    assert "AAR_AUTODATA_CONCURRENCY:-2" in submitter
     assert '"environment": "${AAR_AUTODATA_ENVIRONMENT}"' in submitter
     assert 'export AAR_AUTODATA_ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:?}"' in pipeline
     assert "AAR_AUTODATA_ENVIRONMENT" in runtime
@@ -49,13 +49,14 @@ def test_run9_capacity_canary_uses_four_real_model_backed_jobs() -> None:
     submitter = (RUN9 / "submit_run_9_capacity_canary.sh").read_text()
     canary = (RUN9 / "run_9_capacity_canary.sbatch").read_text()
 
-    assert "--max-concurrent 4" in canary
+    assert '--max-concurrent "${CONCURRENCY}"' in canary
     assert "for index in 1 2 3 4" in canary
     assert "autodata_model_broker_canary.py" in canary
     assert '--environment "${ENVIRONMENT}"' in canary
-    assert '"concurrency": 4' in canary
+    assert '"concurrency": concurrency' in canary
     assert "--campaign-policy" in canary
     assert '"environment": "${ENVIRONMENT}"' in submitter
+    assert 'export AAR_AUTODATA_CONCURRENCY="${CONCURRENCY}"' in submitter
     assert "--export=ALL" in submitter
 
 

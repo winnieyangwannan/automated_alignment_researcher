@@ -13,6 +13,7 @@ REPO="${AAR_REPO:?submit through submit_run_9_capacity_canary.sh}"
 AUTODATA="${AAR_AUTODATA_CHECKOUT:?missing AutoData checkout}"
 ROOT="${AAR_RUN9_CANARY_ROOT:?missing retained canary root}"
 ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:?missing Firecracker environment}"
+CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:?missing canary concurrency}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:?missing broker Python}"
 CAPABILITY_FILE="${AAR_AUTODATA_CAPABILITY_FILE:?missing capability file}"
 
@@ -32,7 +33,7 @@ PYTHONPATH="${AUTODATA}/src" "${BROKER_PYTHON}" -m autodata.broker.cli \
   --root "${ROOT}/broker" \
   --gateway-url "${SANDOQ_GATEWAY_URL:-https://sandoq-gateway.eks-prod.cf.aws.metafb.cloud}" \
   --host 127.0.0.1 --port "${port}" \
-  --max-concurrent 4 \
+  --max-concurrent "${CONCURRENCY}" \
   --auth-token-file "${CAPABILITY_FILE}" \
   --execsidecar-token-file "${AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE:?}" \
   --workload-env-file "${AAR_AUTODATA_MODEL_ENV_FILE:?}" \
@@ -79,13 +80,14 @@ for pid in "${pids[@]}"; do
 done
 [ "${failed}" = 0 ] || { echo "one or more model-backed canaries failed" >&2; exit 1; }
 
-PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" - "${ROOT}" "${ENVIRONMENT}" <<'PY'
+PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" - "${ROOT}" "${ENVIRONMENT}" "${CONCURRENCY}" <<'PY'
 import json
 import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
 environment = sys.argv[2]
+concurrency = int(sys.argv[3])
 reports = [json.loads(path.read_text()) for path in sorted((root / "reports").glob("canary-*.json"))]
 if len(reports) != 4 or any(not report.get("success") for report in reports):
     raise SystemExit("capacity canary did not retain four successful reports")
@@ -95,7 +97,7 @@ summary = {
     "schema": "aar.autodata.firecracker-capacity-canary/v1",
     "success": True,
     "environment": environment,
-    "concurrency": 4,
+    "concurrency": concurrency,
     "broker_job_ids": [report["broker_job_id"] for report in reports],
     "sandoq_session_ids": [report["sandoq_session_id"] for report in reports],
 }

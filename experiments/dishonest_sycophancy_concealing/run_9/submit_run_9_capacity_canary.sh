@@ -9,6 +9,7 @@ SECRET_ENV="${AAR_RUN9_SECRET_ENV:-/storage/home/${USER}/aar-worktrees/autodata/
 FIRECRACKER_TOKEN="${AAR_RUN9_FIRECRACKER_TOKEN:-/storage/home/${USER}/aar-worktrees/autodata/.sandoq-firecracker-token}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
 ENVIRONMENT="${1:-oci-runner-firecracker-medium}"
+CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-4}"
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "canary requires branch autodata" >&2; exit 2; }
 git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || { echo "tracked AAR worktree is dirty" >&2; exit 2; }
@@ -17,6 +18,10 @@ git -C "${AUTODATA_CHECKOUT}" diff --quiet && git -C "${AUTODATA_CHECKOUT}" diff
 case "${ENVIRONMENT}" in
   oci-runner-firecracker-small|oci-runner-firecracker-medium|oci-runner-firecracker-large|oci-runner-firecracker-xlarge) ;;
   *) echo "unsupported AutoData Firecracker environment: ${ENVIRONMENT}" >&2; exit 2 ;;
+esac
+case "${CONCURRENCY}" in
+  1|2|3|4) ;;
+  *) echo "capacity-canary concurrency must be in [1,4]" >&2; exit 2 ;;
 esac
 for required in "${SECRET_ENV}" "${FIRECRACKER_TOKEN}"; do
   [ -f "${required}" ] || { echo "missing required input: ${required}" >&2; exit 2; }
@@ -73,6 +78,7 @@ EOF
 export AAR_RUN9_CANARY_ROOT="${root}"
 export AAR_AUTODATA_CHECKOUT="${AUTODATA_CHECKOUT}"
 export AAR_AUTODATA_ENVIRONMENT="${ENVIRONMENT}"
+export AAR_AUTODATA_CONCURRENCY="${CONCURRENCY}"
 export AAR_AUTODATA_BROKER_PYTHON="${BROKER_PYTHON}"
 export AAR_AUTODATA_CAPABILITY_FILE="${capability_file}"
 export AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE="${FIRECRACKER_TOKEN}"
@@ -80,7 +86,7 @@ export AAR_AUTODATA_MODEL_ENV_FILE="${model_env}"
 export AAR_AUTODATA_CAMPAIGN_POLICY="${policy}"
 
 job_id="$(sbatch --parsable --output="${root}/slurm-%j.out" --export=ALL "${SCRIPT_DIR}/run_9_capacity_canary.sbatch")"
-printf 'job_id=%s\nroot=%s\nenvironment=%s\naar_git_commit=%s\nautodata_git_commit=%s\n' \
-  "${job_id}" "${root}" "${ENVIRONMENT}" "$(git -C "${REPO}" rev-parse HEAD)" "$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)" \
+printf 'job_id=%s\nroot=%s\nenvironment=%s\nconcurrency=%s\naar_git_commit=%s\nautodata_git_commit=%s\n' \
+  "${job_id}" "${root}" "${ENVIRONMENT}" "${CONCURRENCY}" "$(git -C "${REPO}" rev-parse HEAD)" "$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)" \
   | tee "${root}/submission.txt"
 unset MODEL_API_KEY
