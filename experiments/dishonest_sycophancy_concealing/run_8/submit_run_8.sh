@@ -19,8 +19,12 @@ SECRET_ENV="${AAR_RUN8_SECRET_ENV:-${REPO}/.env}"
 EXECSIDECAR_TOKEN_FILE=/storage/home/winnieyangwn/aar-worktrees/autodata/.sandoq-firecracker-token
 
 AUTODATA_MAX_COST_USD=100
-AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD="${AAR_RUN8_AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD:-0.05}"
 AUTODATA_REQUIRED_RETAINED_ROWS=64
+GENERATOR_MAX_INPUT_TOKENS="${AAR_RUN8_GENERATOR_MAX_INPUT_TOKENS:-4096}"
+GENERATOR_MAX_OUTPUT_TOKENS="${AAR_RUN8_GENERATOR_MAX_OUTPUT_TOKENS:-1536}"
+JUDGE_MAX_INPUT_TOKENS="${AAR_RUN8_JUDGE_MAX_INPUT_TOKENS:-4096}"
+JUDGE_MAX_OUTPUT_TOKENS="${AAR_RUN8_JUDGE_MAX_OUTPUT_TOKENS:-512}"
+MODEL_REQUEST_MAX_ATTEMPTS="${AAR_RUN8_MODEL_REQUEST_MAX_ATTEMPTS:-3}"
 GENERATOR_INPUT_RATE="${AAR_RUN8_GENERATOR_INPUT_USD_PER_MILLION:-1}"
 GENERATOR_OUTPUT_RATE="${AAR_RUN8_GENERATOR_OUTPUT_USD_PER_MILLION:-4}"
 JUDGE_INPUT_RATE="${AAR_RUN8_JUDGE_INPUT_USD_PER_MILLION:-1}"
@@ -142,10 +146,12 @@ REUSED_BASELINE="$(realpath -e -- "${REUSED_BASELINE}")"
 # A production target must be distinct from both retained smoke sizes. The cap
 # must cover two complete worst-case reservations because the service uses one
 # durable scope for both sequential proposal run IDs.
-"${REPO}/.venv/bin/python" - \
+AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD="$("${REPO}/.venv/bin/python" - \
   "${AUTODATA_MAX_COST_USD}" \
-  "${AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD}" \
   "${AUTODATA_REQUIRED_RETAINED_ROWS}" \
+  "${GENERATOR_MAX_INPUT_TOKENS}" "${GENERATOR_MAX_OUTPUT_TOKENS}" \
+  "${JUDGE_MAX_INPUT_TOKENS}" "${JUDGE_MAX_OUTPUT_TOKENS}" \
+  "${MODEL_REQUEST_MAX_ATTEMPTS}" \
   "${GENERATOR_INPUT_RATE}" "${GENERATOR_OUTPUT_RATE}" \
   "${JUDGE_INPUT_RATE}" "${JUDGE_OUTPUT_RATE}" <<'PY'
 from decimal import Decimal, InvalidOperation
@@ -153,8 +159,12 @@ import sys
 
 names = (
     "campaign cap",
-    "maximum estimated cost per task",
     "retained rows",
+    "Kimi maximum input tokens",
+    "Kimi maximum output tokens",
+    "Luna maximum input tokens",
+    "Luna maximum output tokens",
+    "model request maximum attempts",
     "Kimi input rate",
     "Kimi output rate",
     "Luna input rate",
@@ -162,19 +172,27 @@ names = (
 )
 try:
     cap = Decimal(sys.argv[1])
-    per_task = Decimal(sys.argv[2])
-    rows = int(sys.argv[3])
-    rates = [Decimal(value) for value in sys.argv[4:]]
+    rows = int(sys.argv[2])
+    token_limits = [int(value) for value in sys.argv[3:7]]
+    request_attempts = int(sys.argv[7])
+    rates = [Decimal(value) for value in sys.argv[8:12]]
 except (InvalidOperation, ValueError) as error:
     raise SystemExit(f"invalid Run 8 production control: {error}")
 if not cap.is_finite() or cap <= 0:
     raise SystemExit(f"{names[0]} must be a positive finite decimal")
-if not per_task.is_finite() or per_task <= 0:
-    raise SystemExit(f"{names[1]} must be a positive finite decimal")
-if rows <= 16 or str(rows) != sys.argv[3]:
+if rows <= 16 or str(rows) != sys.argv[2]:
     raise SystemExit("retained rows must be an integer greater than the 16-row smoke target")
+if any(value <= 0 for value in token_limits):
+    raise SystemExit("all model token ceilings must be positive integers")
+if request_attempts < 1 or request_attempts > 5:
+    raise SystemExit("model request maximum attempts must be from 1 through 5")
 if any(not rate.is_finite() or rate <= 0 for rate in rates):
     raise SystemExit("all Kimi and Luna token rates must be positive finite decimals")
+per_attempt = sum(
+    (Decimal(tokens) * rate for tokens, rate in zip(token_limits, rates)),
+    Decimal(0),
+) / Decimal(1_000_000)
+per_task = Decimal(request_attempts) * per_attempt
 source_count = max(96, (rows * 4 + 2) // 3)
 task_attempts = 2 + 2 * 64 + 3 * 32 + 7 * source_count
 required_cap = Decimal(2 * task_attempts) * per_task
@@ -182,7 +200,9 @@ if cap < required_cap:
     raise SystemExit(
         f"campaign cap {cap} cannot cover two conservative reservations totaling {required_cap}"
     )
+print(format(per_task, "f"))
 PY
+)"
 
 # Verify the exact deployment on every submission without retaining or using
 # its ephemeral direct proxy. Firecracker tasks use the stable qualified pod
@@ -297,6 +317,9 @@ profile_digest="$("${REPO}/.venv/bin/python" - \
   "${budget_scope_id}" "${AUTODATA_MAX_COST_USD}" \
   "${AUTODATA_REQUIRED_RETAINED_ROWS}" \
   "${AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD}" \
+  "${GENERATOR_MAX_INPUT_TOKENS}" "${GENERATOR_MAX_OUTPUT_TOKENS}" \
+  "${JUDGE_MAX_INPUT_TOKENS}" "${JUDGE_MAX_OUTPUT_TOKENS}" \
+  "${MODEL_REQUEST_MAX_ATTEMPTS}" \
   "${GENERATOR_INPUT_RATE}" "${GENERATOR_OUTPUT_RATE}" \
   "${JUDGE_INPUT_RATE}" "${JUDGE_OUTPUT_RATE}" <<'PY'
 import hashlib, json, sys
@@ -310,6 +333,7 @@ profile = {
     "max_cost_usd": sys.argv[5],
     "required_retained_rows": int(sys.argv[6]),
     "max_estimated_cost_per_task_usd": sys.argv[7],
+    "model_request_max_attempts": int(sys.argv[12]),
     "max_concurrency": 4,
     "max_wall_seconds": 10800,
     "training_view": "sft",
@@ -317,15 +341,17 @@ profile = {
         "model": "Kimi-K2.6",
         "deployment_id": "winnieyangwn-kimi26",
         "url": "https://ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud/v1",
-        "max_output_tokens": 1536,
-        "input_usd_per_million": sys.argv[8],
-        "output_usd_per_million": sys.argv[9],
+        "max_input_tokens": int(sys.argv[8]),
+        "max_output_tokens": int(sys.argv[9]),
+        "input_usd_per_million": sys.argv[13],
+        "output_usd_per_million": sys.argv[14],
     },
     "judge": {
         "model": "gpt-5-6-luna",
-        "max_output_tokens": 512,
-        "input_usd_per_million": sys.argv[10],
-        "output_usd_per_million": sys.argv[11],
+        "max_input_tokens": int(sys.argv[10]),
+        "max_output_tokens": int(sys.argv[11]),
+        "input_usd_per_million": sys.argv[15],
+        "output_usd_per_million": sys.argv[16],
     },
     "executor": {
         "kind": "sandoq-firecracker",
@@ -351,6 +377,11 @@ for item in \
   "VLLM_WORKER_SH:${VLLM_WORKER_SH}" \
   "AUTODATA_MAX_COST_USD:${AUTODATA_MAX_COST_USD}" \
   "AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD:${AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD}" \
+  "GENERATOR_MAX_INPUT_TOKENS:${GENERATOR_MAX_INPUT_TOKENS}" \
+  "GENERATOR_MAX_OUTPUT_TOKENS:${GENERATOR_MAX_OUTPUT_TOKENS}" \
+  "JUDGE_MAX_INPUT_TOKENS:${JUDGE_MAX_INPUT_TOKENS}" \
+  "JUDGE_MAX_OUTPUT_TOKENS:${JUDGE_MAX_OUTPUT_TOKENS}" \
+  "MODEL_REQUEST_MAX_ATTEMPTS:${MODEL_REQUEST_MAX_ATTEMPTS}" \
   "GENERATOR_INPUT_RATE:${GENERATOR_INPUT_RATE}" \
   "GENERATOR_OUTPUT_RATE:${GENERATOR_OUTPUT_RATE}" \
   "JUDGE_INPUT_RATE:${JUDGE_INPUT_RATE}" "JUDGE_OUTPUT_RATE:${JUDGE_OUTPUT_RATE}"; do
@@ -362,7 +393,7 @@ job_id="$(sbatch --parsable \
   --cpus-per-task=16 --mem=128G --time=02:00:00 \
   --job-name=aar-gemma-vllm-run8-launch \
   --output="${attempt_dir}/logs/pipeline-%j.out" \
-  --export=AAR_REPO="${REPO}",AAR_RUNTIME_ROOT="${attempt_dir}",AAR_RUN_ATTEMPT_DIR="${attempt_dir}",AAR_BASELINE_GIT_COMMIT="${commit}",AAR_REUSED_BASELINE="${REUSED_BASELINE}",HARNESS_ENV="${HARNESS_ENV}",LLM_UNCERTAINTY_SRC="${LLM_UNCERTAINTY_SRC}",LLM_UNCERTAINTY_SOURCE_MANIFEST="${LLM_UNCERTAINTY_SOURCE_MANIFEST}",AUTODATA_SOURCE_ROOT="${AUTODATA_ROOT}",AAR_RUN8_AUTODATA_SHA="${AUTODATA_SHA}",AAR_RUN8_BROKER_PYTHON="${BROKER_PYTHON}",AAR_RUN8_EXECSIDECAR_TOKEN_FILE="${EXECSIDECAR_TOKEN_FILE}",AAR_RUN8_ADAPTER_TOKEN_FILE="${adapter_token_file}",AAR_RUN8_BROKER_TOKEN_FILE="${broker_token_file}",AAR_RUN8_GENERATOR_URL="${GENERATOR_URL}",AAR_RUN8_VLLM_WORKER_SH="${VLLM_WORKER_SH}",AAR_RUN8_BUDGET_SCOPE_ID="${budget_scope_id}",AAR_RUN8_RESOURCE_PROFILE="${resource_profile}",AAR_RUN8_RESOURCE_PROFILE_SHA256="${profile_digest}",AAR_RUN8_AUTODATA_MAX_COST_USD="${AUTODATA_MAX_COST_USD}",AAR_RUN8_REQUIRED_RETAINED_ROWS="${AUTODATA_REQUIRED_RETAINED_ROWS}",AAR_RUN8_AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD="${AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD}",AAR_RUN8_GENERATOR_INPUT_USD_PER_MILLION="${GENERATOR_INPUT_RATE}",AAR_RUN8_GENERATOR_OUTPUT_USD_PER_MILLION="${GENERATOR_OUTPUT_RATE}",AAR_RUN8_JUDGE_INPUT_USD_PER_MILLION="${JUDGE_INPUT_RATE}",AAR_RUN8_JUDGE_OUTPUT_USD_PER_MILLION="${JUDGE_OUTPUT_RATE}",USER="${USER}" \
+  --export=AAR_REPO="${REPO}",AAR_RUNTIME_ROOT="${attempt_dir}",AAR_RUN_ATTEMPT_DIR="${attempt_dir}",AAR_BASELINE_GIT_COMMIT="${commit}",AAR_REUSED_BASELINE="${REUSED_BASELINE}",HARNESS_ENV="${HARNESS_ENV}",LLM_UNCERTAINTY_SRC="${LLM_UNCERTAINTY_SRC}",LLM_UNCERTAINTY_SOURCE_MANIFEST="${LLM_UNCERTAINTY_SOURCE_MANIFEST}",AUTODATA_SOURCE_ROOT="${AUTODATA_ROOT}",AAR_RUN8_AUTODATA_SHA="${AUTODATA_SHA}",AAR_RUN8_BROKER_PYTHON="${BROKER_PYTHON}",AAR_RUN8_EXECSIDECAR_TOKEN_FILE="${EXECSIDECAR_TOKEN_FILE}",AAR_RUN8_ADAPTER_TOKEN_FILE="${adapter_token_file}",AAR_RUN8_BROKER_TOKEN_FILE="${broker_token_file}",AAR_RUN8_GENERATOR_URL="${GENERATOR_URL}",AAR_RUN8_VLLM_WORKER_SH="${VLLM_WORKER_SH}",AAR_RUN8_BUDGET_SCOPE_ID="${budget_scope_id}",AAR_RUN8_RESOURCE_PROFILE="${resource_profile}",AAR_RUN8_RESOURCE_PROFILE_SHA256="${profile_digest}",AAR_RUN8_AUTODATA_MAX_COST_USD="${AUTODATA_MAX_COST_USD}",AAR_RUN8_REQUIRED_RETAINED_ROWS="${AUTODATA_REQUIRED_RETAINED_ROWS}",AAR_RUN8_GENERATOR_MAX_INPUT_TOKENS="${GENERATOR_MAX_INPUT_TOKENS}",AAR_RUN8_GENERATOR_MAX_OUTPUT_TOKENS="${GENERATOR_MAX_OUTPUT_TOKENS}",AAR_RUN8_JUDGE_MAX_INPUT_TOKENS="${JUDGE_MAX_INPUT_TOKENS}",AAR_RUN8_JUDGE_MAX_OUTPUT_TOKENS="${JUDGE_MAX_OUTPUT_TOKENS}",AAR_RUN8_MODEL_REQUEST_MAX_ATTEMPTS="${MODEL_REQUEST_MAX_ATTEMPTS}",AAR_RUN8_GENERATOR_INPUT_USD_PER_MILLION="${GENERATOR_INPUT_RATE}",AAR_RUN8_GENERATOR_OUTPUT_USD_PER_MILLION="${GENERATOR_OUTPUT_RATE}",AAR_RUN8_JUDGE_INPUT_USD_PER_MILLION="${JUDGE_INPUT_RATE}",AAR_RUN8_JUDGE_OUTPUT_USD_PER_MILLION="${JUDGE_OUTPUT_RATE}",USER="${USER}" \
   "${SCRIPT_DIR}/run_8_pipeline.sbatch")"
 
 printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nautodata_framework_commit=%s\nreused_baseline=%s\nresearch_chains=1\nmax_iterations_per_chain=2\nevaluator_jobs=1\nevaluator_gpus_per_job=4\nautodata_budget_scope_id=%s\nautodata_max_cost_usd=%s\nautodata_required_retained_rows=%s\ngenerator_deployment_id=winnieyangwn-kimi26\ngenerator_model=Kimi-K2.6\njudge_model=gpt-5-6-luna\n' \

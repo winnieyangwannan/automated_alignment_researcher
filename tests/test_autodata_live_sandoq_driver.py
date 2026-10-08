@@ -5,10 +5,12 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -66,6 +68,41 @@ class LiveSandoQRecipeTest(unittest.TestCase):
         serialized = json.dumps(value).lower()
         for forbidden in ("mask_factual", "sycophancy_eval", "abstentionbench"):
             self.assertNotIn(forbidden, serialized)
+
+    def test_recipe_check_allows_negative_source_constraints_only(self) -> None:
+        base_request = {
+            "schema": "aar.autodata.recipe-request/v1",
+            "safety_axis": "honesty_sycophancy_concealing_uncertainty",
+            "training_mechanism": "LoRA SFT on original examples.",
+        }
+
+        def run_check(goal: str) -> subprocess.CompletedProcess[str]:
+            with tempfile.TemporaryDirectory() as temporary:
+                recipe = Path(temporary) / "recipe"
+                shutil.copytree(RECIPE / "recipe", recipe)
+                (recipe / "request.json").write_text(
+                    json.dumps({**base_request, "goal": goal})
+                )
+                return subprocess.run(
+                    [sys.executable, str(recipe / "check.py")],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+        allowed = run_check(
+            "Generate original examples and do not imitate the prompt format, persona, "
+            "pressure phrasing, question form, or answer form of any evaluation benchmark."
+        )
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        for forbidden_goal in (
+            "Copy examples from an evaluation benchmark.",
+            "Use held-out prompts as templates.",
+            "Create legal document tasks from a collected source.",
+        ):
+            rejected = run_check(forbidden_goal)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("forbidden evaluation/source", rejected.stderr)
 
     def test_task_uses_qualified_kimi_and_luna_and_retains_usage(self) -> None:
         task_module = _module("autodata_recipe_task", RECIPE / "recipe" / "task.py")
@@ -174,6 +211,114 @@ class LiveSandoQRecipeTest(unittest.TestCase):
         self.assertEqual(totals["model_calls"], 1)
         self.assertEqual(totals["spent_cost_usd"], "0.00002")
 
+    def test_native_cli_uses_fixed_state_paths_and_structured_argv(self) -> None:
+        driver = _module(
+            "autodata_live_sandoq_driver_cli_contract",
+            REPO / "scripts" / "autodata_live_sandoq_driver.py",
+        )
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(
+            os.environ, {"AUTODATA_SOURCE_ROOT": str(AUTODATA_ROOT)}, clear=False
+        ), patch.object(driver.subprocess, "run") as run:
+            root = Path(temporary)
+            paths = {
+                "root": root,
+                "database": root / "state.db",
+                "artifacts": root / "artifacts",
+                "workspaces": root / "workspaces",
+            }
+            run.return_value = subprocess.CompletedProcess(
+                [], 0, stdout='{"status": "active"}\n', stderr=""
+            )
+            value = driver._autodata_cli(
+                paths, "workspace", "step", "ws_example", timeout=30
+            )
+        self.assertEqual(value, {"status": "active"})
+        command = run.call_args.args[0]
+        self.assertEqual(
+            command,
+            [
+                sys.executable,
+                "-m",
+                "autodata.cli",
+                "--state",
+                str(paths["database"]),
+                "--artifacts",
+                str(paths["artifacts"]),
+                "--workspaces",
+                str(paths["workspaces"]),
+                "workspace",
+                "step",
+                "ws_example",
+            ],
+        )
+        self.assertIsInstance(command, list)
+
+    def test_explicit_meta_execution_is_created_through_native_cli(self) -> None:
+        if not (AUTODATA_ROOT / "src" / "autodata" / "models.py").is_file():
+            self.skipTest("canonical AutoData checkout unavailable")
+        driver = _module(
+            "autodata_live_sandoq_driver_meta_cli",
+            REPO / "scripts" / "autodata_live_sandoq_driver.py",
+        )
+
+        class Store:
+            @staticmethod
+            def latest_snapshot(workspace_id):
+                return {"id": "snapshot-1", "root": str(snapshot)}
+
+            @staticmethod
+            def study_for_subject(kind, subject_id):
+                return "study-1"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot = root / "snapshot"
+            shutil.copytree(RECIPE, snapshot)
+            grounding = snapshot / "grounding" / "manifest.json"
+            grounding.write_text("{}")
+            draft = root / "draft"
+            draft.mkdir()
+            shutil.copy2(RECIPE / "autodata.workspace.json", draft)
+            paths = {
+                "root": root,
+                "draft": draft,
+                "state": root / "driver-state.json",
+            }
+            state = {"workspace_id": "ws_one", "source_count": 96}
+            request = {"run_id": "run-one", "spec": {"seed": 17}}
+            calls = []
+
+            def native_cli(unused_paths, *arguments, **unused):
+                calls.append(arguments)
+                if arguments[0] == "cancel":
+                    return {"execution_id": "exec_default", "status": "cancelled"}
+                if arguments[0] == "pipeline":
+                    return {"valid": True}
+                return {"execution_id": "exec_meta", "status": "active"}
+
+            with patch.object(driver, "_autodata_cli", side_effect=native_cli):
+                driver._protocol_create_meta(
+                    Store(),
+                    paths,
+                    state,
+                    request,
+                    {
+                        "execution_id": "exec_default",
+                        "snapshot_id": "snapshot-1",
+                    },
+                )
+
+            self.assertEqual(calls[0], ("cancel", "exec_default"))
+            self.assertEqual(calls[1][:2], ("pipeline", "validate"))
+            self.assertEqual(calls[2][:2], ("execution", "create"))
+            self.assertIn("--pipeline", calls[2])
+            self.assertIn("--execution", calls[2])
+            manifest = json.loads((root / "meta-execution.json").read_text())
+            self.assertEqual(len(manifest["tuning_task_ids"]), 64)
+            self.assertEqual(len(manifest["validation_task_ids"]), 32)
+            self.assertEqual(state["meta_execution_id"], "exec_meta")
+            self.assertEqual(state["workspace_snapshot_id"], "snapshot-1")
+
     def test_source_count_aligns_retained_target_with_acceptance_constraint(self) -> None:
         driver = _module(
             "autodata_live_sandoq_driver_source_count",
@@ -187,6 +332,26 @@ class LiveSandoQRecipeTest(unittest.TestCase):
             driver._maximum_model_task_attempts(count),
             2 + 2 * 64 + 3 * 32 + 7 * 342,
         )
+
+    def test_task_cost_ceiling_is_derived_from_tokens_rates_and_attempts(self) -> None:
+        driver = _module(
+            "autodata_live_sandoq_driver_cost_ceiling",
+            REPO / "scripts" / "autodata_live_sandoq_driver.py",
+        )
+        environment = {
+            "AAR_AUTODATA_GENERATOR_MAX_INPUT_TOKENS": "4096",
+            "AAR_AUTODATA_GENERATOR_MAX_TOKENS": "1536",
+            "AAR_AUTODATA_JUDGE_MAX_INPUT_TOKENS": "4096",
+            "AAR_AUTODATA_JUDGE_MAX_TOKENS": "512",
+            "AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "3",
+            "AAR_AUTODATA_GENERATOR_INPUT_USD_PER_MILLION": "1",
+            "AAR_AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION": "4",
+            "AAR_AUTODATA_JUDGE_INPUT_USD_PER_MILLION": "1",
+            "AAR_AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": "4",
+        }
+        with patch.dict(os.environ, environment, clear=False):
+            ceiling = driver._maximum_estimated_cost_per_task_usd()
+        self.assertEqual(str(ceiling), "0.049152")
 
     def test_final_dataset_must_meet_frozen_validity_floor(self) -> None:
         driver = _module(
@@ -231,6 +396,26 @@ class LiveSandoQRecipeTest(unittest.TestCase):
         self.assertEqual(raised.exception.usage["request_id"], "luna-malformed-1")
         self.assertEqual(raised.exception.usage["input_tokens"], 50)
 
+    def test_provider_usage_cannot_exceed_frozen_token_ceiling(self) -> None:
+        task_module = _module(
+            "autodata_recipe_task_token_ceiling", RECIPE / "recipe" / "task.py"
+        )
+        response = {
+            "id": "luna-over-limit-1",
+            "usage": {"input_tokens": 4097, "output_tokens": 1},
+        }
+        with self.assertRaises(task_module.MeteredCallError) as raised:
+            task_module._usage(
+                response,
+                role="judge",
+                model="gpt-5-6-luna",
+                input_rate=Decimal("1"),
+                output_rate=Decimal("4"),
+                max_input_tokens=4096,
+                max_output_tokens=512,
+            )
+        self.assertEqual(raised.exception.usage["input_tokens"], 4097)
+
     def test_runtime_rejects_retry_timeouts_larger_than_task_envelope(self) -> None:
         driver = _module(
             "autodata_live_sandoq_driver_timeout",
@@ -250,27 +435,11 @@ class LiveSandoQRecipeTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "task envelope"):
                 driver._runtime_executor(args)
 
-    def test_usage_tee_records_hidden_calls_without_persisting_hidden_content(self) -> None:
+    def test_native_artifact_collector_records_hidden_usage_without_copying_content(self) -> None:
         driver = _module(
             "autodata_live_sandoq_driver_hidden_usage",
             REPO / "scripts" / "autodata_live_sandoq_driver.py",
         )
-
-        class EphemeralTarget:
-            def __init__(self):
-                self.values = {}
-
-            def collect_path(self, root, relative_path):
-                payload = (root / relative_path).read_bytes()
-                self.values[relative_path] = payload
-                return {"ephemeral": relative_path}
-
-            def put_bytes(self, data, *, media_type, name=None):
-                self.values[name or "value"] = data
-                return {"ephemeral": name}
-
-            def get_bytes(self, ref):
-                return self.values[ref["ephemeral"]]
 
         usage = {
             "request_id": "hidden-luna-1",
@@ -297,25 +466,40 @@ class LiveSandoQRecipeTest(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            result_path = root / ".autodata" / "task-result.json"
-            result_path.parent.mkdir()
+            result_path = root / "artifacts" / "objects" / "sha256" / "aa" / "result"
+            result_path.parent.mkdir(parents=True)
             result_path.write_text(json.dumps(task_result))
             ledger_path = root / "usage.jsonl"
             ledger = driver._UsageLedger(ledger_path)
-            target = EphemeralTarget()
-            tee = driver._UsageTeeArtifacts(target, ledger)
-            tee.collect_path(root, ".autodata/task-result.json")
+            driver._collect_native_usage({"artifacts": root / "artifacts"}, ledger)
             persisted = ledger_path.read_text()
             self.assertEqual(ledger.totals()["model_calls"], 1)
             self.assertEqual(ledger.totals()["input_tokens"], 90)
             self.assertIn("hidden-luna-1", persisted)
             self.assertNotIn("secret-hidden-task-id", persisted)
             self.assertNotIn("secret hidden prompt", persisted)
-            self.assertIn(
-                b"secret hidden prompt",
-                target.values[".autodata/task-result.json"],
-            )
+            self.assertIn("secret hidden prompt", result_path.read_text())
             self.assertEqual(ledger_path.stat().st_mode & 0o777, 0o600)
+
+    def test_native_artifact_collector_fails_closed_on_malformed_usage(self) -> None:
+        driver = _module(
+            "autodata_live_sandoq_driver_malformed_usage",
+            REPO / "scripts" / "autodata_live_sandoq_driver.py",
+        )
+        task_result = {
+            "schema": "autodata.task-result/v1",
+            "task_id": "hidden-task-that-must-not-leak",
+            "provider_usage": {"malformed": True},
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result = root / "artifacts" / "objects" / "sha256" / "aa" / "result"
+            result.parent.mkdir(parents=True)
+            result.write_text(json.dumps(task_result))
+            ledger = driver._UsageLedger(root / "usage.jsonl")
+            with self.assertRaisesRegex(RuntimeError, "provider_usage must be an array") as raised:
+                driver._collect_native_usage({"artifacts": root / "artifacts"}, ledger)
+        self.assertNotIn("hidden-task-that-must-not-leak", str(raised.exception))
 
     def test_interactive_protocol_consumes_agent_authoring_before_native_review(self) -> None:
         if not (AUTODATA_ROOT / "src" / "autodata" / "models.py").is_file():
@@ -342,7 +526,6 @@ class LiveSandoQRecipeTest(unittest.TestCase):
             "AAR_AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION": "0",
             "AAR_AUTODATA_JUDGE_INPUT_USD_PER_MILLION": "1",
             "AAR_AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": "2",
-            "AAR_AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD": "0.01",
         }
         with tempfile.TemporaryDirectory() as temporary, patch.dict(
             os.environ, environment, clear=False
@@ -388,6 +571,10 @@ class LiveSandoQRecipeTest(unittest.TestCase):
             )
             created = driver._protocol_create(args)
             self.assertEqual(created["phase"], "workspace")
+            self.assertEqual(
+                created["native_status"]["workspace"]["id"],
+                created["workspace_id"],
+            )
             draft = args.state_root / "live-workspace"
             self.assertFalse((draft / "grounding").exists())
             self.assertFalse((draft / "autodata.pipeline.json").exists())
@@ -395,11 +582,14 @@ class LiveSandoQRecipeTest(unittest.TestCase):
             args.kind = "step"
             clarify = driver._protocol_step(args)["action"]
             self.assertEqual(clarify["kind"], "clarify_design")
-            args.kind = "action_complete"
             args.action_id = clarify["id"]
+            args.kind = "action_begin"
+            lease = driver._protocol_action_begin(args)["lease_token"]
+            args.kind = "action_complete"
             payload_path.write_text(
                 json.dumps(
                     {
+                        "lease_token": lease,
                         "result": {
                             "summary": "Confirmed the proposal-bound scientific intent.",
                             "decisions": ["Use synthetic scenarios only."],
@@ -413,11 +603,14 @@ class LiveSandoQRecipeTest(unittest.TestCase):
             grounding = driver._protocol_step(args)["action"]
             self.assertEqual(grounding["kind"], "author_grounding")
             self.assertFalse((draft / "grounding").exists())
-            args.kind = "action_complete"
             args.action_id = grounding["id"]
+            args.kind = "action_begin"
+            lease = driver._protocol_action_begin(args)["lease_token"]
+            args.kind = "action_complete"
             payload_path.write_text(
                 json.dumps(
                     {
+                        "lease_token": lease,
                         "result": {
                             "summary": "Authored synthetic grounding with provenance.",
                             "decisions": ["Retain the generated scenario manifest."],
@@ -435,11 +628,14 @@ class LiveSandoQRecipeTest(unittest.TestCase):
             self.assertTrue(
                 all(check["passed"] for check in approval["evidence"]["checks"])
             )
-            args.kind = "action_complete"
             args.action_id = approval["id"]
+            args.kind = "action_begin"
+            lease = driver._protocol_action_begin(args)["lease_token"]
+            args.kind = "action_complete"
             payload_path.write_text(
                 json.dumps(
                     {
+                        "lease_token": lease,
                         "result": {
                             "decision": "approve",
                             "feedback": "Integrity evidence passed.",
@@ -454,11 +650,14 @@ class LiveSandoQRecipeTest(unittest.TestCase):
             pipeline = driver._protocol_step(args)["action"]
             self.assertEqual(pipeline["kind"], "author_pipeline")
             self.assertFalse((draft / "autodata.pipeline.json").exists())
-            args.kind = "action_complete"
             args.action_id = pipeline["id"]
+            args.kind = "action_begin"
+            lease = driver._protocol_action_begin(args)["lease_token"]
+            args.kind = "action_complete"
             payload_path.write_text(
                 json.dumps(
                     {
+                        "lease_token": lease,
                         "result": {
                             "summary": "Authored the proposal-bound pipeline.",
                             "decisions": ["Use independent Luna row judging."],
@@ -561,8 +760,11 @@ class LiveSandoQRecipeTest(unittest.TestCase):
             "broker_auth_secret_ref": "TEST_BROKER_TOKEN",
             "non_secret_env": {
                 "AUTODATA_GENERATOR_DEPLOYMENT_ID": "winnieyangwn-kimi26",
+                "AUTODATA_GENERATOR_MAX_INPUT": "4096",
                 "AUTODATA_GENERATOR_MAX_OUTPUT": "1536",
+                "AUTODATA_JUDGE_MAX_INPUT": "4096",
                 "AUTODATA_JUDGE_MAX_OUTPUT": "512",
+                "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "3",
             },
         }
         ready = {
@@ -595,7 +797,8 @@ class LiveSandoQRecipeTest(unittest.TestCase):
                 "budget_scope_id": "scope-1",
                 "max_cost_usd": "10.00",
                 "required_retained_rows": 64,
-                "max_estimated_cost_per_task_usd": "0.01",
+                "max_estimated_cost_per_task_usd": "0.015360",
+                "model_request_max_attempts": 3,
                 "max_concurrency": 4,
                 "max_wall_seconds": 10800,
                 "training_view": "sft",
@@ -603,9 +806,14 @@ class LiveSandoQRecipeTest(unittest.TestCase):
                     "model": "Kimi-K2.6",
                     "deployment_id": "winnieyangwn-kimi26",
                     "url": "https://generator.invalid/v1",
+                    "max_input_tokens": 4096,
                     "max_output_tokens": 1536,
                 },
-                "judge": {"model": "gpt-5.6-luna", "max_output_tokens": 512},
+                "judge": {
+                    "model": "gpt-5.6-luna",
+                    "max_input_tokens": 4096,
+                    "max_output_tokens": 512,
+                },
                 "executor": {
                     key: executor[key]
                     for key in ("kind", "environment", "image", "expected_image_id")
@@ -661,7 +869,10 @@ class LiveSandoQRecipeTest(unittest.TestCase):
             }
             environment = {
                 "TEST_BROKER_TOKEN": "never-retain-this-token",
-                "AAR_AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD": "0.010",
+                "AAR_AUTODATA_GENERATOR_INPUT_USD_PER_MILLION": "0",
+                "AAR_AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION": "0",
+                "AAR_AUTODATA_JUDGE_INPUT_USD_PER_MILLION": "1",
+                "AAR_AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": "2",
             }
             with patch.dict(os.environ, environment, clear=False), patch.object(
                 driver.urllib.request,

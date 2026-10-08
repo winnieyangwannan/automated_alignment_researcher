@@ -158,9 +158,13 @@ def _verify_run(
     meta_id = str(manifest.get("meta_optimize_execution_id") or "")
     production_id = str(manifest.get("production_execution_id") or "")
     workspace_id = str(manifest.get("workspace_id") or "")
+    workspace_snapshot_id = str(manifest.get("workspace_snapshot_id") or "")
     study_id = str(manifest.get("study_id") or "")
-    if not workspace_id or not study_id:
-        _fail(f"{run_id} does not prove autonomous workspace/study creation")
+    if not workspace_id or not workspace_snapshot_id or not study_id:
+        _fail(
+            f"{run_id} does not prove autonomous workspace/study creation "
+            "and its frozen snapshot binding"
+        )
     if not meta_id or not production_id or meta_id == production_id:
         _fail(f"{run_id} does not identify distinct meta-optimize and production executions")
     _require_equal(manifest.get("execution_id"), production_id, f"{run_id} final execution")
@@ -307,6 +311,7 @@ def _verify_run(
         "dataset_sha256": dataset_digest,
         "row_count": row_count,
         "workspace_id": workspace_id,
+        "workspace_snapshot_id": workspace_snapshot_id,
         "meta_optimize_execution_id": meta_id,
         "production_execution_id": production_id,
         "model_calls": budget["model_calls"],

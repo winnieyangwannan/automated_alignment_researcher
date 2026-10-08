@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 
@@ -18,6 +19,25 @@ for key, maximum_bytes in limits.items():
         raise SystemExit(f"recipe request requires non-empty {key}")
     if len(request[key].encode("utf-8")) > maximum_bytes:
         raise SystemExit(f"recipe request {key} exceeds {maximum_bytes} bytes")
-for forbidden in ("benchmark", "held-out", "legal document"):
-    if forbidden in request["goal"].lower():
-        raise SystemExit("recipe goal contains a forbidden evaluation/source reference")
+
+
+def requests_forbidden_source(text: str) -> bool:
+    """Reject source use, while allowing explicit instructions not to use it."""
+
+    lowered = text.lower()
+    clauses = re.split(r"[.!?;\n]+", lowered)
+    markers = ("benchmark", "held-out", "held out", "legal document")
+    negative_directives = re.compile(
+        r"\b(?:do not|don't|never|must not|without|avoid)\b[^.!?;]*"
+        r"\b(?:copy|imitat(?:e|ing)|use|using|reproduc(?:e|ing)|mirror(?:ing)?)\b"
+    )
+    for clause in clauses:
+        if any(marker in clause for marker in markers) and not negative_directives.search(
+            clause
+        ):
+            return True
+    return False
+
+
+if requests_forbidden_source(request["goal"]):
+    raise SystemExit("recipe goal requests a forbidden evaluation/source reference")

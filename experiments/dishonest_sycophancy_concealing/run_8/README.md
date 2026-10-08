@@ -24,9 +24,11 @@ the authorized Firecracker Runner bearer at
 as an owner-owned mode-0600 file. The profile freezes 64 retained SFT rows per
 iteration, concurrency 4, and one $100 campaign cap across both iterations.
 The conservative accounting defaults are $1/M input tokens and $4/M output
-tokens for both Kimi and Luna, plus $0.05 per maximum model task; providers
-return token usage but no billable cost. Operators may override those rates,
-and the submitter always verifies that the cap covers two worst-case
+tokens for both Kimi and Luna. The launcher derives the maximum task
+reservation from the frozen input/output token ceilings, those rates, and the
+three-attempt request limit; it is not a separately configurable flat fee. The
+current controls derive a $0.049152 ceiling. Providers return token usage but no
+billable cost. The submitter verifies that the cap covers two worst-case
 reservations (898 task attempts per iteration at the frozen row target).
 
 ```bash

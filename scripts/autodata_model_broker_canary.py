@@ -103,6 +103,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-image-id", default=DEFAULT_IMAGE_ID)
     parser.add_argument("--generator-url", default=DEFAULT_GENERATOR_URL)
     parser.add_argument("--generator-deployment-id", default=GENERATOR_DEPLOYMENT_ID)
+    parser.add_argument("--generator-max-input-tokens", type=_positive_integer, default=4096)
+    parser.add_argument("--generator-max-output-tokens", type=_positive_integer, default=1536)
     parser.add_argument(
         "--generator-input-usd-per-million", type=_decimal, default=Decimal("1")
     )
@@ -115,6 +117,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--judge-output-usd-per-million", type=_decimal, default=Decimal("4")
     )
+    parser.add_argument("--judge-max-input-tokens", type=_positive_integer, default=4096)
+    parser.add_argument("--judge-max-output-tokens", type=_positive_integer, default=512)
+    parser.add_argument("--model-request-max-attempts", type=_positive_integer, default=3)
     parser.add_argument("--timeout-seconds", type=_positive_integer, default=900)
     return parser
 
@@ -280,7 +285,8 @@ def _model_environment(args: argparse.Namespace) -> dict[str, str]:
         "AUTODATA_GENERATOR_URL": args.generator_url.rstrip("/"),
         "AUTODATA_GENERATOR_MODEL": GENERATOR_MODEL,
         "AUTODATA_GENERATOR_DEPLOYMENT_ID": args.generator_deployment_id,
-        "AUTODATA_GENERATOR_MAX_OUTPUT": "1536",
+        "AUTODATA_GENERATOR_MAX_INPUT": str(args.generator_max_input_tokens),
+        "AUTODATA_GENERATOR_MAX_OUTPUT": str(args.generator_max_output_tokens),
         "AUTODATA_GENERATOR_TIMEOUT": "90",
         "AUTODATA_GENERATOR_INPUT_USD_PER_MILLION": str(
             args.generator_input_usd_per_million
@@ -290,7 +296,9 @@ def _model_environment(args: argparse.Namespace) -> dict[str, str]:
         ),
         "AUTODATA_JUDGE_URL": JUDGE_URL,
         "AUTODATA_JUDGE_MODEL": JUDGE_MODEL,
-        "AUTODATA_JUDGE_MAX_OUTPUT": "512",
+        "AUTODATA_JUDGE_MAX_INPUT": str(args.judge_max_input_tokens),
+        "AUTODATA_JUDGE_MAX_OUTPUT": str(args.judge_max_output_tokens),
+        "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": str(args.model_request_max_attempts),
         "AUTODATA_JUDGE_TIMEOUT": "90",
         "AUTODATA_JUDGE_INPUT_USD_PER_MILLION": str(args.judge_input_usd_per_million),
         "AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": str(args.judge_output_usd_per_million),

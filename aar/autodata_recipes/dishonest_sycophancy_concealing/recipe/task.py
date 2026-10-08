@@ -31,6 +31,17 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _bounded_positive_int_env(name: str, default: str, *, maximum: int) -> int:
+    raw = os.environ.get(name, default).strip()
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be a positive integer") from error
+    if value < 1 or value > maximum or str(value) != raw:
+        raise RuntimeError(f"{name} must be an integer from 1 through {maximum}")
+    return value
+
+
 def _post_json(
     url: str,
     payload: dict[str, Any],
@@ -45,7 +56,10 @@ def _post_json(
         method="POST",
     )
     last: Exception | None = None
-    for attempt in range(3):
+    attempts = _bounded_positive_int_env(
+        "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS", "3", maximum=5
+    )
+    for attempt in range(attempts):
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 value = json.load(response)
@@ -54,10 +68,10 @@ def _post_json(
             return value
         except (OSError, ValueError, urllib.error.HTTPError) as error:
             last = error
-            if attempt == 2:
+            if attempt == attempts - 1:
                 break
             time.sleep(2**attempt)
-    raise RuntimeError(f"model request failed after bounded retries: {last}")
+    raise RuntimeError(f"model request failed after {attempts} bounded attempts: {last}")
 
 
 def _json_object(text: str) -> dict[str, Any]:
@@ -84,6 +98,8 @@ def _usage(
     model: str,
     input_rate: Decimal,
     output_rate: Decimal,
+    max_input_tokens: int,
+    max_output_tokens: int,
 ) -> dict[str, Any]:
     raw = response.get("usage")
     if not isinstance(raw, dict):
@@ -105,7 +121,7 @@ def _usage(
     request_id = response.get("id")
     if not isinstance(request_id, str) or not request_id.strip():
         raise RuntimeError(f"{role} response omitted provider request id")
-    return {
+    usage = {
         "request_id": request_id.strip(),
         "role": role,
         "model": model,
@@ -114,6 +130,11 @@ def _usage(
         "estimated_cost_usd": format(cost, "f"),
         "cost_basis": "operator-configured-token-rates",
     }
+    if input_tokens > max_input_tokens or output_tokens > max_output_tokens:
+        raise MeteredCallError(
+            f"{role} usage exceeded the operator-pinned token ceiling", usage
+        )
+    return usage
 
 
 def _generator_text(response: dict[str, Any]) -> str:
@@ -201,6 +222,10 @@ def _generate(
         model=model,
         input_rate=Decimal(_required_env("AUTODATA_GENERATOR_INPUT_USD_PER_MILLION")),
         output_rate=Decimal(_required_env("AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION")),
+        max_input_tokens=_bounded_positive_int_env(
+            "AUTODATA_GENERATOR_MAX_INPUT", "4096", maximum=1_000_000
+        ),
+        max_output_tokens=max_tokens,
     )
     try:
         generated = _json_object(_generator_text(response))
@@ -256,6 +281,10 @@ def _judge(row: dict[str, str]) -> tuple[dict[str, Any], dict[str, Any]]:
         model=model,
         input_rate=Decimal(_required_env("AUTODATA_JUDGE_INPUT_USD_PER_MILLION")),
         output_rate=Decimal(_required_env("AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION")),
+        max_input_tokens=_bounded_positive_int_env(
+            "AUTODATA_JUDGE_MAX_INPUT", "4096", maximum=1_000_000
+        ),
+        max_output_tokens=int(os.environ.get("AUTODATA_JUDGE_MAX_OUTPUT", "512")),
     )
     try:
         verdict = _json_object(_judge_text(response))

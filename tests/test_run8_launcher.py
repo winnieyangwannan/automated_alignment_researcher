@@ -109,7 +109,13 @@ def test_models_budget_and_secrets_are_pinned() -> None:
     assert "requires HARNESS_ENV inside /storage/home/${USER}" in submit
     assert "AUTODATA_MAX_COST_USD=100" in submit
     assert "AUTODATA_REQUIRED_RETAINED_ROWS=64" in submit
-    assert "AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD:-0.05" in submit
+    assert "AAR_RUN8_AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD" not in submit
+    assert "GENERATOR_MAX_INPUT_TOKENS=\"${AAR_RUN8_GENERATOR_MAX_INPUT_TOKENS:-4096}\"" in submit
+    assert "GENERATOR_MAX_OUTPUT_TOKENS=\"${AAR_RUN8_GENERATOR_MAX_OUTPUT_TOKENS:-1536}\"" in submit
+    assert "JUDGE_MAX_INPUT_TOKENS=\"${AAR_RUN8_JUDGE_MAX_INPUT_TOKENS:-4096}\"" in submit
+    assert "JUDGE_MAX_OUTPUT_TOKENS=\"${AAR_RUN8_JUDGE_MAX_OUTPUT_TOKENS:-512}\"" in submit
+    assert "MODEL_REQUEST_MAX_ATTEMPTS=\"${AAR_RUN8_MODEL_REQUEST_MAX_ATTEMPTS:-3}\"" in submit
+    assert "per_task = Decimal(request_attempts) * per_attempt" in submit
     assert "AAR_RUN8_GENERATOR_INPUT_USD_PER_MILLION:-1" in submit
     assert "AAR_RUN8_GENERATOR_OUTPUT_USD_PER_MILLION:-4" in submit
     assert "AAR_RUN8_JUDGE_INPUT_USD_PER_MILLION:-1" in submit

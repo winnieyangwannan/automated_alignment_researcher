@@ -2,9 +2,10 @@
 """Run the real AAR AutoData workspace -> meta-optimize -> production lifecycle.
 
 This is the operator-owned implementation behind ``LiveModelLifecycleBackend``.
-It imports a pinned AutoData checkout, binds the AAR scientific request to the
-checked-in recipe, and executes every generation task through AutoData's native
-SandoQ Firecracker executor. Provider credentials remain broker/service-side.
+It invokes the pinned AutoData CLI as the public operational contract, binds the
+AAR scientific request to the checked-in recipe, and executes every generation
+task through AutoData's native SandoQ Firecracker executor. Provider credentials
+remain broker/service-side.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ import subprocess
 import sys
 import threading
 import urllib.request
-from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Mapping
@@ -69,6 +69,70 @@ def _install_autodata(root: Path) -> None:
     if not (source / "autodata" / "engine.py").is_file():
         raise RuntimeError(f"not an AutoData checkout: {root}")
     sys.path.insert(0, str(source))
+
+
+def _autodata_cli(
+    paths: Mapping[str, Path],
+    *arguments: str,
+    timeout: int | None = None,
+) -> dict[str, Any]:
+    """Invoke one fixed native AutoData CLI operation and parse its JSON result.
+
+    Callers construct ``arguments`` from server-owned paths and validated native
+    identifiers. No agent-supplied shell command or free-form argv is accepted.
+    """
+
+    checkout = Path(_required_env("AUTODATA_SOURCE_ROOT")).resolve()
+    source = checkout / "src"
+    if not (source / "autodata" / "cli.py").is_file():
+        raise RuntimeError(f"not an AutoData checkout: {checkout}")
+    environment = os.environ.copy()
+    python_path = environment.get("PYTHONPATH", "")
+    environment["PYTHONPATH"] = (
+        str(source) if not python_path else str(source) + os.pathsep + python_path
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "autodata.cli",
+        "--state",
+        str(paths["database"]),
+        "--artifacts",
+        str(paths["artifacts"]),
+        "--workspaces",
+        str(paths["workspaces"]),
+        *arguments,
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=paths["root"],
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=(
+            timeout
+            if timeout is not None
+            else int(os.environ.get("AAR_AUTODATA_MAX_WALL_SECONDS", "10800")) + 300
+        ),
+        check=False,
+    )
+    if completed.returncode:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(
+            "native AutoData CLI failed "
+            f"({completed.returncode}) for {' '.join(arguments[:2])}: {detail}"
+        )
+    try:
+        value = json.loads(completed.stdout)
+    except ValueError as error:
+        raise RuntimeError(
+            "native AutoData CLI returned invalid JSON for "
+            + " ".join(arguments[:2])
+        ) from error
+    if not isinstance(value, dict):
+        raise RuntimeError("native AutoData CLI response must be a JSON object")
+    return value
 
 
 def _git_head(root: Path) -> str:
@@ -222,7 +286,7 @@ class _UsageLedger:
             return
         if not isinstance(value, dict) or value.get("schema") != "autodata.task-result/v1":
             return
-        usage = value.get("provider_usage", [])
+        usage = value.get("provider_usage")
         if not isinstance(usage, list):
             raise RuntimeError("task result provider_usage must be an array")
         with self._lock:
@@ -254,59 +318,25 @@ class _UsageLedger:
         }
 
 
-class _UsageTeeArtifacts:
-    """Forward artifacts while extracting usage only; never persist hidden content."""
+def _collect_native_usage(paths: Mapping[str, Path], ledger: _UsageLedger) -> None:
+    """Collect provider usage from native immutable artifacts.
 
-    def __init__(self, target: Any, ledger: _UsageLedger) -> None:
-        self.target = target
-        self.ledger = ledger
+    The native CLI owns execution and artifact persistence. This collector keeps
+    AAR's campaign ledger complete without wrapping or replacing the upstream
+    executor. ``record_payload`` retains only validated provider usage fields;
+    prompts, responses, hidden task ids, and other task-result content are never
+    copied to the usage ledger or returned in an error.
+    """
 
-    def put_bytes(
-        self, data: bytes, *, media_type: str, name: str | None = None
-    ) -> Any:
-        self.ledger.record_payload(data)
-        return self.target.put_bytes(data, media_type=media_type, name=name)
-
-    def get_bytes(self, ref: Any) -> bytes:
-        return self.target.get_bytes(ref)
-
-    def collect_path(self, root: Path, relative_path: str) -> Any:
-        resolved_root = root.resolve()
-        source = (resolved_root / relative_path).resolve()
-        if source != resolved_root and resolved_root not in source.parents:
-            raise RuntimeError("usage tee artifact path escaped its result root")
-        if source.is_file() and not source.is_symlink():
-            self.ledger.record_payload(source.read_bytes())
-        return self.target.collect_path(root, relative_path)
-
-
-class _UsageRecordingExecutor:
-    """Executor protocol wrapper that records safe usage for every collection."""
-
-    def __init__(self, delegate: Any, ledger: _UsageLedger) -> None:
-        self.delegate = delegate
-        self.ledger = ledger
-        self.backend = delegate.backend
-
-    def submit(self, request: Any) -> Any:
-        return self.delegate.submit(request)
-
-    def poll(self, handle: Any) -> Any:
-        return self.delegate.poll(handle)
-
-    def cancel(self, handle: Any) -> None:
-        self.delegate.cancel(handle)
-
-    def collect(self, handle: Any, artifacts: Any) -> Any:
-        return self.delegate.collect(
-            handle, _UsageTeeArtifacts(artifacts, self.ledger)
-        )
-
-    def cleanup(self, handle: Any) -> None:
-        self.delegate.cleanup(handle)
-
-    def progress(self, handle: Any) -> Any:
-        return self.delegate.progress(handle)
+    objects = paths["artifacts"] / "objects" / "sha256"
+    if not objects.exists():
+        return
+    if objects.is_symlink() or not objects.is_dir():
+        raise RuntimeError("native AutoData artifact object root is unsafe")
+    for path in sorted(objects.glob("*/*")):
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeError("native AutoData artifact object is unsafe")
+        ledger.record_payload(path.read_bytes())
 
 
 def _source_task_count(required_rows: int) -> int:
@@ -345,16 +375,35 @@ def _maximum_model_task_attempts(source_count: int) -> int:
     return 2 + 2 * TUNING_COUNT + 3 * VALIDATION_COUNT + 7 * source_count
 
 
-def _final_dataset(store: Any, artifacts: Any, execution_id: str) -> dict[str, Any]:
-    from autodata.models import ArtifactRef
+def _native_export_dataset(
+    paths: Mapping[str, Path], execution_id: str, *, label: str
+) -> dict[str, Any]:
+    """Export a completed dataset through the native CLI and parse it."""
 
-    finalized = None
-    for event in store.list_events("execution", execution_id):
-        if event["kind"] == "execution.finalized":
-            finalized = json.loads(str(event["payloadJson"]))
-    if finalized is None:
-        raise RuntimeError(f"execution {execution_id} has no final dataset event")
-    return json.loads(artifacts.get_bytes(ArtifactRef.from_dict(finalized["dataset"])))
+    output = paths["root"] / "native-exports" / f"{label}.json"
+    result = _autodata_cli(
+        paths,
+        "export",
+        execution_id,
+        "--output",
+        str(output),
+        timeout=300,
+    )
+    if result.get("execution_id") != execution_id or not output.is_file():
+        raise RuntimeError("native AutoData export returned an inconsistent result")
+    try:
+        value = json.loads(output.read_text())
+    except ValueError as error:
+        raise RuntimeError("native AutoData export is not valid JSON") from error
+    if not isinstance(value, dict):
+        raise RuntimeError("native AutoData export must be a JSON object")
+    return value
+
+
+def _native_status(paths: Mapping[str, Path], subject_id: str) -> dict[str, Any]:
+    """Return AutoData's own status/dashboard snapshot for an authorized subject."""
+
+    return _autodata_cli(paths, "status", subject_id, timeout=300)
 
 
 def _runtime_executor(args: argparse.Namespace) -> dict[str, Any]:
@@ -362,10 +411,16 @@ def _runtime_executor(args: argparse.Namespace) -> dict[str, Any]:
         "AAR_AUTODATA_GENERATOR_TIMEOUT", "90"
     )
     judge_timeout = _positive_int_setting("AAR_AUTODATA_JUDGE_TIMEOUT", "90")
-    # Each request has at most three attempts and two bounded backoff pauses.
+    request_attempts = _positive_int_setting(
+        "AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS", "3"
+    )
+    if request_attempts > 5:
+        raise RuntimeError("model request attempts must not exceed five")
+    # Each request has a bounded number of attempts and exponential backoff.
     # Keep the combined generator+judge worst case within the task command's
     # 600-second sandbox timeout, including a small serialization margin.
-    if 3 * (generator_timeout + judge_timeout) + 6 > 570:
+    retry_backoff = 2 * sum(2**attempt for attempt in range(request_attempts - 1))
+    if request_attempts * (generator_timeout + judge_timeout) + retry_backoff > 570:
         raise RuntimeError(
             "generator and judge retry timeouts exceed the 600-second task envelope"
         )
@@ -374,6 +429,12 @@ def _runtime_executor(args: argparse.Namespace) -> dict[str, Any]:
     )
     judge_max_output = _positive_int_setting(
         "AAR_AUTODATA_JUDGE_MAX_TOKENS", "512"
+    )
+    generator_max_input = _positive_int_setting(
+        "AAR_AUTODATA_GENERATOR_MAX_INPUT_TOKENS", "4096"
+    )
+    judge_max_input = _positive_int_setting(
+        "AAR_AUTODATA_JUDGE_MAX_INPUT_TOKENS", "4096"
     )
     executor: dict[str, Any] = {
         "kind": "sandoq-firecracker",
@@ -393,6 +454,7 @@ def _runtime_executor(args: argparse.Namespace) -> dict[str, Any]:
                 "AAR_AUTODATA_GENERATOR_DEPLOYMENT_ID"
             ),
             "AUTODATA_GENERATOR_MAX_OUTPUT": str(generator_max_output),
+            "AUTODATA_GENERATOR_MAX_INPUT": str(generator_max_input),
             "AUTODATA_GENERATOR_TIMEOUT": str(generator_timeout),
             "AUTODATA_GENERATOR_INPUT_USD_PER_MILLION": str(
                 _positive_decimal_env(
@@ -407,6 +469,8 @@ def _runtime_executor(args: argparse.Namespace) -> dict[str, Any]:
             "AUTODATA_JUDGE_URL": args.judge_url,
             "AUTODATA_JUDGE_MODEL": args.judge_model,
             "AUTODATA_JUDGE_MAX_OUTPUT": str(judge_max_output),
+            "AUTODATA_JUDGE_MAX_INPUT": str(judge_max_input),
+            "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": str(request_attempts),
             "AUTODATA_JUDGE_TIMEOUT": str(judge_timeout),
             "AUTODATA_JUDGE_INPUT_USD_PER_MILLION": str(
                 _positive_decimal_env("AAR_AUTODATA_JUDGE_INPUT_USD_PER_MILLION")
@@ -422,22 +486,6 @@ def _runtime_executor(args: argparse.Namespace) -> dict[str, Any]:
             raise RuntimeError(f"broker auth secret environment variable is unset: {auth_ref}")
         executor["broker_auth_secret_ref"] = auth_ref
     return executor
-
-
-def _make_executor(
-    spec: Any, store: Any, artifacts: Any, usage_ledger: _UsageLedger
-) -> Any:
-    from autodata.executors import SandoQFirecrackerExecutor
-    from autodata.secrets import EnvironmentSecretResolver
-
-    resolver = EnvironmentSecretResolver()
-    if spec.broker_auth_secret_ref:
-        secret = resolver.resolve([spec.broker_auth_secret_ref])[spec.broker_auth_secret_ref]
-        store.register_secret_values([secret])
-        artifacts.register_secret_values([secret])
-    return _UsageRecordingExecutor(
-        SandoQFirecrackerExecutor(spec, resolver), usage_ledger
-    )
 
 
 def _protocol_paths(args: argparse.Namespace) -> dict[str, Path]:
@@ -463,7 +511,14 @@ def _protocol_request(args: argparse.Namespace) -> dict[str, Any]:
 
 def _protocol_runtime(
     args: argparse.Namespace,
-) -> tuple[Any, Any, Any, _UsageLedger, dict[str, Path], dict[str, Any]]:
+) -> tuple[Any, Any, _UsageLedger, dict[str, Path], dict[str, Any]]:
+    """Open read-only orchestration views not exposed by the native CLI.
+
+    The store is used to resolve frozen snapshot and winning-candidate roots
+    while constructing operator-owned execution manifests. Every lifecycle
+    mutation still goes through ``_autodata_cli``.
+    """
+
     from autodata.artifacts import FileArtifactStore
     from autodata.sqlite_store import SQLiteStateStore
 
@@ -473,15 +528,7 @@ def _protocol_runtime(
     artifacts = FileArtifactStore(paths["artifacts"])
     usage = _UsageLedger(paths["usage"])
     state = json.loads(paths["state"].read_text())
-    executor_spec = json.loads((paths["draft"] / "autodata.workspace.json").read_text())[
-        "execution_defaults"
-    ]["executor"]
-    from autodata.models import ExecutorSpec
-
-    executor = _make_executor(
-        ExecutorSpec.from_dict(executor_spec), store, artifacts, usage
-    )
-    return store, artifacts, executor, usage, paths, {**state, "request": request}
+    return store, artifacts, usage, paths, {**state, "request": request}
 
 
 def _protocol_usage_delta(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> dict[str, Any]:
@@ -575,7 +622,7 @@ def _resource_approval_evidence(
         ("max_cost_usd", controls["max_cost_usd"]),
         (
             "max_estimated_cost_per_task_usd",
-            _required_env("AAR_AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD"),
+            _maximum_estimated_cost_per_task_usd(),
         ),
     ):
         try:
@@ -595,10 +642,16 @@ def _resource_approval_evidence(
         or generator.get("url") != args.generator_url
         or generator.get("max_output_tokens")
         != int(executor["non_secret_env"]["AUTODATA_GENERATOR_MAX_OUTPUT"])
+        or generator.get("max_input_tokens")
+        != int(executor["non_secret_env"]["AUTODATA_GENERATOR_MAX_INPUT"])
         or not isinstance(judge, dict)
         or judge.get("model") != args.judge_model
         or judge.get("max_output_tokens")
         != int(executor["non_secret_env"]["AUTODATA_JUDGE_MAX_OUTPUT"])
+        or judge.get("max_input_tokens")
+        != int(executor["non_secret_env"]["AUTODATA_JUDGE_MAX_INPUT"])
+        or profile.get("model_request_max_attempts")
+        != int(executor["non_secret_env"]["AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS"])
         or not isinstance(pinned_executor, dict)
         or any(
             pinned_executor.get(key) != executor.get(key)
@@ -776,11 +829,6 @@ def _public_action(
 
 
 def _protocol_create(args: argparse.Namespace) -> dict[str, Any]:
-    from autodata.artifacts import FileArtifactStore
-    from autodata.models import load_workspace
-    from autodata.sqlite_store import SQLiteStateStore
-    from autodata.workspace import WorkspaceEngine
-
     request = _protocol_request(args)
     if request.get("spec", {}).get("training_view") != "sft":
         raise RuntimeError("the live recipe supports only the sft training view")
@@ -792,6 +840,7 @@ def _protocol_create(args: argparse.Namespace) -> dict[str, Any]:
             "state": "active",
             "phase": state["phase"],
             "workspace_id": state["workspace_id"],
+            "native_status": _native_status(paths, str(state["workspace_id"])),
         }
     required_rows = int(request["controls"]["required_retained_rows"])
     source_count = _source_task_count(required_rows)
@@ -851,96 +900,108 @@ def _protocol_create(args: argparse.Namespace) -> dict[str, Any]:
     }
     paths["draft"].mkdir()
     _write_json(paths["draft"] / "autodata.workspace.json", workspace_raw)
-    store = SQLiteStateStore(paths["database"])
-    artifacts = FileArtifactStore(paths["artifacts"])
-    usage = _UsageLedger(paths["usage"])
-    workspace_spec = load_workspace(paths["draft"] / "autodata.workspace.json")
-    executor = _make_executor(
-        workspace_spec.execution_defaults.executor, store, artifacts, usage
+    created = _autodata_cli(
+        paths,
+        "workspace",
+        "create",
+        "--brief",
+        str(paths["draft"] / "autodata.workspace.json"),
+        "--root",
+        str(paths["draft"]),
+        "--idempotency-key",
+        f"{request['run_id']}:workspace",
+        timeout=300,
     )
-    workspace = WorkspaceEngine.create(
-        store,
-        artifacts,
-        executor,
-        executor,
-        workspace_spec,
-        root=paths["draft"],
-        internal_root=paths["workspaces"] / "authoring",
-        idempotency_key=f"{request['run_id']}:workspace",
-    )
+    workspace_id = str(created.get("workspace_id") or "")
+    if not workspace_id.startswith("ws_"):
+        raise RuntimeError("native workspace create omitted workspace_id")
     state = {
         "schema": "aar.autodata.live-driver-state/v1",
         "phase": "workspace",
-        "workspace_id": workspace.workspace_id,
+        "workspace_id": workspace_id,
         "source_count": source_count,
         "required_rows": required_rows,
         "max_attempts": max_attempts,
     }
     _write_json(paths["state"], state)
-    return {"state": "active", "phase": "workspace", "workspace_id": workspace.workspace_id}
-
-
-def _protocol_workspace_engine(store: Any, artifacts: Any, executor: Any, state: Mapping[str, Any]):
-    from autodata.models import WorkspaceSpec
-    from autodata.workspace import WorkspaceEngine
-
-    row = store.get_workspace(str(state["workspace_id"]))
-    spec = WorkspaceSpec.from_dict(json.loads(str(row["specJson"])))
-    return WorkspaceEngine(
-        store, artifacts, executor, executor, str(state["workspace_id"])
-    ), spec
+    return {
+        "state": "active",
+        "phase": "workspace",
+        "workspace_id": workspace_id,
+        "native_status": _native_status(paths, workspace_id),
+    }
 
 
 def _protocol_create_meta(
     store: Any,
-    artifacts: Any,
-    executor: Any,
     paths: Mapping[str, Path],
     state: dict[str, Any],
     request: Mapping[str, Any],
     frozen: Mapping[str, Any],
 ) -> None:
-    from autodata.engine import ExecutionEngine
-    from autodata.models import ExecutionSpec, GroundingRef, load_pipeline, load_workspace
+    from autodata import ExecutionSpec
 
-    store.cancel_execution(str(frozen["execution_id"]))
+    _autodata_cli(paths, "cancel", str(frozen["execution_id"]), timeout=300)
     snapshot = store.latest_snapshot(str(state["workspace_id"]))
+    if snapshot is None or not snapshot.get("id"):
+        raise RuntimeError("frozen native workspace omitted its snapshot")
+    snapshot_id = str(snapshot["id"])
+    returned_snapshot_id = frozen.get("snapshot_id")
+    if returned_snapshot_id is not None and returned_snapshot_id != snapshot_id:
+        raise RuntimeError("native workspace freeze returned a different snapshot")
     snapshot_root = Path(str(snapshot["root"]))
     source_count = int(state["source_count"])
     task_ids = [f"safety-sft-{index + 1:04d}" for index in range(source_count)]
     grounding_path = snapshot_root / "grounding" / "manifest.json"
-    workspace_spec = load_workspace(paths["draft"] / "autodata.workspace.json")
-    meta_spec = ExecutionSpec(
-        grounding=GroundingRef(
-            "grounding/manifest.json",
-            "sha256:" + hashlib.sha256(grounding_path.read_bytes()).hexdigest(),
-        ),
-        mode="meta_optimize",
-        tuning_task_ids=tuple(task_ids[:TUNING_COUNT]),
-        validation_task_ids=tuple(task_ids[TUNING_COUNT : TUNING_COUNT + VALIDATION_COUNT]),
-        test_grounding=None,
-        split_seed=int(request["spec"]["seed"]),
-        executor=workspace_spec.execution_defaults.executor,
-        budget=workspace_spec.execution_defaults.budget,
-        concurrency=workspace_spec.execution_defaults.concurrency,
-        secret_references=(),
+    workspace = json.loads((paths["draft"] / "autodata.workspace.json").read_text())
+    defaults = dict(workspace["execution_defaults"])
+    meta_spec = ExecutionSpec.from_dict(
+        {
+            "schema": "autodata.execution/v1",
+            **defaults,
+            "grounding": {
+                "manifest_path": "grounding/manifest.json",
+                "digest": "sha256:"
+                + hashlib.sha256(grounding_path.read_bytes()).hexdigest(),
+            },
+            "mode": "meta_optimize",
+            "tuning_task_ids": task_ids[:TUNING_COUNT],
+            "validation_task_ids": task_ids[
+                TUNING_COUNT : TUNING_COUNT + VALIDATION_COUNT
+            ],
+            "split_seed": int(request["spec"]["seed"]),
+        }
     )
-    meta = ExecutionEngine.create(
-        store,
-        artifacts,
-        executor,
-        load_pipeline(snapshot_root / "autodata.pipeline.json"),
-        meta_spec,
-        pipeline_root=snapshot_root,
-        workspace_root=paths["workspaces"] / "executions",
-        idempotency_key=f"{request['run_id']}:meta-explicit-64",
-        study_id=store.study_for_subject("workspace", str(state["workspace_id"])),
-        workspace_id=str(state["workspace_id"]),
-        snapshot_id=str(snapshot["id"]),
+    meta_manifest = paths["root"] / "meta-execution.json"
+    _write_json(meta_manifest, meta_spec.to_dict())
+    _autodata_cli(
+        paths,
+        "pipeline",
+        "validate",
+        str(snapshot_root / "autodata.pipeline.json"),
+        timeout=300,
     )
+    created = _autodata_cli(
+        paths,
+        "execution",
+        "create",
+        "--pipeline",
+        str(snapshot_root / "autodata.pipeline.json"),
+        "--execution",
+        str(meta_manifest),
+        "--study-id",
+        str(store.study_for_subject("workspace", str(state["workspace_id"]))),
+        "--idempotency-key",
+        f"{request['run_id']}:meta-explicit-64",
+        timeout=300,
+    )
+    execution_id = str(created.get("execution_id") or "")
+    if not execution_id.startswith("exec_"):
+        raise RuntimeError("native execution create omitted meta execution_id")
     state.update(
         phase="meta_optimize",
-        meta_execution_id=meta.execution_id,
+        meta_execution_id=execution_id,
+        workspace_snapshot_id=snapshot_id,
         snapshot_root=str(snapshot_root),
     )
     _write_json(paths["state"], state)
@@ -948,41 +1009,54 @@ def _protocol_create_meta(
 
 def _protocol_create_production(
     store: Any,
-    artifacts: Any,
-    executor: Any,
     paths: Mapping[str, Path],
     state: dict[str, Any],
     request: Mapping[str, Any],
     completed: Mapping[str, Any],
 ) -> None:
-    from autodata.engine import ExecutionEngine
-    from autodata.models import ExecutionSpec, load_pipeline
+    from autodata import ExecutionSpec
 
     meta_row = store.get_execution(str(state["meta_execution_id"]))
-    meta_spec = ExecutionSpec.from_dict(json.loads(str(meta_row["executionJson"])))
     winner = store.get_candidate(str(completed["winner_candidate_id"]))
     winner_root = Path(str(winner["workspace"]))
-    production_spec = replace(
-        meta_spec,
-        mode="production",
-        tuning_task_ids=(),
-        validation_task_ids=(),
-        budget=replace(meta_spec.budget, max_task_attempts=int(state["max_attempts"])),
+    raw = json.loads(str(meta_row["executionJson"]))
+    raw["mode"] = "production"
+    raw.pop("tuning_task_ids", None)
+    raw.pop("validation_task_ids", None)
+    raw["budget"] = {
+        **raw["budget"],
+        "max_task_attempts": int(state["max_attempts"]),
+    }
+    production_spec = ExecutionSpec.from_dict(raw)
+    production_manifest = paths["root"] / "production-execution.json"
+    _write_json(production_manifest, production_spec.to_dict())
+    _autodata_cli(
+        paths,
+        "pipeline",
+        "validate",
+        str(winner_root / "autodata.pipeline.json"),
+        timeout=300,
     )
-    production = ExecutionEngine.create(
-        store,
-        artifacts,
-        executor,
-        load_pipeline(winner_root / "autodata.pipeline.json"),
-        production_spec,
-        pipeline_root=winner_root,
-        workspace_root=paths["workspaces"] / "production",
-        idempotency_key=f"{request['run_id']}:production",
-        study_id=store.study_for_subject("workspace", str(state["workspace_id"])),
+    created = _autodata_cli(
+        paths,
+        "execution",
+        "create",
+        "--pipeline",
+        str(winner_root / "autodata.pipeline.json"),
+        "--execution",
+        str(production_manifest),
+        "--study-id",
+        str(store.study_for_subject("workspace", str(state["workspace_id"]))),
+        "--idempotency-key",
+        f"{request['run_id']}:production",
+        timeout=300,
     )
+    execution_id = str(created.get("execution_id") or "")
+    if not execution_id.startswith("exec_"):
+        raise RuntimeError("native execution create omitted production execution_id")
     state.update(
         phase="production",
-        production_execution_id=production.execution_id,
+        production_execution_id=execution_id,
         winner_root=str(winner_root),
     )
     _write_json(paths["state"], state)
@@ -990,13 +1064,14 @@ def _protocol_create_production(
 
 def _protocol_final_result(
     store: Any,
-    artifacts: Any,
     paths: Mapping[str, Path],
     state: Mapping[str, Any],
 ) -> dict[str, Any]:
-    meta_dataset = _final_dataset(store, artifacts, str(state["meta_execution_id"]))
-    production_dataset = _final_dataset(
-        store, artifacts, str(state["production_execution_id"])
+    meta_dataset = _native_export_dataset(
+        paths, str(state["meta_execution_id"]), label="meta-optimize"
+    )
+    production_dataset = _native_export_dataset(
+        paths, str(state["production_execution_id"]), label="production"
     )
     meta_valid = _require_valid_aggregate(meta_dataset, execution_label="meta-optimize")
     production_valid = _require_valid_aggregate(
@@ -1035,6 +1110,7 @@ def _protocol_final_result(
             "study_id": store.study_for_subject("workspace", str(state["workspace_id"])),
             "execution_id": state["production_execution_id"],
             "workspace_id": state["workspace_id"],
+            "workspace_snapshot_id": state["workspace_snapshot_id"],
             "meta_optimize_execution_id": state["meta_execution_id"],
             "production_execution_id": state["production_execution_id"],
             "recipe_digest": _tree_digest(paths["draft"]),
@@ -1066,60 +1142,97 @@ def _protocol_final_result(
         },
         "status_fields": {
             "workspace_id": state["workspace_id"],
+            "workspace_snapshot_id": state["workspace_snapshot_id"],
             "meta_execution_id": state["meta_execution_id"],
             "production_execution_id": state["production_execution_id"],
             "retained_rows": len(rows),
         },
+        "native_status": _native_status(
+            paths, str(state["production_execution_id"])
+        ),
     }
 
 
 def _protocol_step(args: argparse.Namespace) -> dict[str, Any]:
-    from autodata.engine import ExecutionEngine
+    from autodata import ActionSpec
 
-    store, artifacts, executor, _, paths, state = _protocol_runtime(args)
+    store, artifacts, _, paths, state = _protocol_runtime(args)
     request = state.pop("request")
     if paths["pending"].is_file():
         saved = json.loads(paths["pending"].read_text())
-        return {"state": "waiting_action", "phase": state["phase"], "action": saved["public"]}
+        return {
+            "state": "waiting_action",
+            "phase": state["phase"],
+            "action": saved["public"],
+            "native_status": _native_status(
+                paths, str(saved["native"]["scope"]["id"])
+            ),
+        }
     if state["phase"] == "workspace":
-        engine, _ = _protocol_workspace_engine(store, artifacts, executor, state)
-        value = engine.step()
-        if hasattr(value, "kind"):
-            public = _public_action(value, artifacts, request, args)
-            _write_json(paths["pending"], {"native": value.to_dict(), "public": public})
-            return {"state": "waiting_action", "phase": "workspace", "action": public}
+        value = _autodata_cli(
+            paths, "workspace", "step", str(state["workspace_id"])
+        )
+        if value.get("schema") == "autodata.action/v1":
+            action = ActionSpec.from_dict(value)
+            public = _public_action(action, artifacts, request, args)
+            _write_json(paths["pending"], {"native": value, "public": public})
+            return {
+                "state": "waiting_action",
+                "phase": "workspace",
+                "action": public,
+                "native_status": _native_status(paths, str(state["workspace_id"])),
+            }
         if value.get("status") != "frozen":
-            return dict(value)
-        _protocol_create_meta(store, artifacts, executor, paths, state, request, value)
+            return {
+                "state": "active",
+                "phase": "workspace",
+                "workspace_id": state["workspace_id"],
+                "native_status": _native_status(paths, str(state["workspace_id"])),
+            }
+        _protocol_create_meta(store, paths, state, request, value)
         return {
             "state": "active",
             "phase": "meta_optimize",
             "workspace_id": state["workspace_id"],
             "execution_id": state["meta_execution_id"],
+            "native_status": _native_status(
+                paths, str(state["meta_execution_id"])
+            ),
         }
     execution_id = (
         state["meta_execution_id"]
         if state["phase"] == "meta_optimize"
         else state["production_execution_id"]
     )
-    engine = ExecutionEngine(store, artifacts, executor, str(execution_id))
-    value = engine.step()
-    if hasattr(value, "kind"):
-        public = _public_action(value, artifacts, request, args)
-        _write_json(paths["pending"], {"native": value.to_dict(), "public": public})
-        return {"state": "waiting_action", "phase": state["phase"], "action": public}
+    value = _autodata_cli(paths, "execution", "step", str(execution_id))
+    if value.get("schema") == "autodata.action/v1":
+        action = ActionSpec.from_dict(value)
+        public = _public_action(action, artifacts, request, args)
+        _write_json(paths["pending"], {"native": value, "public": public})
+        return {
+            "state": "waiting_action",
+            "phase": state["phase"],
+            "action": public,
+            "native_status": _native_status(paths, str(execution_id)),
+        }
     if value.get("status") != "completed":
-        return dict(value)
+        return {
+            "state": "active",
+            "phase": state["phase"],
+            "execution_id": execution_id,
+            "native_status": _native_status(paths, str(execution_id)),
+        }
     if state["phase"] == "meta_optimize":
-        _protocol_create_production(
-            store, artifacts, executor, paths, state, request, value
-        )
+        _protocol_create_production(store, paths, state, request, value)
         return {
             "state": "active",
             "phase": "production",
             "execution_id": state["production_execution_id"],
+            "native_status": _native_status(
+                paths, str(state["production_execution_id"])
+            ),
         }
-    return _protocol_final_result(store, artifacts, paths, state)
+    return _protocol_final_result(store, paths, state)
 
 
 def _copy_authored_tree(source: Path, destination: Path, *, grounding_only: bool) -> None:
@@ -1204,10 +1317,12 @@ def _agent_action_result(
     raise RuntimeError(f"unsupported native action kind: {kind}")
 
 
-def _protocol_action(args: argparse.Namespace) -> dict[str, Any]:
-    from autodata.models import ActionSpec
+def _pending_native_action(
+    args: argparse.Namespace,
+) -> tuple[Any, dict[str, Path], dict[str, Any]]:
+    from autodata import ActionSpec
 
-    store, _, _, _, paths, state = _protocol_runtime(args)
+    _, _, _, paths, state = _protocol_runtime(args)
     state.pop("request")
     if not paths["pending"].is_file():
         raise RuntimeError("no native action is pending")
@@ -1215,15 +1330,49 @@ def _protocol_action(args: argparse.Namespace) -> dict[str, Any]:
     action = ActionSpec.from_dict(pending["native"])
     if args.action_id != action.id:
         raise RuntimeError("action id does not match the pending native action")
+    return action, paths, state
+
+
+def _protocol_action_begin(args: argparse.Namespace) -> dict[str, Any]:
+    action, paths, state = _pending_native_action(args)
+    begun = _autodata_cli(paths, "action", "begin", action.id, timeout=300)
+    token = begun.get("lease_token")
+    if not isinstance(token, str) or not token:
+        raise RuntimeError("native action begin omitted lease_token")
+    return {
+        "state": "waiting_action",
+        "phase": state["phase"],
+        "workspace_id": state["workspace_id"],
+        "action": begun.get("action"),
+        "lease_token": token,
+        "native_status": _native_status(paths, str(action.scope.id)),
+    }
+
+
+def _protocol_action(args: argparse.Namespace) -> dict[str, Any]:
+    action, paths, state = _pending_native_action(args)
     payload = json.loads(args.payload.read_text())
+    lease_token = payload.get("lease_token")
+    if not isinstance(lease_token, str) or not lease_token:
+        raise RuntimeError("native action completion requires its lease_token")
     if args.kind == "action_complete":
         supplied = payload.get("result")
         if not isinstance(supplied, dict):
             raise RuntimeError("action completion requires an object result")
         result = _agent_action_result(action, supplied, paths)
-        begun = store.begin_action(action.id, expected_revision=action.scope.revision)
-        token = str(begun["leaseToken"])
-        store.complete_action(action.id, lease_token=token, result=result)
+        result_path = paths["root"] / "action-results" / f"{action.id}.json"
+        _write_json(result_path, result)
+        _autodata_cli(
+            paths,
+            "action",
+            "complete",
+            action.id,
+            "--lease-token",
+            lease_token,
+            "--result",
+            str(result_path),
+            timeout=300,
+        )
         audit = json.loads(paths["audit"].read_text()) if paths["audit"].is_file() else []
         audit.append(
             {
@@ -1246,9 +1395,17 @@ def _protocol_action(args: argparse.Namespace) -> dict[str, Any]:
         reason = payload.get("reason")
         if not isinstance(reason, str) or not reason.strip():
             raise RuntimeError("action failure requires a non-empty reason")
-        begun = store.begin_action(action.id, expected_revision=action.scope.revision)
-        token = str(begun["leaseToken"])
-        store.fail_action(action.id, lease_token=token, reason=reason.strip())
+        _autodata_cli(
+            paths,
+            "action",
+            "fail",
+            action.id,
+            "--lease-token",
+            lease_token,
+            "--reason",
+            reason.strip(),
+            timeout=300,
+        )
     else:
         raise RuntimeError(f"unsupported action operation: {args.kind}")
     paths["pending"].unlink()
@@ -1256,6 +1413,7 @@ def _protocol_action(args: argparse.Namespace) -> dict[str, Any]:
         "state": "active",
         "phase": state["phase"],
         "workspace_id": state["workspace_id"],
+        "native_status": _native_status(paths, str(action.scope.id)),
     }
 
 
@@ -1320,11 +1478,54 @@ def _protocol_step_model_tasks(args: argparse.Namespace) -> int:
     return 0
 
 
+def _maximum_estimated_cost_per_task_usd() -> Decimal:
+    """Derive the fail-closed task reservation from frozen model controls."""
+
+    attempts = _positive_int_setting(
+        "AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS", "3"
+    )
+    if attempts > 5:
+        raise RuntimeError("model request attempts must not exceed five")
+    generator_input = _positive_int_setting(
+        "AAR_AUTODATA_GENERATOR_MAX_INPUT_TOKENS", "4096"
+    )
+    generator_output = _positive_int_setting(
+        "AAR_AUTODATA_GENERATOR_MAX_TOKENS", "1536"
+    )
+    judge_input = _positive_int_setting(
+        "AAR_AUTODATA_JUDGE_MAX_INPUT_TOKENS", "4096"
+    )
+    judge_output = _positive_int_setting(
+        "AAR_AUTODATA_JUDGE_MAX_TOKENS", "512"
+    )
+    generator_input_rate = _positive_decimal_env(
+        "AAR_AUTODATA_GENERATOR_INPUT_USD_PER_MILLION", allow_zero=True
+    )
+    generator_output_rate = _positive_decimal_env(
+        "AAR_AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION", allow_zero=True
+    )
+    judge_input_rate = _positive_decimal_env(
+        "AAR_AUTODATA_JUDGE_INPUT_USD_PER_MILLION"
+    )
+    judge_output_rate = _positive_decimal_env(
+        "AAR_AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION"
+    )
+    one_attempt = (
+        Decimal(generator_input) * generator_input_rate
+        + Decimal(generator_output) * generator_output_rate
+        + Decimal(judge_input) * judge_input_rate
+        + Decimal(judge_output) * judge_output_rate
+    ) / Decimal(1_000_000)
+    return Decimal(attempts) * one_attempt
+
+
 def _protocol_prepare(args: argparse.Namespace) -> dict[str, Any]:
     tasks = _protocol_step_model_tasks(args)
-    maximum = Decimal(tasks) * _positive_decimal_env(
-        "AAR_AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD"
-    ) if tasks else Decimal(0)
+    maximum = (
+        Decimal(tasks) * _maximum_estimated_cost_per_task_usd()
+        if tasks
+        else Decimal(0)
+    )
     return {
         "maximum_cost_usd": format(maximum, "f"),
         "performs_model_call": tasks > 0,
@@ -1334,29 +1535,46 @@ def _protocol_prepare(args: argparse.Namespace) -> dict[str, Any]:
 
 def _protocol_execute(args: argparse.Namespace) -> dict[str, Any]:
     paths = _protocol_paths(args)
-    before = _UsageLedger(paths["usage"]).calls()
+    ledger = _UsageLedger(paths["usage"])
+    before = ledger.calls()
+    result: dict[str, Any] | None = None
+    failure: Exception | None = None
+    usage_complete = True
     try:
         if args.kind == "create_workspace":
             result = _protocol_create(args)
         elif args.kind == "step":
             result = _protocol_step(args)
+        elif args.kind == "action_begin":
+            result = _protocol_action_begin(args)
         elif args.kind in {"action_complete", "action_fail"}:
             result = _protocol_action(args)
         else:
             raise RuntimeError(f"unsupported protocol operation kind: {args.kind}")
     except Exception as exc:
-        after = _UsageLedger(paths["usage"]).calls()
+        failure = exc
+    try:
+        _collect_native_usage(paths, ledger)
+    except Exception as exc:
+        usage_complete = False
+        failure = RuntimeError("native AutoData provider usage collection failed")
+        failure.__cause__ = exc
+    after = ledger.calls()
+    usage = _protocol_usage_delta(before, after)
+    if failure is not None:
         _write_json(
             args.output,
             {
                 "state": "failed",
-                "error": str(exc),
-                "usage": _protocol_usage_delta(before, after),
+                "error": str(failure),
+                "usage": usage,
+                "usage_complete": usage_complete,
             },
         )
-        raise
-    after = _UsageLedger(paths["usage"]).calls()
-    return {**result, "usage": _protocol_usage_delta(before, after)}
+        raise failure
+    if result is None:
+        raise RuntimeError("native AutoData operation omitted its result")
+    return {**result, "usage": usage, "usage_complete": usage_complete}
 
 
 def parser() -> argparse.ArgumentParser:
@@ -1364,7 +1582,13 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--operation", choices=("prepare", "execute"), required=True)
     result.add_argument(
         "--kind",
-        choices=("create_workspace", "step", "action_complete", "action_fail"),
+        choices=(
+            "create_workspace",
+            "step",
+            "action_begin",
+            "action_complete",
+            "action_fail",
+        ),
         required=True,
     )
     result.add_argument("--request", type=Path, required=True)

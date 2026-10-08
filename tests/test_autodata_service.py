@@ -69,13 +69,19 @@ class InteractiveBackend(FakeBackend):
     def __init__(self):
         self.stage = 0
         self.completions = []
+        self.begun_actions = []
 
     @property
     def interactive(self):
         return True
 
     def create_workspace(self, job_root, request, ledger):
-        return {"state": "active", "phase": "grounding", "workspace_id": "ws-live"}
+        return {
+            "state": "active",
+            "phase": "grounding",
+            "workspace_id": "ws-live",
+            "native_status": {"workspace": {"id": "ws-live", "phase": "clarification"}},
+        }
 
     def step_interactive(self, job_root, request, ledger):
         if self.stage == 0:
@@ -122,6 +128,9 @@ class InteractiveBackend(FakeBackend):
     def action_interactive(
         self, operation, job_root, request, action_id, payload, ledger
     ):
+        if operation == "begin":
+            self.begun_actions.append(action_id)
+            return {"lease_token": f"native-{action_id}"}
         self.completions.append((operation, action_id, payload))
         self.stage += 1
         return {"state": "active", "phase": "advance"}
@@ -312,6 +321,7 @@ class AutoDataJobServiceTest(TestCase):
             service = AutoDataJobService(Path(td) / "state", SHA, backend=backend)
             created = service.submit(request("interactive"))
             self.assertEqual(created["workspace_id"], "ws-live")
+            self.assertEqual(created["native_status"]["workspace"]["id"], "ws-live")
             service.step("interactive")
             for _ in range(100):
                 action_state = service.status("interactive")
@@ -320,6 +330,10 @@ class AutoDataJobServiceTest(TestCase):
                 time.sleep(0.01)
             self.assertEqual(action_state["pending_action"]["kind"], "author_grounding")
             lease = service.lease_action("interactive", "author-1")
+            self.assertEqual(lease["lease_token"], "native-author-1")
+            retried_lease = service.lease_action("interactive", "author-1")
+            self.assertEqual(retried_lease["lease_token"], lease["lease_token"])
+            self.assertEqual(backend.begun_actions.count("author-1"), 1)
             service.complete_action(
                 "interactive",
                 "author-1",
@@ -337,6 +351,9 @@ class AutoDataJobServiceTest(TestCase):
             self.assertEqual(completed["state"], "complete")
             approvals = [item for item in backend.completions if item[1] == "approve-1"]
             self.assertEqual(len(approvals), 1)
+            self.assertEqual(
+                approvals[0][2]["lease_token"], "native-approve-1"
+            )
             attestation = approvals[0][2]["result"]["approval_attestation"]
             self.assertEqual(attestation["principal"], "aar-integrity-monitor")
             self.assertLess(
@@ -625,6 +642,70 @@ class AutoDataJobServiceTest(TestCase):
                 execute[execute.index("--resource-profile-sha256") + 1],
                 backend.resource_profile_sha256,
             )
+
+    def test_live_backend_charges_full_reservation_when_usage_is_incomplete(self):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            driver = root / "driver.py"
+            driver.write_text("pass\n")
+            canary, profile = live_evidence(root)
+            os.environ["TEST_GENERATOR_TOKEN"] = "generator-secret"
+            os.environ["TEST_JUDGE_TOKEN"] = "judge-secret"
+            try:
+                backend = MODULE.LiveModelLifecycleBackend(
+                    driver_script=driver,
+                    generator_model="Kimi-K2.6",
+                    judge_model="gpt-5.6-luna",
+                    generator_url="https://generator.invalid/v1",
+                    judge_url="https://judge.invalid/v1/responses",
+                    generator_token_env="TEST_GENERATOR_TOKEN",
+                    judge_token_env="TEST_JUDGE_TOKEN",
+                    model_canary_report=canary,
+                    resource_profile_path=profile,
+                )
+                ledger = MODULE.CampaignBudgetLedger(root / "ledger")
+                ledger.register(request()["controls"])
+
+                def fake_run(command, **kwargs):
+                    output = Path(command[command.index("--output") + 1])
+                    if command[command.index("--operation") + 1] == "prepare":
+                        output.write_text(
+                            json.dumps(
+                                {
+                                    "maximum_cost_usd": "0.40",
+                                    "performs_model_call": True,
+                                }
+                            )
+                        )
+                        return SimpleNamespace(returncode=0, stderr="")
+                    output.write_text(
+                        json.dumps(
+                            {
+                                "state": "failed",
+                                "usage_complete": False,
+                                "usage": {
+                                    "spent_cost_usd": "0.01",
+                                    "model_calls": 1,
+                                    "input_tokens": 10,
+                                    "output_tokens": 1,
+                                },
+                            }
+                        )
+                    )
+                    return SimpleNamespace(returncode=1, stderr="usage collection failed")
+
+                job_root = root / "job"
+                job_root.mkdir()
+                (job_root / "request.json").write_text("{}")
+                with patch.object(MODULE.subprocess, "run", side_effect=fake_run):
+                    with self.assertRaisesRegex(RuntimeError, "usage collection failed"):
+                        backend.create_workspace(job_root, request(), ledger)
+                self.assertEqual(
+                    ledger.snapshot("campaign-1")["spent_cost_usd"], "0.40"
+                )
+            finally:
+                os.environ.pop("TEST_GENERATOR_TOKEN", None)
+                os.environ.pop("TEST_JUDGE_TOKEN", None)
 
     def test_live_backend_rejects_mutable_canary_evidence(self):
         with TemporaryDirectory() as td:

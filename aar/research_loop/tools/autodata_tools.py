@@ -395,7 +395,8 @@ async def autodata_generate(args: Dict[str, Any]) -> Dict[str, Any]:
 
 @tool(
     "autodata_status",
-    "Get state, progress, counts, and provenance summary for the Autodata job bound to an AAR run.",
+    "Get the native AutoData status snapshot plus the minimal AAR run, budget, and provenance "
+    "envelope for the job bound to this approved run.",
     {
         "type": "object",
         "properties": {"run_id": {"type": "string"}},

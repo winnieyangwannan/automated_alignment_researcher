@@ -583,7 +583,11 @@ class LiveModelLifecycleBackend(LifecycleBackend):
             )
             raise RuntimeError("live driver reported an unreserved model call")
         if reservation_id:
-            known_cost = usage.get("spent_cost_usd") if usage else None
+            known_cost = (
+                usage.get("spent_cost_usd")
+                if usage and result.get("usage_complete") is not False
+                else None
+            )
             ledger.settle(
                 scope_id,
                 reservation_id,
@@ -953,6 +957,11 @@ class AutoDataJobService:
             for key in ("workspace_id", "study_id", "execution_id", "mode"):
                 if key in transition:
                     status[key] = transition[key]
+        native_status = transition.get("native_status")
+        if native_status is not None:
+            if not isinstance(native_status, dict):
+                raise RuntimeError("live backend returned malformed native status")
+            status["native_status"] = native_status
         _write_json(root / "status.json", status)
         return status
 
@@ -963,12 +972,23 @@ class AutoDataJobService:
             if not isinstance(action, dict) or action.get("kind") not in self._APPROVAL_KINDS:
                 return status
             result = self._approval_result(root, action)
+            begun = self.backend.action_interactive(
+                "begin",
+                root,
+                request,
+                str(action["id"]),
+                {},
+                self.ledger,
+            )
+            lease_token = begun.get("lease_token")
+            if not isinstance(lease_token, str) or not lease_token:
+                raise RuntimeError("native approval action begin omitted its lease token")
             transition = self.backend.action_interactive(
                 "complete",
                 root,
                 request,
                 str(action["id"]),
-                {"result": result},
+                {"lease_token": lease_token, "result": result},
                 self.ledger,
             )
             status["pending_action"] = None
@@ -1105,6 +1125,11 @@ class AutoDataJobService:
             pending_action=None,
             **dict(result.get("status_fields", {})),
         )
+        native_status = result.get("native_status")
+        if native_status is not None:
+            if not isinstance(native_status, dict):
+                raise RuntimeError("completed backend result has malformed native status")
+            status["native_status"] = native_status
         _write_json(root / "status.json", status)
 
     def _run(self, root: Path, request: Mapping[str, Any]) -> None:
@@ -1239,9 +1264,34 @@ class AutoDataJobService:
             "approve_resources",
         }:
             raise RuntimeError("approval actions are reserved for the integrity monitor")
-        token = uuid.uuid4().hex
+        existing_token = pending.get("lease_token")
+        if pending.get("status") == "leased":
+            if not isinstance(existing_token, str) or not existing_token:
+                raise RuntimeError("leased action omitted its native lease token")
+            return {
+                "run_id": run_id,
+                "action": pending,
+                "lease_token": existing_token,
+            }
+        if self.backend.interactive:
+            root = self._root(run_id)
+            request = self._request(root)
+            begun = self.backend.action_interactive(
+                "begin", root, request, action_id, {}, self.ledger
+            )
+            token = begun.get("lease_token")
+            if not isinstance(token, str) or not token:
+                raise RuntimeError("native action begin omitted its lease token")
+        else:
+            # The deterministic test backend has no native action store.
+            token = uuid.uuid4().hex
+        # Mirror the native token only to bind the follow-up HTTP request; the
+        # adapter does not mint or independently advance an action lease.
         pending = {**pending, "lease_token": token, "status": "leased"}
-        _write_json(self._root(run_id) / "status.json", {**status, "pending_action": pending})
+        _write_json(
+            self._root(run_id) / "status.json",
+            {**status, "pending_action": pending},
+        )
         return {"run_id": run_id, "action": pending, "lease_token": token}
 
     def complete_action(
@@ -1265,7 +1315,7 @@ class AutoDataJobService:
                 root,
                 request,
                 action_id,
-                {"result": dict(result)},
+                {"lease_token": lease_token, "result": dict(result)},
                 self.ledger,
             )
             status["pending_action"] = None
@@ -1299,7 +1349,7 @@ class AutoDataJobService:
                 root,
                 request,
                 action_id,
-                {"reason": reason},
+                {"lease_token": lease_token, "reason": reason},
                 self.ledger,
             )
             status["pending_action"] = None

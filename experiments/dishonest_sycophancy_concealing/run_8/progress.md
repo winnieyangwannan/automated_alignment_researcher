@@ -391,3 +391,45 @@ standalone dataset does not by itself satisfy this criterion.
   archival; evidence-backed unattended resource retry using the frozen
   Kimi/Luna canary, resource profile, executor pins, and current broker
   readiness; and a proposed narrower AAR recipe-source check pending review.
+
+### 2026-10-07 — Per-task reservation derived from frozen model controls
+
+- Removed the operator-overridable flat `$0.05` per-task reservation. The
+  launcher and live driver now independently derive the same ceiling from the
+  frozen Kimi/Luna input and output token ceilings, token rates, and bounded
+  request-attempt count.
+- The current profile derives `$0.049152` per task and an `$88.276992`
+  two-iteration worst-case reservation for 898 task attempts per iteration.
+  This remains a temporary authorization ceiling; completed work settles to
+  reported token usage rather than adding a flat task fee.
+- The resource profile records every formula input. Firecracker tasks receive
+  and enforce the same token and retry ceilings, and delegated resource
+  approval recomputes the ceiling rather than trusting a passed cost value.
+- Shell syntax checks, Python compilation, and 28 focused launcher, driver,
+  recipe, and canary tests passed on the devserver.
+
+### 2026-10-07 — MCP integration reduced to a native CLI wrapper
+
+- Documented all 14 operations in the canonical AutoData CLI and the reason
+  AAR uses MCP for unattended production: the credential-free researcher can
+  request a specific typed operation while the trusted parent retains SandoQ
+  and model credentials, fixed paths, resource policy, and the shared budget.
+- Preserved the existing seven agent-visible MCP names for compatibility, but
+  moved live lifecycle mutations to fixed structured invocations of the pinned
+  native CLI. Native commands now own pipeline validation, workspace and
+  execution creation/stepping, action begin/complete/fail, cancellation,
+  status, and export. No generic command string is accepted.
+- Removed the duplicate live action lease. The native `action begin` token now
+  passes through the adapter unchanged, including for delegated approvals.
+  A retry returns the same persisted native token, and AAR status retains the
+  native `autodata status` snapshot.
+- Provider usage, including hidden validation, is recovered from AutoData's
+  immutable task-result artifacts into the deduplicating owner-only ledger.
+  Malformed usage fails closed without copying task content into visible logs;
+  incomplete usage conservatively charges the full reserved amount.
+- Explicit 64/32 meta-optimization and production manifests remain
+  operator-generated, but native `execution create` consumes them. The final
+  provenance retains the frozen `workspace_snapshot_id`.
+- Seventy-five relevant tests passed, together with Python compilation and
+  `git diff --check`. This was a local integration refactor; it did not launch
+  a new live SandoQ production run.

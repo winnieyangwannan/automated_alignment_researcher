@@ -61,18 +61,20 @@ run_adapter_child() {
   export AAR_AUTODATA_GENERATOR_DEPLOYMENT_ID=winnieyangwn-kimi26
   export AAR_AUTODATA_GENERATOR_URL="${AAR_RUN8_GENERATOR_URL:?missing resolved Kimi route}"
   export AAR_AUTODATA_GENERATOR_TOKEN_ENV=MODEL_API_KEY
-  export AAR_AUTODATA_GENERATOR_MAX_TOKENS=1536
+  export AAR_AUTODATA_GENERATOR_MAX_INPUT_TOKENS="${AAR_RUN8_GENERATOR_MAX_INPUT_TOKENS:?missing Kimi input-token ceiling}"
+  export AAR_AUTODATA_GENERATOR_MAX_TOKENS="${AAR_RUN8_GENERATOR_MAX_OUTPUT_TOKENS:?missing Kimi output-token ceiling}"
   export AAR_AUTODATA_GENERATOR_TIMEOUT=90
   export AAR_AUTODATA_GENERATOR_INPUT_USD_PER_MILLION="${AAR_RUN8_GENERATOR_INPUT_USD_PER_MILLION:?missing Kimi input rate}"
   export AAR_AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION="${AAR_RUN8_GENERATOR_OUTPUT_USD_PER_MILLION:?missing Kimi output rate}"
   export AAR_AUTODATA_JUDGE_MODEL=gpt-5-6-luna
   export AAR_AUTODATA_JUDGE_URL=https://api.meta.ai/v1/responses
   export AAR_AUTODATA_JUDGE_TOKEN_ENV=MODEL_API_KEY
-  export AAR_AUTODATA_JUDGE_MAX_TOKENS=512
+  export AAR_AUTODATA_JUDGE_MAX_INPUT_TOKENS="${AAR_RUN8_JUDGE_MAX_INPUT_TOKENS:?missing Luna input-token ceiling}"
+  export AAR_AUTODATA_JUDGE_MAX_TOKENS="${AAR_RUN8_JUDGE_MAX_OUTPUT_TOKENS:?missing Luna output-token ceiling}"
+  export AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS="${AAR_RUN8_MODEL_REQUEST_MAX_ATTEMPTS:?missing model request attempt ceiling}"
   export AAR_AUTODATA_JUDGE_TIMEOUT=90
   export AAR_AUTODATA_JUDGE_INPUT_USD_PER_MILLION="${AAR_RUN8_JUDGE_INPUT_USD_PER_MILLION:?missing Luna input rate}"
   export AAR_AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION="${AAR_RUN8_JUDGE_OUTPUT_USD_PER_MILLION:?missing Luna output rate}"
-  export AAR_AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD="${AAR_RUN8_AUTODATA_MAX_ESTIMATED_COST_PER_TASK_USD:?missing per-task cost bound}"
   export AAR_AUTODATA_MAX_CONCURRENCY=4
   export AAR_AUTODATA_MAX_WALL_SECONDS=10800
   export AAR_AUTODATA_SANDOQ_ENVIRONMENT=oci-runner-firecracker-small
@@ -327,8 +329,13 @@ PYTHONPATH="${AUTODATA_ROOT}/src" "${BROKER_PYTHON}" \
   --broker-auth-token-file "${BROKER_TOKEN_FILE}" \
   --recipe-root "${REPO}/aar/autodata_recipes/dishonest_sycophancy_concealing" \
   --generator-url "${AAR_RUN8_GENERATOR_URL}" \
+  --generator-max-input-tokens "${AAR_RUN8_GENERATOR_MAX_INPUT_TOKENS}" \
+  --generator-max-output-tokens "${AAR_RUN8_GENERATOR_MAX_OUTPUT_TOKENS}" \
   --generator-input-usd-per-million "${AAR_RUN8_GENERATOR_INPUT_USD_PER_MILLION}" \
   --generator-output-usd-per-million "${AAR_RUN8_GENERATOR_OUTPUT_USD_PER_MILLION}" \
+  --judge-max-input-tokens "${AAR_RUN8_JUDGE_MAX_INPUT_TOKENS}" \
+  --judge-max-output-tokens "${AAR_RUN8_JUDGE_MAX_OUTPUT_TOKENS}" \
+  --model-request-max-attempts "${AAR_RUN8_MODEL_REQUEST_MAX_ATTEMPTS}" \
   --judge-input-usd-per-million "${AAR_RUN8_JUDGE_INPUT_USD_PER_MILLION}" \
   --judge-output-usd-per-million "${AAR_RUN8_JUDGE_OUTPUT_USD_PER_MILLION}" \
   --timeout-seconds 900 \

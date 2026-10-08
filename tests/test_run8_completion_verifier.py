@@ -66,6 +66,7 @@ class Run8CompletionVerifierTests(unittest.TestCase):
                 "recipe_digest": "4" * 64,
                 "pipeline_digest": "5" * 64,
                 "workspace_id": f"workspace-{index}",
+                "workspace_snapshot_id": f"snapshot-{index}",
                 "study_id": f"study-{index}",
                 "execution_id": f"production-{index}",
                 "meta_optimize_execution_id": f"meta-{index}",
