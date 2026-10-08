@@ -43,5 +43,7 @@ export AAR_AUTODATA_RECIPE_ROOT="${REPO}/aar/autodata_recipes/dishonest_sycophan
 
 export AAR_VLLM_CONTAINER_RW_MOUNT="${ATTEMPT_DIR}"
 export AAR_VLLM_MERGED_ROOT="${ATTEMPT_DIR}/merged_candidates"
+export AAR_VLLM_EPHEMERAL_MERGED=1
+export AAR_VLLM_EPHEMERAL_MIN_FREE_BYTES=75161927680
 
 exec bash "${REPO}/experiments/dishonest_sycophancy_concealing/run_5/run_5_pipeline.sbatch"

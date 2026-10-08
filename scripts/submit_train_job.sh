@@ -36,6 +36,7 @@ if [ "${_limit}" -gt 0 ]; then
   _lane_lock="${TEAM_DIR}/.train_dependency_lanes.lock"
   exec 9>"${_lane_lock}"
   flock 9
+  _lanes=()
   mapfile -t _lanes < "${_lane_state}" 2>/dev/null || true
   while [ "${#_lanes[@]}" -lt "${_limit}" ]; do _lanes+=(""); done
   _cursor=0
