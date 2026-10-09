@@ -115,10 +115,9 @@ iteration to the correct `base + incumbent adapter` deployment and that the
 native generation task actually invokes it. The same mechanism can create a
 new binding after each promotion.
 
-It does not yet implement automatic incumbent promotion across a full AAR
-chain, compare multiple candidate adapters, establish data-quality gains, or
-load-test multiple parallel AAR chains. Those should follow only after this
-one-task attachment proof passes.
+The attachment proof is now complete. The full launcher implements automatic
+incumbent promotion across five independent chains; data-quality gains remain
+an experimental result rather than an infrastructure precondition.
 
 ## Persistent endpoint design for parallel AAR chains
 
@@ -163,3 +162,25 @@ Run 12 uses the temporary one-day deployment
 `winnieyangwn-run12-gemma4-cshc` only to prove this attachment mechanism. A
 full-chain implementation should maintain the stable logical lane for the
 chain's complete run and rotate its verified backend after each promotion.
+
+## Full five-chain launcher
+
+`submit_run_12_full.sh` launches five Kimi chains (`alpha` through `epsilon`),
+with five durable sequential score/result pairs per chain. It deliberately uses
+five separate team directories. This prevents the local brokers from sharing a
+retained SQLite ledger or AutoData native state while preserving each chain's
+own memory across its five bounded outer-iteration jobs.
+
+After each durable result, `run_12_chain_controller.sbatch` selects the best
+valid adapter using the same provenance checks as champion export. The
+evaluator retains its atomic merged checkpoint, so the controller does not pay
+for a duplicate 62 GB merge. A changed incumbent is served under a new
+iteration-versioned deployment, tested, bound, and placed into a newly written
+campaign policy before the next AAR job is submitted. A rejected or inferior
+candidate leaves the previous verified target unchanged.
+
+The full launch uses `aar_8-kimi26` for both the Kimi AAR researcher and the
+AutoData generator, local Bubblewrap brokers, five four-GPU evaluator lanes,
+and five one-GPU persistent Gemma research lanes. It starts at AutoData
+concurrency eight per chain, bounding fleet-wide generation concurrency at
+forty while retaining substantial parallelism.
