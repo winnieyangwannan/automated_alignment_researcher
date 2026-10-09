@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 from typing import Any
 
 import mcp.types as types
@@ -60,6 +61,58 @@ def _json_schema(schema: Any) -> dict[str, Any]:
     }
 
 
+def _bounded_text(text: str) -> str:
+    raw_limit = os.environ.get("AAR_KIMI_MCP_MAX_TEXT_CHARS", "").strip()
+    if not raw_limit:
+        return text
+    try:
+        limit = int(raw_limit)
+    except ValueError as error:
+        raise RuntimeError(
+            "AAR_KIMI_MCP_MAX_TEXT_CHARS must be an integer"
+        ) from error
+    if limit < 1000:
+        raise RuntimeError("AAR_KIMI_MCP_MAX_TEXT_CHARS must be at least 1000")
+    if len(text) <= limit:
+        return text
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        notice = "\n...[Kimi MCP response truncated by AAR]"
+        return text[: limit - len(notice)] + notice
+
+    literature = payload.get("literature") if isinstance(payload, dict) else None
+    if isinstance(literature, list):
+        bounded = {key: value for key, value in payload.items() if key != "literature"}
+        bounded["literature"] = []
+        bounded["aar_kimi_bridge"] = {
+            "truncated": True,
+            "original_entries": len(literature),
+            "returned_entries": 0,
+            "instruction": (
+                "Select a direction from these summaries; make at most one focused "
+                "get_literature follow-up if essential."
+            ),
+        }
+        for entry in literature:
+            bounded["literature"].append(entry)
+            bounded["aar_kimi_bridge"]["returned_entries"] = len(
+                bounded["literature"]
+            )
+            candidate = json.dumps(bounded, indent=2, default=str)
+            if len(candidate) > limit:
+                bounded["literature"].pop()
+                bounded["aar_kimi_bridge"]["returned_entries"] = len(
+                    bounded["literature"]
+                )
+                break
+        return json.dumps(bounded, indent=2, default=str)
+
+    notice = "\n...[Kimi MCP response truncated by AAR]"
+    return text[: limit - len(notice)] + notice
+
+
 def _text_content(value: Any) -> list[types.TextContent]:
     if isinstance(value, dict):
         content = value.get("content")
@@ -69,14 +122,15 @@ def _text_content(value: Any) -> list[types.TextContent]:
                 if isinstance(item, dict) and item.get("type") == "text":
                     converted.append(
                         types.TextContent(
-                            type="text", text=str(item.get("text", ""))
+                            type="text",
+                            text=_bounded_text(str(item.get("text", ""))),
                         )
                     )
             if converted:
                 return converted
     return [
         types.TextContent(
-            type="text", text=json.dumps(value, default=str)
+            type="text", text=_bounded_text(json.dumps(value, default=str))
         )
     ]
 

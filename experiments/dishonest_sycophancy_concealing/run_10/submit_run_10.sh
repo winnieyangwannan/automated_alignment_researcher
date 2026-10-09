@@ -71,6 +71,7 @@ export AAR_KIMI_SERVE_DEPLOYMENT=steerability_8-kimi26 AAR_KIMI_EXPECTED_MODEL=K
 export AAR_KIMI_PROVIDER_TYPE=kimi AAR_KIMI_DISABLE_THINKING=1
 export AAR_SERVE_API_V2_ROOT="/storage/home/${USER}/ram_common/vllm_tools/serve_api_v2"
 export KIMI_MODEL_CAPABILITIES=tool_use
+export AAR_KIMI_MCP_MAX_TEXT_CHARS=16000
 unset KIMI_AGENT_MODEL
 "${REPO}/.venv/bin/python" "${SCRIPT_DIR}/verify_kimi_endpoint.py" \
   --workspace "${REPO}" --output "${attempt_dir}/metadata/kimi_mcp_preflight.json"

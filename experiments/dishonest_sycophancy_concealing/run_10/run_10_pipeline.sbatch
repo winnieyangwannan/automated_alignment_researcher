@@ -53,6 +53,7 @@ export AAR_SERVE_API_V2_ROOT="/storage/home/${USER}/ram_common/vllm_tools/serve_
 export KIMI_MODEL_MAX_CONTEXT_SIZE=262144 KIMI_MODEL_MAX_OUTPUT_SIZE=65536
 export KIMI_MODEL_MAX_COMPLETION_TOKENS=65536
 export KIMI_MODEL_CAPABILITIES=tool_use KIMI_MODEL_REASONING_KEY=reasoning_content
+export AAR_KIMI_MCP_MAX_TEXT_CHARS=16000
 unset KIMI_AGENT_MODEL
 
 export AAR_TEAM_ID="honesty-sycophancy-concealing-gemma4_31b-kimi26-run10-${MODE}-${SLURM_JOB_ID}"

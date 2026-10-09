@@ -386,6 +386,35 @@ class KimiAgentTest(unittest.TestCase):
         self.assertEqual(content[0].type, "text")
         self.assertIn('"status": "ok"', content[0].text)
 
+    def test_kimi_mcp_bridge_bounds_literature_at_entry_boundaries(self) -> None:
+        payload = {
+            "count": 10,
+            "mode": "summary",
+            "literature": [
+                {"method": f"method-{index}", "summary": "x" * 500}
+                for index in range(10)
+            ],
+        }
+        value = {
+            "content": [
+                {"type": "text", "text": json.dumps(payload, indent=2)}
+            ]
+        }
+        with patch.dict(
+            os.environ, {"AAR_KIMI_MCP_MAX_TEXT_CHARS": "2000"}
+        ):
+            content = _text_content(value)
+
+        self.assertLessEqual(len(content[0].text), 2000)
+        bounded = json.loads(content[0].text)
+        self.assertTrue(bounded["aar_kimi_bridge"]["truncated"])
+        self.assertEqual(bounded["aar_kimi_bridge"]["original_entries"], 10)
+        self.assertLess(bounded["aar_kimi_bridge"]["returned_entries"], 10)
+        self.assertEqual(
+            bounded["aar_kimi_bridge"]["returned_entries"],
+            len(bounded["literature"]),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

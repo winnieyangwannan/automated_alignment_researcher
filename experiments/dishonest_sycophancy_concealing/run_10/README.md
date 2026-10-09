@@ -14,6 +14,8 @@ Each Kimi session dynamically runs `serve.sh generate-opencode-config steerabili
 
 The research prompt is installed as a Kimi agent profile, so its constraints are system-level rather than user-message text. That profile disables Kimi Code's separate goal/subagent tools and asks for one compact initial literature call; AAR remains the sole owner of iteration continuation and completion.
 
+The Kimi MCP bridge bounds text responses at 16,000 characters. Large literature lists are reduced at complete-entry boundaries and carry truncation metadata, keeping discovery context directly usable instead of triggering Kimi Code's external tool-result spill file.
+
 ## Launch sequence
 
 From the isolated HPC `multi_kimi` checkout:
