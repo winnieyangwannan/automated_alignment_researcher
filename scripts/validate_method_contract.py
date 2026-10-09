@@ -87,6 +87,37 @@ def _gemma_regex_wrapped_in_collection(tree: ast.AST) -> bool:
     return False
 
 
+def _unsupported_training_arguments(tree: ast.AST) -> list[str]:
+    """Return explicit TrainingArguments keywords absent from this environment."""
+    # Run 10 executes on the locked ARM64 Transformers 5.17 environment. Keep
+    # its known removal here as a fallback so the CPU-only dev/CI validator,
+    # where Transformers is intentionally absent, enforces the same contract.
+    supported: set[str] | None = None
+    try:
+        from transformers import TrainingArguments
+    except ImportError:
+        pass
+    else:
+        supported = set(inspect.signature(TrainingArguments).parameters)
+    unsupported: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        function = node.func
+        name = (
+            function.id
+            if isinstance(function, ast.Name)
+            else function.attr if isinstance(function, ast.Attribute) else ""
+        )
+        if name != "TrainingArguments":
+            continue
+        keywords = {keyword.arg for keyword in node.keywords if keyword.arg is not None}
+        unsupported.update(keywords & {"overwrite_output_dir"})
+        if supported is not None:
+            unsupported.update(keywords - supported)
+    return sorted(unsupported)
+
+
 def validate(
     method_path: Path,
     *,
@@ -144,6 +175,14 @@ def validate(
                 "run_experiment must use config.smoke_run for the one-step real-GPU "
                 "training path"
             )
+        if require_smoke_run:
+            unsupported_training_args = _unsupported_training_arguments(tree)
+            if unsupported_training_args:
+                errors.append(
+                    "TrainingArguments uses keyword(s) unsupported by the target "
+                    "Transformers contract: "
+                    + ", ".join(unsupported_training_args)
+                )
 
     module = None
     if tree is not None:

@@ -233,6 +233,42 @@ class ValidateMethodContractTest(unittest.TestCase):
         )
         self.assertEqual(passing_result.returncode, 0, passing_proof)
 
+    def test_rejects_training_arguments_unsupported_by_environment(self) -> None:
+        phases = "\n".join(
+            f'    with phase("{name}"):\n        pass'
+            for name in (
+                "data_generation",
+                "tokenization",
+                "model_loading",
+                "training",
+                "checkpoint_save",
+            )
+        )
+        result, proof = self._run_with_smoke_required(
+            "from contextlib import contextmanager\n"
+            "@contextmanager\n"
+            "def phase(_name):\n"
+            "    yield\n"
+            "class MethodConfig:\n"
+            "    def __init__(self, output_dir='out', dry_run=False, smoke_run=False):\n"
+            "        self.output_dir = output_dir\n"
+            "        self.dry_run = dry_run\n"
+            "        self.smoke_run = smoke_run\n"
+            "def run_experiment(config):\n"
+            "    if config.dry_run:\n"
+            "        return {'model_path': config.output_dir, 'method': 'test'}\n"
+            "    TrainingArguments(overwrite_output_dir=True)\n"
+            f"{phases}\n"
+            "    return {'model_path': config.output_dir, 'method': 'test'}\n"
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(
+            any(
+                "overwrite_output_dir" in error
+                for error in proof["errors"]
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
