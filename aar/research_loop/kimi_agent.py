@@ -155,6 +155,7 @@ class KimiAgent:
         completion_tool: Optional[str] = None,
         max_continuations: int = 24,
         disallowed_tools: Optional[list[str]] = None,
+        auto_approve: bool = False,
     ) -> None:
         self.name = name
         self.workspace = Path(workspace)
@@ -166,6 +167,7 @@ class KimiAgent:
         self.completion_tool = completion_tool
         self.max_continuations = max_continuations
         self.disallowed_tools = disallowed_tools or []
+        self.auto_approve = auto_approve
 
     async def execute(self, task: str) -> KimiAgentResult:
         start_time = time.time()
@@ -205,6 +207,8 @@ class KimiAgent:
             with self._request_policy_proxy(env):
                 while True:
                     command = [executable]
+                    if self.auto_approve:
+                        command.append("--auto")
                     if self.model:
                         command.extend(["--model", self.model])
                     if continuation_count:

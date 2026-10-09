@@ -572,6 +572,7 @@ class AutonomousAgentLoop:
                 system_prompt=kimi_system_prompt,
                 include_prior_work=not self.local_mode,
                 completion_tool="share_finding",
+                auto_approve=True,
                 disallowed_tools=[
                     "CreateGoal",
                     "UpdateGoal",

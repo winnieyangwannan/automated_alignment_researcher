@@ -224,12 +224,14 @@ class KimiAgentTest(unittest.TestCase):
                         cli_path=str(cli),
                         system_prompt="System-level AAR instructions.",
                         disallowed_tools=["CreateGoal", "AgentSwarm"],
+                        auto_approve=True,
                     ).execute("research task")
                 )
 
             self.assertTrue(result.success, result.error)
             observed = json.loads(capture.read_text())
             self.assertIn("--agent-file", observed["argv"])
+            self.assertIn("--auto", observed["argv"])
             self.assertNotIn("System-level AAR instructions.", observed["argv"])
             self.assertIn(
                 'disallowedTools: ["CreateGoal", "AgentSwarm"]',
