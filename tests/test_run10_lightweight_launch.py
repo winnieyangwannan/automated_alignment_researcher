@@ -99,3 +99,17 @@ def test_run10_canary_keeps_historical_defaults_but_allows_trusted_overrides() -
     assert 'AAR_EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-multi_kimi}"' in pipeline
     assert 'AAR_KIMI_SERVE_DEPLOYMENT="${AAR_KIMI_SERVE_DEPLOYMENT:-steerability_8-kimi26}"' in pipeline
     assert 'AAR_RUN10_TEAM_ID_PREFIX:-honesty-sycophancy-concealing-' in pipeline
+
+
+def test_run10_canary_supports_bounded_recovered_continuation() -> None:
+    pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
+    submitter = (RUN10 / "submit_run_10.sh").read_text()
+
+    assert 'CANARY_ITERATIONS="${AAR_RUN10_CANARY_ITERATIONS:-1}"' in submitter
+    assert 'CANARY_ITERATIONS="${AAR_RUN10_CANARY_ITERATIONS:-1}"' in pipeline
+    assert '"${CANARY_ITERATIONS}" -le 5' in submitter
+    assert 'seeds=canary; iterations="${CANARY_ITERATIONS}"' in pipeline
+    assert 'RECOVERED_AGENT_LOG_DIR="${AAR_RUN10_RECOVERED_AGENT_LOG_DIR:-}"' in submitter
+    assert 'recovered-agent-log' in submitter
+    assert 'export AAR_RECOVERED_AGENT_LOG_DIR="${recovered_agent_log_for_launch}"' in submitter
+    assert 'recovered_agent_log_dir=%s' in submitter

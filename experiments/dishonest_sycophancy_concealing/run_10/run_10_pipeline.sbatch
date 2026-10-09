@@ -16,8 +16,16 @@ REUSED_BASELINE="${AAR_REUSED_BASELINE:?missing baseline}"
 RECOVERED_SOURCES="${AAR_RECOVERED_BASELINE_SOURCES:?missing sources}"
 MODE="${AAR_RUN10_MODE:?missing canary/full mode}"
 RESUME_SMOKE="${AAR_RUN10_RESUME_SMOKE:-0}"
+CANARY_ITERATIONS="${AAR_RUN10_CANARY_ITERATIONS:-1}"
 case "${RESUME_SMOKE}" in 0|1) ;; *) echo "invalid AAR_RUN10_RESUME_SMOKE" >&2; exit 2;; esac
 [ "${RESUME_SMOKE}" = 0 ] || [ "${MODE}" = smoke ] || { echo "resume is smoke-only" >&2; exit 2; }
+case "${CANARY_ITERATIONS}" in
+  ''|*[!0-9]*) echo "canary iterations must be an integer" >&2; exit 2 ;;
+esac
+[ "${CANARY_ITERATIONS}" -ge 1 ] && [ "${CANARY_ITERATIONS}" -le 5 ] || {
+  echo "canary iterations must be between 1 and 5" >&2
+  exit 2
+}
 export HF_HOME="${ATTEMPT_DIR}/cache/huggingface"
 
 # shellcheck disable=SC1091
@@ -75,7 +83,7 @@ if [ "${MODE}" = smoke ]; then
   export AAR_TRAIN_TIME=00:15:00
   export AAR_KEEP_CHECKPOINTS=1
 elif [ "${MODE}" = canary ]; then
-  seeds=canary; iterations=1; hours=17
+  seeds=canary; iterations="${CANARY_ITERATIONS}"; hours=17
   export AAR_MAX_CONCURRENT_TRAIN_JOBS=1 AAR_EVAL_WORKERS=1 AAR_EVAL_GPUS=4 AAR_EVAL_GPU_CAP=4
   export AAR_EVAL_TIME=18:00:00 AAR_EVAL_IDLE_SECONDS=61200
 else

@@ -14,3 +14,11 @@ def test_run12_research_canary_is_one_scored_kimi_iteration() -> None:
     assert "AAR_KEEP_CHECKPOINTS=1" in launcher
     assert "run12-adapter-target/research_canary_attempts" in launcher
     assert 'submit_run_10.sh" canary' in launcher
+
+
+def test_run12_research_canary_can_continue_with_safe_memory() -> None:
+    launcher = (RUN12 / "submit_research_canary.sh").read_text()
+
+    assert 'AAR_RUN12_RESEARCH_MAX_ITERATIONS:-1' in launcher
+    assert "AAR_RUN12_RECOVERED_AGENT_LOG_DIR" in launcher
+    assert 'AAR_RUN10_RECOVERED_AGENT_LOG_DIR' in launcher
