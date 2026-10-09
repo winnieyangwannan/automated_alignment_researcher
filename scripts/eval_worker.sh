@@ -220,10 +220,13 @@ echo "[worker ${WORKER_ID}] draining submissions for suite=${SUITE} (idle-exit $
 publish_terminal_failure() {
   local failure_run_id="$1"
   local failure_reason="$2"
+  local failure_code="${3:-evaluator_rejected}"
   "${PY}" -m aar.eval_pod.failure \
     --scores-dir "${SCORES_DIR}" \
     --run-id "${failure_run_id}" \
     --reason "${failure_reason}" \
+    --stage evaluation \
+    --error-code "${failure_code}" \
     --eval-job-id "${WORKER_ID}"
   rmdir "${CLAIMS}/${failure_run_id}" 2>/dev/null || true
 }
@@ -294,7 +297,8 @@ while true; do
           --source-commit "$(git -C "${REPO}" rev-parse HEAD)"; then
         echo "[worker ${WORKER_ID}] FAILED merge ${rid}"
         publish_terminal_failure "${rid}" \
-          "adapter merge failed; candidate checkpoint is invalid; inspect the evaluator log"
+          "adapter merge failed; candidate checkpoint is invalid; inspect the evaluator log" \
+          "adapter_merge_failed"
         cleanup_ephemeral_merge "${rid}" || exit 2
         did=1; last_work=$(date +%s)
         continue
@@ -302,7 +306,8 @@ while true; do
       [ -s "${merged_model}/.merge-complete.json" ] || {
         echo "[worker ${WORKER_ID}] FAILED missing merge manifest ${rid}"
         publish_terminal_failure "${rid}" \
-          "adapter merge did not produce a complete checkpoint; inspect the evaluator log"
+          "adapter merge did not produce a complete checkpoint; inspect the evaluator log" \
+          "merge_manifest_missing"
         cleanup_ephemeral_merge "${rid}" || exit 2
         did=1; last_work=$(date +%s)
         continue
@@ -336,7 +341,8 @@ while true; do
       # handoff (no item data or partial scores) so the chain can record the
       # rejected iteration and pivot to a new method.
       publish_terminal_failure "${rid}" \
-        "evaluator rejected the candidate; inspect the evaluator job log"
+        "evaluator rejected the candidate; inspect the evaluator job log" \
+        "evaluator_runtime_failed"
     fi
     if [ "${AAR_VLLM_EPHEMERAL_MERGED:-0}" = 1 ]; then
       if [ ! -f "${SCORES_DIR}/${rid}.json" ] && \

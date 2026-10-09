@@ -119,6 +119,61 @@ class KimiAgentTest(unittest.TestCase):
             ):
                 asyncio.run(agent._wait_for_training_result())
 
+    def test_previous_failure_is_injected_into_next_kimi_session(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            scores = root / "scores"
+            proposals = scores / ".proposals"
+            runs = proposals / "runs"
+            runs.mkdir(parents=True)
+            idea_uid = "kimi-feedback"
+            run_id = f"{idea_uid}-candidate-1"
+            marker = {
+                "approved": True,
+                "idea_name": "kimi_candidate",
+                "code_hash": "abc123",
+            }
+            (proposals / f"{idea_uid}.json").write_text(json.dumps(marker))
+            (runs / "candidate.json").write_text(
+                json.dumps(
+                    {
+                        **marker,
+                        "run_id": run_id,
+                        "stamped_ts": 1,
+                    }
+                )
+            )
+            failure = {
+                "schema_version": 2,
+                "status": "failed",
+                "run_id": run_id,
+                "stage": "training",
+                "error_code": "training_python_exception",
+                "exception_type": "TypeError",
+                "error": "unexpected keyword argument 'tokenizer'",
+                "retryable": False,
+                "log_path": str(root / "logs" / "train-123.out"),
+            }
+            (scores / f"{run_id}.failed.json").write_text(json.dumps(failure))
+            agent = KimiAgent("test-agent", root, cli_path="/bin/true")
+
+            with patch.dict(
+                os.environ,
+                {"SCORES_DIR": str(scores), "IDEA_UID": idea_uid},
+                clear=False,
+            ):
+                prompt = agent._with_previous_failure_feedback("do research")
+                self.assertIn("AUTOMATIC HELD-OUT-SAFE FAILURE FEEDBACK", prompt)
+                self.assertIn("training_python_exception", prompt)
+                self.assertIn("unexpected keyword argument", prompt)
+                self.assertIn("train-123.out", prompt)
+
+                (scores / f"{run_id}.json").write_text("{}\n")
+                self.assertEqual(
+                    agent._with_previous_failure_feedback("do research"),
+                    "do research",
+                )
+
     def test_launcher_selects_kimi_without_anthropic_credentials(self) -> None:
         observed = {}
 

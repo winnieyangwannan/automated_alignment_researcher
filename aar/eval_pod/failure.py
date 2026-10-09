@@ -5,8 +5,32 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import sys
 import tempfile
 from pathlib import Path
+from types import TracebackType
+from typing import Callable
+
+
+_ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_STAGE_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b(api[_-]?key|authorization|password|secret|token)"
+    r"(\s*[:=]\s*)([^\s,;]+)"
+)
+_BEARER_RE = re.compile(r"(?i)\bbearer\s+[^\s,;]+")
+
+
+def sanitize_failure_text(value: object, *, limit: int = 1000) -> str:
+    """Return a compact diagnostic that is safe for the research-side handoff."""
+
+    text = " ".join(str(value).split())
+    text = _BEARER_RE.sub("Bearer [REDACTED]", text)
+    text = _SECRET_ASSIGNMENT_RE.sub(r"\1\2[REDACTED]", text)
+    if len(text) > limit:
+        return text[: limit - 3] + "..."
+    return text
 
 
 def publish_failure(
@@ -15,10 +39,20 @@ def publish_failure(
     reason: str,
     *,
     eval_job_id: str | None = None,
+    stage: str = "evaluation",
+    error_code: str = "evaluator_rejected",
+    retryable: bool = False,
+    exception_type: str | None = None,
+    exit_code: int | None = None,
+    log_path: str | Path | None = None,
 ) -> Path:
-    """Publish an idempotent terminal failure without exposing partial scores."""
+    """Publish an idempotent, structured failure without exposing partial scores."""
     if not run_id or Path(run_id).name != run_id:
         raise ValueError("run_id must be one nonempty path component")
+    if not _STAGE_RE.fullmatch(stage):
+        raise ValueError("stage must be a lowercase identifier")
+    if not _ERROR_CODE_RE.fullmatch(error_code):
+        raise ValueError("error_code must be a lowercase identifier")
 
     directory = Path(scores_dir)
     directory.mkdir(parents=True, exist_ok=True)
@@ -29,12 +63,27 @@ def publish_failure(
     if failure_path.exists():
         return failure_path
 
-    payload = {
+    safe_reason = sanitize_failure_text(reason)
+    payload: dict[str, object] = {
+        "schema_version": 2,
         "status": "failed",
         "run_id": run_id,
-        "reason": reason,
-        "eval_job_id": eval_job_id,
+        "stage": stage,
+        "error_code": error_code,
+        "retryable": retryable,
+        # Keep both keys while older research clients still distinguish training
+        # ("error") from evaluation ("reason") failure markers.
+        "error": safe_reason,
+        "reason": safe_reason,
     }
+    if eval_job_id:
+        payload["eval_job_id"] = sanitize_failure_text(eval_job_id, limit=128)
+    if exception_type:
+        payload["exception_type"] = sanitize_failure_text(exception_type, limit=128)
+    if exit_code is not None:
+        payload["exit_code"] = int(exit_code)
+    if log_path:
+        payload["log_path"] = sanitize_failure_text(log_path, limit=1000)
     fd, temporary_name = tempfile.mkstemp(
         dir=directory,
         prefix=f".{run_id}.failed.",
@@ -54,12 +103,56 @@ def publish_failure(
     return failure_path
 
 
+def install_uncaught_exception_failure_hook(
+    scores_dir: str | Path,
+    run_id: str,
+    *,
+    stage: str,
+    error_code: str,
+    log_path: str | Path | None = None,
+) -> Callable[[type[BaseException], BaseException, TracebackType | None], None]:
+    """Publish a sanitized marker before Python prints an uncaught traceback."""
+
+    prior_hook = sys.excepthook
+
+    def _hook(
+        exception_class: type[BaseException],
+        exception: BaseException,
+        traceback: TracebackType | None,
+    ) -> None:
+        try:
+            publish_failure(
+                scores_dir,
+                run_id,
+                str(exception) or exception_class.__name__,
+                stage=stage,
+                error_code=error_code,
+                retryable=False,
+                exception_type=exception_class.__name__,
+                exit_code=1,
+                log_path=log_path,
+            )
+        except Exception:
+            # Failure reporting must never mask the original exception.
+            pass
+        prior_hook(exception_class, exception, traceback)
+
+    sys.excepthook = _hook
+    return _hook
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--scores-dir", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--reason", required=True)
     parser.add_argument("--eval-job-id", default=os.getenv("SLURM_JOB_ID"))
+    parser.add_argument("--stage", default="evaluation")
+    parser.add_argument("--error-code", default="evaluator_rejected")
+    parser.add_argument("--retryable", action="store_true")
+    parser.add_argument("--exception-type")
+    parser.add_argument("--exit-code", type=int)
+    parser.add_argument("--log-path")
     args = parser.parse_args()
     print(
         publish_failure(
@@ -67,6 +160,12 @@ def main() -> int:
             args.run_id,
             args.reason,
             eval_job_id=args.eval_job_id,
+            stage=args.stage,
+            error_code=args.error_code,
+            retryable=args.retryable,
+            exception_type=args.exception_type,
+            exit_code=args.exit_code,
+            log_path=args.log_path,
         )
     )
     return 0

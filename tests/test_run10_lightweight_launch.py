@@ -34,6 +34,15 @@ def test_training_smoke_validates_real_peft_adapter_without_submission() -> None
     assert "per-method one-step GPU preflight passed" in trainer
 
 
+def test_training_failure_handoff_contains_safe_actionable_context() -> None:
+    trainer = (ROOT / "scripts" / "slurm_train_submit.sh").read_text()
+
+    assert "install_uncaught_exception_failure_hook" in trainer
+    assert "training_python_exception" in trainer
+    assert "training_process_failed" in trainer
+    assert "AAR_TRAIN_LOG_PATH" in trainer
+
+
 def test_evaluator_is_launched_only_after_method_smoke_passes() -> None:
     pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
     verifier = (RUN10 / "verify_run_10_canary.py").read_text()

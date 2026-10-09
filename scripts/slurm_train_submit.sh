@@ -60,13 +60,26 @@ export SUBMISSIONS_DIR="${SUBMISSIONS_DIR:-${REPO}/_runs/submissions}"
 export SCORES_DIR="${SCORES_DIR:-${TEAM_DIR:+${TEAM_DIR}/scores}}"
 export SCORES_DIR="${SCORES_DIR:-${REPO}/_runs/scores}"
 mkdir -p "${SCORES_DIR}"
+if [ -n "${TEAM_DIR:-}" ] && [ -n "${SLURM_JOB_ID:-}" ]; then
+  export AAR_TRAIN_LOG_PATH="${TEAM_DIR}/logs/train-${SLURM_JOB_ID}.out"
+fi
 _record_training_failure() {
   _exit_code=$?
   if [ "${_exit_code}" -ne 0 ] && [ "${AAR_WRITE_TRAIN_FAILURE_MARKER:-0}" = "1" ]; then
     _failure_path="${SCORES_DIR}/${RUN_ID}.failed.json"
     if [ ! -e "${SCORES_DIR}/${RUN_ID}.json" ] && [ ! -e "${_failure_path}" ]; then
-      printf '{"run_id":"%s","status":"failed","stage":"training","exit_code":%d,"error":"training job exited before model scoring"}\n' \
-        "${RUN_ID}" "${_exit_code}" > "${_failure_path}"
+      _failure_python="${PY:-${HARNESS_PY:-python3}}"
+      "${_failure_python}" -m aar.eval_pod.failure \
+        --scores-dir "${SCORES_DIR}" \
+        --run-id "${RUN_ID}" \
+        --stage training \
+        --error-code training_process_failed \
+        --exit-code "${_exit_code}" \
+        --log-path "${AAR_TRAIN_LOG_PATH:-}" \
+        --reason "training process exited before model scoring; inspect log_path" \
+        >/dev/null 2>&1 || \
+        printf '{"schema_version":2,"run_id":"%s","status":"failed","stage":"training","error_code":"training_process_failed","retryable":false,"exit_code":%d,"error":"training process exited before model scoring","reason":"training process exited before model scoring"}\n' \
+          "${RUN_ID}" "${_exit_code}" > "${_failure_path}"
     fi
   fi
 }
@@ -105,6 +118,17 @@ PYTHONUNBUFFERED=1 "${PY}" -c "from aar.research_loop.tools.server_api_tools imp
 
 echo "[train] ${IDEA} -> stage model + submit (run ${RUN_ID})"
 PYTHONUNBUFFERED=1 "${PY}" -u - <<PY
+import os
+from aar.eval_pod.failure import install_uncaught_exception_failure_hook
+
+install_uncaught_exception_failure_hook(
+    os.environ["SCORES_DIR"],
+    os.environ["AAR_CURRENT_RUN_ID"],
+    stage="training",
+    error_code="training_python_exception",
+    log_path=os.environ.get("AAR_TRAIN_LOG_PATH"),
+)
+
 try:
     from ${IDEA}.run import run_experiment, MethodConfig   # team method (AAR_IDEAS_DIR on path)
 except ModuleNotFoundError:
@@ -112,7 +136,6 @@ except ModuleNotFoundError:
 from aar import transport
 from aar.phase_timing import phase, require_successful_phases
 import json
-import os
 import shutil
 from pathlib import Path
 smoke_run = "${AAR_METHOD_SMOKE:-0}".lower() in {"1", "true", "yes", "on"}

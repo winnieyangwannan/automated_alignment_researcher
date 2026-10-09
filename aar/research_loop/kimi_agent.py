@@ -257,7 +257,7 @@ class KimiAgent:
                 "Kimi backend requires an executable KIMI_CLI_PATH or `kimi` on PATH"
             )
 
-        prompt = task
+        prompt = self._with_previous_failure_feedback(task)
 
         output: dict[str, Any] = {
             "text_outputs": [],
@@ -807,6 +807,51 @@ class KimiAgent:
         except (OSError, json.JSONDecodeError):
             return None
         return payload if isinstance(payload, dict) else {"error": str(payload)}
+
+    @classmethod
+    def _previous_failure_feedback(cls) -> Optional[dict[str, Any]]:
+        """Return the latest unscored failure for the next Kimi session."""
+
+        run_id = cls._approved_run_id()
+        if run_id is None:
+            return None
+        score_path = cls._score_path_for_run(run_id)
+        if score_path is not None and score_path.is_file():
+            return None
+        failure = cls._current_training_failure()
+        if failure is None:
+            return None
+        allowed_fields = (
+            "schema_version",
+            "status",
+            "run_id",
+            "stage",
+            "error_code",
+            "exception_type",
+            "error",
+            "reason",
+            "retryable",
+            "exit_code",
+            "log_path",
+            "eval_job_id",
+        )
+        return {key: failure[key] for key in allowed_fields if key in failure}
+
+    @classmethod
+    def _with_previous_failure_feedback(cls, task: str) -> str:
+        feedback = cls._previous_failure_feedback()
+        if feedback is None:
+            return task
+        return (
+            task
+            + "\n\nAUTOMATIC HELD-OUT-SAFE FAILURE FEEDBACK FROM YOUR PREVIOUS "
+            "CANDIDATE:\n"
+            + json.dumps(feedback, sort_keys=True)
+            + "\nBefore proposing another method, diagnose and fix this exact failure. "
+            "Read log_path when present, record the cause in your chain memory, "
+            "and do not resubmit the unchanged method. This feedback contains no "
+            "held-out examples or partial held-out scores."
+        )
 
     @staticmethod
     def _score_path_for_run(run_id: str) -> Optional[Path]:
