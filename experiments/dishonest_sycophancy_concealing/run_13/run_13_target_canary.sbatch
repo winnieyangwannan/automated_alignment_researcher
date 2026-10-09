@@ -80,7 +80,9 @@ PYTHONPATH="${CANARY_PYTHONPATH}" "${REPO}/.venv/bin/python" \
   --generator-url "${AAR_RUN13_GENERATOR_URL:?}" \
   --generator-host-header "${AAR_RUN13_GENERATOR_HOST_HEADER:?}" \
   --generator-deployment-id "${AAR_RUN13_GENERATOR_DEPLOYMENT_ID:?}" \
-  --generator-max-output-tokens 768 \
+  --generator-max-output-tokens 65536 \
+  --judge-max-output-tokens 65536 \
+  --target-max-output-tokens 65536 \
   --target-canary-id-prefix run13-adapter-target-canary \
   --model-request-max-attempts 1 \
   --timeout-seconds 600 \

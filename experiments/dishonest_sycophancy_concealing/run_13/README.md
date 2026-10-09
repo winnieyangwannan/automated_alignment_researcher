@@ -192,3 +192,9 @@ The retained submission and full-launch manifests must record
 `research_backend=claude`, `research_model=claude-opus-4-8`, `chains=5`, and
 `target_pairs_per_chain=5`. Kimi-K2.6 remains the AutoData example generator;
 it is not the AAR researcher.
+
+Run 13 pins the generator, target, and judge output ceilings to 65,536 tokens,
+the largest ceiling supported end-to-end by the recipe. This prevents the
+small historical 768/512-token request budgets from truncating structured
+generator or judge JSON. Existing signed campaign policies remain immutable;
+the larger ceilings take effect only in a fresh attempt.
