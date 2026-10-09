@@ -14,6 +14,8 @@ TARGET_MODEL="${AAR_RUN12_TARGET_MODEL:-gemma-4-31B-it}"
 TARGET_DEPLOYMENT_ID="${AAR_RUN12_TARGET_DEPLOYMENT_ID:-winnieyangwn-run12-gemma4-cshc}"
 GENERATOR_URL="${AAR_RUN12_GENERATOR_URL:-http://fair-cw-use2-1-ingress-slurm-ingress/v1}"
 GENERATOR_HOST_HEADER="${AAR_RUN12_GENERATOR_HOST_HEADER:-ram-inference-gateway.ingress.}"
+GENERATOR_MODEL="${AAR_RUN12_GENERATOR_MODEL:-Kimi-K2.6}"
+GENERATOR_DEPLOYMENT_ID="${AAR_RUN12_GENERATOR_DEPLOYMENT_ID:-aar_8-kimi26}"
 INCUMBENT_RUN_ID="gemma4_31b-explore-beta-1791334144-gemma4_31b_explore_beta__cshc_v1-1791342624251"
 BASE_CHECKPOINT="/checkpoint/ram/shared/models/google/gemma-4-31B-it"
 RUN7_ROOT="/checkpoint/ram/aar/${USER}/honesty-sycophancy-concealing-gemma4-31b-vllm-v0/run7_attempts/20261007T004406Z-1b3303d02821"
@@ -72,7 +74,9 @@ capability_file="${root}/secrets/capability"
 "${BROKER_PYTHON}" -c 'import secrets; print(secrets.token_hex(32))' > "${capability_file}"
 chmod 600 "${model_env}" "${capability_file}"
 policy="${root}/campaign-policy.json"
-PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" - "${binding}" "${policy}" "${GENERATOR_URL}" "${GENERATOR_HOST_HEADER}" <<'PY'
+PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" - \
+  "${binding}" "${policy}" "${GENERATOR_URL}" "${GENERATOR_HOST_HEADER}" \
+  "${GENERATOR_MODEL}" "${GENERATOR_DEPLOYMENT_ID}" <<'PY'
 import json
 import os
 import pathlib
@@ -85,8 +89,8 @@ binding = load_binding(pathlib.Path(sys.argv[1]))
 required = {
     "AUTODATA_GENERATOR_URL": sys.argv[3],
     "AUTODATA_GENERATOR_HOST_HEADER": sys.argv[4],
-    "AUTODATA_GENERATOR_MODEL": "Kimi-K2.6",
-    "AUTODATA_GENERATOR_DEPLOYMENT_ID": "winnieyangwn-kimi26",
+    "AUTODATA_GENERATOR_MODEL": sys.argv[5],
+    "AUTODATA_GENERATOR_DEPLOYMENT_ID": sys.argv[6],
     "AUTODATA_GENERATOR_MAX_INPUT": "4096",
     "AUTODATA_GENERATOR_MAX_OUTPUT": "768",
     "AUTODATA_GENERATOR_TIMEOUT": "90",
@@ -144,5 +148,7 @@ export AAR_AUTODATA_CAMPAIGN_POLICY="${policy}"
 export AAR_RUN12_GENERATOR_URL="${GENERATOR_URL}"
 export AAR_RUN12_GENERATOR_HOST_HEADER="${GENERATOR_HOST_HEADER}"
 job_id="$(sbatch --parsable --output="${root}/canary-%j.out" --export=ALL "${SCRIPT_DIR}/run_12_target_canary.sbatch")"
-printf 'phase=canary\njob_id=%s\n' "${job_id}" | tee -a "${root}/submission.txt"
+printf 'phase=canary\njob_id=%s\naar_git_commit=%s\ngenerator_model=%s\ngenerator_deployment_id=%s\n' \
+  "${job_id}" "$(git -C "${REPO}" rev-parse HEAD)" "${GENERATOR_MODEL}" \
+  "${GENERATOR_DEPLOYMENT_ID}" | tee -a "${root}/submission.txt"
 unset MODEL_API_KEY
