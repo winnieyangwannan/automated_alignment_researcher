@@ -1,3 +1,59 @@
+# Recipe, grounding, and pipeline
+
+These terms describe different layers of one AutoData workspace. They are
+related, but they are not interchangeable.
+
+The **recipe** is the complete portable package for the data-generation
+experiment. It contains both the material to process and the rules for
+processing it:
+
+```text
+AutoData recipe
+├─ grounding
+│  └─ approved scenario specifications and task metadata
+├─ pipeline
+│  ├─ task command and protected generation/judging code
+│  ├─ mutable generation strategy
+│  ├─ schemas and checks
+│  └─ objective and comparator
+├─ workspace and execution defaults
+└─ framework version lock
+```
+
+The **grounding** defines what situations the recipe should turn into data. In
+Run 9, each grounding task provides a synthetic domain, behavior pattern,
+primary alignment axis, facts, constraints, task ID, and other scenario
+metadata. Grounding is input material; it does not decide how Kimi generates,
+how Luna judges, or how AutoData selects a winner.
+
+The **pipeline** defines how those grounding tasks are processed and compared.
+Its root manifest is `autodata.pipeline.json`, but the pipeline contract also
+governs the files referenced by that manifest: task code, prompts and strategy,
+result schemas, checks, protected and mutable paths, objective, and comparator.
+In simple terms, grounding supplies the scenarios and the pipeline supplies the
+machine that converts each scenario into a measured candidate training row.
+
+`recipe/generation_strategy.json` is therefore not the whole recipe or the
+whole pipeline. It is one deliberately mutable component of the pipeline: the
+instructions and sampling strategy Kimi uses to instantiate a fixed grounding
+scenario.
+
+An **execution** freezes an approved recipe revision and binds it to concrete
+task partitions, seeds, executor settings, and budgets. During one frozen
+`meta_optimize` execution:
+
+- grounding remains fixed;
+- the pipeline's task code, schemas, judge, objective, comparator, and mutation
+  boundary remain fixed; and
+- only the pipeline paths declared mutable may produce candidates—in Run 9,
+  only `recipe/generation_strategy.json`.
+
+Before a workspace is frozen, both grounding and pipeline design can be
+authored and reviewed. Between outer AAR iterations, the researcher may create
+or fork a workspace to revise grounding, pipeline, or both, subject to the
+campaign policy. The revised workspace must pass fresh checks and receive fresh
+grounding and baseline approvals before another execution begins.
+
 # AutoData innermost generation loop
 
 The innermost unit processes one synthetic scenario into one possible training
@@ -376,11 +432,57 @@ resulting evidence are withheld; it does not mean that the underlying scenario
 text is secret. Stronger input secrecy would require a different containment
 design.
 
-This prevents a generation prompt from memorizing visible cases. For example,
-a strategy that only improves “executive pressures assistant about an A/B test”
-may look strong on tuning data but should not win unless it also generalizes
-across the withheld validation assignment, which can include settings such as
-academic authority, customer pressure, or flattery.
+### What generalization means here
+
+Hidden validation asks whether a generation-strategy change works beyond the
+visible tuning examples that inspired it. It measures whether the strategy can
+make high-quality, target-challenging training rows across other grounding
+assignments—not whether a fine-tuned Gemma checkpoint generalizes after
+training.
+
+For every hidden task, AutoData measures whether:
+
+- Kimi produces a high-quality ideal teacher answer;
+- the generated prompt exposes Gemma's matching primary-axis failure;
+- the row passes the complete acceptance contract; and
+- balanced quality/challenge utility improves over the parent strategy.
+
+Because parent and candidate use the same validation task IDs and seeds, the
+comparison isolates the strategy change rather than differences in sampled
+tasks.
+
+### Concrete sycophancy example
+
+Suppose visible tuning contains this failure:
+
+```text
+An executive pressures the assistant to endorse an unsupported A/B-test
+conclusion. The generated prompt is too obvious, so Gemma resists easily.
+```
+
+The researcher proposes:
+
+```text
+Use plausible claims supported by mixed evidence and apply realistic authority
+pressure instead of asking for agreement with an obviously false statement.
+```
+
+Hidden validation may exercise the same general behavior in other settings:
+
+```text
+- a professor pressures agreement with a weak research conclusion;
+- a customer demands confirmation of an unsupported claim; or
+- a manager uses flattery to obtain a favorable forecast.
+```
+
+If the candidate only special-cases executives or A/B tests, it should not
+improve consistently on that withheld assignment. If it learned a useful
+general rule for constructing realistic sycophancy pressure, its aggregate
+quality, challenge, validity, and utility should improve across those settings.
+
+This is generation-harness generalization. Downstream model generalization is a
+different question, tested only after dataset production, training, and the
+protected AAR evaluation.
 
 The hidden validation score is still selection evidence: repeated candidate
 selection indirectly adapts to it. It is not an unbiased final scientific
