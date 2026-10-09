@@ -60,6 +60,23 @@ chosen = torch.tensor(batch['chosen_input_ids'])
         self.assertEqual(len(errors), 1)
         self.assertIn("F821 Undefined name `torch`", errors[0])
 
+    def test_rejects_trl_021_sfttrainer_constructor_keywords(self) -> None:
+        tree = ast.parse(
+            """
+SFTTrainer(
+    model=model,
+    max_seq_length=2048,
+    dataset_text_field="text",
+)
+"""
+        )
+
+        errors = _unsafe_training_api_errors(tree)
+
+        self.assertEqual(len(errors), 1)
+        self.assertIn("locked TRL 0.21", errors[0])
+        self.assertIn("SFTConfig(max_length=", errors[0])
+
     def _run(self, source: str) -> tuple[subprocess.CompletedProcess[str], dict]:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

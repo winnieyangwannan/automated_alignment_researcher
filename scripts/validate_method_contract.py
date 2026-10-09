@@ -170,6 +170,18 @@ def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
                     "SFTTrainer(tokenizer=...) is unsupported by the target TRL "
                     "contract; use processing_class=tokenizer"
                 )
+            if name == "SFTTrainer" and keywords & {
+                "max_seq_length",
+                "dataset_text_field",
+            }:
+                invalid = ", ".join(
+                    sorted(keywords & {"max_seq_length", "dataset_text_field"})
+                )
+                errors.add(
+                    f"SFTTrainer keyword(s) {invalid} are unsupported by locked TRL "
+                    "0.21; use SFTConfig(max_length=..., dataset_text_field=...) "
+                    "and pass it as args="
+                )
             if name == "train" and "max_steps" in keywords:
                 errors.add(
                     "Trainer.train(max_steps=...) is unsupported; set max_steps in "
