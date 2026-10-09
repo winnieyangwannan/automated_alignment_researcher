@@ -46,9 +46,15 @@ def _required_phases(tree: ast.AST) -> set[str]:
     return observed
 
 
-def validate(method_path: Path, *, run_dry_run: bool = False) -> dict[str, Any]:
+def validate(
+    method_path: Path,
+    *,
+    run_dry_run: bool = False,
+    require_gemma4_targets: bool = False,
+) -> dict[str, Any]:
     method_path = method_path.resolve()
     source = method_path.read_bytes()
+    source_text = source.decode("utf-8", errors="replace")
     source_hash = hashlib.sha256(source).hexdigest()
     errors: list[str] = []
     try:
@@ -61,6 +67,24 @@ def validate(method_path: Path, *, run_dry_run: bool = False) -> dict[str, Any]:
         missing = sorted(set(REQUIRED_METHOD_PHASES) - _required_phases(tree))
         if missing:
             errors.append(f"missing required phase contexts: {', '.join(missing)}")
+        if (
+            "BitsAndBytesConfig" in source_text
+            and importlib.util.find_spec("bitsandbytes") is None
+        ):
+            errors.append(
+                "BitsAndBytesConfig requires bitsandbytes, which is not installed"
+            )
+        if require_gemma4_targets:
+            normalized_source = source_text.replace("\\\\", "\\")
+            required_target = (
+                r"model\.language_model\.layers\.\d+\.self_attn\."
+                r"(q_proj|v_proj)"
+            )
+            if required_target not in normalized_source:
+                errors.append(
+                    "Gemma-4 PEFT must use target_modules regex "
+                    f"{required_target}"
+                )
 
     module = None
     if tree is not None:
@@ -141,6 +165,7 @@ def main() -> None:
     parser.add_argument("method_path", type=Path)
     parser.add_argument("--proof", type=Path)
     parser.add_argument("--run-dry-run", action="store_true")
+    parser.add_argument("--require-gemma4-targets", action="store_true")
     args = parser.parse_args()
     proof = args.proof or args.method_path.parent / ".aar-method-contract.json"
     try:
@@ -162,7 +187,11 @@ def main() -> None:
         + "\n"
     )
     try:
-        result = validate(args.method_path, run_dry_run=args.run_dry_run)
+        result = validate(
+            args.method_path,
+            run_dry_run=args.run_dry_run,
+            require_gemma4_targets=args.require_gemma4_targets,
+        )
     except Exception as error:  # noqa: BLE001 - always leave a diagnostic proof
         result = {
             "schema_version": 1,

@@ -18,7 +18,7 @@ Kimi AAR sessions set Kimi Code's `defaultPermissionMode = "auto"` in the tempor
 
 Run-10's Kimi-only request shim uses one-shot named `tool_choice` on exact continuation checkpoints. Initial research and tool arguments remain model-selected; the shim only ensures that a checkpoint requiring `Read`, `Bash`, `Write`, or an AAR MCP function is emitted as a real structured call rather than narrated as prose.
 
-Before proposal submission, Run 10 also requires a source-hash-bound method-contract proof with a no-GPU dry run. This catches import failures and missing `MethodConfig`, `run_experiment`, result fields, or timing phases that syntax compilation cannot detect. The training submitter repeats the proof independently and emits a terminal failure marker on any later training failure.
+Before proposal submission, Run 10 also requires a source-hash-bound method-contract proof with a no-GPU dry run. This catches import failures, unavailable BitsAndBytes use, invalid Gemma-4 PEFT targets, and missing `MethodConfig`, `run_experiment`, result fields, or timing phases that syntax compilation cannot detect. The training submitter repeats the proof independently and emits a terminal failure marker on any later training failure.
 
 The Kimi MCP bridge bounds text responses at 16,000 characters. Large literature lists are reduced at complete-entry boundaries and carry truncation metadata, keeping discovery context directly usable instead of triggering Kimi Code's external tool-result spill file.
 

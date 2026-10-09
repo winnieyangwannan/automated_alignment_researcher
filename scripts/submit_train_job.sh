@@ -29,8 +29,12 @@ if [ "${AAR_REQUIRE_METHOD_CONTRACT:-0}" = "1" ]; then
     echo "submit_train_job: method is missing: ${_method_path}" >&2
     exit 2
   }
+  _contract_args=("${_method_path}" --proof "${_proof_path}" --run-dry-run)
+  if [ "${AAR_REQUIRE_GEMMA4_TARGETS:-0}" = "1" ]; then
+    _contract_args+=(--require-gemma4-targets)
+  fi
   timeout 60s "${HARNESS_PY:-python}" "${REPO}/scripts/validate_method_contract.py" \
-    "${_method_path}" --proof "${_proof_path}" --run-dry-run >&2
+    "${_contract_args[@]}" >&2
 fi
 
 AAR_TRAIN_SUBMITTED_AT_NS="$(date +%s%N)"

@@ -523,6 +523,8 @@ class KimiAgent:
                 f"timeout 60s python {validator} {method_path} --proof {proof} "
                 "--run-dry-run"
             )
+            if os.environ.get("AAR_REQUIRE_GEMMA4_TARGETS") == "1":
+                command += " --require-gemma4-targets"
             return (
                 "Call the native Bash tool exactly once now with command="
                 f"{json.dumps(command)} to validate the complete import, MethodConfig, "
