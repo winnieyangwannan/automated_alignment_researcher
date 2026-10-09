@@ -207,8 +207,6 @@ class KimiAgent:
             with self._request_policy_proxy(env):
                 while True:
                     command = [executable]
-                    if self.auto_approve:
-                        command.append("--auto")
                     if self.model:
                         command.extend(["--model", self.model])
                     if continuation_count:
@@ -508,9 +506,28 @@ class KimiAgent:
             for child in source_home.iterdir():
                 if child.name == "mcp.json":
                     continue
+                if child.name == "config.toml" and self.auto_approve:
+                    config_text = child.read_text()
+                    permission = 'defaultPermissionMode = "auto"'
+                    if re.search(
+                        r"(?m)^\s*defaultPermissionMode\s*=.*$", config_text
+                    ):
+                        config_text = re.sub(
+                            r"(?m)^\s*defaultPermissionMode\s*=.*$",
+                            permission,
+                            config_text,
+                        )
+                    else:
+                        config_text = f"{permission}\n{config_text}"
+                    (overlay_home / child.name).write_text(config_text)
+                    continue
                 (overlay_home / child.name).symlink_to(
                     child, target_is_directory=child.is_dir()
                 )
+        if self.auto_approve and not (overlay_home / "config.toml").exists():
+            (overlay_home / "config.toml").write_text(
+                'defaultPermissionMode = "auto"\n'
+            )
 
         mcp_config: dict[str, Any] = {"mcpServers": {}}
         source_mcp = source_home / "mcp.json"

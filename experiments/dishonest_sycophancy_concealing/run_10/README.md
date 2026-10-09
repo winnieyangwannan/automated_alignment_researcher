@@ -14,7 +14,7 @@ Each Kimi session dynamically runs `serve.sh generate-opencode-config steerabili
 
 The research prompt is installed as a Kimi agent profile, so its constraints are system-level rather than user-message text. That profile disables Kimi Code's separate goal/subagent tools and asks for one compact initial literature call; AAR remains the sole owner of iteration continuation and completion.
 
-Kimi AAR sessions use Kimi Code's `--auto` permission mode because the Slurm research process is noninteractive. This lets the checkpointed scaffold, edit, validation, and training commands execute without an unanswered approval prompt. It is opt-in for this backend and does not change generic Kimi invocations or Claude.
+Kimi AAR sessions set Kimi Code's `defaultPermissionMode = "auto"` in the temporary session configuration because `--prompt` cannot be combined with the `--auto` CLI flag. This lets the checkpointed scaffold, edit, validation, and training commands execute without an unanswered approval prompt. It is opt-in for this backend and does not change the user's Kimi configuration, generic Kimi invocations, or Claude.
 
 The Kimi MCP bridge bounds text responses at 16,000 characters. Large literature lists are reduced at complete-entry boundaries and carry truncation metadata, keeping discovery context directly usable instead of triggering Kimi Code's external tool-result spill file.
 

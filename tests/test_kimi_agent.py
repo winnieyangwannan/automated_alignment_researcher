@@ -203,8 +203,10 @@ class KimiAgentTest(unittest.TestCase):
                 "from pathlib import Path\n"
                 "index = sys.argv.index('--agent-file')\n"
                 "profile = Path(sys.argv[index + 1])\n"
+                "home = Path(os.environ['KIMI_CODE_HOME'])\n"
                 "Path(os.environ['KIMI_TEST_CAPTURE']).write_text(json.dumps({\n"
                 "  'argv': sys.argv[1:], 'profile': profile.read_text(),\n"
+                "  'config': (home / 'config.toml').read_text(),\n"
                 "}))\n"
                 "print(json.dumps({'role': 'assistant', 'content': 'done'}))\n"
             )
@@ -231,7 +233,10 @@ class KimiAgentTest(unittest.TestCase):
             self.assertTrue(result.success, result.error)
             observed = json.loads(capture.read_text())
             self.assertIn("--agent-file", observed["argv"])
-            self.assertIn("--auto", observed["argv"])
+            self.assertNotIn("--auto", observed["argv"])
+            self.assertIn(
+                'defaultPermissionMode = "auto"', observed["config"]
+            )
             self.assertNotIn("System-level AAR instructions.", observed["argv"])
             self.assertIn(
                 'disallowedTools: ["CreateGoal", "AgentSwarm"]',
