@@ -61,6 +61,24 @@ attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "${REPO}" rev-parse --short=12 H
 attempt_dir="/storage/home/${USER}/aar-runs/run13-claude/research_canary_attempts/${attempt_id}"
 mkdir -p "${attempt_dir}"/{metadata,logs,secrets}
 chmod 700 "${attempt_dir}" "${attempt_dir}/metadata" "${attempt_dir}/logs" "${attempt_dir}/secrets"
+recovered_agent_log_for_launch=""
+if [ -n "${RECOVERED_AGENT_LOG_DIR}" ]; then
+  recovered_agent_log_for_launch="${attempt_dir}/metadata/recovered-agent-log"
+  mkdir -p "${recovered_agent_log_for_launch}"
+  chmod 700 "${recovered_agent_log_for_launch}"
+  recovered_log="${recovered_agent_log_for_launch}/AGENT_LOG_gemma4_31b_explore_canary.md"
+  cp -- "${RECOVERED_AGENT_LOG_DIR}/AGENT_LOG_gemma4_31b_explore_canary.md" "${recovered_log}"
+  sed -i '/^### !!! SUBMIT WORKAROUND/,/^### KEY ENV FACTS/{
+    /^### KEY ENV FACTS/!d
+  }' "${recovered_log}"
+  sed -i '/^### KEY ENV FACTS/i\
+### METHOD VALIDATION FOR THIS CONTINUATION\
+The prior sandbox workaround is obsolete. Keep AAR_REQUIRE_METHOD_CONTRACT=1.\
+The trusted launcher provides an attempt-local ruff binary and AAR_METHOD_VALIDATOR_PY;\
+submit every approved method normally through scripts/submit_train_job.sh.\
+' "${recovered_log}"
+  chmod 600 "${recovered_log}"
+fi
 "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/snapshot_vllm_runtime.sh" \
   "${attempt_dir}" > "${attempt_dir}/metadata/vllm_runtime_path.txt"
 
@@ -70,8 +88,8 @@ export AAR_RUNTIME_ROOT="${attempt_dir}" AAR_RUN_ATTEMPT_DIR="${attempt_dir}"
 export AAR_BASELINE_GIT_COMMIT="${commit}" AAR_REUSED_BASELINE="${REUSED_BASELINE}"
 export AAR_RECOVERED_BASELINE_SOURCES="${RECOVERED_SOURCES}"
 export AAR_RUN13_RESEARCH_MAX_ITERATIONS="${MAX_ITERATIONS}"
-if [ -n "${RECOVERED_AGENT_LOG_DIR}" ]; then
-  export AAR_RECOVERED_AGENT_LOG_DIR="${RECOVERED_AGENT_LOG_DIR}"
+if [ -n "${recovered_agent_log_for_launch}" ]; then
+  export AAR_RECOVERED_AGENT_LOG_DIR="${recovered_agent_log_for_launch}"
 fi
 export CLAUDE_CLI_PATH
 
@@ -80,5 +98,5 @@ job_id="$(sbatch --parsable \
   "${SCRIPT_DIR}/run_13_research_canary.sbatch")"
 printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nresearch_backend=claude\nresearch_model=claude-opus-4-8\nresearch_chains=1\nmax_iterations_per_chain=%s\nevaluator_jobs=1\nevaluator_gpus_per_job=4\nkeep_checkpoints=1\nrecovered_agent_log_dir=%s\n' \
   "${job_id}" "${attempt_dir}" "${commit}" "${MAX_ITERATIONS}" \
-  "${RECOVERED_AGENT_LOG_DIR:-none}" | tee "${attempt_dir}/metadata/submission.txt"
+  "${recovered_agent_log_for_launch:-none}" | tee "${attempt_dir}/metadata/submission.txt"
 unset MODEL_API_KEY ANTHROPIC_API_KEY HF_TOKEN

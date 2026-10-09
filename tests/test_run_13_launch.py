@@ -53,3 +53,6 @@ def test_research_canary_explicitly_launches_one_claude_opus_chain() -> None:
     assert 'AAR_RESEARCH_TOOL_DIR="${ATTEMPT_DIR}/research-tools"' in pipeline
     assert 'MAX_ITERATIONS="${AAR_RUN13_RESEARCH_MAX_ITERATIONS:-1}"' in submitter
     assert "AAR_RUN13_RECOVERED_AGENT_LOG_DIR" in submitter
+    assert "### METHOD VALIDATION FOR THIS CONTINUATION" in submitter
+    assert "Keep AAR_REQUIRE_METHOD_CONTRACT=1" in submitter
+    assert 'metadata/recovered-agent-log' in submitter
