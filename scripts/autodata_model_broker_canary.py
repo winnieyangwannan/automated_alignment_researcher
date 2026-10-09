@@ -181,12 +181,14 @@ def _read_owned_token(path: Path) -> str:
             os.close(descriptor)
     except OSError as error:
         raise RuntimeError("broker auth token file could not be read safely") from error
-    identity = lambda value: (
-        value.st_dev,
-        value.st_ino,
-        value.st_size,
-        value.st_mtime_ns,
-    )
+    def identity(value: os.stat_result) -> tuple[int, int, int, int]:
+        return (
+            value.st_dev,
+            value.st_ino,
+            value.st_size,
+            value.st_mtime_ns,
+        )
+
     if identity(before) != identity(opened) or identity(opened) != identity(after):
         raise RuntimeError("broker auth token file changed while it was read")
     if len(raw) > 64 << 10:
