@@ -22,3 +22,13 @@ def test_run12_research_canary_can_continue_with_safe_memory() -> None:
     assert 'AAR_RUN12_RESEARCH_MAX_ITERATIONS:-1' in launcher
     assert "AAR_RUN12_RECOVERED_AGENT_LOG_DIR" in launcher
     assert 'AAR_RUN10_RECOVERED_AGENT_LOG_DIR' in launcher
+
+
+def test_run12_target_binding_accepts_a_newly_promoted_incumbent() -> None:
+    launcher = (RUN12 / "submit_run_12.sh").read_text()
+
+    assert "AAR_RUN12_INCUMBENT_RUN_ID" in launcher
+    assert "AAR_RUN12_ADAPTER_CHECKPOINT" in launcher
+    assert "AAR_RUN12_MERGED_CHECKPOINT" in launcher
+    assert "AAR_RUN12_TARGET_ITERATION" in launcher
+    assert '--iteration "${TARGET_ITERATION}"' in launcher

@@ -16,11 +16,12 @@ GENERATOR_URL="${AAR_RUN12_GENERATOR_URL:-http://fair-cw-use2-1-ingress-slurm-in
 GENERATOR_HOST_HEADER="${AAR_RUN12_GENERATOR_HOST_HEADER:-ram-inference-gateway.ingress.}"
 GENERATOR_MODEL="${AAR_RUN12_GENERATOR_MODEL:-Kimi-K2.6}"
 GENERATOR_DEPLOYMENT_ID="${AAR_RUN12_GENERATOR_DEPLOYMENT_ID:-aar_8-kimi26}"
-INCUMBENT_RUN_ID="gemma4_31b-explore-beta-1791334144-gemma4_31b_explore_beta__cshc_v1-1791342624251"
+INCUMBENT_RUN_ID="${AAR_RUN12_INCUMBENT_RUN_ID:-gemma4_31b-explore-beta-1791334144-gemma4_31b_explore_beta__cshc_v1-1791342624251}"
 BASE_CHECKPOINT="/checkpoint/ram/shared/models/google/gemma-4-31B-it"
 RUN7_ROOT="/checkpoint/ram/aar/${USER}/honesty-sycophancy-concealing-gemma4-31b-vllm-v0/run7_attempts/20261007T004406Z-1b3303d02821"
-ADAPTER_CHECKPOINT="${RUN7_ROOT}/aar_teams/honesty-sycophancy-concealing-gemma4_31b-opus48-fiveagent-vllm-run7-v0/submissions/${INCUMBENT_RUN_ID}/model"
-MERGED_CHECKPOINT="${RUN7_ROOT}/merged_candidates/${INCUMBENT_RUN_ID}"
+ADAPTER_CHECKPOINT="${AAR_RUN12_ADAPTER_CHECKPOINT:-${RUN7_ROOT}/aar_teams/honesty-sycophancy-concealing-gemma4_31b-opus48-fiveagent-vllm-run7-v0/submissions/${INCUMBENT_RUN_ID}/model}"
+MERGED_CHECKPOINT="${AAR_RUN12_MERGED_CHECKPOINT:-${RUN7_ROOT}/merged_candidates/${INCUMBENT_RUN_ID}}"
+TARGET_ITERATION="${AAR_RUN12_TARGET_ITERATION:-2}"
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "Run 12 requires branch autodata" >&2; exit 2; }
 git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || { echo "tracked AAR worktree is dirty" >&2; exit 2; }
@@ -34,7 +35,7 @@ if [ "${ACTION}" = preflight ]; then
   chmod 700 "${root}" "${root}/secrets"
   binding="${root}/target-binding.json"
   PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_target_binding create \
-    --iteration 2 \
+    --iteration "${TARGET_ITERATION}" \
     --incumbent-run-id "${INCUMBENT_RUN_ID}" \
     --base-checkpoint "${BASE_CHECKPOINT}" \
     --adapter-checkpoint "${ADAPTER_CHECKPOINT}" \
