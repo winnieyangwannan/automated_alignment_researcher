@@ -96,12 +96,27 @@ def _unsupported_training_arguments(tree: ast.AST) -> list[str]:
     # its known removal here as a fallback so the CPU-only dev/CI validator,
     # where Transformers is intentionally absent, enforces the same contract.
     supported: set[str] | None = None
-    try:
-        from transformers import TrainingArguments
-    except ImportError:
-        pass
-    else:
-        supported = set(inspect.signature(TrainingArguments).parameters)
+    spec = importlib.util.find_spec("transformers")
+    if spec is not None and spec.submodule_search_locations:
+        training_args_path = (
+            Path(next(iter(spec.submodule_search_locations))) / "training_args.py"
+        )
+        try:
+            training_args_tree = ast.parse(training_args_path.read_bytes())
+        except (OSError, SyntaxError):
+            pass
+        else:
+            for candidate in training_args_tree.body:
+                if isinstance(candidate, ast.ClassDef) and candidate.name == (
+                    "TrainingArguments"
+                ):
+                    supported = {
+                        statement.target.id
+                        for statement in candidate.body
+                        if isinstance(statement, ast.AnnAssign)
+                        and isinstance(statement.target, ast.Name)
+                    }
+                    break
     unsupported: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -123,7 +138,12 @@ def _unsupported_training_arguments(tree: ast.AST) -> list[str]:
 
 def _undefined_name_errors(method_path: Path) -> list[str]:
     """Run the target environment's Ruff F821 analysis on generated code."""
-    ruff = shutil.which("ruff")
+    adjacent_ruff = Path(sys.executable).with_name("ruff")
+    ruff = (
+        str(adjacent_ruff)
+        if os.access(adjacent_ruff, os.X_OK)
+        else shutil.which("ruff")
+    )
     if ruff is None:
         if os.environ.get("AAR_REQUIRE_METHOD_CONTRACT") == "1":
             return ["Ruff is required for fail-closed undefined-name validation"]
