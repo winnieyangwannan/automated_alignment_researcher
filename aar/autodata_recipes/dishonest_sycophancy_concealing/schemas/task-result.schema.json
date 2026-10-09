@@ -34,7 +34,12 @@
     "metrics": {
       "type": "object",
       "additionalProperties": { "type": "number" },
-      "required": ["quality", "valid"]
+      "required": [
+        "quality",
+        "valid",
+        "challenge",
+        "quality_challenge_utility"
+      ]
     },
     "provider_usage": { "type": "array" },
     "reason_code": { "type": ["string", "null"] },

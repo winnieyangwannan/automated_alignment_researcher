@@ -268,9 +268,14 @@ def verify_preflight(run_id: str) -> dict[str, Any]:
     if not isinstance(state_raw, str):
         raise ValueError("training handoff state_db must be a path")
     state = _safe_file(Path(state_raw), "native AutoData state")
-    expected_state_raw = os.getenv("AAR_AUTODATA_STATE", "").strip()
+    # The live controller database may be node-local.  Cross-node training
+    # verifies the supervisor's atomic retained snapshot when configured.
+    expected_state_raw = (
+        os.getenv("AAR_AUTODATA_RETAINED_STATE", "").strip()
+        or os.getenv("AAR_AUTODATA_STATE", "").strip()
+    )
     if not expected_state_raw or state != _safe_file(
-        Path(expected_state_raw), "AAR_AUTODATA_STATE"
+        Path(expected_state_raw), "trusted AAR_AUTODATA state"
     ):
         raise ValueError("training handoff state_db is not the trusted native state")
 

@@ -94,7 +94,7 @@ def test_run9_bounds_meta_work_and_has_production_acceptance_headroom() -> None:
     assert "AAR_AUTODATA_PRODUCTION_MAX_TASKS=2000" in pipeline
 
 
-def test_run9_supports_opt_in_target_aware_autodata() -> None:
+def test_run9_requires_target_aware_autodata_by_default() -> None:
     submitter = (RUN9 / "submit_run_9.sh").read_text()
     recipe = (
         ROOT
@@ -114,6 +114,9 @@ def test_run9_supports_opt_in_target_aware_autodata() -> None:
         assert name in submitter
         assert name in recipe
     assert "target_setting_count" in submitter
+    assert 'AUTODATA_TARGET_ENABLED="${AUTODATA_TARGET_ENABLED:-1}"' in submitter
+    assert '"AUTODATA_TARGET_ENABLED": "${target_enabled}"' in submitter
+    assert "enabled by default" in submitter
     assert "target_aware=%s" in submitter
     assert 'role="target"' in recipe
     assert 'metrics["challenge"]' in recipe
@@ -159,3 +162,26 @@ def test_run9_keeps_the_hot_broker_database_on_node_local_storage() -> None:
     assert '--database "${broker_database}"' in canary
     assert 'snapshot_broker_database' in canary
     assert "wal_checkpoint(TRUNCATE)" in canary
+
+
+def test_run9_uses_one_supervised_node_local_autodata_lifecycle() -> None:
+    chain = (ROOT / "scripts" / "slurm_aar_chain.sh").read_text()
+    submit_train = (ROOT / "scripts" / "submit_train_job.sh").read_text()
+    submitter = (RUN9 / "submit_run_9.sh").read_text()
+    pipeline = (RUN9 / "run_9_pipeline.sbatch").read_text()
+    prompt = (ROOT / "aar" / "research_loop" / "prompt_safety.jinja2").read_text()
+
+    assert "AAR_AUTODATA_LIFECYCLE_SUPERVISED=1" in pipeline
+    assert '${SLURM_TMPDIR:-/tmp}/aar-autodata-native-' in chain
+    assert "AAR_AUTODATA_RETAINED_STATE" in chain
+    assert "AAR_AUTODATA_SUPERVISOR_CONTROL" in chain
+    assert "autodata_lifecycle_supervisor.py\" run" in chain
+    assert "autodata_lifecycle_supervisor.py\" restore" in chain
+    assert "--require-manifest" in chain
+    assert '--control-file "${AAR_AUTODATA_SUPERVISOR_CONTROL}"' in chain
+    assert "autodata_lifecycle_supervisor.py\" snapshot" in submit_train
+    assert "sole caller of native" in prompt
+    assert "never infers intent" in prompt
+    assert "Never register\nthe workspace's automatically created default execution" in prompt
+    assert "AAR_AUTODATA_RETAINED_STATE" in prompt
+    assert "34f0a22c89a2a40e605afd43f3a7b11c25003ab7" in submitter

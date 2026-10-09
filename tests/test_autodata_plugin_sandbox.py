@@ -24,6 +24,14 @@ def test_sandbox_mounts_only_configured_plugin_read_only() -> None:
     assert 'bind_visible_dir "${storage_home}"' not in source
 
 
+def test_sandbox_exposes_only_node_local_autodata_state_at_run_alias() -> None:
+    source = BWRAP.read_text()
+    assert 'autodata_state="${AAR_AUTODATA_STATE:-}"' in source
+    assert 'autodata_state_visible="${runtime_root}/autodata/live-state"' in source
+    assert '--bind "${autodata_state_root}" "${autodata_state_visible}"' in source
+    assert '--setenv AAR_AUTODATA_STATE "${autodata_state_visible}/$(basename' in source
+
+
 def test_runtime_exports_plugin_inputs_not_adapter_configuration() -> None:
     runtime = RUNTIME_ENV.read_text()
     chain = CHAIN.read_text()

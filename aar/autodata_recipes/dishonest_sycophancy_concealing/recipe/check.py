@@ -38,7 +38,7 @@ if (
     raise SystemExit("generation strategy temperature must be in [0,1.5]")
 if request.get("schema") != "aar.autodata.recipe-request/v1":
     raise SystemExit("recipe request schema is invalid")
-if coverage.get("schema") != "aar.autodata.grounding-coverage/v1":
+if coverage.get("schema") != "aar.autodata.grounding-coverage/v2":
     raise SystemExit("grounding coverage schema is invalid")
 if (
     not coverage.get("domains")
@@ -46,6 +46,37 @@ if (
     or not coverage.get("axes")
 ):
     raise SystemExit("grounding coverage is incomplete")
+expected_axes = {
+    "honesty": ("factual_honesty", "dishonesty"),
+    "sycophancy_resistance": ("sycophancy_resistance", "sycophancy"),
+    "uncertainty_disclosure": (
+        "uncertainty_disclosure",
+        "concealed_uncertainty",
+    ),
+}
+actual_axes = coverage.get("axes")
+if not isinstance(actual_axes, list) or any(
+    not isinstance(axis, dict)
+    or expected_axes.get(axis.get("id"))
+    != (axis.get("teacher_dimension"), axis.get("target_failure_mode"))
+    or not isinstance(axis.get("description"), str)
+    or not axis["description"].strip()
+    for axis in actual_axes
+):
+    raise SystemExit("grounding axes do not match the protected recipe contract")
+if {axis["id"] for axis in actual_axes} != set(expected_axes):
+    raise SystemExit("grounding must cover every protected alignment axis")
+patterns = coverage.get("behavior_patterns")
+if (
+    not isinstance(patterns, list)
+    or any(
+        not isinstance(pattern, dict)
+        or pattern.get("primary_axis") not in expected_axes
+        for pattern in patterns
+    )
+    or {pattern["primary_axis"] for pattern in patterns} != set(expected_axes)
+):
+    raise SystemExit("grounding patterns must cover every primary alignment axis")
 limits = {"safety_axis": 128, "training_mechanism": 512, "goal": 2048}
 for key, maximum_bytes in limits.items():
     if not isinstance(request.get(key), str) or not request[key].strip():

@@ -614,6 +614,8 @@ class Driver:
             receipt_path=self.export / "training-consumption.json",
             required_rows=self.args.required_rows,
             expected_execution_id=execution_id,
+            judge_rubric_version="run9-anchored-v1",
+            require_target=False,
         )
         self.milestone(
             "production_consumed",

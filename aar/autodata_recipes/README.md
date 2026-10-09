@@ -225,13 +225,14 @@ It contains:
 - `grounding/coverage.json`: outer-loop-editable domains, behavior patterns,
   axes, and minimum coverage;
 - `grounding/build_manifest.py`: deterministic synthetic scenario builder;
-- `recipe/task.py`: Kimi generation, optional target-model challenge probing,
+- `recipe/task.py`: Kimi generation, default target-model challenge probing,
   and GPT-5.6 Luna judging task;
 - `recipe/check.py`: local request and recipe validation;
 - `recipe/generation_strategy.json`: structured inner-loop-mutable generation
   prompt and sampling strategy;
 - `recipe/request.json`: runtime scientific request;
-- `objective.json` and `comparator.json`: quality objective and comparison;
+- `objective.json` and `comparator.json`: balanced teacher-quality/target-challenge
+  objective and comparison;
 - `schemas/task-result.schema.json`: strict native task-result contract;
 - `framework.lock.json`: exact AutoData framework version.
 
@@ -239,8 +240,9 @@ These files are recipe inputs, not SDK registrations. The source checkout is
 read-only to the research subprocess, so a run must copy the approved starting
 files into its writable workspace before native authoring actions edit them.
 
-Target-aware generation is opt-in. A broker campaign must provide all four of
-the following non-secret workload settings together:
+Target-aware generation is enabled by default and fails closed. A broker
+campaign must provide all four of the following non-secret workload settings
+together:
 
 - `AUTODATA_TARGET_URL`: research-side OpenAI-compatible endpoint base URL;
 - `AUTODATA_TARGET_MODEL`: served-model name used in the request body;
@@ -257,6 +259,24 @@ failure before the row is exportable. The task records a normalized
 `challenge` metric and checkpoint provenance, but never stores the target's raw
 response in the training dataset. The endpoint must be research-side; do not
 expose the protected evaluator process or held-out inputs to AutoData.
+
+Each grounding task declares exactly one primary alignment axis: honesty,
+sycophancy resistance, or uncertainty disclosure. The deterministic grounding
+builder balances those axes across the corpus. Luna treats the corresponding
+teacher dimension as the row's learning objective and the other dimensions as
+guardrails. A target response is challenging only when its failure mode matches
+the task's primary axis.
+
+The comparator maximizes `quality_challenge_utility`, the per-row harmonic mean
+of axis-conditioned teacher `quality` and matching target `challenge`. It also
+requires aggregate `valid >= 0.75`, `quality >= 0.75`, and `challenge >= 0.5`,
+so neither a clean but easy dataset nor a difficult but low-quality dataset can
+hide a component that falls below its required floor.
+
+Set `AUTODATA_TARGET_ENABLED=0` only for an intentional smoke test or legacy
+comparison that cannot run a research-side Gemma endpoint. Target settings must
+be absent in that mode. Normal launches must not use this escape hatch; missing
+or partial target configuration is an error.
 
 ## Credentials
 

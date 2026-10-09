@@ -86,7 +86,7 @@ Kimi creates a candidate prompt and ideal teacher response
 This closes a gap in Luna-only generation: a clean, relevant teacher response does
 not prove that the example is difficult or useful for the current Gemma model.
 
-The recipe now has an opt-in, all-or-none target configuration:
+The recipe requires an all-or-none target configuration by default:
 
 ```text
 AUTODATA_TARGET_URL
@@ -96,17 +96,20 @@ AUTODATA_TARGET_CHECKPOINT_HASH
 ```
 
 It also supports an optional target host header and target-specific timeout, token,
-and rate settings. A partial configuration must fail closed. The checkpoint hash,
-deployment ID, model name, server identity, decoding settings, and seed must be
-retained with the run's reproducibility metadata.
+and rate settings. Missing or partial configuration must fail closed. An explicit
+`AUTODATA_TARGET_ENABLED=0` escape hatch is reserved for smoke tests and legacy
+comparisons; a normal Run 11 chain must not use it. The checkpoint hash, deployment
+ID, model name, server identity, decoding settings, and seed must be retained with
+the run's reproducibility metadata.
 
 Current target-aware acceptance requires both:
 
-1. a passing teacher-quality judgment across self-containment, factual honesty,
-   sycophancy resistance, uncertainty disclosure, helpfulness, and safety, with a
-   normalized teacher-quality score of at least `0.75`; and
-2. a target challenge score above zero with an allowed observed failure mode:
-   `dishonesty`, `sycophancy`, or `concealed_uncertainty`.
+1. full performance on the task's one declared primary teacher dimension, with the
+   remaining dimensions passing as universal or supporting guardrails and weighted
+   teacher quality of at least `0.75`; and
+2. a target challenge score above zero whose failure mode matches that primary
+   axis: honesty → `dishonesty`, sycophancy resistance → `sycophancy`, or
+   uncertainty disclosure → `concealed_uncertainty`.
 
 The accepted training row contains the generated prompt and ideal response. The raw
 Gemma probe response is not copied into the training dataset. Challenge evidence and
@@ -196,22 +199,20 @@ multiplexing unless measurements justify that cost.
 - Apply both per-chain and global budgets because API and GPU costs scale roughly
   with chain count.
 
-## Scientific decisions to settle before launch
+## Comparator policy and remaining scientific decisions
 
-The current implementation treats target challenge as a validity gate while the
-AutoData comparator still primarily optimizes teacher quality. Run 11 must choose
-and record one policy:
+The comparator now maximizes `quality_challenge_utility`, the harmonic mean of
+axis-conditioned teacher quality and matching target challenge. Aggregate validity
+must remain at least `0.75`, quality at least `0.75`, and challenge at least `0.5`.
+The harmonic mean prevents one strong component from masking a weak one, while the
+floors fail closed before candidate ranking.
 
-1. keep challenge as a minimum constraint and optimize teacher quality;
-2. require only strong target failures (`challenge_score == 2`);
-3. use a lexicographic comparator: validity, challenge, then teacher quality; or
-4. use a weighted composite with an explicit diversity term.
-
-The safest first canary is option 1 because it changes the least. Before a full run,
-compare acceptance rate, failure-mode coverage, duplicate rate, and downstream
-training value. A hard-example-only dataset may become narrow, so production should
-support an explicit mixture of target failures, boundary cases, and high-quality
-controls rather than assuming 100% difficult examples is optimal.
+The remaining canary decision is whether these floors and the `0.01` meaningful
+utility delta are calibrated to observed acceptance rates. Before a full run,
+compare axis coverage, failure-mode coverage, duplicate rate, score distribution,
+and downstream training value. A hard-example-only dataset may become narrow, so
+production should retain explicit axis balance and monitor boundary cases rather
+than assuming maximum difficulty alone is optimal.
 
 One deterministic target answer is inexpensive but noisy. Multiple samples or a
 failure-rate estimate can improve the challenge signal later, after measuring the

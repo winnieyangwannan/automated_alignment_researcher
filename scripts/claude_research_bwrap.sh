@@ -22,6 +22,7 @@ runtime_root="${AAR_RUNTIME_ROOT:?missing run root}"
 sandbox_home="${HOME:?missing HOME}"
 storage_home="${AAR_RESEARCH_STORAGE_HOME:-/storage/home/${USER:?missing USER}}"
 autodata_plugin_root="${AAR_AUTODATA_PLUGIN_ROOT:-}"
+autodata_state="${AAR_AUTODATA_STATE:-}"
 
 [ -x "${real_cli}" ] || fail "real Claude CLI is not executable"
 [ -d "${repo}" ] || fail "repository does not exist"
@@ -41,6 +42,7 @@ if [ -n "${autodata_plugin_root}" ]; then
   [ -f "${autodata_plugin_root}/scripts/autodata.py" ] || \
     fail "AutoData CLI wrapper is missing"
 fi
+
 case "${sandbox_home}" in /|/home|/storage|/storage/home) fail "unsafe HOME";; esac
 
 declare -a hidden_roots=("${sandbox_home}")
@@ -118,6 +120,22 @@ case "${runtime_root}" in
   "${repo}"/*) fail "runtime root must not be nested in the read-only source checkout" ;;
   *) bind_visible_dir "${runtime_root}" rw ;;
 esac
+
+# The orchestration-owned supervisor keeps the hot native state on the Slurm
+# node.  Expose only that one directory at a run-scoped alias; /tmp itself stays
+# private to the research sandbox.  The trusted parent continues using the host
+# path, while agent CLI status/action calls use the alias to the same inode.
+if [ -n "${autodata_state}" ]; then
+  autodata_state_root="$(dirname -- "${autodata_state}")"
+  [ -d "${autodata_state_root}" ] || fail "AutoData live-state directory is missing"
+  autodata_state_root="$(realpath -e -- "${autodata_state_root}")"
+  autodata_state_visible="${runtime_root}/autodata/live-state"
+  mkdir -p "${autodata_state_visible}"
+  bwrap_args+=(
+    --bind "${autodata_state_root}" "${autodata_state_visible}"
+    --setenv AAR_AUTODATA_STATE "${autodata_state_visible}/$(basename -- "${autodata_state}")"
+  )
+fi
 
 # The trusted parent has already verified the plugin's checkout, branch, SHA,
 # manifest, and symlink policy. Restore only that plugin directory read-only;
@@ -214,6 +232,7 @@ unset AAR_CLAUDE_REAL_CLI_PATH AAR_RESEARCH_STORAGE_HOME
 # but prevent an operator-side pin from crossing this isolation boundary.
 unset META_CLAUDE_CODE_RELEASE CLAUDE_CODE_VERSION_OVERRIDE
 unset git_common cli_dir masked_file hidden_root storage_home autodata_plugin_root eval_private
+unset autodata_state autodata_state_root autodata_state_visible
 unset claude_native_cache dotslash_cache
 while IFS= read -r env_name; do
   upper_name="${env_name^^}"

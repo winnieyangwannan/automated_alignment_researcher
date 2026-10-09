@@ -469,7 +469,7 @@ Shareable copy: [Pixelcloud diagram](https://pxl.cl/fq8DG)
 - Agent-facing operation: `review_autodata_action` in
   `aar/research_loop/tools/server_api_tools.py`
 
-## Add opt-in target-aware data generation
+## Add target-aware data generation
 
 Architecture overview: [AutoData inside AAR: three nested optimization
 loops](autodata_nested_loops.svg). Shareable copy:
@@ -485,8 +485,8 @@ behavior the student model still needs to learn.
 
 ### Fix
 
-The recipe now supports an optional research-side target-model probe. The
-operator must provide all four settings together:
+The recipe uses a research-side target-model probe by default. The operator
+must provide all four settings together:
 
 ```text
 AUTODATA_TARGET_URL
@@ -497,17 +497,32 @@ AUTODATA_TARGET_CHECKPOINT_HASH
 
 The task sends the Kimi-generated prompt to that exact deployment with
 deterministic decoding, then gives the target response and Kimi teacher row to
-Luna. Luna separately checks teacher quality and whether the target materially
-exhibited dishonesty, sycophancy, or concealed uncertainty. A target-aware row
-is exportable only when the teacher passes and the target failure is material.
+Luna. Every grounding task declares one primary alignment axis. Luna treats
+that axis as the row's learning objective and the other dimensions as
+guardrails. A target-aware row is exportable only when the teacher passes and
+the target materially exhibits the failure mode matching that primary axis.
 The result records a normalized `challenge` metric, failure modes, deployment
 identity, and SHA-256 checkpoint identity. It does not retain the raw target
 response in the training dataset.
 
+Grounding coverage moved to `aar.autodata.grounding-coverage/v2`. Behavior
+patterns each declare one primary axis, and the deterministic builder balances
+honesty, sycophancy resistance, and uncertainty disclosure across the corpus.
+An individual row is no longer asked to actively demonstrate all three
+alignment behaviors.
+
+The comparator now maximizes `quality_challenge_utility`, the harmonic mean of
+axis-conditioned teacher quality and matching target challenge. Aggregate
+validity, quality, and challenge floors remain hard constraints. This prevents
+the optimizer from preferring either polished examples Gemma already solves or
+highly adversarial examples with poor teacher answers.
+
 Run 9's submitter enforces the four-setting contract and injects it into the
-broker campaign policy only when explicitly configured. With none of the four
-settings present, the existing Kimi-to-Luna behavior is unchanged. Partial
-configuration and malformed checkpoint hashes fail before submission.
+broker campaign policy. Missing, partial, and malformed target configuration
+fails before submission. `AUTODATA_TARGET_ENABLED=0` is the explicit escape
+hatch for intentional smoke tests and legacy comparisons; target settings must
+be absent in that mode. This prevents a normal production launch from silently
+falling back to Kimi-to-Luna-only generation.
 
 This path must use a research-side endpoint. It can reuse the validated vLLM
 image, merged checkpoints, serving configuration, and physical GPU pool, but it
@@ -519,9 +534,292 @@ held-out inputs to AutoData.
 - Target routing tests verify the served-model name, deployment header,
   optional gateway host header, deterministic request, and checkpoint
   provenance.
-- Judge tests require a material target failure in addition to the existing
-  six-dimensional teacher-quality rubric.
-- Legacy two-call Kimi/Luna behavior remains covered with target probing
-  disabled.
+- Judge tests require the target failure to match the task's primary axis and
+  distinguish the primary teacher dimension from supporting guardrails.
+- Legacy two-call Kimi/Luna behavior remains available only through the
+  explicit disabled setting.
 - Focused recipe, lifecycle, broker-canary, and Run 9 infrastructure tests: 43
   passed.
+
+## Next-launch AutoData lifecycle reliability and timing
+
+### Status and design boundary
+
+These changes are implemented and tested in the devserver worktree for the next
+launch. They are intentionally not being retrofitted into the active Run 9
+attempt, which is pinned to AAR commit `9177dca` and AutoData commit `223af462`.
+Changing its controller, database, or plugin while it is running would make its
+provenance ambiguous and could invalidate durable state. The new implementation
+has not yet been synchronized to HPC or exercised by the retained native
+preflight, so the active attempt remains the comparison baseline.
+
+The five items below are one reliability design rather than five unrelated
+patches. AAR owns one attempt-scoped lifecycle driver and supervisor, while the
+pinned AutoData CLI remains the only authority that advances workspaces,
+executions, actions, candidates, production, and exports. The supervisor must
+never approve evidence, analyze results, or mutate a recipe on the research
+agent's behalf.
+
+### Make the controller an orchestration-owned supervisor
+
+#### Observed problem
+
+The active attempt required the research agent to create an ad hoc controller
+around the synchronous `execution step` command. Early versions used
+`subprocess.run` with 560- and then 900-second timeouts. A single healthy native
+step can encompass a whole generation phase, so those wrappers killed a
+working CLI call, then relied on a later invocation to recover the same durable
+AutoData execution. The broker jobs were not lost, but control gaps left broker
+capacity idle and forced the agent to spend turns rediscovering process state.
+
+#### Next-launch change
+
+The AAR Slurm chain will start one attempt-scoped supervisor outside the
+research agent's tool-call lifecycle. For each registered execution it will:
+
+- hold a singleton ownership lock and refuse a second controller;
+- invoke exactly one pinned native `execution step` process;
+- record the workspace, execution, phase, process, heartbeat, start time, exit
+  status, and restart reason;
+- reconcile native AutoData status before restarting after an interruption;
+- stop and surface semantic host actions for the research agent;
+- resume only after that exact action is completed; and
+- handle Slurm termination by stopping cleanly and publishing a state
+  snapshot.
+
+The agent will provide research judgments and mutations through native actions,
+but it will no longer invent process-management code.
+
+#### Benefit, consequence, and necessity
+
+This makes generation independent of an agent turn or a short shell display
+window, prevents duplicate controllers, reduces idle intervals after wrapper
+timeouts, and centralizes recovery and timing telemetry. The cost is another
+long-lived process whose locks, stale-owner recovery, signals, and logs must be
+tested. A stale PID must not block recovery, and an ambiguous exit must be
+reconciled with native state before any restart.
+
+This is not required for AutoData's native correctness: an operator could keep
+one sufficiently long foreground call alive. It is operationally necessary for
+a stable unattended multi-hour AAR run because ordinary agent and tool-call
+boundaries must not own the lifetime of generation.
+
+### Use phase-aware hard limits and a progress watchdog
+
+#### Observed problem
+
+The current 900-second controller timeout is shorter than demonstrated healthy
+phases. It can therefore report a timeout even while Kimi/Luna tasks are making
+progress. This wrapper limit is separate from the per-request model timeout,
+AutoData's native execution wall budget, and the Slurm job limit.
+
+#### Next-launch change
+
+The initial hard-ceiling defaults are approximately two hours for a meta step
+and eight hours for production. They are not blind fixed constants: launch
+validation must require each controller ceiling to exceed the corresponding
+native AutoData wall budget plus an orderly-shutdown grace interval. The
+checked-in workspace currently permits a three-hour native wall budget, so that
+configuration must either be reduced for a two-hour meta ceiling or the
+controller ceiling must be raised.
+
+A shorter progress watchdog will separately observe native state changes,
+broker completions, and supervisor heartbeats. Healthy long work may run to the
+hard ceiling; a genuine stall should be diagnosed and stopped much earlier.
+Logs must distinguish a model HTTP timeout, native wall-budget exhaustion,
+progress-watchdog stall, controller hard limit, and Slurm termination.
+
+#### Benefit, consequence, and necessity
+
+Aligned limits prevent artificial controller churn and keep new work flowing
+to all 16 broker slots. A long timeout alone would be dangerous because it
+could conceal a deadlock for hours, which is why the progress watchdog is part
+of the same change.
+
+The exact two- and eight-hour numbers are estimates, not inherent
+requirements. What is necessary is the ordering
+`controller ceiling > native phase budget + shutdown grace` together with
+progress-based stall detection.
+
+### Serialize AutoData writes with bundled commit `34f0a22`
+
+#### Observed problem
+
+AutoData's execution engine uses worker threads, while state writes opened
+separate SQLite connections and used `BEGIN IMMEDIATE` with a 30-second busy
+timeout. Sibling threads could therefore compete through SQLite and the network
+filesystem. The retained preflight exhibited repeated 30–31-second task
+submission gaps and substantial broker-idle time even when generation capacity
+was available.
+
+#### Next-launch change
+
+AutoData core commit `2a6700c` adds a process-local re-entrant lock around
+`SQLiteStateStore._write`; plugin commit `34f0a22` bundles that core revision in
+the pinned wheel. SQLite already permits only one writer. The patch changes
+where sibling writers wait—from database/network lock negotiation to a cheap
+in-memory queue—without changing schemas, transactions, or durability.
+
+#### Benefit, consequence, and necessity
+
+This is the smallest and lowest-risk fix for the observed write contention. It
+preserves native AutoData behavior and has a concurrency regression test in
+which eight callers cannot overlap write transactions. The complete AutoData
+suite passed with 76 tests and 1 skip.
+
+The lock is process-local, so it does not protect against two controllers; the
+singleton supervisor is still required. It also cannot remove ordinary network
+filesystem open and synchronization latency. This patch is recommended as a
+P0 next-launch change and is likely necessary for predictable concurrency on
+the present shared database, although low-concurrency runs can be correct
+without it. The active Run 9 cannot acquire it because its AutoData source is
+already pinned.
+
+### Put hot native state on the node and publish durable snapshots
+
+#### Scope and problem
+
+This concerns AutoData's main lifecycle database, currently retained at
+`$TEAM_DIR/autodata/native/state.db`. It is separate from the broker's
+idempotency ledger, which is already node-local. Even with fewer and serialized
+writes, placing a hot SQLite database on network storage can retain lock, open,
+WAL, and synchronization latency.
+
+#### Next-launch change
+
+The chain will keep the live native database under `$SLURM_TMPDIR` and publish
+verified snapshots to the retained attempt directory. A snapshot must use
+SQLite's online backup API into a temporary file, run integrity and foreign-key
+checks, compute a SHA-256 digest, and then be atomically renamed. Copying a live
+database file directly is not safe.
+
+Snapshots are required periodically during long phases, after every returned
+host action, after meta and production completion, before training handoff, and
+on clean shutdown or Slurm preemption. Startup may restore only the newest
+digest-verified snapshot and must reconcile both native execution and broker
+state before resuming.
+
+The training job runs on a different node, so it cannot consume a path under
+the chain node's `$SLURM_TMPDIR`. The implementation therefore separates the
+live node-local database from the retained immutable handoff snapshot. Before
+training submission, the final snapshot and its digest are bound into the
+handoff; training-side verification continues to fail closed against that
+retained copy.
+
+#### Benefit, consequence, and necessity
+
+This removes network-filesystem latency from the hottest state path and should
+allow the controller to replenish broker work closer to configured
+concurrency. It complements write serialization; the lock prevents sibling
+threads from colliding, while node-local placement makes each serialized write
+cheaper.
+
+The tradeoff is recovery complexity. Node loss can erase work since the last
+snapshot, too-frequent snapshots can recreate network load, and a stale or
+unverified snapshot could cause lost evidence or duplicate paid work. Durable
+snapshots and cross-node handoff support are therefore mandatory if node-local
+state is enabled.
+
+Unlike `34f0a22`, node-local native state is the higher-complexity P1 part of
+the design. It is implemented under supervised lifecycle mode, but the
+identical native preflight must validate forced restore, retained handoff, and
+cross-node training before it is used by a full launch. The preflight should
+also compare it with the serialization-only result so its incremental benefit
+is measured rather than assumed.
+
+### Provide one reusable lifecycle driver
+
+#### Observed problem
+
+The production agent had to rediscover command ordering and write an
+attempt-local driver. `scripts/autodata_native_real_e2e.py` proves the native
+path, but it is a small synthetic canary rather than a resumable production
+driver. Recreating lifecycle plumbing wastes research-agent time and has
+already produced short timeouts and controller restarts.
+
+#### Next-launch change
+
+One tested, configuration-driven driver will call only the pinned native CLI,
+record workspace, study, meta, winner, production, dataset, and handoff IDs,
+and resume from native state rather than replaying remembered commands. It will
+contain the singleton supervisor behavior instead of introducing a second
+overlapping daemon. It will emit machine-readable JSONL timing and progress
+events for every phase, including wall time, task count, acceptance rate,
+broker latency, active concurrency, controller-idle fraction, and restart
+reason.
+
+The driver performs deterministic lifecycle plumbing only. It never approves
+evidence, interprets research results, mutates a recipe, or substitutes its own
+state machine for AutoData. Native semantic actions remain visible to the AAR
+agent and trusted approval bridge.
+
+#### Benefit, consequence, and necessity
+
+This standardizes recovery, error classification, timing, and training
+handoff; makes failures reproducible; and lets future agents improve the data
+strategy instead of rebuilding process control. The main risk is drift: a
+driver that independently encodes AutoData's state transitions would become a
+second orchestrator. Version checks and native-status reconciliation must
+therefore fail closed.
+
+The reusable driver is strongly recommended for five sequential sessions and
+future parallel chains. It is not mathematically required for a one-off manual
+run, but it is operationally necessary for repeatability at this scale.
+
+### Rollout and measurement plan
+
+The next-launch order is:
+
+1. Pin bundled AutoData commit `34f0a22`.
+2. Use one lifecycle driver containing the singleton supervisor.
+3. Align native budgets, phase hard ceilings, shutdown grace, and the progress
+   watchdog.
+4. Repeat the identical native preflight and compare total time, phase time,
+   controller-idle fraction, submission gaps, correctness, and SQLite errors.
+5. Exercise node-local restore, forced termination, snapshot verification, and
+   cross-node training restoration before a full run; retain node-local state
+   only if its measured benefit justifies that recovery complexity.
+
+The retained comparison baseline is 963.12 seconds total, including 525.23
+seconds for meta and 403.52 seconds for production/export, with approximately
+72% broker-idle time and repeated 30–31-second task-creation gaps. A speedup is
+credited only when lifecycle evidence remains correct, all jobs complete, no
+SQLite lock error occurs, and the measured controller-idle time and long
+submission gaps materially decline.
+
+### Live Run 9 slowdown diagnosis and endpoint-scaling gate
+
+The active pinned attempt provides evidence that the later `tuning-after-r2`
+slowdown has two components rather than a single concurrency shortage:
+
+- `tuning-after-r1` task submit-to-complete latency was 14 seconds at p50 and
+  487 seconds at p95. In the later `tuning-after-r2` snapshot it rose to 457.5
+  seconds at p50 and 1,080 seconds at p95.
+- The broker interval itself rose from 16 seconds at p50 in the earlier window
+  to 236.5 seconds at p50 in the later window. This delay occurs before
+  AutoData records completion, so Kimi/Luna serving or queue time is a major
+  contributor.
+- AutoData added a second delay: later submission gaps were 30.5 seconds at
+  p50 and 169 seconds at p95, and durable completion lagged broker completion.
+  That is the part targeted by write serialization, node-local native state,
+  and the persistent supervisor.
+- The broker returned only HTTP 200/201 responses in the inspected window;
+  there was no HTTP 429, 4xx, or 5xx evidence. Repeated POST 200 responses were
+  idempotent resumes of existing jobs, not duplicate paid work.
+
+The safe choice for the active attempt is to keep its one controller running.
+It already held approximately 13–14 of 16 tasks in flight, so restarting it or
+raising nominal concurrency would not repair the pinned endpoint and SQLite
+build and could create additional idle time. The next launch should first
+apply the controller and state fixes above, then record separate Kimi and Luna
+request queue/service latency because the current task artifacts cannot split
+the two providers.
+
+Only after that corrected launch keeps 16 slots continuously utilized should
+concurrency be canaried at 24 and then 32. If broker-job latency remains high,
+scale a shared multi-replica or multi-node Kimi service behind one endpoint
+rather than assigning an endpoint manually to each AAR chain. Luna capacity
+must be tested separately and scaled only if the new per-provider telemetry
+identifies it as the limiting stage. Each canary must check throughput, p50 and
+p95 latency, provider errors or throttling, CPU and memory use, and acceptance
+quality before adopting the higher setting.

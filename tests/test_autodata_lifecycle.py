@@ -249,6 +249,22 @@ def test_preflight_verifies_native_meta_winner_and_production(tmp_path: Path) ->
     assert result["available_rows"] == 1000
 
 
+def test_preflight_prefers_retained_state_for_cross_node_handoff(
+    tmp_path: Path,
+) -> None:
+    run_id, team, state = _fixture(tmp_path)
+    with mock.patch.dict(
+        os.environ,
+        {
+            "TEAM_DIR": str(team),
+            "AAR_AUTODATA_STATE": str(tmp_path / "node-local" / "state.db"),
+            "AAR_AUTODATA_RETAINED_STATE": str(state),
+        },
+        clear=False,
+    ):
+        assert verify_preflight(run_id)["available_rows"] == 1000
+
+
 def test_preflight_rejects_non_winner_production_tree(tmp_path: Path) -> None:
     run_id, team, state = _fixture(tmp_path)
     (team / "autodata" / run_id / "production" / "recipe" / "config.json").write_text(

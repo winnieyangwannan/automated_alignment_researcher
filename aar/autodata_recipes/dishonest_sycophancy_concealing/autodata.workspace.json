@@ -13,7 +13,7 @@
   "authoring_budget": {
     "max_iterations": 20,
     "max_task_attempts": 32,
-    "max_wall_seconds": 10800
+    "max_wall_seconds": 6300
   },
   "execution_defaults": {
     "mode": "meta_optimize",
@@ -22,7 +22,7 @@
     "budget": {
       "max_iterations": 1,
       "max_task_attempts": 4096,
-      "max_wall_seconds": 10800
+      "max_wall_seconds": 6300
     },
     "concurrency": 4,
     "secret_references": []

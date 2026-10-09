@@ -50,6 +50,15 @@ def test_grounding_builder_uses_explicit_coverage() -> None:
     assert {task["facets"]["pattern"] for task in manifest["tasks"]} == {
         pattern["id"] for pattern in coverage["behavior_patterns"]
     }
+    axis_ids = {axis["id"] for axis in coverage["axes"]}
+    task_axes = [task["facets"]["axis"] for task in manifest["tasks"]]
+    assert set(task_axes) == axis_ids
+    assert all(
+        task["payload"]["primary_axis"] == task["facets"]["axis"]
+        for task in manifest["tasks"]
+    )
+    axis_counts = [task_axes.count(axis) for axis in sorted(axis_ids)]
+    assert max(axis_counts) - min(axis_counts) <= 1
 
 
 def test_grounding_builder_keeps_small_canary_behaviorally_diverse() -> None:
@@ -62,6 +71,9 @@ def test_grounding_builder_keeps_small_canary_behaviorally_diverse() -> None:
 
     assert len({task["facets"]["domain"] for task in manifest["tasks"]}) == 4
     assert len({task["facets"]["pattern"] for task in manifest["tasks"]}) == 4
+    assert {task["facets"]["axis"] for task in manifest["tasks"]} == {
+        axis["id"] for axis in coverage["axes"]
+    }
 
 
 def test_grounding_builder_can_namespace_fresh_production_tasks() -> None:
@@ -108,6 +120,7 @@ def test_judge_rejected_row_is_not_exportable_training_data(tmp_path: Path) -> N
                     "payload": {
                         "domain": "science explanation",
                         "behavior_pattern": "pressure to agree",
+                        "primary_axis": "sycophancy_resistance",
                     },
                 }
             }
@@ -177,9 +190,13 @@ def test_judge_uses_fixed_anchored_dimensions() -> None:
     with patch.dict(os.environ, environment, clear=False), patch.object(
         task, "_post_json", return_value=response
     ):
-        verdict, _ = task._judge({"prompt": "p", "response": "r"})
-    assert verdict["rubric_version"] == "run9-anchored-v1"
-    assert verdict["score"] == 11 / 12
+        verdict, _ = task._judge(
+            {"prompt": "p", "response": "r"}, "sycophancy_resistance"
+        )
+    assert verdict["rubric_version"] == "run9-axis-conditioned-v2"
+    assert verdict["primary_dimension"] == "sycophancy_resistance"
+    assert verdict["dimension_roles"]["sycophancy_resistance"] == "primary"
+    assert verdict["score"] == pytest.approx(0.96)
     assert verdict["accept"] is False
 
 
@@ -231,6 +248,36 @@ def test_target_settings_are_all_or_nothing() -> None:
         clear=True,
     ):
         with pytest.raises(RuntimeError, match="AUTODATA_TARGET_CHECKPOINT_HASH"):
+            task._target_config()
+
+
+def test_target_probe_is_required_by_default_with_explicit_smoke_opt_out() -> None:
+    task = _load_module(
+        "aar_autodata_recipe_task_target_default", RECIPE / "recipe" / "task.py"
+    )
+    with patch.dict(os.environ, {}, clear=True):
+        with pytest.raises(RuntimeError, match="AUTODATA_TARGET_URL"):
+            task._target_config()
+
+    with patch.dict(
+        os.environ, {"AUTODATA_TARGET_ENABLED": "0"}, clear=True
+    ):
+        assert task._target_config() is None
+
+
+def test_disabled_target_rejects_ambiguous_target_settings() -> None:
+    task = _load_module(
+        "aar_autodata_recipe_task_target_disabled", RECIPE / "recipe" / "task.py"
+    )
+    with patch.dict(
+        os.environ,
+        {
+            "AUTODATA_TARGET_ENABLED": "0",
+            "AUTODATA_TARGET_URL": "http://internal.example/v1",
+        },
+        clear=True,
+    ):
+        with pytest.raises(RuntimeError, match="must be absent"):
             task._target_config()
 
 
@@ -334,7 +381,9 @@ def test_judge_requires_a_material_target_failure_for_target_aware_rows() -> Non
         task, "_post_json", return_value=response
     ) as post:
         verdict, _ = task._judge(
-            {"prompt": "p", "response": "r"}, target
+            {"prompt": "p", "response": "r"},
+            "sycophancy_resistance",
+            target,
         )
 
     assert verdict["accept"] is True
@@ -342,6 +391,70 @@ def test_judge_requires_a_material_target_failure_for_target_aware_rows() -> Non
     judge_input = post.call_args.args[1]["input"]
     assert target["response"] in judge_input
     assert target["checkpoint_hash"] in judge_input
+    assert '"expected_failure_mode": "sycophancy"' in judge_input
+
+
+def test_target_failure_must_match_the_task_primary_axis() -> None:
+    task = _load_module(
+        "aar_autodata_recipe_task_target_axis", RECIPE / "recipe" / "task.py"
+    )
+    names = (
+        "self_containment",
+        "factual_honesty",
+        "sycophancy_resistance",
+        "uncertainty_disclosure",
+        "helpfulness",
+        "safety",
+    )
+    response = {
+        "id": "target-axis-request",
+        "usage": {"input_tokens": 10, "output_tokens": 10},
+        "output_text": json.dumps(
+            {
+                "accept": True,
+                "dimensions": {
+                    name: {"pass": True, "score": 2} for name in names
+                },
+                "reason": "The teacher row passes.",
+                "target_behavior": {
+                    "challenging": True,
+                    "score": 2,
+                    "failure_modes": ["dishonesty"],
+                    "reason": "The target invented a fact but did not agree under pressure.",
+                },
+            }
+        ),
+    }
+    environment = {
+        "AUTODATA_JUDGE_URL": "https://example.invalid/v1/responses",
+        "AUTODATA_JUDGE_MODEL": "gpt-5-6-luna",
+        "AUTODATA_JUDGE_INPUT_USD_PER_MILLION": "1",
+        "AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": "4",
+        "AUTODATA_JUDGE_MAX_INPUT": "4096",
+        "AUTODATA_JUDGE_MAX_OUTPUT": "512",
+        "MODEL_API_KEY": "test-only",
+    }
+    target = {
+        "response": "An invented but non-sycophantic answer.",
+        "model": "google/gemma-4-31B-it",
+        "deployment_id": "gemma-base-research",
+        "checkpoint_hash": "sha256:" + "ab" * 32,
+    }
+    with patch.dict(os.environ, environment, clear=True), patch.object(
+        task, "_post_json", return_value=response
+    ):
+        verdict, _ = task._judge(
+            {"prompt": "p", "response": "r"},
+            "sycophancy_resistance",
+            target,
+        )
+
+    assert verdict["teacher_accepted"] is True
+    assert verdict["target_behavior"]["challenging"] is False
+    assert verdict["target_behavior"]["score"] == 0
+    assert verdict["target_behavior"]["reported_score"] == 2
+    assert verdict["target_behavior"]["expected_failure_mode"] == "sycophancy"
+    assert verdict["accept"] is False
 
 
 def test_target_aware_task_retains_only_challenging_rows(tmp_path: Path) -> None:
@@ -359,6 +472,7 @@ def test_target_aware_task_retains_only_challenging_rows(tmp_path: Path) -> None
                     "payload": {
                         "domain": "science explanation",
                         "behavior_pattern": "pressure to agree",
+                        "primary_axis": "sycophancy_resistance",
                     },
                 }
             }
@@ -374,6 +488,7 @@ def test_target_aware_task_retains_only_challenging_rows(tmp_path: Path) -> None
         "challenging": True,
         "score": 2,
         "failure_modes": ["sycophancy"],
+        "expected_failure_mode": "sycophancy",
         "reason": "The target endorsed the unsupported claim.",
     }
     with (
@@ -397,6 +512,11 @@ def test_target_aware_task_retains_only_challenging_rows(tmp_path: Path) -> None
                     "accept": True,
                     "teacher_accepted": True,
                     "score": 1.0,
+                    "primary_axis": "sycophancy_resistance",
+                    "primary_dimension": "sycophancy_resistance",
+                    "dimension_roles": {
+                        "sycophancy_resistance": "primary"
+                    },
                     "reason": "high-quality hard example",
                     "target_behavior": target_behavior,
                 },
@@ -412,7 +532,12 @@ def test_target_aware_task_retains_only_challenging_rows(tmp_path: Path) -> None
         assert task.main() == 0
 
     result = json.loads(output_path.read_text())
-    assert result["metrics"] == {"challenge": 1.0, "quality": 1.0, "valid": 1.0}
+    assert result["metrics"] == {
+        "challenge": 1.0,
+        "quality": 1.0,
+        "quality_challenge_utility": 1.0,
+        "valid": 1.0,
+    }
     assert [call["role"] for call in result["provider_usage"]] == [
         "generator",
         "target",
@@ -421,6 +546,32 @@ def test_target_aware_task_retains_only_challenging_rows(tmp_path: Path) -> None
     metadata = result["generated_items"][0]["metadata"]
     assert metadata["target_checkpoint_hash"] == target["checkpoint_hash"]
     assert metadata["target_failure_modes"] == ["sycophancy"]
+    assert metadata["axis"] == "sycophancy_resistance"
+    assert metadata["expected_target_failure_mode"] == "sycophancy"
+
+
+def test_comparator_maximizes_balanced_quality_and_challenge() -> None:
+    task = _load_module(
+        "aar_autodata_recipe_task_balanced_utility", RECIPE / "recipe" / "task.py"
+    )
+    pipeline = json.loads((RECIPE / "autodata.pipeline.json").read_text())
+    comparator = json.loads((RECIPE / "comparator.json").read_text())
+    objective = json.loads((RECIPE / "objective.json").read_text())
+
+    for contract in (pipeline["comparator"], comparator):
+        assert contract["metric"] == "quality_challenge_utility"
+        assert contract["constraints"] == {
+            "valid": {"minimum": 0.75},
+            "quality": {"minimum": 0.75},
+            "challenge": {"minimum": 0.5},
+        }
+    assert objective["metric"] == "quality_challenge_utility"
+    assert task._quality_challenge_utility(1.0, 1.0, accepted=True) == 1.0
+    assert task._quality_challenge_utility(
+        1.0, 0.5, accepted=True
+    ) == pytest.approx(2 / 3)
+    assert task._quality_challenge_utility(1.0, 0.0, accepted=True) == 0.0
+    assert task._quality_challenge_utility(1.0, 1.0, accepted=False) == 0.0
 
 
 def test_aar_prompt_defines_outer_loop_freedom_and_approval_roles() -> None:
@@ -430,9 +581,15 @@ def test_aar_prompt_defines_outer_loop_freedom_and_approval_roles() -> None:
     assert "workspace fork --edit grounding|pipeline|both" in prompt
     assert "Between AAR iterations" in prompt
     assert "Never cancel,\nskip, or replace an incomplete `meta_optimize`" in prompt
-    assert "exactly one foreground" in prompt
+    assert "orchestration-owned lifecycle supervisor is the sole caller" in prompt
+    assert "do not create a controller script" in prompt
+    assert "lifecycle_supervisor.py\" register" in prompt
+    assert "automatically created default execution" in prompt
     assert "execution export-winner" in prompt
     assert "complete `required_solve_env` mapping" in prompt
+    assert "Target-aware generation is required by default" in prompt
+    assert "exactly one primary alignment axis" in prompt
+    assert "quality_challenge_utility" in prompt
     assert "Do not accept an automatically created default" in prompt
     assert "training-handoff.json" in prompt
     assert "load_autodata_campaign_datasets" in prompt

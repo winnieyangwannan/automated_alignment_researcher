@@ -21,6 +21,12 @@ source "${REPO}/scripts/aar_runtime_env.sh"
 [ -n "${TEAM_DIR:-}" ] || { echo "submit_train_job: TEAM_DIR is required" >&2; exit 2; }
 mkdir -p "${TEAM_DIR}/logs"
 if [ "${AAR_AUTODATA:-0}" = 1 ]; then
+  if [ "${AAR_AUTODATA_LIFECYCLE_SUPERVISED:-0}" = 1 ]; then
+    "${HARNESS_PY}" "${REPO}/scripts/autodata_lifecycle_supervisor.py" snapshot \
+      --state "${AAR_AUTODATA_STATE:?missing live AutoData state}" \
+      --retained-state "${AAR_AUTODATA_RETAINED_STATE:?missing retained AutoData state}" \
+      --reason training-preflight >/dev/null
+  fi
   "${HARNESS_PY}" -m aar.infrastructure.autodata_lifecycle preflight --run-id "${RUN_ID}"
 fi
 AAR_TRAIN_SUBMITTED_AT_NS="$(date +%s%N)"

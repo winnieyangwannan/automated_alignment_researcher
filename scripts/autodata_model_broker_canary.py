@@ -293,6 +293,10 @@ def _task_input() -> dict[str, Any]:
 
 def _model_environment(args: argparse.Namespace) -> dict[str, str]:
     environment = {
+        # This is intentionally a two-provider broker/connectivity smoke, not a
+        # target-aware dataset-quality canary. Normal Run 9/11 launches leave
+        # target probing enabled and provide the pinned Gemma identity.
+        "AUTODATA_TARGET_ENABLED": "0",
         "AUTODATA_GENERATOR_URL": args.generator_url.rstrip("/"),
         "AUTODATA_GENERATOR_MODEL": GENERATOR_MODEL,
         "AUTODATA_GENERATOR_DEPLOYMENT_ID": args.generator_deployment_id,

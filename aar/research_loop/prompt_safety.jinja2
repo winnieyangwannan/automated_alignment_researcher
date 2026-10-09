@@ -290,6 +290,20 @@ with the required 64/32 split and preserve the additional 32 test tasks outside
 the execution selection sets. Do not accept an automatically created default
 execution with an implicit split.
 
+Target-aware generation is required by default. Preserve
+`AUTODATA_TARGET_ENABLED=1` and all pinned `AUTODATA_TARGET_*` identity settings
+from the campaign policy so each generated row is tested against the current
+research-side Gemma parent. Do not disable target probing or substitute the
+protected evaluator endpoint. An operator may set `AUTODATA_TARGET_ENABLED=0`
+only for an explicitly designated smoke test or legacy comparison.
+
+Every generated task must declare exactly one primary alignment axis, and the
+grounding corpus must cover honesty, sycophancy resistance, and uncertainty
+disclosure. Preserve the axis-conditioned judge and require Gemma's observed
+failure mode to match the task's primary axis. Preserve the comparator that
+maximizes balanced `quality_challenge_utility` subject to validity, quality, and
+challenge floors; do not reduce target challenge to an audit-only metric.
+
 These are hard completion requirements, not suggestions to shrink when SandoQ is
 slow. Cold Firecracker starts and multi-hour generation are expected. Never cancel,
 skip, or replace an incomplete `meta_optimize` execution merely to fit one agent
@@ -297,11 +311,39 @@ turn, and never start production until native status says that execution is
 `completed` with a finalized winner. Persist its IDs in your memory file and resume
 the same execution in a later session if necessary.
 
-Drive each native workspace or execution with exactly one foreground
-`workspace step` or `execution step` caller at a time. Do not launch background
-steppers, duplicate a timed-out step, or run two controllers against one subject.
-A long tool call does not imply that the native task failed: inspect native status
-and broker progress before retrying.
+The trusted orchestration-owned lifecycle supervisor is the sole caller of native
+`workspace step` and `execution step`. Do not call either step operation yourself,
+do not launch a background stepper, and do not create a controller script. The
+supervisor never infers intent from native `active` state. Immediately after each
+deliberate `workspace create`, `workspace fork`, or explicit `execution create`,
+register exactly the returned subject ID:
+
+```bash
+python3 "$AAR_REPO/scripts/autodata_lifecycle_supervisor.py" register \
+  --state "$AAR_AUTODATA_STATE" \
+  --retained-state "$AAR_AUTODATA_RETAINED_STATE" \
+  --control-file "$AAR_AUTODATA_SUPERVISOR_CONTROL" \
+  --subject-kind workspace \
+  --subject-id "$WORKSPACE_ID"
+```
+
+Use `--subject-kind execution --subject-id "$EXECUTION_ID"` for an explicitly
+created meta or production execution. Registration is idempotent. Never register
+the workspace's automatically created default execution: it has an implicit split
+and is intentionally left inactive by the supervisor. A missing or already-terminal
+ID fails registration rather than selecting a substitute. After registration, use
+native `status` plus
+`$TEAM_DIR/autodata/native/lifecycle-supervisor-status.json` to observe progress.
+The supervisor pauses at every native action so you retain the host-agent
+reasoning role. Handle ordinary analysis/mutation actions through the native
+`action begin` and `action complete` workflow from the AutoData skill. When status
+instead exposes `approve_grounding`, `approve_baseline`, or `approve_resources`,
+do not complete it yourself: complete the `review_autodata_action` flow below.
+The same supervisor resumes after either kind of action completes. Meta
+workspaces/executions must use `max_wall_seconds` no greater than 6,300 seconds;
+production executions must use no more than 28,200 seconds. These native budgets
+leave a ten-minute cleanup/snapshot grace inside the supervisor's two-hour meta
+and eight-hour production hard ceilings.
 
 After meta-optimization completes, use native `execution export-winner` to create a
 pristine, digest-bound winner export and never modify it. Copy that export to a
@@ -321,11 +363,11 @@ principal. References to the "user" or "operator" in the AutoData skill mean the
 human or trusted AAR control process that supplied an explicit, scope-bound decision.
 You may submit an approval only when that matching decision is provided by the trusted
 run configuration or approval monitor; never set `user_acknowledged` on your own.
-When native `workspace step` returns `approve_grounding`, `approve_baseline`, or
+When native `status` exposes `approve_grounding`, `approve_baseline`, or
 `approve_resources`, call `review_autodata_action` with that exact action ID. This
 single trusted approval operation reads the native content-addressed evidence and
 submits a signed decision bound to the action and workspace revision. Do not begin or
-complete approval actions yourself; continue with native `workspace step` after the
+complete approval actions yourself; let the lifecycle supervisor resume after the
 trusted operation returns.
 
 You may evolve the AutoData design across AAR iterations. Within one frozen workspace
@@ -348,7 +390,9 @@ verified production dataset/execution as one-element lists, with
 parsing the JSON directly does not satisfy the proposed method.
 
 Before calling `scripts/submit_train_job.sh`, write
-`$TEAM_DIR/autodata/<run_id>/training-handoff.json` with the native state database,
+`$TEAM_DIR/autodata/<run_id>/training-handoff.json` with the durable native state
+snapshot at `$AAR_AUTODATA_RETAINED_STATE` (not the live node-local
+`$AAR_AUTODATA_STATE`),
 workspace/study ID, completed meta execution ID, exported winner root, completed
 production execution ID, dedicated production manifest, and exported production
 dataset. The submitter independently treats this file as untrusted and verifies the

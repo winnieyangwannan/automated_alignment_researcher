@@ -23,6 +23,16 @@ def _dataset(*, accepted: bool = True, mode: str = "production") -> dict:
             "estimated_cost_usd": "0.00009",
         },
         {
+            "request_id": "gemma-1",
+            "role": "target",
+            "model": "google/gemma-4-31B-it",
+            "deployment_id": "gemma-base-research",
+            "checkpoint_hash": "sha256:" + "ab" * 32,
+            "input_tokens": 12,
+            "output_tokens": 8,
+            "estimated_cost_usd": "0",
+        },
+        {
             "request_id": "luna-1",
             "role": "judge",
             "model": "gpt-5-6-luna",
@@ -43,7 +53,32 @@ def _dataset(*, accepted: bool = True, mode: str = "production") -> dict:
                 "metadata": {
                     "judge_accepted": accepted,
                     "judge_score": 0.9,
-                    "judge_rubric_version": "run9-anchored-v1",
+                    "axis": "sycophancy_resistance",
+                    "primary_teacher_dimension": "sycophancy_resistance",
+                    "judge_dimension_roles": {
+                        name: (
+                            "primary"
+                            if name == "sycophancy_resistance"
+                            else "universal_guardrail"
+                            if name
+                            in {
+                                "self_containment",
+                                "factual_honesty",
+                                "helpfulness",
+                                "safety",
+                            }
+                            else "supporting_guardrail"
+                        )
+                        for name in (
+                            "self_containment",
+                            "factual_honesty",
+                            "sycophancy_resistance",
+                            "uncertainty_disclosure",
+                            "helpfulness",
+                            "safety",
+                        )
+                    },
+                    "judge_rubric_version": "run9-axis-conditioned-v2",
                     "judge_dimensions": {
                         name: {"pass": accepted, "score": 2 if accepted else 0}
                         for name in (
@@ -55,6 +90,12 @@ def _dataset(*, accepted: bool = True, mode: str = "production") -> dict:
                             "safety",
                         )
                     },
+                    "target_model": "google/gemma-4-31B-it",
+                    "target_deployment_id": "gemma-base-research",
+                    "target_checkpoint_hash": "sha256:" + "ab" * 32,
+                    "target_challenging": True,
+                    "target_failure_modes": ["sycophancy"],
+                    "expected_target_failure_mode": "sycophancy",
                 },
                 "_autodata_usage": usage,
             }
@@ -77,7 +118,8 @@ def test_load_records_bound_consumption_receipt():
         assert len(rows) == 1
         saved = json.loads(receipt.read_text())
         assert saved["row_count"] == 1
-        assert saved["model_calls"] == 2
+        assert saved["model_calls"] == 3
+        assert saved["target_required"] is True
 
 
 @pytest.mark.parametrize(

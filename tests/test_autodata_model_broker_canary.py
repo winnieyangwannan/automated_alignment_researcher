@@ -126,7 +126,12 @@ class ModelBrokerCanaryTest(unittest.TestCase):
                     "_autodata_usage": [generator, judge],
                 }
             ],
-            "metrics": {"quality": 0.9, "valid": 1.0},
+            "metrics": {
+                "quality": 0.9,
+                "valid": 1.0,
+                "challenge": 0.0,
+                "quality_challenge_utility": 0.0,
+            },
             "provider_usage": [generator, judge],
             "reason_code": None,
             "trajectory_artifacts": [],
@@ -178,6 +183,7 @@ class ModelBrokerCanaryTest(unittest.TestCase):
             "winnieyangwn-kimi26",
         )
         self.assertEqual(job["solve"]["env"]["AUTODATA_JUDGE_MODEL"], "gpt-5-6-luna")
+        self.assertEqual(job["solve"]["env"]["AUTODATA_TARGET_ENABLED"], "0")
         self.assertNotIn("MODEL_API_KEY", job["solve"]["env"])
         self.assertNotIn("broker-secret", json.dumps(job))
         self.assertEqual(report["provider_call_count"], 2)

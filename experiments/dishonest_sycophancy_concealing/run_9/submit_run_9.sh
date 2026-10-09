@@ -12,6 +12,7 @@ AAR_AUTODATA_BROKER_RUNNER="${AAR_AUTODATA_BROKER_RUNNER:-local-bwrap}"
 AAR_AUTODATA_ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-large}"
 AAR_AUTODATA_CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-16}"
 VLLM_WORKER_SHA256="913c3286e237ed2231c64de200a4bcfc65729292a05c6aa3a88100f8c0248361"
+REQUIRED_AUTODATA_SHA="34f0a22c89a2a40e605afd43f3a7b11c25003ab7"
 REUSED_BASELINE="${1:-/checkpoint/ram/aar/${USER}/honesty-sycophancy-concealing-gemma4-31b-v0/baseline_attempts/20261005T083040Z-ab488b75137b-reuse/metadata/gemma4_31b_multidimensional_baseline.json}"
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "run 9 requires branch autodata" >&2; exit 2; }
@@ -42,16 +43,21 @@ target_setting_names=(
   AUTODATA_TARGET_DEPLOYMENT_ID
   AUTODATA_TARGET_CHECKPOINT_HASH
 )
+AUTODATA_TARGET_ENABLED="${AUTODATA_TARGET_ENABLED:-1}"
+case "${AUTODATA_TARGET_ENABLED}" in
+  1) target_enabled=1 ;;
+  0) target_enabled=0 ;;
+  *) echo "AUTODATA_TARGET_ENABLED must be 1 or 0" >&2; exit 2 ;;
+esac
 target_setting_count=0
 for name in "${target_setting_names[@]}"; do
   [ -z "${!name:-}" ] || target_setting_count=$((target_setting_count + 1))
 done
-case "${target_setting_count}" in
-  0) target_enabled=0 ;;
-  4) target_enabled=1 ;;
-  *) echo "target-aware AutoData requires all four AUTODATA_TARGET_* settings" >&2; exit 2 ;;
-esac
 if [ "${target_enabled}" = 1 ]; then
+  [ "${target_setting_count}" = 4 ] || {
+    echo "target-aware AutoData is enabled by default and requires all four AUTODATA_TARGET_* settings; set AUTODATA_TARGET_ENABLED=0 only for an intentional legacy/smoke run" >&2
+    exit 2
+  }
   case "${AUTODATA_TARGET_CHECKPOINT_HASH}" in
     sha256:*) target_digest="${AUTODATA_TARGET_CHECKPOINT_HASH#sha256:}" ;;
     *) target_digest="${AUTODATA_TARGET_CHECKPOINT_HASH}" ;;
@@ -60,6 +66,9 @@ if [ "${target_enabled}" = 1 ]; then
     echo "AUTODATA_TARGET_CHECKPOINT_HASH must be a SHA-256 digest" >&2
     exit 2
   }
+elif [ "${target_setting_count}" != 0 ]; then
+  echo "AUTODATA_TARGET_* settings must be absent when AUTODATA_TARGET_ENABLED=0" >&2
+  exit 2
 fi
 for required in "${SECRET_ENV}" "${REUSED_BASELINE}" "${SCRIPT_DIR}/snapshot_vllm_runtime.sh"; do
   [ -f "${required}" ] || { echo "missing required input: ${required}" >&2; exit 2; }
@@ -83,6 +92,10 @@ done
 
 commit="$(git -C "${REPO}" rev-parse HEAD)"
 autodata_sha="$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)"
+[ "${autodata_sha}" = "${REQUIRED_AUTODATA_SHA}" ] || {
+  echo "Run 9 requires AutoData ${REQUIRED_AUTODATA_SHA}; found ${autodata_sha}" >&2
+  exit 2
+}
 attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "${REPO}" rev-parse --short=12 HEAD)"
 attempt_dir="/storage/home/${USER}/aar-runs/run9-five-iteration/${attempt_id}"
 mkdir -p "${attempt_dir}"/{metadata,logs,secrets}
@@ -135,6 +148,7 @@ cat > "${policy}" <<EOF
     "AUTODATA_JUDGE_TIMEOUT": "90",
     "AUTODATA_JUDGE_INPUT_USD_PER_MILLION": "1",
     "AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": "4",
+    "AUTODATA_TARGET_ENABLED": "${target_enabled}",
     "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "1"
   }
 }

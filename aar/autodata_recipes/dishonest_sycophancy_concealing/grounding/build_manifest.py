@@ -9,7 +9,7 @@ from pathlib import Path
 
 def load_coverage(path: Path) -> dict[str, object]:
     value = json.loads(path.read_text(encoding="utf-8"))
-    if value.get("schema") != "aar.autodata.grounding-coverage/v1":
+    if value.get("schema") != "aar.autodata.grounding-coverage/v2":
         raise ValueError("invalid grounding coverage schema")
     domains = value.get("domains")
     patterns = value.get("behavior_patterns")
@@ -20,19 +20,45 @@ def load_coverage(path: Path) -> dict[str, object]:
         raise ValueError("coverage domains must be non-empty strings")
     if not isinstance(patterns, list) or not all(
         isinstance(item, dict)
+        and set(item) == {"id", "description", "primary_axis"}
         and isinstance(item.get("id"), str)
         and item["id"].strip()
         and isinstance(item.get("description"), str)
         and item["description"].strip()
+        and isinstance(item.get("primary_axis"), str)
+        and item["primary_axis"].strip()
         for item in patterns
     ):
         raise ValueError("coverage behavior patterns are invalid")
+    expected_axis_keys = {
+        "id",
+        "teacher_dimension",
+        "target_failure_mode",
+        "description",
+    }
     if not isinstance(axes, list) or not all(
-        isinstance(item, str) and item.strip() for item in axes
+        isinstance(item, dict)
+        and set(item) == expected_axis_keys
+        and all(isinstance(item[key], str) and item[key].strip() for key in item)
+        for item in axes
     ):
-        raise ValueError("coverage axes must be non-empty strings")
+        raise ValueError("coverage axes must be complete primary-axis definitions")
     if not domains or not patterns or not axes:
         raise ValueError("coverage requires domains, behavior patterns, and axes")
+    axis_ids = {item["id"] for item in axes}
+    if any(pattern["primary_axis"] not in axis_ids for pattern in patterns):
+        raise ValueError("every behavior pattern must reference an approved axis")
+    if {pattern["primary_axis"] for pattern in patterns} != axis_ids:
+        raise ValueError("behavior patterns must cover every approved axis")
+    for label, values in {
+        "domain": domains,
+        "behavior pattern": [item["id"] for item in patterns],
+        "axis": [item["id"] for item in axes],
+        "teacher dimension": [item["teacher_dimension"] for item in axes],
+        "target failure mode": [item["target_failure_mode"] for item in axes],
+    }.items():
+        if len(set(values)) != len(values):
+            raise ValueError(f"coverage {label} values must be unique")
     return value
 
 
@@ -50,17 +76,22 @@ def build(
     assert isinstance(domains, list)
     assert isinstance(patterns, list)
     assert isinstance(axes, list)
+    if count < len(axes):
+        raise ValueError("task count must cover every primary alignment axis")
+    axes_by_id = {item["id"]: item for item in axes}
     tasks = []
     for index in range(count):
         ordinal = start_index + index
         task_id = f"{id_prefix}-{ordinal:04d}"
         domain = domains[index % len(domains)]
-        # Traverse patterns immediately, then rotate the pairing after each
-        # domain-sized block. This keeps tiny canaries diverse while still
-        # covering every domain/pattern pairing in a full 64-row cycle.
-        pattern = patterns[(index + index // len(domains)) % len(patterns)]
+        # Patterns declare one primary axis and are ordered in balanced axis
+        # rounds. Cycling domains and patterns (8 and 9 respectively) covers
+        # every domain/pattern pair in the first 72 tasks.
+        pattern = patterns[index % len(patterns)]
+        axis = axes_by_id[pattern["primary_axis"]]
         assert isinstance(domain, str)
         assert isinstance(pattern, dict)
+        assert isinstance(axis, dict)
         tasks.append(
             {
                 "id": task_id,
@@ -69,10 +100,13 @@ def build(
                     "domain": domain,
                     "behavior_pattern": pattern["description"],
                     "behavior_pattern_id": pattern["id"],
+                    "primary_axis": axis["id"],
+                    "primary_axis_description": axis["description"],
                     "variation": ordinal - 1,
                     "requirements": [
                         "Create an original user prompt with enough context for a self-contained answer.",
-                        "The ideal answer must be truthful, resist social pressure, and calibrate uncertainty.",
+                        "Target the declared primary alignment failure rather than forcing every alignment behavior into one example.",
+                        "The ideal answer must fully correct the primary failure while remaining truthful, helpful, and safe.",
                         "Do not mention benchmarks, grading, policies, or synthetic-data generation.",
                     ],
                 },
@@ -80,14 +114,18 @@ def build(
                 "facets": {
                     "domain": domain,
                     "pattern": pattern["id"],
-                    "axis": axes,
+                    "axis": axis["id"],
                 },
             }
         )
+    covered_axes = {task["facets"]["axis"] for task in tasks}
+    expected_axes = {axis["id"] for axis in axes}
+    if covered_axes != expected_axes:
+        raise ValueError("grounding manifest does not cover every alignment axis")
     return {
         "schema": "autodata.grounding/v1",
-        "name": "aar-original-honesty-sycophancy-uncertainty-scenarios",
-        "description": "Deterministically enumerated synthetic scenario specifications; no benchmark or held-out examples are sources.",
+        "name": "aar-original-single-axis-alignment-scenarios",
+        "description": "Deterministically enumerated synthetic scenarios with one primary alignment axis per task and corpus-level coverage of every approved axis; no benchmark or held-out examples are sources.",
         "sources": [],
         "coverage_dimensions": ["domain", "pattern", "axis"],
         "dry_run_task_ids": [task["id"] for task in tasks[:2]],

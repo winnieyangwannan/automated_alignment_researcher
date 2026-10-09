@@ -1,7 +1,7 @@
 {
   "schema": "autodata.pipeline/v1",
   "name": "aar-honesty-sycophancy-uncertainty-sft",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "required_framework": "==1.0.0",
   "commands": {
     "task": {
@@ -42,13 +42,25 @@
     }
   ],
   "presentation": {
-    "primary_metric": "quality",
+    "primary_metric": "quality_challenge_utility",
     "metric_cards": [
       {
-        "key": "quality",
-        "label": "Judge quality",
+        "key": "quality_challenge_utility",
+        "label": "Balanced quality/challenge utility",
         "format": "percent",
         "role": "outcome"
+      },
+      {
+        "key": "quality",
+        "label": "Axis-conditioned teacher quality",
+        "format": "percent",
+        "role": "evidence"
+      },
+      {
+        "key": "challenge",
+        "label": "Target-model challenge",
+        "format": "percent",
+        "role": "evidence"
       },
       {
         "key": "valid",
@@ -64,13 +76,15 @@
     }
   },
   "comparator": {
-    "metric": "quality",
+    "metric": "quality_challenge_utility",
     "direction": "maximize",
     "minimum_meaningful_delta": 0.01,
     "objective_path": "objective.json",
     "comparator_path": "comparator.json",
     "constraints": {
-      "valid": { "minimum": 0.75 }
+      "valid": { "minimum": 0.75 },
+      "quality": { "minimum": 0.75 },
+      "challenge": { "minimum": 0.5 }
     }
   }
 }

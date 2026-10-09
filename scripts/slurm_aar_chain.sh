@@ -96,6 +96,9 @@ PY="${HARNESS_PY}"
 _autodata_broker_pid=''
 _autodata_broker_database=''
 _autodata_broker_database_retained=''
+_autodata_supervisor_pid=''
+_autodata_native_state=''
+_autodata_native_state_retained=''
 snapshot_autodata_broker_database() {
   if [ -n "${_autodata_broker_database}" ] \
       && [ -f "${_autodata_broker_database}" ] \
@@ -110,6 +113,18 @@ snapshot_autodata_broker_database() {
   fi
 }
 cleanup_autodata_broker() {
+  if [ -n "${_autodata_supervisor_pid}" ] && kill -0 "${_autodata_supervisor_pid}" 2>/dev/null; then
+    kill "${_autodata_supervisor_pid}" 2>/dev/null || true
+    wait "${_autodata_supervisor_pid}" 2>/dev/null || true
+  fi
+  if [ -n "${_autodata_native_state}" ] \
+      && [ -n "${_autodata_native_state_retained}" ] \
+      && [ -f "${_autodata_native_state}" ]; then
+    "${PY}" "${REPO}/scripts/autodata_lifecycle_supervisor.py" snapshot \
+      --state "${_autodata_native_state}" \
+      --retained-state "${_autodata_native_state_retained}" \
+      --reason chain-cleanup >/dev/null || true
+  fi
   if [ -n "${_autodata_broker_pid}" ] && kill -0 "${_autodata_broker_pid}" 2>/dev/null; then
     kill "${_autodata_broker_pid}" 2>/dev/null || true
     wait "${_autodata_broker_pid}" 2>/dev/null || true
@@ -154,9 +169,29 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   chmod 700 "${_autodata_broker_database_root}"
   _autodata_broker_database="${_autodata_broker_database_root}/broker.db"
   _autodata_broker_database_retained="${_autodata_root}/broker.db"
-  export AAR_AUTODATA_STATE="${TEAM_DIR}/autodata/native/state.db"
+  if [ -f "${_autodata_broker_database_retained}" ]; then
+    cp -- "${_autodata_broker_database_retained}" "${_autodata_broker_database}"
+    chmod 600 "${_autodata_broker_database}"
+  fi
+  _autodata_native_state_retained="${TEAM_DIR}/autodata/native/state.db"
+  export AAR_AUTODATA_RETAINED_STATE="${_autodata_native_state_retained}"
+  if [ "${AAR_AUTODATA_LIFECYCLE_SUPERVISED:-0}" = 1 ]; then
+    _autodata_native_database_root="${SLURM_TMPDIR:-/tmp}/aar-autodata-native-${SLURM_JOB_ID:-$$}"
+    mkdir -p "${_autodata_native_database_root}"
+    chmod 700 "${_autodata_native_database_root}"
+    _autodata_native_state="${_autodata_native_database_root}/state.db"
+    "${PY}" "${REPO}/scripts/autodata_lifecycle_supervisor.py" restore \
+      --state "${_autodata_native_state}" \
+      --retained-state "${_autodata_native_state_retained}" \
+      --require-manifest >/dev/null
+    export AAR_AUTODATA_STATE="${_autodata_native_state}"
+  else
+    _autodata_native_state="${_autodata_native_state_retained}"
+    export AAR_AUTODATA_STATE="${_autodata_native_state}"
+  fi
   export AAR_AUTODATA_ARTIFACTS="${TEAM_DIR}/autodata/native/artifacts"
   export AAR_AUTODATA_WORKSPACES="${TEAM_DIR}/autodata/native/workspaces"
+  export AAR_AUTODATA_SUPERVISOR_CONTROL="${TEAM_DIR}/autodata/native/lifecycle-control.json"
   export AAR_AUTODATA_APPROVAL_AUDIT_DIR="${TEAM_DIR}/autodata/approvals"
   mkdir -p "$(dirname -- "${AAR_AUTODATA_STATE}")" "${AAR_AUTODATA_ARTIFACTS}" \
     "${AAR_AUTODATA_WORKSPACES}" "${AAR_AUTODATA_APPROVAL_AUDIT_DIR}"
@@ -206,8 +241,28 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   done
   kill -0 "${_autodata_broker_pid}" 2>/dev/null || { echo "[aar] ERROR: AutoData broker is not running" >&2; exit 2; }
   echo "[aar] campaign-scoped AutoData broker ready (pid=${_autodata_broker_pid}, runner=${AAR_AUTODATA_BROKER_RUNNER}, concurrency=${AAR_AUTODATA_CONCURRENCY}, database=node-local)"
+  if [ "${AAR_AUTODATA_LIFECYCLE_SUPERVISED:-0}" = 1 ]; then
+    "${PY}" "${REPO}/scripts/autodata_lifecycle_supervisor.py" run \
+      --python "${AAR_AUTODATA_WRAPPER_PYTHON}" \
+      --state "${AAR_AUTODATA_STATE}" \
+      --retained-state "${AAR_AUTODATA_RETAINED_STATE}" \
+      --control-file "${AAR_AUTODATA_SUPERVISOR_CONTROL}" \
+      --artifacts "${AAR_AUTODATA_ARTIFACTS}" \
+      --workspaces "${AAR_AUTODATA_WORKSPACES}" \
+      --lock-file "${TEAM_DIR}/autodata/native/lifecycle-supervisor.lock" \
+      --status-file "${TEAM_DIR}/autodata/native/lifecycle-supervisor-status.json" \
+      --log-file "${TEAM_DIR}/logs/autodata-lifecycle-supervisor.log" &
+    _autodata_supervisor_pid=$!
+    sleep 1
+    kill -0 "${_autodata_supervisor_pid}" 2>/dev/null || {
+      echo "[aar] ERROR: AutoData lifecycle supervisor exited during startup" >&2
+      exit 2
+    }
+    echo "[aar] AutoData lifecycle supervisor ready (pid=${_autodata_supervisor_pid}, meta_timeout=2h, production_timeout=8h, state=node-local)"
+  fi
   unset _autodata_broker_args _autodata_broker_database_root \
-    _autodata_capability_file _autodata_probe _autodata_port
+    _autodata_capability_file _autodata_probe _autodata_port \
+    _autodata_native_database_root
 fi
 
 # --- agent authentication + web mode ---
