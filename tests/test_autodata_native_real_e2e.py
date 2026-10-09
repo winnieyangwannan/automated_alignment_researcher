@@ -93,3 +93,23 @@ def test_cli_retries_ambiguous_broker_reachability_failure(tmp_path: Path) -> No
             {"command": "execution step exe_test", "attempt": 2},
         )
     ]
+
+
+def test_executor_uses_declared_internal_generator_route() -> None:
+    driver_type = _load_driver()
+    driver = object.__new__(driver_type)
+    driver.args = argparse.Namespace(
+        broker_url="http://127.0.0.1:8791",
+        environment="oci-runner-firecracker-large",
+        generator_url="http://internal-ingress/v1",
+        generator_host_header="model.ingress.",
+    )
+
+    executor = driver.executor()
+
+    assert executor["non_secret_env"]["AUTODATA_GENERATOR_URL"] == (
+        "http://internal-ingress/v1"
+    )
+    assert executor["non_secret_env"]["AUTODATA_GENERATOR_HOST_HEADER"] == (
+        "model.ingress."
+    )

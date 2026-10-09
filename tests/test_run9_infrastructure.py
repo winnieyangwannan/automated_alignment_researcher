@@ -68,6 +68,21 @@ def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
     assert "--export=ALL" in submitter
 
 
+def test_run9_native_preflight_covers_the_real_lifecycle() -> None:
+    submitter = (RUN9 / "submit_run_9_native_preflight.sh").read_text()
+    preflight = (RUN9 / "run_9_native_preflight.sbatch").read_text()
+
+    assert "autodata_native_real_e2e.py" in preflight
+    assert '--task-count 16' in preflight
+    assert '--concurrency 16' in preflight
+    assert '--max-cost-usd 2' in preflight
+    assert "AAR_AUTODATA_WRAPPER_PYTHON" in preflight
+    assert "native-preflight/v1" in preflight
+    assert "RUN9_NATIVE_PREFLIGHT_PASS" in preflight
+    assert '"runner": "${RUNNER}"' in submitter
+    assert '"AUTODATA_GENERATOR_HOST_HEADER"' in submitter
+
+
 def test_generic_launchers_include_run7_first_use_fixes() -> None:
     trainer = (ROOT / "scripts" / "submit_train_job.sh").read_text()
     evaluator = (ROOT / "scripts" / "launch_eval_worker.sh").read_text()
@@ -82,6 +97,18 @@ def test_chain_initializes_python_before_autodata_health_probe() -> None:
     assert chain.index('PY="${HARNESS_PY}"') < chain.index(
         'if "${PY}" -c \'import os,urllib.request'
     )
+
+
+def test_chain_prebootstraps_and_pins_autodata_plugin_python() -> None:
+    chain = (ROOT / "scripts" / "slurm_aar_chain.sh").read_text()
+    runtime = (ROOT / "scripts" / "aar_runtime_env.sh").read_text()
+
+    assert 'export AUTODATA_CACHE_DIR="${AUTODATA_CACHE_DIR:-' in chain
+    assert '"${AAR_AUTODATA_PLUGIN_ROOT}/scripts/bootstrap.py"' in chain
+    assert "export AAR_AUTODATA_WRAPPER_PYTHON" in chain
+    assert "bootstrapped AutoData plugin import failed" in chain
+    assert "AAR_AUTODATA_WRAPPER_PYTHON" in runtime
+    assert "AUTODATA_CACHE_DIR" in runtime
 
 
 def test_run9_keeps_the_hot_broker_database_on_node_local_storage() -> None:

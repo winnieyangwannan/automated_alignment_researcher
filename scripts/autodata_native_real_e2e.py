@@ -42,6 +42,11 @@ def _args() -> argparse.Namespace:
     parser.add_argument("--plugin-root", type=Path, required=True)
     parser.add_argument("--recipe-root", type=Path, default=DEFAULT_RECIPE)
     parser.add_argument("--broker-url", default="http://127.0.0.1:8791")
+    parser.add_argument(
+        "--generator-url",
+        default="https://ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud/v1",
+    )
+    parser.add_argument("--generator-host-header", default="")
     parser.add_argument("--broker-auth-token-file", type=Path, required=True)
     parser.add_argument("--model-api-env-file", type=Path, required=True)
     parser.add_argument("--task-count", type=int, default=4)
@@ -98,6 +103,8 @@ class Driver:
         self.approvals = self.root / "approvals"
         self.export = self.root / "export"
         self.secrets = self.root / "secrets"
+        self.methods = self.root / "methods"
+        self.scores = self.root / "scores"
         for path in (
             self.state.parent,
             self.artifacts,
@@ -107,8 +114,24 @@ class Driver:
             self.approvals,
             self.export,
             self.secrets,
+            self.methods,
+            self.scores,
         ):
             path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.proposal_bindings = self.root / "proposal-bindings.json"
+        self.proposal_bindings.write_text(
+            json.dumps(
+                {
+                    "schema": "aar.autodata.proposal-bindings/v1",
+                    "proposals": {},
+                    "workspaces": {},
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        self.proposal_bindings.chmod(0o600)
         self.progress = self.root / "progress.jsonl"
         self.environment = os.environ.copy()
         self.environment["AUTODATA_BROKER_AUTH_TOKEN"] = _secret(
@@ -233,7 +256,7 @@ class Driver:
         return private, public, "sha256:" + hashlib.sha256(public.read_bytes()).hexdigest()
 
     def executor(self) -> dict[str, Any]:
-        return {
+        executor = {
             "kind": "sandoq-firecracker",
             "environment": self.args.environment,
             "image": IMAGE,
@@ -246,7 +269,7 @@ class Driver:
             "network": "host",
             "workdir": "/workspace",
             "non_secret_env": {
-                "AUTODATA_GENERATOR_URL": "https://ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud/v1",
+                "AUTODATA_GENERATOR_URL": self.args.generator_url,
                 "AUTODATA_GENERATOR_MODEL": "Kimi-K2.6",
                 "AUTODATA_GENERATOR_DEPLOYMENT_ID": "winnieyangwn-kimi26",
                 "AUTODATA_GENERATOR_MAX_INPUT": "4096",
@@ -264,6 +287,11 @@ class Driver:
                 "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "1",
             },
         }
+        if self.args.generator_host_header:
+            executor["non_secret_env"]["AUTODATA_GENERATOR_HOST_HEADER"] = (
+                self.args.generator_host_header
+            )
+        return executor
 
     def _preflight_budget(self) -> None:
         per_task = (
@@ -357,6 +385,14 @@ class Driver:
         shutil.copytree(self.recipe / "schemas", self.draft / "schemas")
 
     def _configure_approval(self, private_key: Path) -> None:
+        idea_uid = "run9-native-lifecycle-canary"
+        idea_name = "run9_native_lifecycle_canary"
+        method = self.methods / idea_name
+        method.mkdir(exist_ok=True)
+        (method / "run.py").write_text(
+            '"""Operator-owned native lifecycle canary method."""\n',
+            encoding="utf-8",
+        )
         settings = {
             "AAR_AUTODATA_PLUGIN_ROOT": str(self.plugin),
             "AAR_AUTODATA_STATE": str(self.state),
@@ -366,12 +402,41 @@ class Driver:
             "AAR_AUTODATA_APPROVAL_AUDIT_DIR": str(self.approvals),
             "AAR_AUTODATA_APPROVAL_ACTOR": "aar-integrity-monitor",
             "AAR_AUTODATA_APPROVAL_POLICY_VERSION": "aar-autodata/run9-v1",
+            "AAR_AUTODATA_PROPOSAL_BINDINGS": str(self.proposal_bindings),
+            "AAR_AUTODATA_RESOURCES_READY": "1",
+            "AAR_AUTODATA": "1",
+            "AAR_NO_LOCAL_GPU": "1",
+            "AAR_IDEAS_DIR": str(self.methods),
+            "SCORES_DIR": str(self.scores),
+            "IDEA_UID": idea_uid,
+            "IDEA_NAME": idea_name,
             "AAR_MONITOR_BACKEND": "model_api",
             "MONITOR_MODEL": "gpt-5-6-luna",
             "MODEL_API_KEY": self.environment["MODEL_API_KEY"],
             "AUTODATA_BROKER_AUTH_TOKEN": self.environment["AUTODATA_BROKER_AUTH_TOKEN"],
         }
         os.environ.update(settings)
+        from aar.research_loop.tools.server_api_tools import (
+            _method_code,
+            _proposal_marker_path,
+        )
+
+        _, code_hash = _method_code(idea_name)
+        if not code_hash:
+            raise RuntimeError("native lifecycle canary method hash is unavailable")
+        marker = {
+            "approved": True,
+            "code_hash": code_hash,
+            "idea_name": idea_name,
+            "idea_uid": idea_uid,
+            "run_id": "run9-native-lifecycle-canary-v1",
+            "ts": time.time(),
+            "paper": {"title": "Run 9 native lifecycle canary"},
+        }
+        _proposal_marker_path().write_text(
+            json.dumps(marker, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
     def _review(self, action: dict[str, Any]) -> None:
         from aar.research_loop.autodata_approval import review_and_complete_action

@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import sqlite3
 import stat
 import subprocess
@@ -345,7 +346,16 @@ def _run_cli(arguments: list[str]) -> dict[str, Any]:
         check=False,
     )
     if completed.returncode != 0:
-        raise RuntimeError("native AutoData CLI failed: " + completed.stderr[-1000:])
+        termination = f"exit={completed.returncode}"
+        if completed.returncode < 0:
+            try:
+                termination += f" signal={signal.Signals(-completed.returncode).name}"
+            except ValueError:
+                termination += f" signal={-completed.returncode}"
+        stderr = completed.stderr[-1000:].strip() or "<empty>"
+        raise RuntimeError(
+            f"native AutoData CLI failed ({termination}); stderr: {stderr}"
+        )
     value = json.loads(completed.stdout)
     if not isinstance(value, dict):
         raise RuntimeError("native AutoData CLI returned invalid JSON")

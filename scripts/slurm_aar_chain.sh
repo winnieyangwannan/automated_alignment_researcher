@@ -119,6 +119,7 @@ cleanup_autodata_broker() {
 trap cleanup_autodata_broker EXIT
 if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   : "${AAR_AUTODATA_CHECKOUT:?missing canonical AutoData checkout}"
+  : "${AAR_AUTODATA_PLUGIN_ROOT:?missing pinned AutoData plugin root}"
   : "${AAR_AUTODATA_BROKER_PYTHON:?missing broker Python}"
   : "${AAR_AUTODATA_BROKER_RUNNER:?missing broker runner}"
   : "${AAR_AUTODATA_MODEL_ENV_FILE:?missing model workload env path}"
@@ -126,6 +127,25 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   : "${AAR_AUTODATA_CAPABILITY:?missing attempt-scoped broker capability}"
   : "${AAR_AUTODATA_APPROVAL_PRIVATE_KEY:?missing delegated approval key}"
   : "${AAR_AUTODATA_APPROVAL_PUBLIC_KEY:?missing delegated approval public key}"
+  export AUTODATA_CACHE_DIR="${AUTODATA_CACHE_DIR:-${AAR_RUNTIME_ROOT}/autodata/plugin-cache}"
+  mkdir -p "${AUTODATA_CACHE_DIR}"
+  chmod 700 "${AUTODATA_CACHE_DIR}"
+  export AAR_AUTODATA_WRAPPER_PYTHON
+  AAR_AUTODATA_WRAPPER_PYTHON="$(
+    AUTODATA_CACHE_DIR="${AUTODATA_CACHE_DIR}" \
+      "${AAR_AUTODATA_BROKER_PYTHON}" \
+      "${AAR_AUTODATA_PLUGIN_ROOT}/scripts/bootstrap.py"
+  )"
+  [ -x "${AAR_AUTODATA_WRAPPER_PYTHON}" ] || {
+    echo "[aar] ERROR: AutoData plugin bootstrap did not return an executable" >&2
+    exit 2
+  }
+  "${AAR_AUTODATA_WRAPPER_PYTHON}" -c \
+    'import autodata,autodata.engine; assert autodata.__version__ == "1.0.0"' || {
+      echo "[aar] ERROR: bootstrapped AutoData plugin import failed" >&2
+      exit 2
+    }
+  echo "[aar] AutoData plugin bootstrap verified (cache=attempt-local, interpreter=pinned)"
   _autodata_root="${TEAM_DIR}/autodata/broker"
   mkdir -p "${_autodata_root}"
   chmod 700 "${TEAM_DIR}/autodata" "${_autodata_root}"
