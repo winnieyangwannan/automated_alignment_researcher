@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="650" viewBox="0 0 1200 650">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
+    </marker>
+    <style>
+      .title { font: 700 28px sans-serif; fill: #0f172a; }
+      .label { font: 700 18px sans-serif; fill: #0f172a; }
+      .body { font: 15px sans-serif; fill: #334155; }
+      .small { font: 14px sans-serif; fill: #475569; }
+      .box { stroke-width: 2; rx: 14; ry: 14; }
+      .arrow { stroke: #334155; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+      .dash { stroke: #7c3aed; stroke-width: 3; stroke-dasharray: 8 6; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1200" height="650" fill="#f8fafc"/>
+  <text x="600" y="45" text-anchor="middle" class="title">How AAR, MCP, and AutoData fit together</text>
+
+  <rect x="35" y="100" width="245" height="155" class="box" fill="#e0f2fe" stroke="#0284c7"/>
+  <text x="157" y="135" text-anchor="middle" class="label">Research agent</text>
+  <text x="157" y="165" text-anchor="middle" class="body">Claude in a restricted</text>
+  <text x="157" y="188" text-anchor="middle" class="body">Bubblewrap sandbox</text>
+  <text x="157" y="222" text-anchor="middle" class="small">Cannot access signing key</text>
+
+  <rect x="350" y="85" width="255" height="190" class="box" fill="#ecfccb" stroke="#65a30d"/>
+  <text x="477" y="120" text-anchor="middle" class="label">AutoData CLI</text>
+  <text x="477" y="150" text-anchor="middle" class="body">workspace create / step</text>
+  <text x="477" y="175" text-anchor="middle" class="body">execution create / step</text>
+  <text x="477" y="200" text-anchor="middle" class="body">status / export</text>
+  <text x="477" y="238" text-anchor="middle" class="small">Existing plugin wrapper</text>
+
+  <rect x="690" y="85" width="215" height="190" class="box" fill="#fef3c7" stroke="#d97706"/>
+  <text x="797" y="120" text-anchor="middle" class="label">AutoData core</text>
+  <text x="797" y="150" text-anchor="middle" class="body">ExecutionEngine</text>
+  <text x="797" y="175" text-anchor="middle" class="body">SQLite state</text>
+  <text x="797" y="200" text-anchor="middle" class="body">Artifacts + lifecycle</text>
+  <text x="797" y="238" text-anchor="middle" class="small">AutoData-owned logic</text>
+
+  <rect x="975" y="85" width="190" height="190" class="box" fill="#fee2e2" stroke="#dc2626"/>
+  <text x="1070" y="120" text-anchor="middle" class="label">Broker</text>
+  <text x="1070" y="150" text-anchor="middle" class="body">local-bwrap jobs</text>
+  <text x="1070" y="175" text-anchor="middle" class="body">Kimi generation</text>
+  <text x="1070" y="200" text-anchor="middle" class="body">Luna judging</text>
+  <text x="1070" y="238" text-anchor="middle" class="small">Task execution only</text>
+
+  <path d="M280 175 L350 175" class="arrow"/>
+  <text x="315" y="159" text-anchor="middle" class="small">Bash</text>
+  <path d="M605 175 L690 175" class="arrow"/>
+  <path d="M905 175 L975 175" class="arrow"/>
+
+  <rect x="350" y="350" width="555" height="210" class="box" fill="#f3e8ff" stroke="#7c3aed"/>
+  <text x="627" y="386" text-anchor="middle" class="label">Trusted AAR parent: one MCP approval tool</text>
+  <text x="627" y="418" text-anchor="middle" class="body">review_autodata_action(action_id)</text>
+  <text x="627" y="450" text-anchor="middle" class="body">Integrity monitor judges immutable native evidence</text>
+  <text x="627" y="478" text-anchor="middle" class="body">Bridge signs the decision with its private key</text>
+  <text x="627" y="506" text-anchor="middle" class="body">Then invokes the same AutoData CLI action begin / complete</text>
+  <text x="627" y="538" text-anchor="middle" class="small">Luna in the preflight; Opus 4.8 is the full-chain default</text>
+
+  <path d="M157 255 C157 330 310 390 350 425" class="dash"/>
+  <text x="180" y="330" class="small" fill="#7c3aed">approval request only</text>
+  <path d="M627 350 C627 315 520 310 490 275" class="dash"/>
+
+  <rect x="35" y="585" width="1130" height="42" rx="10" fill="#e2e8f0"/>
+  <text x="600" y="612" text-anchor="middle" class="body">Normal path: Agent → Bash → AutoData CLI → AutoData core → Broker. MCP appears only when a signed approval is required.</text>
+</svg>
