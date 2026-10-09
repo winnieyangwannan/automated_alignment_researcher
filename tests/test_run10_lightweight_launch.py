@@ -51,7 +51,9 @@ def test_passed_smoke_can_resume_without_research_or_training_relaunch() -> None
     assert "no research or training relaunch" in pipeline
     assert 'if [ "${RESUME_SMOKE}" = 0 ]; then' in pipeline
     assert 'baseline_reuse_provenance.json" ] ||' in pipeline
-    assert '${ATTEMPT_DIR}/eval/prompt_baselines.' in pipeline
-    assert '${ATTEMPT_DIR}/eval/lifecycle_holdout_v2/gemma4_31b' in pipeline
+    assert '${ATTEMPT_DIR}/eval/prompt_baselines_v3.' in pipeline
+    assert '${ATTEMPT_DIR}/eval/lifecycle_holdout_v3/gemma4_31b' in pipeline
     assert 'AAR_SUITE_BENCHMARKS=verbalized_ece AAR_PUBLISH_FORCE_N=2' in pipeline
     assert 'AAR_EVAL_IDLE_SECONDS=120' in pipeline
+    assert 'AAR_EVAL_RETRY_FAILED=1' in pipeline
+    assert "reusing staged immutable adapter" in pipeline

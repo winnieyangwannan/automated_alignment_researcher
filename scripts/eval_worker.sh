@@ -258,7 +258,10 @@ while true; do
     rid=$(basename "$d")
     [ -f "${d}.submitted" ] || continue
     [ -f "${SCORES_DIR}/${rid}.json" ] && continue          # already scored
-    [ -f "${SCORES_DIR}/${rid}.failed.json" ] && continue   # terminal eval failure
+    if [ -f "${SCORES_DIR}/${rid}.failed.json" ] && \
+       [ "${AAR_EVAL_RETRY_FAILED:-0}" != 1 ]; then
+      continue                                                # terminal unless explicitly retried
+    fi
     # Atomic claim: exactly one worker's mkdir succeeds for a given rid, so
     # parallel workers never double-score. (Claims live in the eval-writable
     # SCORES_DIR so every worker — same OS user — can create them.)
@@ -306,6 +309,9 @@ while true; do
       }
       if [ "${AAR_VLLM_EPHEMERAL_MERGED:-0}" = 1 ]; then
         manifest_copy="${EVAL_TEAM_DIR}/merge_manifests/${rid}.json"
+        if [ -e "${manifest_copy}" ]; then
+          manifest_copy="${EVAL_TEAM_DIR}/merge_manifests/${rid}.retry-${WORKER_ID}.json"
+        fi
         manifest_tmp="${manifest_copy}.tmp.${WORKER_ID}"
         cp -- "${merged_model}/.merge-complete.json" "${manifest_tmp}"
         chmod 600 "${manifest_tmp}"

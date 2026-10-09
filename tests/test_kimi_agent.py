@@ -28,6 +28,55 @@ import run as launcher
 
 
 class KimiAgentTest(unittest.TestCase):
+    def test_successful_retry_score_takes_precedence_over_retained_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            scores = root / "scores"
+            proposals = scores / ".proposals"
+            runs = proposals / "runs"
+            receipts = root / ".train_submissions"
+            runs.mkdir(parents=True)
+            receipts.mkdir()
+            idea_uid = "kimi-retry"
+            run_id = f"{idea_uid}-candidate-1"
+            marker = {
+                "approved": True,
+                "idea_name": "kimi_candidate",
+                "code_hash": "abc123",
+            }
+            (proposals / f"{idea_uid}.json").write_text(json.dumps(marker))
+            (runs / "candidate.json").write_text(
+                json.dumps({
+                    **marker,
+                    "run_id": run_id,
+                    "stamped_ts": 1,
+                })
+            )
+            (receipts / f"{run_id}.env").write_text(
+                f"run_id={run_id}\njob_id=12345\n"
+            )
+            (scores / f"{run_id}.failed.json").write_text(
+                json.dumps({"error": "retained first-attempt failure"})
+            )
+            (scores / f"{run_id}.json").write_text(json.dumps({"score": 1.0}))
+
+            agent = KimiAgent(
+                "test-agent",
+                root,
+                cli_path="/bin/true",
+                completion_tool="share_finding",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "SCORES_DIR": str(scores),
+                    "TEAM_DIR": str(root),
+                    "IDEA_UID": idea_uid,
+                },
+                clear=False,
+            ):
+                asyncio.run(agent._wait_for_training_result())
+
     def test_launcher_selects_kimi_without_anthropic_credentials(self) -> None:
         observed = {}
 

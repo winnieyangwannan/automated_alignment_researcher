@@ -305,7 +305,15 @@ class KimiAgent:
                     self._ensure_approved_training_submission()
                     await self._wait_for_training_result()
                     training_failure = self._current_training_failure()
-                    if training_failure is not None:
+                    approved_run_id = self._approved_run_id()
+                    score_path = (
+                        self._score_path_for_run(approved_run_id)
+                        if approved_run_id is not None
+                        else None
+                    )
+                    if training_failure is not None and not (
+                        score_path is not None and score_path.is_file()
+                    ):
                         raise RuntimeError(
                             "Kimi training failed closed: "
                             + json.dumps(training_failure, sort_keys=True)[:2000]
@@ -757,15 +765,15 @@ class KimiAgent:
         deadline = time.monotonic() + timeout_seconds
         next_update = time.monotonic()
         while time.monotonic() < deadline:
+            if score_path.is_file():
+                print(f"[Kimi] score ready for approved run {run_id}")
+                return
             failure = self._current_training_failure()
             if failure is not None:
                 raise RuntimeError(
                     "Kimi training failed closed: "
                     + json.dumps(failure, sort_keys=True)[:2000]
                 )
-            if score_path.is_file():
-                print(f"[Kimi] score ready for approved run {run_id}")
-                return
             if time.monotonic() >= next_update:
                 job_id = self._current_training_job_id(run_id)
                 print(f"[Kimi] waiting for score from training job {job_id}")

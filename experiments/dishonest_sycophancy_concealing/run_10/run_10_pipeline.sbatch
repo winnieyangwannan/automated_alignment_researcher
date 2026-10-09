@@ -157,14 +157,20 @@ if [ "${MODE}" = smoke ]; then
 
   echo "[run10] method smoke passed; publishing two-item lifecycle evaluation and staging the same adapter"
   export AAR_SUITE_BENCHMARKS=verbalized_ece AAR_PUBLISH_FORCE_N=2
-  export HOLDOUT_DIR="${ATTEMPT_DIR}/eval/lifecycle_holdout_v2/gemma4_31b"
-  export BASELINES_PATH="${ATTEMPT_DIR}/eval/prompt_baselines.honesty_sycophancy_concealing_uncertainty.google_gemma-4-31B-it.json"
+  export HOLDOUT_DIR="${ATTEMPT_DIR}/eval/lifecycle_holdout_v3/gemma4_31b"
+  export BASELINES_PATH="${ATTEMPT_DIR}/eval/prompt_baselines_v3.honesty_sycophancy_concealing_uncertainty.google_gemma-4-31B-it.json"
   bash "${REPO}/scripts/publish_holdout.sh"
-  "${HARNESS_PY}" -c \
-    'import sys; from aar.transport import put_model; print(put_model(sys.argv[1], sys.argv[2]))' \
-    "${adapter_path}" "${run_id}"
+  if [ -f "${SUBMISSIONS_DIR}/${run_id}/.submitted" ] && \
+     [ -f "${SUBMISSIONS_DIR}/${run_id}/model/adapter_config.json" ]; then
+    echo "[run10] reusing staged immutable adapter for ${run_id}"
+  else
+    "${HARNESS_PY}" -c \
+      'import sys; from aar.transport import put_model; print(put_model(sys.argv[1], sys.argv[2]))' \
+      "${adapter_path}" "${run_id}"
+  fi
 
   export AAR_EVAL_WORKERS=1 AAR_EVAL_GPUS=4 AAR_EVAL_GPU_CAP=4
+  export AAR_EVAL_RETRY_FAILED=1
   export AAR_EVAL_TIME=01:00:00 AAR_EVAL_IDLE_SECONDS=120
   export EVAL_VLLM_MAX_NUM_SEQS=8 EVAL_VLLM_MAX_NUM_BATCHED_TOKENS=8192
   eval_launch_log="${ATTEMPT_DIR}/metadata/launch_on_demand_evaluator.txt"
