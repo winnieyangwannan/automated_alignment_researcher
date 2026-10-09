@@ -8,9 +8,30 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from scripts.validate_method_contract import _undefined_name_errors
 
 
 class ValidateMethodContractTest(unittest.TestCase):
+    def test_undefined_name_gate_reports_ruff_diagnostic(self) -> None:
+        completed = subprocess.CompletedProcess(
+            ["ruff"],
+            1,
+            "run.py:9:5: F821 Undefined name `torch`\n",
+            "",
+        )
+        with (
+            patch("scripts.validate_method_contract.shutil.which", return_value="ruff"),
+            patch(
+                "scripts.validate_method_contract.subprocess.run",
+                return_value=completed,
+            ),
+        ):
+            errors = _undefined_name_errors(Path("run.py"))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("F821 Undefined name `torch`", errors[0])
+
     def _run(self, source: str) -> tuple[subprocess.CompletedProcess[str], dict]:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

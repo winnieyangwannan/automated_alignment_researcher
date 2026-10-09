@@ -9,6 +9,9 @@ import hashlib
 import importlib.util
 import inspect
 import json
+import os
+import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -118,6 +121,25 @@ def _unsupported_training_arguments(tree: ast.AST) -> list[str]:
     return sorted(unsupported)
 
 
+def _undefined_name_errors(method_path: Path) -> list[str]:
+    """Run the target environment's Ruff F821 analysis on generated code."""
+    ruff = shutil.which("ruff")
+    if ruff is None:
+        if os.environ.get("AAR_REQUIRE_METHOD_CONTRACT") == "1":
+            return ["Ruff is required for fail-closed undefined-name validation"]
+        return []
+    completed = subprocess.run(
+        [ruff, "check", "--select", "F821", "--output-format", "concise", str(method_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode == 0:
+        return []
+    detail = completed.stdout.strip() or completed.stderr.strip()
+    return ["undefined-name validation failed: " + detail[-4000:]]
+
+
 def validate(
     method_path: Path,
     *,
@@ -183,6 +205,7 @@ def validate(
                     "Transformers contract: "
                     + ", ".join(unsupported_training_args)
                 )
+            errors.extend(_undefined_name_errors(method_path))
 
     module = None
     if tree is not None:
