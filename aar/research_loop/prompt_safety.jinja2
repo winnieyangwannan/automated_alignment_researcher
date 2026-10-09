@@ -216,10 +216,14 @@ the language tower's ordinary linear projections.
 {% if serve_v2_deployment_dir %}
 The target model's own Serve API v2 deployment is available for optional synthetic
 generation at `{{ serve_v2_deployment_dir }}` with served model
-`{{ serve_v2_model }}`. Use `aar.infrastructure.serve_v2.chat_completion`; it reads endpoint
-metadata at runtime without returning credentials, requests
-`chat_template_kwargs={"enable_thinking": true}`, and returns `answer` separately
-from `reasoning`. Use only `answer` as a label.
+`{{ serve_v2_model }}`. Use `aar.infrastructure.serve_v2.chat_completion`; it reads
+endpoint metadata at runtime without returning credentials. Its only positional
+argument is `messages`; pass the served name as `model="{{ serve_v2_model }}"`
+and request reasoning with the Python keyword `enable_thinking=True`. The client
+translates that keyword to the HTTP payload's `chat_template_kwargs` field and
+returns `answer` separately from `reasoning`. Do not pass `chat_template_kwargs`
+or `top_p` to the Python function. Use only `answer` as a label, and let target
+generation failures propagate rather than silently substituting fallback rows.
 {% endif %}
 {% if autodata %}
 
