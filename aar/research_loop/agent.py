@@ -347,8 +347,6 @@ class BaseAgent:
         overloaded_retries = 0
 
         while True:
-            iteration_count = 0
-            messages = []
             try:
                 return await self._execute_once(task, start_time)
             except Exception as e:
