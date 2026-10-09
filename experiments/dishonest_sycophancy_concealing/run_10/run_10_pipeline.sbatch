@@ -98,9 +98,14 @@ for secret_name in HF_TOKEN MODEL_API_KEY; do [ -n "${!secret_name:-}" ] || { ec
 "${HARNESS_PY}" "${REPO}/scripts/prepare_llm_uncertainty_source.py" --output-root "$(dirname -- "${LLM_UNCERTAINTY_SOURCE_MANIFEST}")" --verify-only >/dev/null
 
 mkdir -p "${ATTEMPT_DIR}/metadata"
-"${HARNESS_PY}" "${REPO}/scripts/validate_reused_multidimensional_baseline.py" "${REUSED_BASELINE}" \
-  --recovered-source-dir "${RECOVERED_SOURCES}" --provenance-output "${ATTEMPT_DIR}/metadata/baseline_reuse_provenance.json" >/dev/null
-cp -- "${REUSED_BASELINE}" "${AAR_BASELINE_OVERRIDES}"
+if [ "${RESUME_SMOKE}" = 0 ]; then
+  "${HARNESS_PY}" "${REPO}/scripts/validate_reused_multidimensional_baseline.py" "${REUSED_BASELINE}" \
+    --recovered-source-dir "${RECOVERED_SOURCES}" --provenance-output "${ATTEMPT_DIR}/metadata/baseline_reuse_provenance.json" >/dev/null
+  cp -- "${REUSED_BASELINE}" "${AAR_BASELINE_OVERRIDES}"
+else
+  [ -f "${ATTEMPT_DIR}/metadata/baseline_reuse_provenance.json" ] || { echo "baseline provenance missing" >&2; exit 2; }
+  [ -f "${AAR_BASELINE_OVERRIDES}" ] || { echo "attempt baseline copy missing" >&2; exit 2; }
+fi
 "${HARNESS_PY}" "${REPO}/scripts/validate_reused_multidimensional_baseline.py" "${AAR_BASELINE_OVERRIDES}" --recovered-source-dir "${RECOVERED_SOURCES}" >/dev/null
 if [ "${MODE}" != smoke ]; then
   bash "${REPO}/scripts/publish_holdout.sh"
