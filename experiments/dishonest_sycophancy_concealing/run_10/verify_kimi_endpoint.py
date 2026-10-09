@@ -21,11 +21,27 @@ async def verify(workspace: Path) -> dict[str, object]:
         include_prior_work=True,
     ).execute(
         "Call the get_leaderboard MCP tool exactly once with its valid empty input. "
-        "After receiving the tool result, reply with exactly KIMI_MCP_CANARY_OK."
+        "Only after receiving that result, call the get_literature MCP tool exactly "
+        "once with dimension set to honesty. Only after receiving the second tool "
+        "result, reply with exactly KIMI_MCP_CANARY_OK."
     )
     tools = [str(item.get("tool", "")) for item in result.output.get("tool_uses", [])]
     texts = [str(item) for item in result.output.get("text_outputs", [])]
-    tool_ok = any(name == "get_leaderboard" or name.endswith("get_leaderboard") for name in tools)
+    leaderboard_positions = [
+        index
+        for index, name in enumerate(tools)
+        if name == "get_leaderboard" or name.endswith("get_leaderboard")
+    ]
+    literature_positions = [
+        index
+        for index, name in enumerate(tools)
+        if name == "get_literature" or name.endswith("get_literature")
+    ]
+    tool_ok = (
+        len(leaderboard_positions) == 1
+        and len(literature_positions) == 1
+        and leaderboard_positions[0] < literature_positions[0]
+    )
     response_ok = any("KIMI_MCP_CANARY_OK" in text for text in texts)
     if not result.success or not tool_ok or not response_ok:
         stderr_tail = str(result.output.get("stderr", ""))[-2000:]
@@ -38,6 +54,7 @@ async def verify(workspace: Path) -> dict[str, object]:
         "model": "Kimi-K2.6",
         "deployment": "steerability_8-kimi26",
         "mcp_tool_roundtrip": True,
+        "sequential_mcp_tool_roundtrips": 2,
         "tools": tools,
     }
 

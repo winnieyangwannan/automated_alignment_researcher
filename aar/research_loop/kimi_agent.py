@@ -450,10 +450,15 @@ class KimiAgent:
             raise RuntimeError(
                 f"serve_api_v2 model mismatch: expected {expected_model}, got {model}"
             )
+        provider_type = env.get("AAR_KIMI_PROVIDER_TYPE", "openai").strip()
+        if provider_type not in {"openai", "kimi"}:
+            raise RuntimeError(
+                "AAR_KIMI_PROVIDER_TYPE must be either openai or kimi"
+            )
         env.update(
             {
                 "KIMI_MODEL_NAME": model,
-                "KIMI_MODEL_PROVIDER_TYPE": "openai",
+                "KIMI_MODEL_PROVIDER_TYPE": provider_type,
                 "KIMI_MODEL_BASE_URL": base_url,
                 "KIMI_MODEL_API_KEY": api_key,
                 "KIMI_MODEL_MAX_CONTEXT_SIZE": env.get(

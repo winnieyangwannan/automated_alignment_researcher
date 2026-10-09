@@ -181,6 +181,15 @@ class KimiAgentTest(unittest.TestCase):
             self.assertEqual(env["KIMI_MODEL_CAPABILITIES"], "thinking,tool_use")
             self.assertEqual(env["KIMI_MODEL_REASONING_KEY"], "reasoning_content")
 
+            kimi_env = {
+                "AAR_KIMI_SERVE_DEPLOYMENT": "test-deployment",
+                "AAR_KIMI_EXPECTED_MODEL": "Kimi-K2.6",
+                "AAR_KIMI_PROVIDER_TYPE": "kimi",
+                "AAR_SERVE_API_V2_ROOT": str(serve_root),
+            }
+            agent._apply_serve_api_provider(kimi_env)
+            self.assertEqual(kimi_env["KIMI_MODEL_PROVIDER_TYPE"], "kimi")
+
     def test_serve_api_provider_rejects_unexpected_model(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
