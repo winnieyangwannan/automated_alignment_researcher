@@ -107,12 +107,19 @@ class KimiAgent:
                     command.extend(["--model", self.model])
                 if continuation_count:
                     command.append("--continue")
-                    current_prompt = (
-                        "Continue executing the requested research iteration now. "
-                        "Do not merely announce, summarize, or promise a next action. "
-                        "Use the available tools and do not stop until evaluate_model "
-                        "has returned and share_finding has succeeded."
-                    )
+                    if self.completion_tool == "share_finding":
+                        current_prompt = (
+                            "Continue executing the requested research iteration now. "
+                            "Do not merely announce, summarize, or promise a next action. "
+                            "Use the available tools and do not stop until evaluate_model "
+                            "has returned and share_finding has succeeded."
+                        )
+                    else:
+                        current_prompt = (
+                            "Continue executing the requested task now. Do not merely "
+                            "announce, summarize, or promise a next action. Use the "
+                            f"available tools and call {self.completion_tool}."
+                        )
                 else:
                     current_prompt = prompt
                 command.extend(
