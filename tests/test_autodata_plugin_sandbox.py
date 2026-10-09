@@ -32,6 +32,17 @@ def test_sandbox_exposes_only_node_local_autodata_state_at_run_alias() -> None:
     assert '--setenv AAR_AUTODATA_STATE "${autodata_state_visible}/$(basename' in source
 
 
+def test_sandbox_exposes_attempt_local_method_validation_tools() -> None:
+    source = BWRAP.read_text()
+    submitter = (ROOT / "scripts" / "submit_train_job.sh").read_text()
+
+    assert 'research_tool_dir="${AAR_RESEARCH_TOOL_DIR:-}"' in source
+    assert '"${runtime_root}"/*)' in source
+    assert '--setenv AAR_METHOD_VALIDATOR_PY /usr/bin/python3' in source
+    assert '--setenv PATH "${research_tool_dir}:${PATH}"' in source
+    assert 'AAR_METHOD_VALIDATOR_PY:-${HARNESS_PY:-python}' in submitter
+
+
 def test_runtime_exports_plugin_inputs_not_adapter_configuration() -> None:
     runtime = RUNTIME_ENV.read_text()
     chain = CHAIN.read_text()

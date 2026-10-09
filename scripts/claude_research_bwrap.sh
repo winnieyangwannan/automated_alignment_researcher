@@ -23,6 +23,7 @@ sandbox_home="${HOME:?missing HOME}"
 storage_home="${AAR_RESEARCH_STORAGE_HOME:-/storage/home/${USER:?missing USER}}"
 autodata_plugin_root="${AAR_AUTODATA_PLUGIN_ROOT:-}"
 autodata_state="${AAR_AUTODATA_STATE:-}"
+research_tool_dir="${AAR_RESEARCH_TOOL_DIR:-}"
 
 [ -x "${real_cli}" ] || fail "real Claude CLI is not executable"
 [ -d "${repo}" ] || fail "repository does not exist"
@@ -32,6 +33,15 @@ real_cli="$(realpath -e -- "${real_cli}")"
 repo="$(realpath -e -- "${repo}")"
 runtime_root="$(realpath -e -- "${runtime_root}")"
 sandbox_home="$(realpath -e -- "${sandbox_home}")"
+if [ -n "${research_tool_dir}" ]; then
+  [ -d "${research_tool_dir}" ] || fail "research tool directory does not exist"
+  research_tool_dir="$(realpath -e -- "${research_tool_dir}")"
+  case "${research_tool_dir}" in
+    "${runtime_root}"/*) ;;
+    *) fail "research tool directory must be inside the run root" ;;
+  esac
+  [ -x "${research_tool_dir}/ruff" ] || fail "research tool directory lacks ruff"
+fi
 if [ -n "${autodata_plugin_root}" ]; then
   [ -d "${autodata_plugin_root}" ] || fail "AutoData plugin does not exist"
   autodata_plugin_root="$(realpath -e -- "${autodata_plugin_root}")"
@@ -74,6 +84,12 @@ for hidden_root in "${hidden_roots[@]}"; do
   bwrap_args+=(--tmpfs "${hidden_root}")
 done
 bwrap_args+=(--setenv HOME "${sandbox_home}" --setenv TMPDIR /tmp)
+if [ -n "${research_tool_dir}" ]; then
+  bwrap_args+=(
+    --setenv PATH "${research_tool_dir}:${PATH}"
+    --setenv AAR_METHOD_VALIDATOR_PY /usr/bin/python3
+  )
+fi
 declare -A made_dirs=()
 
 # A tmpfs over each possible home root removes all original descendants.
@@ -234,6 +250,7 @@ unset META_CLAUDE_CODE_RELEASE CLAUDE_CODE_VERSION_OVERRIDE
 unset git_common cli_dir masked_file hidden_root storage_home autodata_plugin_root eval_private
 unset autodata_state autodata_state_root autodata_state_visible
 unset claude_native_cache dotslash_cache
+unset research_tool_dir
 while IFS= read -r env_name; do
   upper_name="${env_name^^}"
   case "${upper_name}" in

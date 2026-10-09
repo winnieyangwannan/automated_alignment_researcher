@@ -14,6 +14,7 @@ ATTEMPT_DIR="${AAR_RUN_ATTEMPT_DIR:?missing retained attempt}"
 EXPECTED_COMMIT="${AAR_BASELINE_GIT_COMMIT:?missing submitted commit}"
 REUSED_BASELINE="${AAR_REUSED_BASELINE:?missing retained baseline}"
 RECOVERED_SOURCES="${AAR_RECOVERED_BASELINE_SOURCES:?missing sources}"
+MAX_ITERATIONS="${AAR_RUN13_RESEARCH_MAX_ITERATIONS:-1}"
 export HF_HOME="${ATTEMPT_DIR}/cache/huggingface"
 
 # shellcheck disable=SC1091
@@ -27,7 +28,12 @@ source "${REPO}/scripts/axis_env.sh"
   echo "attempt-local HF_HOME was overridden" >&2
   exit 2
 }
-mkdir -p "${HF_HOME}" "${ATTEMPT_DIR}/metadata"
+mkdir -p "${HF_HOME}" "${ATTEMPT_DIR}/metadata" "${ATTEMPT_DIR}/research-tools"
+ruff_source="$(dirname -- "${HARNESS_PY}")/ruff"
+[ -x "${ruff_source}" ] || { echo "trusted harness lacks ruff" >&2; exit 2; }
+cp -- "${ruff_source}" "${ATTEMPT_DIR}/research-tools/ruff"
+chmod 500 "${ATTEMPT_DIR}/research-tools/ruff"
+export AAR_RESEARCH_TOOL_DIR="${ATTEMPT_DIR}/research-tools"
 
 export AAR_EXPECTED_BRANCH=autodata
 export AAR_RUNTIME_ROOT="${ATTEMPT_DIR}"
@@ -106,7 +112,7 @@ cp -- "${REUSED_BASELINE}" "${AAR_BASELINE_OVERRIDES}"
 bash "${REPO}/scripts/publish_holdout.sh"
 
 launch_log="${ATTEMPT_DIR}/metadata/launch_run13_research_canary.txt"
-bash "${REPO}/scripts/launch_team.sh" canary 1 17 | tee "${launch_log}"
+bash "${REPO}/scripts/launch_team.sh" canary "${MAX_ITERATIONS}" 17 | tee "${launch_log}"
 mapfile -t evaluator_ids < <(awk '/^\[launch\] evaluator 1\/1 -> job [0-9]+$/{print $NF}' "${launch_log}")
 mapfile -t chain_ids < <(awk '/^\[team\] chain canary -> job [0-9]+$/{print $NF}' "${launch_log}")
 [ "${#evaluator_ids[@]}" -eq 1 ] || { echo "evaluator job ID missing" >&2; exit 1; }
@@ -114,7 +120,7 @@ mapfile -t chain_ids < <(awk '/^\[team\] chain canary -> job [0-9]+$/{print $NF}
 {
   printf 'evaluator_jobs=%s\n' "${evaluator_ids[0]}"
   printf 'research_chain_jobs=%s\n' "${chain_ids[0]}"
-  printf 'research_seeds=canary\nmax_iterations_per_chain=1\n'
+  printf 'research_seeds=canary\nmax_iterations_per_chain=%s\n' "${MAX_ITERATIONS}"
   printf 'evaluator_gpus_per_job=4\nresearch_backend=claude\n'
   printf 'research_model=claude-opus-4-8\nkeep_checkpoints=1\n'
 } > "${ATTEMPT_DIR}/metadata/children.env"

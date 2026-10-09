@@ -10,6 +10,8 @@ REUSED_BASELINE="${RECOVERY_BUNDLE}/gemma4_31b_multidimensional_baseline.json"
 RECOVERED_SOURCES="${RECOVERY_BUNDLE}/source_artifacts"
 SECRET_ENV="$(realpath -e -- "${AAR_RUN13_SECRET_ENV:-${REPO}/.env}")"
 CLAUDE_CLI_PATH="${CLAUDE_CLI_PATH:-/usr/local/bin/claude}"
+MAX_ITERATIONS="${AAR_RUN13_RESEARCH_MAX_ITERATIONS:-1}"
+RECOVERED_AGENT_LOG_DIR="${AAR_RUN13_RECOVERED_AGENT_LOG_DIR:-}"
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "Run 13 requires branch autodata" >&2; exit 2; }
 if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; then
@@ -18,6 +20,20 @@ if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; 
 fi
 [ -x "${REPO}/.venv/bin/python" ] || { echo "missing worktree-local ARM64 .venv" >&2; exit 2; }
 [ -x "${CLAUDE_CLI_PATH}" ] || { echo "missing Claude CLI" >&2; exit 2; }
+case "${MAX_ITERATIONS}" in
+  ''|*[!0-9]*) echo "research max iterations must be an integer" >&2; exit 2 ;;
+esac
+[ "${MAX_ITERATIONS}" -ge 1 ] && [ "${MAX_ITERATIONS}" -le 5 ] || {
+  echo "research max iterations must be between 1 and 5" >&2
+  exit 2
+}
+if [ -n "${RECOVERED_AGENT_LOG_DIR}" ]; then
+  RECOVERED_AGENT_LOG_DIR="$(realpath -e -- "${RECOVERED_AGENT_LOG_DIR}")"
+  [ -f "${RECOVERED_AGENT_LOG_DIR}/AGENT_LOG_gemma4_31b_explore_canary.md" ] || {
+    echo "recovered Run 13 agent log is missing" >&2
+    exit 2
+  }
+fi
 [ "$(stat -c %a "${SECRET_ENV}")" = 600 ] || { echo "secret env must be mode 600" >&2; exit 2; }
 for required in "${REUSED_BASELINE}" "${RECOVERED_SOURCES}" "${SCRIPT_DIR}/run_13_research_canary.sbatch"; do
   [ -e "${required}" ] || { echo "missing required input: ${required}" >&2; exit 2; }
@@ -53,11 +69,16 @@ export LLM_UNCERTAINTY_SOURCE_MANIFEST="${source_root}/.aar-source.json"
 export AAR_RUNTIME_ROOT="${attempt_dir}" AAR_RUN_ATTEMPT_DIR="${attempt_dir}"
 export AAR_BASELINE_GIT_COMMIT="${commit}" AAR_REUSED_BASELINE="${REUSED_BASELINE}"
 export AAR_RECOVERED_BASELINE_SOURCES="${RECOVERED_SOURCES}"
+export AAR_RUN13_RESEARCH_MAX_ITERATIONS="${MAX_ITERATIONS}"
+if [ -n "${RECOVERED_AGENT_LOG_DIR}" ]; then
+  export AAR_RECOVERED_AGENT_LOG_DIR="${RECOVERED_AGENT_LOG_DIR}"
+fi
 export CLAUDE_CLI_PATH
 
 job_id="$(sbatch --parsable \
   --output="${attempt_dir}/logs/pipeline-%j.out" --export=ALL \
   "${SCRIPT_DIR}/run_13_research_canary.sbatch")"
-printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nresearch_backend=claude\nresearch_model=claude-opus-4-8\nresearch_chains=1\nmax_iterations_per_chain=1\nevaluator_jobs=1\nevaluator_gpus_per_job=4\nkeep_checkpoints=1\n' \
-  "${job_id}" "${attempt_dir}" "${commit}" | tee "${attempt_dir}/metadata/submission.txt"
+printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nresearch_backend=claude\nresearch_model=claude-opus-4-8\nresearch_chains=1\nmax_iterations_per_chain=%s\nevaluator_jobs=1\nevaluator_gpus_per_job=4\nkeep_checkpoints=1\nrecovered_agent_log_dir=%s\n' \
+  "${job_id}" "${attempt_dir}" "${commit}" "${MAX_ITERATIONS}" \
+  "${RECOVERED_AGENT_LOG_DIR:-none}" | tee "${attempt_dir}/metadata/submission.txt"
 unset MODEL_API_KEY ANTHROPIC_API_KEY HF_TOKEN

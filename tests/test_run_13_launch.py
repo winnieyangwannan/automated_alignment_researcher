@@ -46,7 +46,10 @@ def test_research_canary_explicitly_launches_one_claude_opus_chain() -> None:
     assert "research_model=claude-opus-4-8" in submitter
     assert "AAR_AGENT_BACKEND=claude" in pipeline
     assert "AAR_AGENT_MODEL=claude-opus-4-8" in pipeline
-    assert 'launch_team.sh" canary 1 17' in pipeline
+    assert 'launch_team.sh" canary "${MAX_ITERATIONS}" 17' in pipeline
     assert "AAR_KEEP_CHECKPOINTS=1" in pipeline
     assert "EVAL_INFERENCE_BACKEND=vllm" in pipeline
     assert "EVAL_VLLM_LORA_STRATEGY=merged_checkpoint" in pipeline
+    assert 'AAR_RESEARCH_TOOL_DIR="${ATTEMPT_DIR}/research-tools"' in pipeline
+    assert 'MAX_ITERATIONS="${AAR_RUN13_RESEARCH_MAX_ITERATIONS:-1}"' in submitter
+    assert "AAR_RUN13_RECOVERED_AGENT_LOG_DIR" in submitter
