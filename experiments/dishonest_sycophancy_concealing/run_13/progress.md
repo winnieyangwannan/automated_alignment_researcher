@@ -1,14 +1,15 @@
 # Run 13 progress
 
-Last updated: 2026-10-09 03:37 PDT
+Last updated: 2026-10-09 03:40 PDT
 
 ## Current state
 
 Run 13's dedicated merged-Gemma endpoint is serving and its endpoint preflight
-passed. The target-aware AutoData canary has not been submitted yet; two fixes
-learned from Run 12 are validated locally and awaiting commit/synchronization
-before canary submission. Training, evaluation, and the full chain have not
-been launched.
+passed. The first target-aware AutoData canary failed before any model call
+because its client used a generator deployment ID that did not match the broker
+campaign policy. The attempt and logs are preserved. The missing argument
+wiring and Run 13 idempotency namespace are fixed and validated locally;
+training, evaluation, and the full chain have not been launched.
 
 ## Completed
 
@@ -39,6 +40,10 @@ been launched.
   `sha256:f4ca9e6a4ce4ad301b717a37a26373dff9938974dcb5653d53ca39f12a69b9d6`.
 - Ported Run 12's validated Kimi deployment ID and AutoData `PYTHONPATH` fixes
   into Run 13; 10 focused tests pass with those changes.
+- Preserved failed canary job `1784198`; it made no provider calls or retained
+  result report because campaign-policy admission rejected it.
+- Added explicit generator-deployment-ID wiring and a Run 13-specific broker
+  idempotency prefix; 10 focused tests pass after the fix.
 
 ## Live infrastructure
 
@@ -47,19 +52,21 @@ been launched.
 - Run 13 proxy job: `1784107`, ready
 - Run 13 gateway route ready: yes, deployment-specific only
 - Run 13 endpoint preflight: passed, job `1784170`
-- Run 13 one-task AutoData canary: not submitted
+- Run 13 one-task AutoData canary: first attempt `1784198` failed at broker
+  policy admission; corrected fresh attempt not submitted yet
 
 No Run 12 job or deployment is claimed as Run 13 infrastructure.
 
 ## Next actions
 
-1. Commit and synchronize the validated Run 13 canary fixes.
+1. Commit and synchronize the corrected Run 13 canary wiring.
 2. Re-run focused validation in the HPC environment.
-3. Submit `submit_run_13.sh canary <attempt-root>` and wait for
+3. Create a fresh attempt with `submit_run_13.sh preflight`.
+4. Submit `submit_run_13.sh canary <fresh-attempt-root>` and wait for
    `canary-report.json`.
-4. Verify three provider calls and exact target provenance.
-5. Record timing and any failure/acceptance result.
-6. Stop the temporary deployment after the retained evidence is complete.
+5. Verify three provider calls and exact target provenance.
+6. Record timing and any failure/acceptance result.
+7. Stop the temporary deployment after the retained evidence is complete.
 
 ## Timing so far
 

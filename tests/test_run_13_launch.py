@@ -29,5 +29,10 @@ def test_run_13_jobs_use_run_13_namespace_and_expected_provider_order() -> None:
     assert "AAR_RUN13_ROOT" in canary
     assert "AAR_RUN13_TARGET_BINDING" in canary
     assert 'CANARY_PYTHONPATH="${AUTODATA}/src:${REPO}"' in canary
+    deployment_argument = (
+        '--generator-deployment-id "${AAR_RUN13_GENERATOR_DEPLOYMENT_ID:?}"'
+    )
+    assert deployment_argument in canary
+    assert "--target-canary-id-prefix run13-adapter-target-canary" in canary
     assert '[\n    "generator", "target", "judge"\n]' in canary
     assert "run12" not in (preflight + canary).lower()

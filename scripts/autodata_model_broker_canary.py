@@ -122,6 +122,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--generator-url", default=DEFAULT_GENERATOR_URL)
     parser.add_argument("--generator-host-header", default="")
     parser.add_argument("--generator-deployment-id", default=GENERATOR_DEPLOYMENT_ID)
+    parser.add_argument(
+        "--target-canary-id-prefix",
+        default="run12-adapter-target-canary",
+        help="run-specific idempotency prefix for a target-aware canary",
+    )
     parser.add_argument("--generator-max-input-tokens", type=_positive_integer, default=4096)
     parser.add_argument("--generator-max-output-tokens", type=_positive_integer, default=1536)
     parser.add_argument(
@@ -597,7 +602,7 @@ def run(args: argparse.Namespace, *, runtime: _Runtime | None = None) -> dict[st
             {
                 "schema": "autodata.broker-job/v1",
                 "idempotency_key": (
-                    f"run12-adapter-target-canary:{uuid.uuid4().hex}"
+                    f"{args.target_canary_id_prefix}:{uuid.uuid4().hex}"
                     if target_binding is not None
                     else f"run8-model-canary:{uuid.uuid4().hex}"
                 ),

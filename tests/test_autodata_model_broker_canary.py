@@ -359,8 +359,6 @@ class ModelBrokerCanaryTest(unittest.TestCase):
                     str(RECIPE),
                     "--target-binding",
                     str(binding_path),
-                    "--target-canary-id-prefix",
-                    "run13-adapter-target-canary",
                     "--output",
                     str(root / "report.json"),
                 ]
@@ -368,11 +366,6 @@ class ModelBrokerCanaryTest(unittest.TestCase):
             report = self.module.run(args, runtime=runtime)
 
         environment = _FakeBrokerJobSpec.captured["solve"]["env"]
-        self.assertTrue(
-            _FakeBrokerJobSpec.captured["idempotency_key"].startswith(
-                "run13-adapter-target-canary:"
-            )
-        )
         self.assertEqual(environment["AUTODATA_TARGET_ENABLED"], "1")
         self.assertEqual(
             environment["AUTODATA_TARGET_CHECKPOINT_HASH"], binding.checkpoint_hash

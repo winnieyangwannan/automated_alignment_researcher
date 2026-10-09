@@ -152,6 +152,7 @@ export AAR_AUTODATA_MODEL_ENV_FILE="${model_env}"
 export AAR_AUTODATA_CAMPAIGN_POLICY="${policy}"
 export AAR_RUN13_GENERATOR_URL="${GENERATOR_URL}"
 export AAR_RUN13_GENERATOR_HOST_HEADER="${GENERATOR_HOST_HEADER}"
+export AAR_RUN13_GENERATOR_DEPLOYMENT_ID="${GENERATOR_DEPLOYMENT_ID}"
 job_id="$(sbatch --parsable --output="${root}/canary-%j.out" --export=ALL "${SCRIPT_DIR}/run_13_target_canary.sbatch")"
 printf 'phase=canary\njob_id=%s\naar_git_commit=%s\ngenerator_model=%s\ngenerator_deployment_id=%s\n' \
   "${job_id}" "$(git -C "${REPO}" rev-parse HEAD)" "${GENERATOR_MODEL}" \
