@@ -28,6 +28,48 @@ import run as launcher
 
 
 class KimiAgentTest(unittest.TestCase):
+    def test_only_current_session_proposal_owns_persistent_training_state(self) -> None:
+        agent = KimiAgent("test-agent", Path.cwd(), cli_path="/bin/true")
+        self.assertFalse(agent._submitted_proposal_in_output({"tool_uses": []}))
+        self.assertFalse(
+            agent._submitted_proposal_in_output(
+                {"tool_uses": [{"tool": "get_literature", "input": {}}]}
+            )
+        )
+        self.assertTrue(
+            agent._submitted_proposal_in_output(
+                {
+                    "tool_uses": [
+                        {
+                            "tool": "mcp__server-api-tools__submit_idea_proposal",
+                            "input": {},
+                        }
+                    ]
+                }
+            )
+        )
+
+    def test_stale_failed_proposal_does_not_poison_new_session(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cli = root / "kimi"
+            cli.write_text(
+                f"#!{sys.executable}\n"
+                "import json\n"
+                "print(json.dumps({'role': 'assistant', 'content': 'fresh session'}))\n"
+            )
+            cli.chmod(0o755)
+            agent = KimiAgent("test-agent", root, cli_path=str(cli))
+            with patch.object(
+                agent,
+                "_current_training_failure",
+                return_value={"status": "failed", "run_id": "stale-run"},
+            ):
+                result = asyncio.run(agent.execute("start a new research session"))
+
+            self.assertTrue(result.success, result.error)
+
+
     def test_successful_retry_score_takes_precedence_over_retained_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

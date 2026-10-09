@@ -302,22 +302,27 @@ class KimiAgent:
                             f"Kimi Code exited with status {return_code}: "
                             f"{detail or 'no error detail'}"
                         )
-                    self._ensure_approved_training_submission()
-                    await self._wait_for_training_result()
-                    training_failure = self._current_training_failure()
-                    approved_run_id = self._approved_run_id()
-                    score_path = (
-                        self._score_path_for_run(approved_run_id)
-                        if approved_run_id is not None
-                        else None
-                    )
-                    if training_failure is not None and not (
-                        score_path is not None and score_path.is_file()
-                    ):
-                        raise RuntimeError(
-                            "Kimi training failed closed: "
-                            + json.dumps(training_failure, sort_keys=True)[:2000]
+                    # Proposal markers persist across AutonomousAgentLoop sessions.
+                    # Only the session that actually submitted the proposal may act
+                    # on that marker; otherwise one failed run poisons every later
+                    # session and burns the iteration budget without allowing a fix.
+                    if self._submitted_proposal_in_output(output):
+                        self._ensure_approved_training_submission()
+                        await self._wait_for_training_result()
+                        training_failure = self._current_training_failure()
+                        approved_run_id = self._approved_run_id()
+                        score_path = (
+                            self._score_path_for_run(approved_run_id)
+                            if approved_run_id is not None
+                            else None
                         )
+                        if training_failure is not None and not (
+                            score_path is not None and score_path.is_file()
+                        ):
+                            raise RuntimeError(
+                                "Kimi training failed closed: "
+                                + json.dumps(training_failure, sort_keys=True)[:2000]
+                            )
                     if not self.completion_tool or self._completion_tool_used(output):
                         break
                     if continuation_count >= self.max_continuations:
@@ -421,6 +426,13 @@ class KimiAgent:
     @staticmethod
     def _tool_name(item: dict[str, Any]) -> str:
         return str(item.get("tool", "")).rsplit("__", 1)[-1]
+
+    @classmethod
+    def _submitted_proposal_in_output(cls, output: dict[str, Any]) -> bool:
+        return any(
+            cls._tool_name(item) == "submit_idea_proposal"
+            for item in output.get("tool_uses", [])
+        )
 
     def _continuation_prompt(self, output: dict[str, Any]) -> str:
         """Require one concrete next milestone instead of replaying the task."""

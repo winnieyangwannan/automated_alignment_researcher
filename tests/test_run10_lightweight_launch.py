@@ -29,6 +29,9 @@ def test_training_smoke_validates_real_peft_adapter_without_submission() -> None
     assert '"adapter_model.safetensors"' in trainer
     assert 'method_smoke' in trainer
     assert 'if [ "${AAR_METHOD_SMOKE:-0}" = "1" ]; then' in trainer
+    assert 'pretrain_smoke = "${AAR_PRETRAIN_SMOKE:-0}"' in trainer
+    assert 'phase("train.preflight_smoke")' in trainer
+    assert "per-method one-step GPU preflight passed" in trainer
 
 
 def test_evaluator_is_launched_only_after_method_smoke_passes() -> None:
@@ -60,3 +63,9 @@ def test_passed_smoke_can_resume_without_research_or_training_relaunch() -> None
     assert 'AAR_EVAL_IDLE_SECONDS=120' in pipeline
     assert 'AAR_EVAL_RETRY_FAILED=1' in pipeline
     assert "reusing staged immutable adapter" in pipeline
+
+
+def test_full_mode_requires_per_method_gpu_preflight() -> None:
+    pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
+
+    assert 'export AAR_PRETRAIN_SMOKE=1' in pipeline

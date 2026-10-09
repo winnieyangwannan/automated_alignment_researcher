@@ -80,6 +80,7 @@ elif [ "${MODE}" = canary ]; then
 else
   seeds="alpha beta gamma delta epsilon"; iterations=50; hours=167
   export AAR_MAX_CONCURRENT_TRAIN_JOBS=5 AAR_EVAL_WORKERS=5 AAR_EVAL_GPUS=4 AAR_EVAL_GPU_CAP=4
+  export AAR_PRETRAIN_SMOKE=1
   export AAR_EVAL_TIME=7-00:00:00 AAR_EVAL_IDLE_SECONDS=604200
 fi
 

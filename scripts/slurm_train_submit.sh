@@ -113,11 +113,33 @@ from aar import transport
 from aar.phase_timing import phase, require_successful_phases
 import json
 import os
+import shutil
 from pathlib import Path
 smoke_run = "${AAR_METHOD_SMOKE:-0}".lower() in {"1", "true", "yes", "on"}
+pretrain_smoke = "${AAR_PRETRAIN_SMOKE:-0}".lower() in {"1", "true", "yes", "on"}
 config_kwargs = {"output_dir": "${STAGING}"}
 if smoke_run:
     config_kwargs["smoke_run"] = True
+if pretrain_smoke and not smoke_run:
+    smoke_dir = Path("${STAGING}.preflight")
+    try:
+        with phase("train.preflight_smoke"):
+            smoke_out = run_experiment(MethodConfig(
+                output_dir=str(smoke_dir), smoke_run=True
+            ))
+            from peft import PeftConfig
+            from aar.transport import validate_model_submission
+            smoke_model = validate_model_submission(smoke_out["model_path"]).resolve()
+            PeftConfig.from_pretrained(smoke_model)
+            if not any(
+                (smoke_model / name).is_file()
+                and (smoke_model / name).stat().st_size > 0
+                for name in ("adapter_model.safetensors", "adapter_model.bin")
+            ):
+                raise RuntimeError("preflight smoke did not save PEFT adapter weights")
+        print("[train] per-method one-step GPU preflight passed for ${RUN_ID}")
+    finally:
+        shutil.rmtree(smoke_dir, ignore_errors=True)
 with phase("train.method_total"):
     out = run_experiment(MethodConfig(**config_kwargs))
 if "${AAR_REQUIRE_PHASE_TIMINGS:-0}".lower() in {"1", "true", "yes", "on"}:

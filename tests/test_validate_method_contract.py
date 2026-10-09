@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 import sys
@@ -10,10 +11,37 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.validate_method_contract import _undefined_name_errors
+from scripts.validate_method_contract import (
+    _undefined_name_errors,
+    _unsafe_training_api_errors,
+)
 
 
 class ValidateMethodContractTest(unittest.TestCase):
+    def test_rejects_observed_target_runtime_failures_before_gpu(self) -> None:
+        tree = ast.parse(
+            """
+def load_teacher():
+    return Model.from_pretrained('teacher')
+
+for item in records:
+    load_teacher()
+
+DPOTrainer(model=model)
+SFTTrainer(model=model, tokenizer=tokenizer)
+trainer.train(max_steps=1)
+chosen = torch.tensor(batch['chosen_input_ids'])
+"""
+        )
+        errors = _unsafe_training_api_errors(tree)
+
+        self.assertEqual(len(errors), 5)
+        self.assertTrue(any("DPOTrainer" in error for error in errors))
+        self.assertTrue(any("SFTTrainer(tokenizer" in error for error in errors))
+        self.assertTrue(any("Trainer.train(max_steps" in error for error in errors))
+        self.assertTrue(any("torch.tensor(batch" in error for error in errors))
+        self.assertTrue(any("per-item loop" in error for error in errors))
+
     def test_undefined_name_gate_reports_ruff_diagnostic(self) -> None:
         completed = subprocess.CompletedProcess(
             ["ruff"],

@@ -136,6 +136,79 @@ def _unsupported_training_arguments(tree: ast.AST) -> list[str]:
     return sorted(unsupported)
 
 
+def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
+    """Reject target-environment API and batching failures before GPU launch."""
+    errors: set[str] = set()
+    loader_functions = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and child.func.attr == "from_pretrained"
+            for child in ast.walk(node)
+        )
+    }
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            function = node.func
+            name = (
+                function.id
+                if isinstance(function, ast.Name)
+                else function.attr if isinstance(function, ast.Attribute) else ""
+            )
+            keywords = {kw.arg for kw in node.keywords if kw.arg is not None}
+            if name in {"DPOTrainer", "DPOConfig"}:
+                errors.add(
+                    "DPOTrainer/DPOConfig is unavailable in the locked target "
+                    "TRL/Transformers stack; use a compatible manual loss or SFTTrainer"
+                )
+            if name == "SFTTrainer" and "tokenizer" in keywords:
+                errors.add(
+                    "SFTTrainer(tokenizer=...) is unsupported by the target TRL "
+                    "contract; use processing_class=tokenizer"
+                )
+            if name == "train" and "max_steps" in keywords:
+                errors.add(
+                    "Trainer.train(max_steps=...) is unsupported; set max_steps in "
+                    "the trainer configuration"
+                )
+            if (
+                name == "tensor"
+                and isinstance(function, ast.Attribute)
+                and isinstance(function.value, ast.Name)
+                and function.value.id == "torch"
+                and node.args
+                and isinstance(node.args[0], ast.Subscript)
+                and isinstance(node.args[0].value, ast.Name)
+                and node.args[0].value.id == "batch"
+            ):
+                errors.add(
+                    "torch.tensor(batch[...]) is unsafe with DataLoader-collated "
+                    "sequence columns; configure torch formatting or stack the batch"
+                )
+
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            for child in ast.walk(node):
+                if not isinstance(child, ast.Call):
+                    continue
+                if (
+                    isinstance(child.func, ast.Attribute)
+                    and child.func.attr == "from_pretrained"
+                ) or (
+                    isinstance(child.func, ast.Name)
+                    and child.func.id in loader_functions
+                ):
+                    errors.add(
+                        "model/tokenizer from_pretrained loading may not occur inside "
+                        "a per-item loop; load once and reuse the object"
+                    )
+                    break
+    return sorted(errors)
+
+
 def _undefined_name_errors(method_path: Path) -> list[str]:
     """Run the target environment's Ruff F821 analysis on generated code."""
     adjacent_ruff = Path(sys.executable).with_name("ruff")
@@ -226,6 +299,7 @@ def validate(
                     + ", ".join(unsupported_training_args)
                 )
             errors.extend(_undefined_name_errors(method_path))
+            errors.extend(_unsafe_training_api_errors(tree))
 
     module = None
     if tree is not None:
