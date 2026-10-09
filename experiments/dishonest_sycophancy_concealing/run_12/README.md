@@ -120,3 +120,46 @@ chain, compare multiple candidate adapters, establish data-quality gains, or
 load-test multiple parallel AAR chains. Those should follow only after this
 one-task attachment proof passes.
 
+## Persistent endpoint design for parallel AAR chains
+
+Each AAR chain should own one persistent **logical research endpoint** for the
+entire lifetime of that chain. It must not accidentally share a mutable model
+deployment with another chain. The model behind the endpoint advances after
+each successful promotion:
+
+```text
+chain C research endpoint
+  iteration 1 → fixed base
+  iteration 2 → fixed base + chain C adapter 1
+  iteration 3 → fixed base + chain C adapter 2
+```
+
+“Persistent endpoint” means that AutoData receives a stable chain-local route;
+it does not mean mutating weights inside a live vLLM process. Each promoted
+model should be served by a new immutable, iteration-versioned backend. Trusted
+orchestration must:
+
+1. select chain C's accepted incumbent adapter from iteration N-1;
+2. merge that adapter with the fixed base into a new checkpoint;
+3. launch and health-check a versioned research deployment;
+4. validate its merge receipt and checkpoint identity;
+5. create the iteration-N target binding; and
+6. atomically move chain C's logical route only after every check passes.
+
+The previous backend stays available until the switch succeeds, making rollback
+possible. A failed launch must leave the chain on its previous verified target.
+After the switch, all AutoData meta-optimization and production tasks within
+that AAR iteration use the same immutable binding.
+
+Five parallel AAR chains therefore need five isolated logical endpoint lanes
+and five independently versioned binding histories. They may share cluster
+scheduling, a gateway, and a multi-replica serving pool where resource sharing
+is safe, but they must never share ambiguous routing state or silently reuse
+another chain's adapter. Every retained AutoData result records chain,
+iteration, deployment ID, incumbent run ID, and checkpoint hash so cross-chain
+or stale-checkpoint routing fails closed.
+
+Run 12 uses the temporary one-day deployment
+`winnieyangwn-run12-gemma4-cshc` only to prove this attachment mechanism. A
+full-chain implementation should maintain the stable logical lane for the
+chain's complete run and rotate its verified backend after each promotion.
