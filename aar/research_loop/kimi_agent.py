@@ -55,6 +55,8 @@ class KimiAgent:
         message_callback: Optional[Callable[[KimiAssistantMessage], None]] = None,
         system_prompt: Optional[str] = None,
         include_prior_work: bool = True,
+        completion_tool: Optional[str] = None,
+        max_continuations: int = 24,
     ) -> None:
         self.name = name
         self.workspace = Path(workspace)
@@ -63,6 +65,8 @@ class KimiAgent:
         self.message_callback = message_callback
         self.system_prompt = system_prompt
         self.include_prior_work = include_prior_work
+        self.completion_tool = completion_tool
+        self.max_continuations = max_continuations
 
     async def execute(self, task: str) -> KimiAgentResult:
         start_time = time.time()
@@ -84,11 +88,7 @@ class KimiAgent:
                 "Kimi backend requires an executable KIMI_CLI_PATH or `kimi` on PATH"
             )
 
-        command = [executable]
-        if self.model:
-            command.extend(["--model", self.model])
         prompt = f"{self.system_prompt}\n\n{task}" if self.system_prompt else task
-        command.extend(["--prompt", prompt, "--output-format", "stream-json"])
 
         output: dict[str, Any] = {
             "text_outputs": [],
@@ -97,74 +97,55 @@ class KimiAgent:
             "raw_stdout": [],
         }
         iteration_count = 0
+        continuation_count = 0
 
         with tempfile.TemporaryDirectory(prefix="aar-kimi-") as temp_dir:
             env = self._build_environment(Path(temp_dir))
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                cwd=self.workspace,
-                env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                limit=10 * 1024 * 1024,
-            )
-            assert process.stdout is not None
-            assert process.stderr is not None
-            stderr_task = asyncio.create_task(process.stderr.read())
+            while True:
+                command = [executable]
+                if self.model:
+                    command.extend(["--model", self.model])
+                if continuation_count:
+                    command.append("--continue")
+                    current_prompt = (
+                        "Continue executing the requested research iteration now. "
+                        "Do not merely announce, summarize, or promise a next action. "
+                        "Use the available tools and do not stop until evaluate_model "
+                        "has returned and share_finding has succeeded."
+                    )
+                else:
+                    current_prompt = prompt
+                command.extend(
+                    ["--prompt", current_prompt, "--output-format", "stream-json"]
+                )
+                return_code, stderr, new_tool_uses = await self._run_command(
+                    command, env, output
+                )
+                iteration_count += new_tool_uses
+                if return_code != 0:
+                    detail = stderr or self._event_error(output["raw_messages"])
+                    raise RuntimeError(
+                        f"Kimi Code exited with status {return_code}: "
+                        f"{detail or 'no error detail'}"
+                    )
+                if not self.completion_tool or self._completion_tool_used(output):
+                    break
+                if continuation_count >= self.max_continuations:
+                    raise RuntimeError(
+                        "Kimi stopped before calling the required completion tool "
+                        f"{self.completion_tool} after {self.max_continuations} "
+                        "continuations"
+                    )
+                continuation_count += 1
+                print(
+                    f"[Kimi] resuming incomplete session "
+                    f"({continuation_count}/{self.max_continuations})"
+                )
 
-            try:
-                async for raw_line in process.stdout:
-                    line = raw_line.decode("utf-8", errors="replace").strip()
-                    if not line:
-                        continue
-                    try:
-                        event = json.loads(line)
-                    except json.JSONDecodeError:
-                        # Kimi Code 2.1.1 can mirror terminal-tool output to
-                        # stdout before emitting the corresponding JSON tool
-                        # event. Preserve it without corrupting the JSONL
-                        # session parser.
-                        output["raw_stdout"].append(line)
-                        continue
-                    output["raw_messages"].append(event)
-                    message = self._assistant_message(event)
-                    if message is None:
-                        continue
-                    for block in message.content:
-                        if isinstance(block, KimiTextBlock):
-                            output["text_outputs"].append(block.text)
-                        else:
-                            iteration_count += 1
-                            output["tool_uses"].append(
-                                {"tool": block.name, "input": block.input}
-                            )
-                    log_message = self._format_message(message)
-                    if log_message:
-                        print(log_message)
-                    if self.message_callback:
-                        self.message_callback(message)
-
-                return_code = await process.wait()
-                stderr = (await stderr_task).decode("utf-8", errors="replace").strip()
-                if stderr:
-                    output["stderr"] = stderr
-            except BaseException:
-                if process.returncode is None:
-                    process.kill()
-                    await process.wait()
-                if not stderr_task.done():
-                    stderr_task.cancel()
-                raise
-
-        if return_code != 0:
-            detail = stderr or self._event_error(output["raw_messages"])
-            raise RuntimeError(
-                f"Kimi Code exited with status {return_code}: "
-                f"{detail or 'no error detail'}"
-            )
         if not output["text_outputs"] and not output["tool_uses"]:
             raise RuntimeError("Kimi Code ended without an assistant response")
 
+        output["continuations"] = continuation_count
         output["result_message"] = (
             output["text_outputs"][-1] if output["text_outputs"] else ""
         )
@@ -173,6 +154,78 @@ class KimiAgent:
             output=output,
             duration=time.time() - start_time,
             iteration_count=iteration_count,
+        )
+
+    async def _run_command(
+        self,
+        command: list[str],
+        env: dict[str, str],
+        output: dict[str, Any],
+    ) -> tuple[int, str, int]:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=self.workspace,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            limit=10 * 1024 * 1024,
+        )
+        assert process.stdout is not None
+        assert process.stderr is not None
+        stderr_task = asyncio.create_task(process.stderr.read())
+        tool_uses = 0
+        try:
+            async for raw_line in process.stdout:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    # Kimi Code 2.1.1 can mirror terminal-tool output to stdout
+                    # before emitting the corresponding JSON tool event.
+                    output["raw_stdout"].append(line)
+                    continue
+                output["raw_messages"].append(event)
+                message = self._assistant_message(event)
+                if message is None:
+                    continue
+                for block in message.content:
+                    if isinstance(block, KimiTextBlock):
+                        output["text_outputs"].append(block.text)
+                    else:
+                        tool_uses += 1
+                        output["tool_uses"].append(
+                            {"tool": block.name, "input": block.input}
+                        )
+                log_message = self._format_message(message)
+                if log_message:
+                    print(log_message)
+                if self.message_callback:
+                    self.message_callback(message)
+            return_code = await process.wait()
+            stderr = (await stderr_task).decode("utf-8", errors="replace").strip()
+            if stderr:
+                prior = output.get("stderr")
+                output["stderr"] = f"{prior}\n{stderr}".strip() if prior else stderr
+            return return_code, stderr, tool_uses
+        except BaseException:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+            if not stderr_task.done():
+                stderr_task.cancel()
+            raise
+
+    def _completion_tool_used(self, output: dict[str, Any]) -> bool:
+        expected = self.completion_tool
+        return bool(
+            expected
+            and any(
+                item.get("tool") == expected
+                or str(item.get("tool", "")).endswith(f"__{expected}")
+                for item in output["tool_uses"]
+            )
         )
 
     def _build_environment(self, overlay_home: Path) -> dict[str, str]:

@@ -545,18 +545,26 @@ class AutonomousAgentLoop:
     def _create_agent(self, session_id: str, message_callback=None):
         meta_secure_web = os.getenv("AAR_WEB_MODE", "native_web") == "meta_secure"
         if getattr(self, "backend", "claude") == "kimi":
+            kimi_system_prompt = (
+                "You are running noninteractively. Complete the entire requested "
+                "research iteration using tools now. Never end with a statement of "
+                "future intent such as 'let me' or 'next I will'. The iteration is "
+                "complete only after evaluation returns and share_finding succeeds."
+            )
+            if meta_secure_web:
+                kimi_system_prompt += (
+                    " Use the repository's bounded arXiv helper for internet research. "
+                    "Do not use curl, wget, or arbitrary network URLs."
+                )
             return KimiAgent(
                 name=f"autonomous-{session_id}",
                 workspace=self.workspace,
                 model=self.model,
                 cli_path=os.getenv("KIMI_CLI_PATH") or shutil.which("kimi"),
                 message_callback=message_callback,
-                system_prompt=(
-                    "Use the repository's bounded arXiv helper for internet research. "
-                    "Do not use curl, wget, or arbitrary network URLs."
-                    if meta_secure_web else None
-                ),
+                system_prompt=kimi_system_prompt,
                 include_prior_work=not self.local_mode,
+                completion_tool="share_finding",
             )
 
         allowed_tools = [

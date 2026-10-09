@@ -216,6 +216,41 @@ class KimiAgentTest(unittest.TestCase):
         self.assertIn("status 7", result.error or "")
         self.assertIn("bad auth", result.error or "")
 
+    def test_incomplete_kimi_turn_resumes_until_completion_tool(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cli = root / "kimi"
+            cli.write_text(
+                f"#!{sys.executable}\n"
+                "import json, os, sys\n"
+                "from pathlib import Path\n"
+                "counter = Path(os.environ['KIMI_CODE_HOME']) / 'test-calls'\n"
+                "call = int(counter.read_text()) + 1 if counter.exists() else 1\n"
+                "counter.write_text(str(call))\n"
+                "if call == 1:\n"
+                "  assert '--continue' not in sys.argv\n"
+                "  print(json.dumps({'role': 'assistant', 'content': 'Let me continue.'}))\n"
+                "else:\n"
+                "  assert '--continue' in sys.argv\n"
+                "  print(json.dumps({'role': 'assistant', 'content': 'done', "
+                "'tool_calls': [{'function': {'name': "
+                "'mcp__server-api-tools__share_finding', 'arguments': '{}'}}]}))\n"
+            )
+            cli.chmod(0o755)
+            result = asyncio.run(
+                KimiAgent(
+                    "test-agent",
+                    root,
+                    cli_path=str(cli),
+                    completion_tool="share_finding",
+                ).execute("complete the task")
+            )
+
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(result.output["continuations"], 1)
+        self.assertEqual(result.iteration_count, 1)
+        self.assertEqual(result.output["text_outputs"], ["Let me continue.", "done"])
+
     def test_standard_mcp_bridge_advertises_existing_tool_objects(self) -> None:
         self.assertIn("evaluate_model", {
             tool.name for tool in SERVER_TOOLS["server-api-tools"]
