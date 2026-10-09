@@ -691,6 +691,22 @@ class KimiAgentTest(unittest.TestCase):
                 marker.write_text(
                     json.dumps(
                         {
+                            "approved": False,
+                            "idea_name": module,
+                            "code_hash": "hash-1",
+                        }
+                    )
+                )
+                rejection_prompt = prompt(read, scaffold, write, validate, proposal)
+                self.assertIn(f"path={json.dumps(method)}", rejection_prompt)
+                self.assertIn("Do not create or write another candidate", rejection_prompt)
+                self.assertEqual(
+                    forced_tool(read, scaffold, write, validate, proposal),
+                    "Write",
+                )
+                marker.write_text(
+                    json.dumps(
+                        {
                             "approved": True,
                             "idea_name": module,
                             "code_hash": "hash-1",

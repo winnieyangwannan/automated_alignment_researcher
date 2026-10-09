@@ -542,9 +542,11 @@ class KimiAgent:
                 )
             if approved is False:
                 return (
-                    "Call the native Write tool exactly once now to revise the same "
-                    "run.py from the submit_idea_proposal monitor feedback. Do not emit "
-                    "prose or call another tool."
+                    "Call the native Write tool exactly once now with path="
+                    f"{json.dumps(str(method_path))} and full replacement content that "
+                    "revises this canonical candidate from the submit_idea_proposal "
+                    "monitor feedback. Do not create or write another candidate "
+                    "directory, emit prose, or call another tool."
                 )
             return (
                 "Inspect the actual submit_idea_proposal result. If it is approved, "
