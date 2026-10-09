@@ -116,6 +116,8 @@ submit_session() {
   # shellcheck disable=SC1091
   source "${REPO}/scripts/aar_runtime_env.sh"
   local names=() name csv job
+  export AAR_IDEA_UID_OVERRIDE="run12-${SEED}-iteration-${next_iteration}"
+  export AAR_RESUME_APPROVED_PROPOSAL=1
   for name in "${AAR_RESEARCH_CHAIN_ENV_ALLOWLIST[@]}"; do
     [[ -v "${name}" ]] && names+=("${name}")
   done

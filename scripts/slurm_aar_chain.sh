@@ -424,7 +424,7 @@ echo "[aar] launching chain seed=${SEED} suite=${SUITE_NAME} target=${TARGET_MOD
 # UNSET on purpose so evaluate_model mints a unique per-call id (IDEA_UID+ts).
 # MODEL in the identity so a same-axis/different-model team gets distinct session
 # ids, method-dir prefixes, and forum finding tags (no cross-team collision).
-IDEA_UID="${MODEL:-qwen}-${SEED}-$(date +%s)"
+IDEA_UID="${AAR_IDEA_UID_OVERRIDE:-${MODEL:-qwen}-${SEED}-$(date +%s)}"
 export IDEA_UID
 export IDEA_NAME="${MODEL:-qwen}-${SEED}"
 # The evaluator was launched by the operator before this research job and

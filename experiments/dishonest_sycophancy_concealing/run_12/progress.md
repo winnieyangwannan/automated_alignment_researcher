@@ -1,6 +1,38 @@
 # Run 12 progress
 
-Last updated: 2026-10-09 16:20 PDT
+Last updated: 2026-10-09 10:05 PDT
+
+## Full-run launch gate: failed fast and fixed
+
+Attempt `20261009T161919Z-1ae4a3ed13bb` successfully launched five Kimi
+research jobs, five isolated local-Bubblewrap brokers, and five four-GPU vLLM
+0.25.1 evaluator lanes. All five researchers reached Session 0. Epsilon was the
+first to obtain an approved proposal, after 711 seconds.
+
+That approval exposed a deterministic ordering bug. The Kimi wrapper called
+`submit_train_job.sh` immediately when `submit_idea_proposal` returned approved.
+AutoData policy deliberately forbids creating a workspace before proposal
+approval, so the required production handoff could not yet exist. The training
+preflight therefore failed closed with `run-scoped AutoData directory is
+missing or unsafe`. The controller correctly retried outer iteration 1, but the
+retry minted a new proposal identity and restarted literature review instead of
+resuming the approved AutoData run.
+
+The relaunch fix now:
+
+- defers deterministic training submission until
+  `$TEAM_DIR/autodata/<run_id>/training-handoff.json` exists;
+- drives Kimi into the native AutoData workflow immediately after approval;
+- keeps a stable proposal identity across retries of the same outer iteration;
+- injects explicit resume context for an approved but incomplete AutoData run;
+- starts a new proposal identity only after a durable score/result pair advances
+  the outer iteration; and
+- includes the exact statically verifiable AutoData loader signature in the
+  researcher prompt, avoiding repeated contract-discovery rejections.
+
+The faulty attempt is retained for diagnosis but will not be counted as a Run
+12 result. Focused devserver validation after the fix: 48 tests passed; shell
+syntax and diff checks passed. HPC validation and a clean relaunch follow.
 
 ## Adapter-routing proof: passed
 

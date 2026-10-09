@@ -288,8 +288,8 @@ the executor. Copy its complete `required_solve_env` mapping into
 `executor.non_secret_env` for both authoring and explicit execution configs; do
 not omit, rename, or infer these entries. Create the meta execution explicitly
 with the required 64/32 split and preserve the additional 32 test tasks outside
-the execution selection sets. Do not accept an automatically created default
-execution with an implicit split.
+the execution selection sets. Do not accept an automatically created default execution
+with an implicit split.
 
 Target-aware generation is required by default. Preserve
 `AUTODATA_TARGET_ENABLED=1` and all pinned `AUTODATA_TARGET_*` identity settings
@@ -409,6 +409,18 @@ verified production dataset/execution as one-element lists, with
 `required_rows=1000` and the fixed receipt path
 `$TEAM_DIR/autodata/<run_id>/training-consumption.json`. Merely running AutoData or
 parsing the JSON directly does not satisfy the proposed method.
+
+Use this exact loader shape so the static approval contract can verify the future
+handoff before the AutoData workspace is legally created:
+
+```python
+items = load_autodata_campaign_datasets(
+    [production_dataset_path],
+    receipt_path=training_consumption_path,
+    required_rows=1000,
+    expected_execution_ids=[production_execution_id],
+)
+```
 
 Before calling `scripts/submit_train_job.sh`, write
 `$TEAM_DIR/autodata/<run_id>/training-handoff.json` with the durable native state

@@ -931,6 +931,121 @@ class KimiAgentTest(unittest.TestCase):
 
             self.assertEqual(receipt.read_text(), f"run_id={run_id}\njob_id=12345\n")
 
+    def test_autodata_approval_defers_training_until_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            scores = root / "scores"
+            proposal_dir = scores / ".proposals"
+            runs = proposal_dir / "runs"
+            runs.mkdir(parents=True)
+            run_id = "chain-uid-chain__kimi_candidate-1"
+            marker = {
+                "approved": True,
+                "idea_name": "chain__kimi_candidate",
+                "code_hash": "hash-1",
+            }
+            (proposal_dir / "chain-uid.json").write_text(json.dumps(marker))
+            (runs / f"{run_id}.json").write_text(
+                json.dumps(
+                    {
+                        **marker,
+                        "run_id": run_id,
+                        "stamped_ts": 1,
+                    }
+                )
+            )
+            team = root / "team"
+            receipt = team / ".train_submissions" / f"{run_id}.env"
+
+            def submit(command, **kwargs):
+                receipt.parent.mkdir(parents=True)
+                receipt.write_text(f"run_id={run_id}\njob_id=12345\n")
+                return subprocess.CompletedProcess(command, 0, "12345\n", "")
+
+            agent = KimiAgent(
+                "test-agent", root, cli_path="/bin/true", completion_tool="share_finding"
+            )
+            environment = {
+                "AAR_AUTODATA": "1",
+                "AAR_REQUIRE_TRAIN_RECEIPT": "1",
+                "SCORES_DIR": str(scores),
+                "TEAM_DIR": str(team),
+                "IDEA_UID": "chain-uid",
+            }
+            with (
+                patch.dict(os.environ, environment, clear=False),
+                patch(
+                    "aar.research_loop.kimi_agent.subprocess.run", side_effect=submit
+                ) as run,
+            ):
+                agent._ensure_approved_training_submission()
+                run.assert_not_called()
+                self.assertFalse(receipt.exists())
+
+                handoff = team / "autodata" / run_id / "training-handoff.json"
+                handoff.parent.mkdir(parents=True)
+                handoff.write_text("{}\n")
+                agent._ensure_approved_training_submission()
+                run.assert_called_once()
+
+            self.assertEqual(receipt.read_text(), f"run_id={run_id}\njob_id=12345\n")
+
+    def test_autodata_continuation_resumes_approved_run_before_training(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            proposal_dir = root / ".proposals"
+            runs = proposal_dir / "runs"
+            runs.mkdir(parents=True)
+            run_id = "chain-uid-chain__kimi_candidate-1"
+            marker = {
+                "approved": True,
+                "idea_name": "chain__kimi_candidate",
+                "code_hash": "hash-1",
+            }
+            (proposal_dir / "chain-uid.json").write_text(json.dumps(marker))
+            (runs / f"{run_id}.json").write_text(
+                json.dumps({**marker, "run_id": run_id, "stamped_ts": 1})
+            )
+            agent = KimiAgent(
+                "test-agent",
+                Path.cwd(),
+                cli_path="/bin/true",
+                completion_tool="share_finding",
+            )
+            output = {
+                "tool_uses": [
+                    {
+                        "tool": "mcp__server-api-tools__submit_idea_proposal",
+                        "input": {"idea_name": "chain__kimi_candidate"},
+                    }
+                ]
+            }
+            with patch.dict(
+                os.environ,
+                {
+                    "AAR_AUTODATA": "1",
+                    "AAR_IDEAS_DIR": str(root / "methods"),
+                    "IDEA_NAME": "chain",
+                    "IDEA_UID": "chain-uid",
+                    "SCORES_DIR": str(root),
+                    "TEAM_DIR": str(root / "team"),
+                },
+                clear=False,
+            ):
+                prompt = agent._continuation_prompt(output)
+                self.assertIn("proposal is already approved", prompt)
+                self.assertIn(run_id, prompt)
+                self.assertIn("training-handoff.json", prompt)
+                self.assertNotIn("submit_train_job.sh", prompt)
+                self.assertIsNone(agent._continuation_tool(output))
+
+                with patch.dict(
+                    os.environ, {"AAR_RESUME_APPROVED_PROPOSAL": "1"}, clear=False
+                ):
+                    resumed = agent._with_resumable_approved_run("original task")
+                    self.assertIn("AUTOMATIC RESUME CONTEXT", resumed)
+                    self.assertIn(run_id, resumed)
+
     def test_standard_mcp_bridge_advertises_existing_tool_objects(self) -> None:
         self.assertIn("evaluate_model", {
             tool.name for tool in SERVER_TOOLS["server-api-tools"]

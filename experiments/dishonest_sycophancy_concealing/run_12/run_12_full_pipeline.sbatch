@@ -95,6 +95,8 @@ for seed in alpha beta gamma delta epsilon; do
   chain_root="${ATTEMPT}/chains/${seed}"
   team_id="run12-gemma4-31b-kimi26-${seed}-${SLURM_JOB_ID}"
   export AAR_TEAM_ID="${team_id}"
+  export AAR_IDEA_UID_OVERRIDE="run12-${seed}-iteration-1"
+  export AAR_RESUME_APPROVED_PROPOSAL=0
   export AAR_AUTODATA_CAMPAIGN_POLICY="${chain_root}/metadata/campaign-policy.json"
   export AAR_AUTODATA_PROPOSAL_BINDINGS="${chain_root}/secrets/proposal-bindings.json"
   export AAR_VLLM_MERGED_ROOT="${AAR_RUN12_CHECKPOINT_ROOT:?}/chains/${seed}/merged_candidates"

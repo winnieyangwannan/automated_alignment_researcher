@@ -258,6 +258,7 @@ class KimiAgent:
             )
 
         prompt = self._with_previous_failure_feedback(task)
+        prompt = self._with_resumable_approved_run(prompt)
         # Proposal markers are intentionally durable across loop sessions.  Bind
         # training actions to a marker mutation from *this* execute call so a
         # pre-marker proposal rejection cannot inherit the previous session's
@@ -313,26 +314,29 @@ class KimiAgent:
                     # Only the session that actually submitted the proposal may act
                     # on that marker; otherwise one failed run poisons every later
                     # session and burns the iteration budget without allowing a fix.
-                    if (
+                    owns_approved_run = (
                         self._submitted_proposal_in_output(output)
                         and self._proposal_marker_changed_this_session()
-                    ):
-                        self._ensure_approved_training_submission()
-                        await self._wait_for_training_result()
-                        training_failure = self._current_training_failure()
+                    ) or self._resume_approved_proposal_enabled()
+                    if owns_approved_run:
                         approved_run_id = self._approved_run_id()
-                        score_path = (
-                            self._score_path_for_run(approved_run_id)
-                            if approved_run_id is not None
-                            else None
-                        )
-                        if training_failure is not None and not (
-                            score_path is not None and score_path.is_file()
+                        if approved_run_id is not None and (
+                            not self._autodata_enabled()
+                            or self._autodata_handoff_ready(approved_run_id)
                         ):
-                            raise RuntimeError(
-                                "Kimi training failed closed: "
-                                + json.dumps(training_failure, sort_keys=True)[:2000]
-                            )
+                            self._ensure_approved_training_submission()
+                            await self._wait_for_training_result()
+                            training_failure = self._current_training_failure()
+                            score_path = self._score_path_for_run(approved_run_id)
+                            if training_failure is not None and not (
+                                score_path is not None and score_path.is_file()
+                            ):
+                                raise RuntimeError(
+                                    "Kimi training failed closed: "
+                                    + json.dumps(
+                                        training_failure, sort_keys=True
+                                    )[:2000]
+                                )
                     if not self.completion_tool or self._completion_tool_used(output):
                         break
                     if continuation_count >= self.max_continuations:
@@ -520,12 +524,33 @@ class KimiAgent:
             ),
             default=-1,
         )
-        approved_run_id = self._approved_run_id() if proposal_index >= 0 else None
+        approved_run_id = (
+            self._approved_run_id()
+            if proposal_index >= 0 or self._resume_approved_proposal_enabled()
+            else None
+        )
         training_job_id = (
             self._current_training_job_id(approved_run_id)
             if approved_run_id is not None
             else None
         )
+
+        if (
+            approved_run_id is not None
+            and self._autodata_enabled()
+            and not self._autodata_handoff_ready(approved_run_id)
+        ):
+            return (
+                f"The proposal is already approved with run_id={approved_run_id}. "
+                "Do not submit training, change the approved method, or submit "
+                "another proposal. Continue the required native AutoData workflow "
+                "now: load the autodata skill if needed, inspect the reviewed recipe, "
+                "create or resume and register the run-scoped workspace, obtain only "
+                "the delegated native approvals, complete meta-optimization and the "
+                "dedicated production execution, then write the verified "
+                f"$TEAM_DIR/autodata/{approved_run_id}/training-handoff.json. "
+                "Use concrete native tool calls; approval alone is not completion."
+            )
 
         if training_job_id is not None:
             score_path = self._score_path_for_run(approved_run_id)
@@ -779,6 +804,12 @@ class KimiAgent:
         run_id = self._approved_run_id()
         if run_id is None or self._current_training_job_id(run_id) is not None:
             return
+        if self._autodata_enabled() and not self._autodata_handoff_ready(run_id):
+            # AutoData work is intentionally forbidden before proposal approval.
+            # Therefore an approved proposal cannot be submitted for training until
+            # its production lineage has produced the run-scoped handoff.  The
+            # continuation loop drives Kimi through that workflow first.
+            return
         scores_dir = os.environ.get("SCORES_DIR", "").strip()
         idea_uid = os.environ.get("IDEA_UID") or os.environ.get("IDEA_NAME")
         if not scores_dir or not idea_uid:
@@ -821,6 +852,52 @@ class KimiAgent:
         if receipt_job != job_id:
             raise RuntimeError("training submission did not publish its verified receipt")
         print(f"[Kimi] deterministically submitted approved training job {job_id}")
+
+    @staticmethod
+    def _autodata_enabled() -> bool:
+        return os.getenv("AAR_AUTODATA", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    @staticmethod
+    def _resume_approved_proposal_enabled() -> bool:
+        return os.getenv("AAR_RESUME_APPROVED_PROPOSAL", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    @staticmethod
+    def _autodata_handoff_ready(run_id: str) -> bool:
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", run_id):
+            return False
+        team_dir = os.getenv("TEAM_DIR", "").strip()
+        if not team_dir:
+            return False
+        return (
+            Path(team_dir) / "autodata" / run_id / "training-handoff.json"
+        ).is_file()
+
+    def _with_resumable_approved_run(self, task: str) -> str:
+        if not self._resume_approved_proposal_enabled():
+            return task
+        run_id = self._approved_run_id()
+        if run_id is None:
+            return task
+        if self._autodata_enabled() and not self._autodata_handoff_ready(run_id):
+            return (
+                task
+                + "\n\nAUTOMATIC RESUME CONTEXT: This is a retry of the same "
+                f"outer iteration. Proposal run_id={run_id} is already approved. "
+                "Do not restart literature review, author another method, or submit "
+                "another proposal. Resume the existing native AutoData workspace or "
+                "execution and finish its verified production handoff before training."
+            )
+        return task
 
     async def _wait_for_training_result(self) -> None:
         """Keep Kimi out of shell polling while the asynchronous job/evaluator runs."""
