@@ -46,6 +46,47 @@ def _required_phases(tree: ast.AST) -> set[str]:
     return observed
 
 
+def _gemma_regex_wrapped_in_collection(tree: ast.AST) -> bool:
+    """PEFT treats collections as literal suffixes; only a string is a regex."""
+
+    def is_regex_collection(node: ast.AST) -> bool:
+        if not isinstance(node, (ast.List, ast.Set, ast.Tuple)):
+            return False
+        return any(
+            isinstance(element, ast.Constant)
+            and isinstance(element.value, str)
+            and ("\\" in element.value or "|" in element.value)
+            for element in node.elts
+        )
+
+    bad_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and is_regex_collection(node.value):
+            bad_names.update(
+                target.id for target in node.targets if isinstance(target, ast.Name)
+            )
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.value is not None
+            and is_regex_collection(node.value)
+        ):
+            bad_names.add(node.target.id)
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for keyword in node.keywords:
+            if keyword.arg != "target_modules":
+                continue
+            if is_regex_collection(keyword.value) or (
+                isinstance(keyword.value, ast.Name)
+                and keyword.value.id in bad_names
+            ):
+                return True
+    return False
+
+
 def validate(
     method_path: Path,
     *,
@@ -84,6 +125,12 @@ def validate(
                 errors.append(
                     "Gemma-4 PEFT must use target_modules regex "
                     f"{required_target}"
+                )
+            elif _gemma_regex_wrapped_in_collection(tree):
+                errors.append(
+                    "Gemma-4 PEFT target_modules regex must be passed as a string, "
+                    "not a list, set, or tuple; PEFT treats collection entries as "
+                    "literal module suffixes"
                 )
 
     module = None

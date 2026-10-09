@@ -129,6 +129,38 @@ class ValidateMethodContractTest(unittest.TestCase):
             any("Gemma-4 PEFT" in error for error in proof["errors"])
         )
 
+    def test_rejects_gemma_regex_wrapped_in_collection(self) -> None:
+        phases = "\n".join(
+            f'    with phase("{name}"):\n        pass'
+            for name in (
+                "data_generation",
+                "tokenization",
+                "model_loading",
+                "training",
+                "checkpoint_save",
+            )
+        )
+        result, proof = self._run_with_gemma_targets(
+            "from contextlib import contextmanager\n"
+            "@contextmanager\n"
+            "def phase(_name):\n"
+            "    yield\n"
+            "target_modules = "
+            "[r'model\\.language_model\\.layers\\.\\d+\\.self_attn\\.(q_proj|v_proj)']\n"
+            "class MethodConfig:\n"
+            "    def __init__(self, output_dir='out', dry_run=False):\n"
+            "        self.output_dir = output_dir\n"
+            "        self.dry_run = dry_run\n"
+            "def run_experiment(config):\n"
+            f"{phases}\n"
+            "    LoraConfig(target_modules=target_modules)\n"
+            "    return {'model_path': config.output_dir, 'method': 'test'}\n"
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(
+            any("must be passed as a string" in error for error in proof["errors"])
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
