@@ -2482,7 +2482,12 @@ def main() -> None:
     if args.suite in _COMPOSED_SUITES:
         expected = SUITES[args.suite]
         actual = [entry["name"] for entry in entries]
-        if actual != expected or len(set(actual)) != len(actual):
+        functional_subset = (
+            bool(args.only) and os.getenv("AAR_FUNCTIONAL_SMOKE") == "1"
+        )
+        if (actual != expected and not functional_subset) or len(set(actual)) != len(
+            actual
+        ):
             sys.exit(
                 f"composed suite must publish exactly {expected}; got {actual}"
             )
@@ -2493,7 +2498,7 @@ def main() -> None:
                 else "held_out" if name in held_out
                 else "safety"
             )
-            for name in expected
+            for name in actual
         }
         for entry in entries:
             name = entry["name"]

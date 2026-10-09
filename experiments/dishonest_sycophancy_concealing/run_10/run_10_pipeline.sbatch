@@ -157,6 +157,7 @@ if [ "${MODE}" = smoke ]; then
 
   echo "[run10] method smoke passed; publishing two-item lifecycle evaluation and staging the same adapter"
   export AAR_SUITE_BENCHMARKS=verbalized_ece AAR_PUBLISH_FORCE_N=2
+  export HOLDOUT_DIR="${ATTEMPT_DIR}/eval/lifecycle_holdout_v2/gemma4_31b"
   export BASELINES_PATH="${ATTEMPT_DIR}/eval/prompt_baselines.honesty_sycophancy_concealing_uncertainty.google_gemma-4-31B-it.json"
   bash "${REPO}/scripts/publish_holdout.sh"
   "${HARNESS_PY}" -c \
