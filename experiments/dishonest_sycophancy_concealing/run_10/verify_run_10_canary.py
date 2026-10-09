@@ -33,9 +33,13 @@ def main() -> None:
     )
     scores = list(attempt.glob("aar_teams/*/scores/*.json"))
     findings = list(attempt.glob("aar_teams/*/forum/*.json"))
-    score_uids = {load_json(path).get("idea_uid") for path in scores}
-    finding_uids = {load_json(path).get("idea_uid") for path in findings}
-    score_result_pair = bool((score_uids & finding_uids) - {None})
+    score_run_ids = {
+        path.name.removesuffix(".json")
+        for path in scores
+        if not path.name.endswith(".failed.json")
+    }
+    finding_run_ids = {load_json(path).get("run_id") for path in findings}
+    score_result_pair = bool((score_run_ids & finding_run_ids) - {None})
 
     eval_logs = list(attempt.glob("aar_teams/*/_eval_private/eval_worker_*.out"))
     log_text = "\n".join(path.read_text(errors="replace") for path in eval_logs)

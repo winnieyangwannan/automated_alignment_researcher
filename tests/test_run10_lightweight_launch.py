@@ -42,6 +42,9 @@ def test_evaluator_is_launched_only_after_method_smoke_passes() -> None:
     assert "on_demand_evaluator=1" in pipeline
     assert '"method_gpu_smoke"' in verifier
     assert '"on_demand_evaluator"' in verifier
+    assert 'path.name.removesuffix(".json")' in verifier
+    assert 'load_json(path).get("run_id")' in verifier
+    assert 'path.name.endswith(".failed.json")' in verifier
 
 
 def test_passed_smoke_can_resume_without_research_or_training_relaunch() -> None:
