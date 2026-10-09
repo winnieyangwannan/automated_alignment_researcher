@@ -631,26 +631,113 @@ not continue changing the strategy. This separation ensures that the strategy
 selected on tuning and hidden validation is exactly the strategy used to create
 the training dataset.
 
-## What can change later in the outer AAR loop?
+# AAR meta-meta optimization loop
 
-The restrictions above apply to one frozen AutoData execution. Between AAR
-iterations, the researcher may use authorized visible findings to create or
-fork a workspace and propose changes to:
+AutoData meta-optimization asks, “Which allowed generation strategy works best
+for this fixed recipe and grounding?” The outer AAR loop asks a broader
+question: “Did the resulting dataset and training method actually improve
+Gemma, and what should the next data-generation experiment change?”
 
-- grounding domains, behavior patterns, axis balance, or scenario difficulty;
-- generation strategy or non-campaign-fixed protected pipeline design;
-- target-probing design; or
-- the broader training method.
+It is a meta-meta optimization loop because it operates one level above
+AutoData's strategy search:
 
-This freedom remains inside the operator-approved campaign envelope. In Run 9,
-the Luna identity, axis-conditioned rubric, `0.75` threshold, target-aware
-generation requirement, balanced comparator, model identities, credentials,
-resource ceilings, and held-out AAR evaluator remain fixed across outer
-iterations. The researcher cannot redefine success merely because a candidate
-failed.
+```text
+One AAR iteration
+  1. Design and approve grounding and pipeline
+  2. AutoData meta-optimizes the generation strategy
+  3. Freeze the winner and generate the production dataset
+  4. Train a Gemma candidate
+  5. Run the protected AAR evaluation
+  6. Accept or reject the trained candidate
+  7. Use only permitted visible findings to design the next AAR iteration
+```
 
-Authorized outer changes require a new method proposal, a writable workspace,
-fresh native checks, and fresh grounding and baseline approvals before another
-execution is frozen. The researcher must not inspect task-level validation
-evidence or protected evaluator examples and redesign the next workspace around
-them.
+The inner loop optimizes a Kimi generation strategy using row-level quality and
+challenge evidence. The outer loop tests whether that entire data-generation
+and training intervention produces a better model. A strategy can win inside
+AutoData yet fail to improve downstream Gemma behavior; that is useful evidence
+that the next AAR iteration may need a different grounding or method, not just
+another prompt edit.
+
+## What can change between AAR iterations?
+
+The researcher may create or fork a writable workspace and, when supported by
+authorized visible evidence, propose changes to:
+
+- grounding domains, behavior patterns, difficulty, balance, and coverage,
+  while preserving Run 9's required alignment axes;
+- the reviewed baseline generation strategy;
+- non-campaign-fixed protected pipeline implementation;
+- target-probing design while retaining the required pinned research-side
+  target contract;
+- the mutable boundary for the next AutoData execution; or
+- the broader data mixture or training method when the campaign's approved
+  search space permits it.
+
+These are proposals, not edits to the completed execution. Each revised design
+requires a new method record, a new or forked workspace, fresh native checks,
+and fresh grounding and baseline approvals before it can be frozen and run.
+
+## What cannot change within Run 9?
+
+Meta-meta optimization remains inside the operator-approved campaign envelope.
+The researcher cannot change:
+
+- a frozen or active AutoData workspace, execution, or retained result;
+- protected AAR evaluator examples, scoring rules, or success criteria;
+- task-level AutoData validation evidence or hidden AAR evaluation details;
+- the campaign-fixed Luna identity, axis-conditioned rubric, or `0.75`
+  threshold;
+- the required honesty, sycophancy-resistance, and uncertainty-disclosure axis
+  contract;
+- target-aware generation or the balanced quality/challenge comparator;
+- campaign model identities or the evaluation protocol;
+- credentials, isolation boundaries, or secret handling;
+- operator-controlled dataset targets, budgets, and resource ceilings; or
+- provenance records, results, checkpoints, or candidate history.
+
+The current Gemma parent checkpoint naturally changes when AAR advances to a
+new model candidate. Its exact deployment and checkpoint hash must nevertheless
+be pinned and recorded for every AutoData execution. A researcher cannot
+silently substitute a different target.
+
+Most importantly, it cannot redefine success after an unfavorable result or
+use hidden validation or evaluator examples to design the next workspace.
+
+## Worked meta-meta example: downstream sycophancy remains weak
+
+Suppose an AutoData execution successfully finds a generation strategy with
+high teacher quality and target challenge. Production completes, Gemma is
+trained, and the protected AAR evaluation reports through its permitted summary
+that overall performance improved but sycophancy resistance did not.
+
+Visible AutoData tuning evidence also suggests that many accepted sycophancy
+examples use one narrow pattern: an executive explicitly demands agreement.
+The strategy was effective on that grounding, but the training intervention
+did not produce broad downstream improvement.
+
+For the next AAR iteration, the researcher may propose a new workspace that:
+
+- adds grounding patterns for academic authority, customer pressure, flattery,
+  social consensus, and threatened consequences;
+- adds justified-agreement controls so anti-sycophancy does not become automatic
+  contrarianism; and
+- restructures the generation strategy so `sycophancy_resistance` scenarios
+  use plausible mixed evidence and indirect pressure.
+
+The researcher must not inspect protected evaluation prompts or hidden
+validation trajectories to reproduce their wording. The new grounding and
+pipeline are reviewed and approved on their own scientific rationale. AutoData
+then performs a fresh inner meta-optimization, produces a new dataset, and AAR
+tests the newly trained Gemma candidate again.
+
+## A new named experiment is a new study
+
+A separately authorized experiment, such as Run 11, can adopt a different
+campaign policy, judge, comparator, model, or infrastructure. That is broader
+than meta-meta optimization within Run 9: it requires new approvals and a new
+baseline and must not be presented as a directly comparable continuation when
+the measurement contract changed.
+
+Evaluation isolation remains permanent across every experiment. Protected
+evaluator data must never become research input.
