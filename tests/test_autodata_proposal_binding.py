@@ -211,10 +211,23 @@ load_autodata_campaign_datasets(
     receipt_path=receipt_path,
     required_rows=64,
     expected_execution_ids=[execution_id],
+    training_objective="sft",
 )
 """
     assert server_api_tools._autodata_method_contract_error(wrong_size) == (
         "AutoData loader must use literal required_rows=1000"
+    )
+
+    missing_objective = """
+load_autodata_campaign_datasets(
+    [dataset_path],
+    receipt_path=receipt_path,
+    required_rows=1000,
+    expected_execution_ids=[execution_id],
+)
+"""
+    assert "training_objective" in (
+        server_api_tools._autodata_method_contract_error(missing_objective) or ""
     )
 
     valid = """
@@ -223,6 +236,7 @@ load_autodata_campaign_datasets(
     receipt_path=receipt_path,
     required_rows=1000,
     expected_execution_ids=[execution_id],
+    training_objective="sft",
 )
 """
     assert server_api_tools._autodata_method_contract_error(valid) is None

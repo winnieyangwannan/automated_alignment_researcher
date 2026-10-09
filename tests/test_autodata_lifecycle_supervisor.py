@@ -339,6 +339,11 @@ def test_supervised_creation_reuses_and_cancels_unstarted_duplicate(
         )
 
     calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "validate_generation_inputs",
+        lambda **_: {"schema": "aar.autodata.training-data-contract/v1"},
+    )
 
     def fake_native_cli(*args: object) -> dict[str, object]:
         arguments = tuple(str(value) for value in args[4:])
@@ -376,6 +381,8 @@ def test_supervised_creation_reuses_and_cancels_unstarted_duplicate(
         pipeline=pipeline,
         execution=execution,
         study_id="study_one",
+        training_data_contract=tmp_path / "contract.json",
+        campaign_policy=tmp_path / "policy.json",
     )
 
     assert result["execution_id"] == "exe_primary"

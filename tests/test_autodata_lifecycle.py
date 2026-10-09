@@ -13,6 +13,7 @@ import pytest
 from aar.infrastructure.autodata_lifecycle import (
     HANDOFF_SCHEMA,
     _canonical_tree_digest,
+    create_reuse_handoff,
     verify_consumption,
     verify_preflight,
 )
@@ -247,6 +248,122 @@ def test_preflight_verifies_native_meta_winner_and_production(tmp_path: Path) ->
         result = verify_preflight(run_id)
     assert result["source_task_count"] == 1250
     assert result["available_rows"] == 1000
+
+
+def test_digest_verified_cross_run_dataset_reuse(tmp_path: Path) -> None:
+    source_run_id, team, state = _fixture(tmp_path)
+    dataset_path = team / "autodata" / source_run_id / "production-dataset.json"
+    dataset = json.loads(dataset_path.read_text())
+    checkpoint = "sha256:" + "a" * 64
+    for item in dataset["items"]:
+        item["metadata"].update(judge_rubric_version="run9-axis-conditioned-v2")
+        item["_autodata_usage"] = [
+            {
+                "role": "generator",
+                "model": "Kimi-K2.6",
+                "deployment_id": "kimi",
+            },
+            {"role": "judge", "model": "gpt-5-6-luna"},
+            {
+                "role": "target",
+                "model": "gemma",
+                "deployment_id": "gemma-base",
+                "checkpoint_hash": checkpoint,
+            },
+        ]
+    _write_json(dataset_path, dataset)
+    with sqlite3.connect(state) as connection:
+        row = connection.execute(
+            "SELECT id,payloadJson FROM events WHERE kind='execution.finalized' "
+            "AND scopeId=?",
+            ("exe_" + "2" * 32,),
+        ).fetchone()
+        payload = json.loads(row[1])
+        payload["dataset"]["digest"] = _digest(dataset_path)
+        connection.execute(
+            "UPDATE events SET payloadJson=? WHERE id=?", (json.dumps(payload), row[0])
+        )
+    contract = _write_json(
+        tmp_path / "contract.json",
+        {
+            "schema": "aar.autodata.training-data-contract/v1",
+            "training_objective": "sft",
+            "required_item_fields": ["prompt", "response"],
+            "required_rows": 1000,
+            "minimum_successful_task_fraction": 0.95,
+            "judge_rubric_version": "run9-axis-conditioned-v2",
+            "generator": {"model": "Kimi-K2.6", "deployment_id": "kimi"},
+            "judge": {"model": "gpt-5-6-luna"},
+            "target": {
+                "required": True,
+                "model": "gemma",
+                "deployment_id": "gemma-base",
+                "checkpoint_hash": checkpoint,
+            },
+        },
+    )
+    with mock.patch.dict(
+        os.environ,
+        {"TEAM_DIR": str(team), "AAR_AUTODATA_STATE": str(state)},
+        clear=False,
+    ):
+        reused = create_reuse_handoff(
+            source_run_id=source_run_id,
+            run_id="chain-method-2",
+            training_data_contract=contract,
+        )
+        repeated = create_reuse_handoff(
+            source_run_id=source_run_id,
+            run_id="chain-method-2",
+            training_data_contract=contract,
+        )
+
+    assert reused["reused_dataset"] is True
+    assert reused["source_run_id"] == source_run_id
+    assert repeated["dataset_sha256"] == reused["dataset_sha256"]
+
+
+def test_cross_run_reuse_rejects_dataset_tampering(tmp_path: Path) -> None:
+    source_run_id, team, state = _fixture(tmp_path)
+    source = team / "autodata" / source_run_id / "training-handoff.json"
+    handoff = json.loads(source.read_text())
+    consumer = team / "autodata" / "consumer"
+    consumer.mkdir()
+    contract = _write_json(
+        consumer / "training-data-contract.json",
+        {
+            "schema": "aar.autodata.training-data-contract/v1",
+            "training_objective": "sft",
+            "required_item_fields": ["prompt", "response"],
+            "required_rows": 1000,
+            "minimum_successful_task_fraction": 0.95,
+            "judge_rubric_version": "v1",
+            "generator": {"model": "generator", "deployment_id": "deployment"},
+            "judge": {"model": "judge"},
+            "target": {"required": False},
+        },
+    )
+    reuse = {
+        **handoff,
+        "schema": "aar.autodata.training-handoff/v2",
+        "run_id": "consumer",
+        "source_run_id": source_run_id,
+        "state_db_sha256": _digest(state),
+        "dataset_sha256": _digest(Path(handoff["dataset"])),
+        "production_manifest_sha256": _digest(Path(handoff["production_manifest"])),
+        "training_data_contract": str(contract),
+        "training_data_contract_sha256": "sha256:" + "0" * 64,
+        "consumption_receipt": str(consumer / "training-consumption.json"),
+    }
+    _write_json(consumer / "training-handoff.json", reuse)
+    Path(handoff["dataset"]).write_text("{}")
+    with mock.patch.dict(
+        os.environ,
+        {"TEAM_DIR": str(team), "AAR_AUTODATA_STATE": str(state)},
+        clear=False,
+    ):
+        with pytest.raises(ValueError, match="reused dataset digest"):
+            verify_preflight("consumer")
 
 
 def test_preflight_prefers_retained_state_for_cross_node_handoff(

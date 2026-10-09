@@ -346,7 +346,9 @@ python3 "$AAR_REPO/scripts/autodata_lifecycle_supervisor.py" create-execution \
   --workspaces "$AAR_AUTODATA_WORKSPACES" \
   --pipeline "$PIPELINE_MANIFEST" \
   --execution "$EXECUTION_MANIFEST" \
-  --study-id "$STUDY_ID"
+  --study-id "$STUDY_ID" \
+  --training-data-contract "$AAR_AUTODATA_TRAINING_DATA_CONTRACT" \
+  --campaign-policy "$AAR_AUTODATA_CAMPAIGN_POLICY"
 ```
 
 This command derives a content-bound idempotency key, reuses a semantically
@@ -377,7 +379,22 @@ pipeline, must share the native study with the workspace/meta execution, and mus
 baseline snapshot or the 96-task meta manifest. Keep the production execution JSON
 and handoff outside both pipeline roots; only
 `grounding/production-manifest.json` may differ between the pristine winner export
-and production pipeline root.
+and production pipeline root. Copy the operator-provided
+`$AAR_AUTODATA_TRAINING_DATA_CONTRACT` into each pipeline root as
+`training-data-contract.json`; it is protected pipeline content. A production
+execution must also declare this exact completion policy:
+
+```json
+"finalization": {
+  "minimum_generated_items": 1000,
+  "minimum_successful_task_fraction": 0.95
+}
+```
+
+The supervised creation command validates the SFT/DPO item schema, rubric version,
+generator/judge/target provenance, and these completion thresholds before native
+execution creation. It stops after a complete pass once both thresholds hold and
+otherwise retries only deficient tasks.
 
 In AutoData terminology, you are the visible **host agent**, not the approval
 principal. References to the "user" or "operator" in the AutoData skill mean the
@@ -419,6 +436,7 @@ items = load_autodata_campaign_datasets(
     receipt_path=training_consumption_path,
     required_rows=1000,
     expected_execution_ids=[production_execution_id],
+    training_objective="sft",  # use "dpo" only for prompt/chosen/rejected rows
 )
 ```
 
@@ -432,6 +450,21 @@ dataset. The submitter independently treats this file as untrusted and verifies 
 complete winner-to-production lineage, exact source IDs, 1,000 accepted rows, and
 dataset digest. Training is also rejected unless the method creates the verified
 consumption receipt before its model is submitted.
+
+When the operator has provided a completed prior run whose dataset is intended for
+reuse, do not regenerate 1,250 rows. Create a v2 reuse handoff with:
+
+```bash
+python3 -m aar.infrastructure.autodata_lifecycle create-reuse-handoff \
+  --source-run-id "$SOURCE_RUN_ID" \
+  --run-id "$RUN_ID" \
+  --training-data-contract "$AAR_AUTODATA_TRAINING_DATA_CONTRACT"
+```
+
+Reuse succeeds only when native lineage still verifies, the dataset/manifest/state
+digests match, every row satisfies the same SFT/DPO, rubric, and model-provenance
+contract, and the source state is an operator-trusted
+`$AAR_AUTODATA_REUSE_STATE`. Never copy or edit the exported dataset to make it fit.
 {% endif %}
 
 **Where your methods live:** write every method package to your team's methods

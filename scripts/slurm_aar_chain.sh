@@ -139,6 +139,7 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   : "${AAR_AUTODATA_BROKER_RUNNER:?missing broker runner}"
   : "${AAR_AUTODATA_MODEL_ENV_FILE:?missing model workload env path}"
   : "${AAR_AUTODATA_CAMPAIGN_POLICY:?missing campaign policy}"
+  : "${AAR_AUTODATA_TRAINING_DATA_CONTRACT:?missing training-data contract}"
   : "${AAR_AUTODATA_CAPABILITY:?missing attempt-scoped broker capability}"
   : "${AAR_AUTODATA_APPROVAL_PRIVATE_KEY:?missing delegated approval key}"
   : "${AAR_AUTODATA_APPROVAL_PUBLIC_KEY:?missing delegated approval public key}"

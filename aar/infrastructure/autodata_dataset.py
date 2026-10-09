@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -9,8 +10,65 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 RECEIPT_SCHEMA = "aar.autodata.native-consumption/v1"
+_VOLATILE_RECEIPT_FIELDS = {"loaded_at_unix", "consumer_pid"}
+
+
+def _write_or_refresh_receipt(destination: Path, receipt: dict[str, Any]) -> None:
+    """Atomically create or refresh an exactly matching consumption receipt."""
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock_path = destination.with_name(f".{destination.name}.lock")
+    lock_flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    lock_descriptor = os.open(lock_path, lock_flags, 0o600)
+    try:
+        with os.fdopen(lock_descriptor, "r+", encoding="utf-8") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            if destination.exists() or destination.is_symlink():
+                if destination.is_symlink() or not destination.is_file():
+                    raise ValueError(
+                        "AutoData consumption receipt must be a regular non-symlink file"
+                    )
+                try:
+                    existing = json.loads(destination.read_text(encoding="utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                    raise ValueError(
+                        "existing AutoData consumption receipt is invalid"
+                    ) from error
+                if not isinstance(existing, dict) or set(existing) != set(receipt):
+                    raise ValueError(
+                        "existing AutoData consumption receipt does not match"
+                    )
+                stable = set(receipt) - _VOLATILE_RECEIPT_FIELDS
+                if any(existing.get(key) != receipt[key] for key in stable):
+                    raise ValueError(
+                        "existing AutoData consumption receipt does not match"
+                    )
+            temporary = destination.with_name(
+                f".{destination.name}.tmp.{os.getpid()}"
+            )
+            flags = (
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            descriptor = os.open(temporary, flags, 0o600)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                    json.dump(receipt, output, sort_keys=True, indent=2)
+                    output.write("\n")
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(temporary, destination)
+            finally:
+                temporary.unlink(missing_ok=True)
+    except Exception:
+        # fdopen owns the descriptor only after it succeeds.
+        try:
+            os.close(lock_descriptor)
+        except OSError:
+            pass
+        raise
 
 
 def _usage_roles(
@@ -56,10 +114,13 @@ def load_autodata_dataset(
     judge_threshold: float = 0.75,
     judge_rubric_version: str = "run9-axis-conditioned-v2",
     require_target: bool = True,
+    training_objective: str = "sft",
 ) -> list[dict[str, Any]]:
     """Validate, load, and record consumption of one production export."""
     if isinstance(required_rows, bool) or required_rows < 1:
         raise ValueError("required_rows must be a positive integer")
+    if training_objective not in {"sft", "dpo"}:
+        raise ValueError("training_objective must be sft or dpo")
     source = Path(dataset_path).resolve(strict=True)
     if source.is_symlink() or not source.is_file():
         raise ValueError("AutoData dataset must be a regular file")
@@ -80,7 +141,12 @@ def load_autodata_dataset(
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             raise ValueError(f"AutoData item {index} is not an object")
-        for key in ("id", "prompt", "response"):
+        required_fields = (
+            ("id", "prompt", "response")
+            if training_objective == "sft"
+            else ("id", "prompt", "chosen", "rejected")
+        )
+        for key in required_fields:
             if not isinstance(item.get(key), str) or not item[key].strip():
                 raise ValueError(f"AutoData item {index} requires non-empty {key}")
         if item["id"] in seen:
@@ -210,24 +276,12 @@ def load_autodata_dataset(
         "output_tokens": total_output,
         "estimated_cost_usd": format(total_cost, ".12g"),
         "target_required": require_target,
+        "training_objective": training_objective,
         "loaded_at_unix": time.time(),
         "consumer_pid": os.getpid(),
     }
     destination = Path(receipt_path).resolve()
-    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if destination.exists():
-        if destination.is_symlink():
-            raise ValueError("AutoData consumption receipt must not be a symlink")
-        existing = json.loads(destination.read_text())
-        stable = {key: value for key, value in receipt.items() if key not in {"loaded_at_unix", "consumer_pid"}}
-        if any(existing.get(key) != value for key, value in stable.items()):
-            raise ValueError("existing AutoData consumption receipt does not match")
-        return items
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(destination, flags, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-        json.dump(receipt, output, sort_keys=True, indent=2)
-        output.write("\n")
+    _write_or_refresh_receipt(destination, receipt)
     return items
 
 
@@ -242,6 +296,7 @@ def load_autodata_campaign_datasets(
     judge_threshold: float = 0.75,
     judge_rubric_version: str = "run9-axis-conditioned-v2",
     require_target: bool = True,
+    training_objective: str = "sft",
 ) -> list[dict[str, Any]]:
     """Verify bounded production batches and retain exactly the target rows."""
     if len(dataset_paths) != len(expected_execution_ids) or not dataset_paths:
@@ -270,6 +325,7 @@ def load_autodata_campaign_datasets(
                 judge_threshold=judge_threshold,
                 judge_rubric_version=judge_rubric_version,
                 require_target=require_target,
+                training_objective=training_objective,
             )
             combined.extend(batch)
             digests.append("sha256:" + hashlib.sha256(payload).hexdigest())
@@ -294,14 +350,11 @@ def load_autodata_campaign_datasets(
             "judge_threshold": judge_threshold,
             "judge_rubric_version": judge_rubric_version,
             "target_required": require_target,
+            "training_objective": training_objective,
             "loaded_at_unix": time.time(),
             "consumer_pid": os.getpid(),
         }
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(destination, flags, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-            json.dump(receipt, output, sort_keys=True, indent=2)
-            output.write("\n")
+        _write_or_refresh_receipt(destination, receipt)
         return retained
     finally:
         for path in temporary_receipts:

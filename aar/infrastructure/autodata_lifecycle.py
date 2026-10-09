@@ -17,8 +17,14 @@ import stat
 from pathlib import Path
 from typing import Any, Mapping
 
+from aar.infrastructure.autodata_contract import (
+    contract_sha256,
+    validate_dataset_items,
+    validate_training_data_contract,
+)
 
 HANDOFF_SCHEMA = "aar.autodata.training-handoff/v1"
+REUSE_HANDOFF_SCHEMA = "aar.autodata.training-handoff/v2"
 PRODUCTION_MANIFEST = "grounding/production-manifest.json"
 REQUIRED_PRODUCTION_TASKS = 1250
 REQUIRED_TRAINING_ROWS = 1000
@@ -229,7 +235,7 @@ def _grounding_ids(pipeline_root: Path, reference: Any, where: str) -> set[str]:
     return set(_task_ids(_json_file(path, where), where))
 
 
-def _load_handoff(run_id: str) -> tuple[Path, dict[str, Any]]:
+def _load_handoff(run_id: str) -> tuple[Path, Path, dict[str, Any]]:
     if _RUN_ID.fullmatch(run_id) is None:
         raise ValueError("run_id is not a safe run-scoped identifier")
     team_raw = os.getenv("TEAM_DIR", "").strip()
@@ -241,7 +247,10 @@ def _load_handoff(run_id: str) -> tuple[Path, dict[str, Any]]:
         raise ValueError("run-scoped AutoData directory is missing or unsafe")
     handoff_path = _safe_file(run_root / "training-handoff.json", "training handoff")
     handoff = _json_file(handoff_path, "training handoff")
-    if handoff.get("schema") != HANDOFF_SCHEMA or handoff.get("run_id") != run_id:
+    schema = handoff.get("schema")
+    if schema not in {HANDOFF_SCHEMA, REUSE_HANDOFF_SCHEMA} or handoff.get(
+        "run_id"
+    ) != run_id:
         raise ValueError("training handoff schema or run_id does not match")
     expected_fields = {
         "schema",
@@ -256,36 +265,102 @@ def _load_handoff(run_id: str) -> tuple[Path, dict[str, Any]]:
         "production_manifest",
         "consumption_receipt",
     }
+    if schema == REUSE_HANDOFF_SCHEMA:
+        expected_fields |= {
+            "source_run_id",
+            "state_db_sha256",
+            "dataset_sha256",
+            "production_manifest_sha256",
+            "training_data_contract",
+            "training_data_contract_sha256",
+        }
     if set(handoff) != expected_fields:
         raise ValueError("training handoff has unknown or missing fields")
-    return run_root.resolve(strict=True), handoff
+    source_root = run_root
+    if schema == REUSE_HANDOFF_SCHEMA:
+        source_run_id = handoff["source_run_id"]
+        if not isinstance(source_run_id, str) or _RUN_ID.fullmatch(source_run_id) is None:
+            raise ValueError("source_run_id is not a safe run-scoped identifier")
+        source_root = team / "autodata" / source_run_id
+        if source_root.is_symlink() or not source_root.is_dir():
+            raise ValueError("source AutoData run directory is missing or unsafe")
+    return run_root.resolve(strict=True), source_root.resolve(strict=True), handoff
 
 
-def verify_preflight(run_id: str) -> dict[str, Any]:
+def verify_preflight(
+    run_id: str, *, require_operator_contract: bool = True
+) -> dict[str, Any]:
     """Verify completed native meta->winner->fixed-production evidence."""
-    run_root, handoff = _load_handoff(run_id)
+    run_root, source_root, handoff = _load_handoff(run_id)
     state_raw = handoff["state_db"]
     if not isinstance(state_raw, str):
         raise ValueError("training handoff state_db must be a path")
     state = _safe_file(Path(state_raw), "native AutoData state")
     # The live controller database may be node-local.  Cross-node training
     # verifies the supervisor's atomic retained snapshot when configured.
-    expected_state_raw = (
-        os.getenv("AAR_AUTODATA_RETAINED_STATE", "").strip()
-        or os.getenv("AAR_AUTODATA_STATE", "").strip()
-    )
-    if not expected_state_raw or state != _safe_file(
-        Path(expected_state_raw), "trusted AAR_AUTODATA state"
-    ):
+    trusted_state_paths = {
+        raw.strip()
+        for raw in (
+            os.getenv("AAR_AUTODATA_RETAINED_STATE", ""),
+            os.getenv("AAR_AUTODATA_STATE", ""),
+            os.getenv("AAR_AUTODATA_REUSE_STATE", ""),
+        )
+        if raw.strip()
+    }
+    trusted_states = {
+        _safe_file(Path(raw), "trusted AAR_AUTODATA state")
+        for raw in trusted_state_paths
+        if Path(raw).exists() or Path(raw).is_symlink()
+    }
+    if state not in trusted_states:
         raise ValueError("training handoff state_db is not the trusted native state")
+    if handoff["schema"] == REUSE_HANDOFF_SCHEMA and handoff["state_db_sha256"] != _sha256(
+        state
+    ):
+        raise ValueError("reused native state digest does not match the handoff")
 
-    dataset_path = _contained_file(run_root, handoff["dataset"], "production dataset")
+    dataset_path = _contained_file(
+        source_root, handoff["dataset"], "production dataset"
+    )
     winner_export = _contained_directory(
-        run_root, handoff["winner_export"], "winner export"
+        source_root, handoff["winner_export"], "winner export"
     )
     production_manifest = _contained_file(
-        run_root, handoff["production_manifest"], "production manifest"
+        source_root, handoff["production_manifest"], "production manifest"
     )
+    contract = None
+    if handoff["schema"] == REUSE_HANDOFF_SCHEMA:
+        if handoff["dataset_sha256"] != _sha256(dataset_path):
+            raise ValueError("reused dataset digest does not match the handoff")
+        if handoff["production_manifest_sha256"] != _sha256(production_manifest):
+            raise ValueError("reused production manifest digest does not match the handoff")
+        contract_path = _contained_file(
+            run_root,
+            handoff["training_data_contract"],
+            "training-data contract",
+        )
+        contract = validate_training_data_contract(
+            _json_file(contract_path, "training-data contract")
+        )
+        if handoff["training_data_contract_sha256"] != contract_sha256(contract):
+            raise ValueError("training-data contract digest does not match the handoff")
+    trusted_contract_raw = (
+        os.getenv("AAR_AUTODATA_TRAINING_DATA_CONTRACT", "").strip()
+        if require_operator_contract
+        else ""
+    )
+    if trusted_contract_raw:
+        trusted_contract = validate_training_data_contract(
+            _json_file(
+                _safe_file(Path(trusted_contract_raw), "trusted training-data contract"),
+                "trusted training-data contract",
+            )
+        )
+        if contract is not None and contract_sha256(contract) != contract_sha256(
+            trusted_contract
+        ):
+            raise ValueError("reuse contract does not match operator training-data policy")
+        contract = trusted_contract
     meta_id = _execution_id(handoff["meta_execution_id"], "meta_execution_id")
     production_id = _execution_id(
         handoff["production_execution_id"], "production_execution_id"
@@ -350,6 +425,20 @@ def verify_preflight(run_id: str) -> dict[str, Any]:
         budget = _object(production_spec.get("budget"), "production budget")
         if budget.get("max_iterations") != 0 or production["maxIterations"] != 0:
             raise ValueError("production must be a fixed-winner zero-iteration execution")
+        finalization_raw = production_spec.get("finalization")
+        if contract is not None and (
+            handoff["schema"] == HANDOFF_SCHEMA or finalization_raw is not None
+        ):
+            finalization = _object(finalization_raw, "production finalization policy")
+            if (
+                finalization.get("minimum_generated_items")
+                != contract["required_rows"]
+                or finalization.get("minimum_successful_task_fraction")
+                != contract["minimum_successful_task_fraction"]
+            ):
+                raise ValueError(
+                    "production finalization does not match training-data contract"
+                )
         native_studies = {
             _study(connection, "workspace", workspace_id),
             _study(connection, "execution", meta_id),
@@ -454,12 +543,16 @@ def verify_preflight(run_id: str) -> dict[str, Any]:
             item_ids.append(item["id"])
         if len(item_ids) != len(set(item_ids)):
             raise ValueError("production dataset contains duplicate accepted row ids")
+        if contract is not None:
+            validate_dataset_items(items, contract)
     finally:
         connection.close()
 
     return {
         "schema": "aar.autodata.lifecycle-verification/v1",
         "run_id": run_id,
+        "source_run_id": handoff.get("source_run_id", run_id),
+        "reused_dataset": handoff["schema"] == REUSE_HANDOFF_SCHEMA,
         "workspace_id": workspace_id,
         "study_id": study_id,
         "meta_execution_id": meta_id,
@@ -468,13 +561,16 @@ def verify_preflight(run_id: str) -> dict[str, Any]:
         "dataset_sha256": _sha256(dataset_path),
         "source_task_count": REQUIRED_PRODUCTION_TASKS,
         "available_rows": len(items),
+        "training_objective": (
+            contract["training_objective"] if contract is not None else None
+        ),
     }
 
 
 def verify_consumption(run_id: str) -> dict[str, Any]:
     """Require proof that run_experiment consumed the verified production data."""
     verified = verify_preflight(run_id)
-    run_root, handoff = _load_handoff(run_id)
+    run_root, _, handoff = _load_handoff(run_id)
     receipt = _contained_file(
         run_root, handoff["consumption_receipt"], "training consumption receipt"
     )
@@ -485,6 +581,10 @@ def verify_consumption(run_id: str) -> dict[str, Any]:
     if value.get("consumer_pid") != os.getpid():
         raise ValueError("training consumption receipt was not created by this training process")
     production_id = verified["production_execution_id"]
+    if verified["training_objective"] is not None and value.get(
+        "training_objective"
+    ) != verified["training_objective"]:
+        raise ValueError("consumption receipt objective does not match the contract")
     if value.get("required_rows") != REQUIRED_TRAINING_ROWS or value.get(
         "row_count"
     ) != REQUIRED_TRAINING_ROWS:
@@ -504,16 +604,104 @@ def verify_consumption(run_id: str) -> dict[str, Any]:
     return {**verified, "consumption_receipt": str(receipt), "consumed_rows": 1000}
 
 
+def create_reuse_handoff(
+    *, source_run_id: str, run_id: str, training_data_contract: Path
+) -> dict[str, Any]:
+    """Create an idempotent, digest-bound handoff that reuses a verified export."""
+    if source_run_id == run_id:
+        raise ValueError("source and consuming run IDs must differ")
+    verified = verify_preflight(source_run_id, require_operator_contract=False)
+    _, source_root, source = _load_handoff(source_run_id)
+    team = source_root.parent.parent
+    consumer_root = team / "autodata" / run_id
+    if _RUN_ID.fullmatch(run_id) is None:
+        raise ValueError("run_id is not a safe run-scoped identifier")
+    consumer_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if consumer_root.is_symlink():
+        raise ValueError("consuming AutoData run directory is unsafe")
+    contract = validate_training_data_contract(
+        _json_file(_safe_file(training_data_contract, "training-data contract"), "training-data contract")
+    )
+    dataset = _contained_file(source_root, source["dataset"], "production dataset")
+    dataset_value = _json_file(dataset, "production dataset")
+    validate_dataset_items(dataset_value.get("items"), contract)
+    manifest = _contained_file(
+        source_root, source["production_manifest"], "production manifest"
+    )
+    contract_destination = consumer_root / "training-data-contract.json"
+    canonical_contract = json.dumps(contract, sort_keys=True, indent=2) + "\n"
+    if contract_destination.exists():
+        if contract_destination.is_symlink() or contract_destination.read_text(
+            encoding="utf-8"
+        ) != canonical_contract:
+            raise ValueError("existing consuming training-data contract does not match")
+    else:
+        descriptor = os.open(
+            contract_destination,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(canonical_contract)
+    handoff = {
+        "schema": REUSE_HANDOFF_SCHEMA,
+        "run_id": run_id,
+        "source_run_id": verified["source_run_id"],
+        "state_db": source["state_db"],
+        "state_db_sha256": _sha256(_safe_file(Path(source["state_db"]), "native AutoData state")),
+        "dataset": str(dataset),
+        "dataset_sha256": _sha256(dataset),
+        "workspace_id": source["workspace_id"],
+        "study_id": source["study_id"],
+        "meta_execution_id": source["meta_execution_id"],
+        "production_execution_id": source["production_execution_id"],
+        "winner_export": str(
+            _contained_directory(source_root, source["winner_export"], "winner export")
+        ),
+        "production_manifest": str(manifest),
+        "production_manifest_sha256": _sha256(manifest),
+        "training_data_contract": str(contract_destination),
+        "training_data_contract_sha256": contract_sha256(contract),
+        "consumption_receipt": str(consumer_root / "training-consumption.json"),
+    }
+    destination = consumer_root / "training-handoff.json"
+    encoded = json.dumps(handoff, sort_keys=True, indent=2) + "\n"
+    if destination.exists():
+        if destination.is_symlink() or destination.read_text(encoding="utf-8") != encoded:
+            raise ValueError("existing reuse handoff does not match")
+    else:
+        descriptor = os.open(
+            destination,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(encoded)
+    return verify_preflight(run_id)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("preflight", "verify-consumption"))
-    parser.add_argument("--run-id", required=True)
-    args = parser.parse_args()
-    result = (
-        verify_preflight(args.run_id)
-        if args.command == "preflight"
-        else verify_consumption(args.run_id)
+    parser.add_argument(
+        "command",
+        choices=("preflight", "verify-consumption", "create-reuse-handoff"),
     )
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--source-run-id")
+    parser.add_argument("--training-data-contract", type=Path)
+    args = parser.parse_args()
+    if args.command == "preflight":
+        result = verify_preflight(args.run_id)
+    elif args.command == "verify-consumption":
+        result = verify_consumption(args.run_id)
+    else:
+        if not args.source_run_id or args.training_data_contract is None:
+            parser.error("reuse requires --source-run-id and --training-data-contract")
+        result = create_reuse_handoff(
+            source_run_id=args.source_run_id,
+            run_id=args.run_id,
+            training_data_contract=args.training_data_contract,
+        )
     print(json.dumps(result, sort_keys=True))
     return 0
 

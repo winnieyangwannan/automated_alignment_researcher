@@ -166,3 +166,62 @@ def test_campaign_loader_combines_batches_and_retains_exact_target():
         receipt = json.loads((root / "campaign-receipt.json").read_text())
         assert receipt["available_rows"] == 2
         assert receipt["row_count"] == 1
+
+
+def test_campaign_receipt_is_safely_reusable_when_binding_matches(tmp_path: Path):
+    value = _dataset()
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(json.dumps(value))
+    receipt = tmp_path / "campaign-receipt.json"
+    arguments = {
+        "receipt_path": receipt,
+        "required_rows": 1,
+        "expected_execution_ids": ["exec_test"],
+    }
+
+    first = load_autodata_campaign_datasets([dataset], **arguments)
+    saved = json.loads(receipt.read_text())
+    saved["consumer_pid"] = -1
+    receipt.write_text(json.dumps(saved))
+    receipt.chmod(0o600)
+    second = load_autodata_campaign_datasets([dataset], **arguments)
+
+    assert first == second
+    assert json.loads(receipt.read_text())["consumer_pid"] > 0
+    assert receipt.stat().st_mode & 0o777 == 0o600
+
+
+def test_campaign_receipt_reuse_rejects_changed_dataset(tmp_path: Path):
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(json.dumps(_dataset()))
+    receipt = tmp_path / "campaign-receipt.json"
+    arguments = {
+        "receipt_path": receipt,
+        "required_rows": 1,
+        "expected_execution_ids": ["exec_test"],
+    }
+    load_autodata_campaign_datasets([dataset], **arguments)
+    changed = _dataset()
+    changed["items"][0]["response"] = "Changed"
+    dataset.write_text(json.dumps(changed))
+
+    with pytest.raises(ValueError, match="does not match"):
+        load_autodata_campaign_datasets([dataset], **arguments)
+
+
+def test_dpo_schema_is_validated(tmp_path: Path):
+    value = _dataset()
+    row = value["items"][0]
+    row["chosen"] = row.pop("response")
+    row["rejected"] = "Bad answer"
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(json.dumps(value))
+
+    rows = load_autodata_dataset(
+        dataset,
+        receipt_path=tmp_path / "receipt.json",
+        required_rows=1,
+        expected_execution_id="exec_test",
+        training_objective="dpo",
+    )
+    assert rows[0]["chosen"] == "Answer"

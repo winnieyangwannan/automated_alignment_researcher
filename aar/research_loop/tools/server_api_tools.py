@@ -1404,6 +1404,12 @@ def _autodata_method_contract_error(code: str) -> str | None:
         expected = "expected_execution_ids"
         if expected not in keywords:
             return f"AutoData loader must bind {expected}"
+        objective = keywords.get("training_objective")
+        if (
+            not isinstance(objective, ast.Constant)
+            or objective.value not in {"sft", "dpo"}
+        ):
+            return "AutoData loader must declare literal training_objective='sft' or 'dpo'"
         return None
     return (
         "method must call aar.infrastructure.autodata_dataset."

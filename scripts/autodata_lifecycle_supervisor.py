@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
 
+from aar.infrastructure.autodata_contract import validate_generation_inputs
 
 META_TIMEOUT_SECONDS = 2 * 60 * 60
 PRODUCTION_TIMEOUT_SECONDS = 8 * 60 * 60
@@ -406,8 +407,16 @@ def create_or_reuse_execution(
     pipeline: Path,
     execution: Path,
     study_id: str,
+    training_data_contract: Path,
+    campaign_policy: Path,
 ) -> dict[str, Any]:
     """Create and register exactly one semantic execution in a study."""
+    contract = validate_generation_inputs(
+        pipeline_manifest=pipeline,
+        execution_manifest=execution,
+        contract_path=training_data_contract,
+        campaign_policy_path=campaign_policy,
+    )
     key = execution_creation_key(
         pipeline, execution, study_id=study_id, workspaces=workspaces
     )
@@ -480,6 +489,7 @@ def create_or_reuse_execution(
         "idempotency_key": key,
         "deduplicated": discarded_duplicate is not None,
         "discarded_duplicate_execution_id": discarded_duplicate,
+        "training_data_contract": contract["schema"],
     }
 
 
@@ -846,6 +856,8 @@ def _parser() -> argparse.ArgumentParser:
     create_execution.add_argument("--pipeline", type=_path, required=True)
     create_execution.add_argument("--execution", type=_path, required=True)
     create_execution.add_argument("--study-id", required=True)
+    create_execution.add_argument("--training-data-contract", type=_path, required=True)
+    create_execution.add_argument("--campaign-policy", type=_path, required=True)
 
     run = subparsers.add_parser("run")
     run.add_argument("--python", type=_path, required=True)
@@ -913,6 +925,8 @@ def main() -> int:
             pipeline=args.pipeline,
             execution=args.execution,
             study_id=args.study_id,
+            training_data_contract=args.training_data_contract,
+            campaign_policy=args.campaign_policy,
         )
         print(json.dumps(result, sort_keys=True))
         return 0
