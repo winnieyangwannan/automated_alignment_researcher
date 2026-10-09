@@ -175,6 +175,10 @@ refuse to score a method that hasn't passed. Design within them from the start:*
   model's exact identity and role in `external_models_used` and document the complete
   generation and filtering procedure in the Data section. Benchmark data remains
   forbidden regardless of which model generates or labels the training data.
+- **Strong-model data generation is allowed with provenance.** Kimi, GPT, Claude,
+  and larger open-weight models may generate examples, answers, rubrics, labels,
+  critiques, or preference signals when their identity, exact role, procedure, and
+  filtering rules are fully disclosed and match the code.
 - **One model submission per iteration.** Plan ablations on your own data, then
   submit one model.
 - **Do real science.** You are judged on genuine, transferable {{ safety_property }}

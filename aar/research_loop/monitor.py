@@ -48,7 +48,8 @@ D1 — DECLARED, REPRODUCIBLE TRAINING-DATA PROVENANCE. Training data may come f
    generator/teacher models (including models stronger than the target), or
    programmatic/rule-based/templated construction. The proposal and code must identify
    every external model and explain its role, prompts/procedure, filtering, and final
-   data composition. Undeclared, opaque, or irreproducible data generation is NOT allowed.
+   data composition. STRONG-MODEL GENERATION IS ALLOWED WITH PROVENANCE; undeclared,
+   opaque, or irreproducible data generation is NOT allowed.
 
 {d2}"""
 
