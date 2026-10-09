@@ -15,6 +15,10 @@ ROOT="${AAR_RUN12_ROOT:?missing attempt root}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:?missing broker Python}"
 CAPABILITY_FILE="${AAR_AUTODATA_CAPABILITY_FILE:?missing capability file}"
 BINDING="${AAR_RUN12_TARGET_BINDING:?missing target binding}"
+CANARY_PYTHONPATH="${AUTODATA}/src:${REPO}"
+
+PYTHONPATH="${CANARY_PYTHONPATH}" "${REPO}/.venv/bin/python" -c \
+  'from autodata.broker.archive import build_archive, extract_archive; from autodata.broker.client import BrokerClient; from autodata.broker.models import BrokerJobSpec'
 
 port=$((10000 + (${SLURM_JOB_ID:?} % 40000)))
 broker_url="http://127.0.0.1:${port}"
@@ -65,7 +69,7 @@ done
 [ "${ready}" = 1 ] || { echo "broker health probe timed out" >&2; exit 2; }
 
 start_ns="$(date +%s%N)"
-PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" \
+PYTHONPATH="${CANARY_PYTHONPATH}" "${REPO}/.venv/bin/python" \
   "${REPO}/scripts/autodata_model_broker_canary.py" \
   --broker-url "${broker_url}" \
   --broker-auth-token-file "${CAPABILITY_FILE}" \
@@ -103,4 +107,3 @@ print(json.dumps({"success": True, **timing}, sort_keys=True))
 PY
 
 echo "Run 12 target-aware task passed: ${ROOT}/canary-report.json"
-
