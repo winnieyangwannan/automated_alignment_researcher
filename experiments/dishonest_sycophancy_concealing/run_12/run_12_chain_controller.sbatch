@@ -103,7 +103,8 @@ deploy_checkpoint() {
     -u NO_PROXY -u no_proxy \
     "${SV}/serve.sh" deploy "${deployment}" \
       --model gemma-4-31B-it --checkpoint "${checkpoint}" --endpoints 1 \
-      --cluster fair-cw-use2-1 --gateway-register --lifetime 7d --no-watch
+      --cluster fair-cw-use2-1 --partition g3 --account ram --qos g3_ram_high \
+      --gateway-register --lifetime 7d --no-watch
   wait_deployment "${deployment}"
 }
 
