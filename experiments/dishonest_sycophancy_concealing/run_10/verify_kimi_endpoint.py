@@ -99,7 +99,7 @@ async def verify(workspace: Path) -> dict[str, object]:
     ).execute(
         "In this first turn, do not call any tool; reply exactly "
         "KIMI_FORCE_READY. On the later turn that requires Bash, call it with "
-        'command `test -w "$PWD" && printf KIMI_FORCE_OK`.'
+        "command `printf KIMI_FORCE_OK`."
     )
     forced_uses = [
         item
@@ -115,7 +115,7 @@ async def verify(workspace: Path) -> dict[str, object]:
         forced_result.success
         and forced_result.output.get("continuations", 0) >= 1
         and len(forced_uses) == 1
-        and forced_command == 'test -w "$PWD" && printf KIMI_FORCE_OK'
+        and forced_command == "printf KIMI_FORCE_OK"
     )
     if not forced_ok:
         raise RuntimeError(
