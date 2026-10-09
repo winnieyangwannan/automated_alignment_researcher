@@ -144,11 +144,32 @@ sources:
 
 The first local-runner probes correctly removed inherited proxy variables but
 then showed that the external inference-gateway hostname was not reachable from
-the HPC task environment. The local runner was updated to use FAIR's
-cluster-internal inference ingress while preserving the required host,
-deployment, and model headers. This did not change the generator: it remains
-the same `Kimi-K2.6` deployment. It changed only the network route used from the
-compute node.
+the HPC task environment. Those attempts failed before reaching Kimi and
+recorded no provider usage.
+
+The route changed from the external HTTPS ingress:
+
+```text
+https://ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud/v1
+```
+
+to the cluster-internal Slurm ingress:
+
+```text
+http://fair-cw-use2-1-ingress-slurm-ingress/v1
+Host: ram-inference-gateway.ingress.
+```
+
+The campaign policy still pins and passes the same model and deployment headers,
+so the generator remains `Kimi-K2.6` on deployment `winnieyangwn-kimi26`. Only
+the path from the compute node to the inference gateway changed.
+
+This restored model connectivity without reintroducing inherited proxy
+variables into the task sandbox. It also removes external DNS, TLS, proxy, and
+egress dependencies from this local cluster path. The corrected concurrency-16
+canary reached Kimi and Luna for all 16 jobs. This change does not add Kimi
+replicas, distribute the endpoint across more nodes, or by itself raise model
+serving capacity; any higher request concurrency still requires a load test.
 
 ### Node-local broker ledger
 
@@ -209,6 +230,87 @@ separate load test.
 - Record the successful local concurrency canary: `1cd196a`
 - Keep the broker ledger node-local with retained snapshots: `eb57e64`
 - The original AutoData broker and `local-bwrap` runner code remain unchanged.
+
+## Bootstrap the pinned AutoData plugin without `ensurepip`
+
+### Problem
+
+The AAR parent process needs an isolated, version-pinned AutoData Python runtime
+to invoke the plugin wrapper and complete native approval actions. The plugin
+already bundles a locked AutoData wheel, and its bootstrap originally prepared
+that runtime with this sequence:
+
+```text
+create virtual environment with pip
+  → Python invokes ensurepip to install pip
+  → pip installs the bundled AutoData wheel
+```
+
+`ensurepip` is the optional CPython component that seeds `pip` into a new
+virtual environment. The minimal FAIR Python installations used by both the
+chain host and dedicated broker runtime omit it. Consequently,
+`venv.EnvBuilder(with_pip=True)` failed before AutoData could import or the MCP
+approval bridge could review an action.
+
+The affected full attempt spent time planning and preparing a workspace but
+then failed at the first delegated approval boundary. It created no broker
+generation jobs, made no Kimi or Luna calls, and produced zero durable AAR
+score/result pairs. This was a host-runtime bootstrap failure, not an AutoData
+lifecycle, monitor-policy, or broker failure.
+
+### Fix
+
+The bootstrap now creates the virtual environment with
+`venv.EnvBuilder(with_pip=False)`. Because the locked plugin currently contains
+only hash-verified, dependency-free, pure-Python wheels, it can safely install
+the package without a general-purpose package installer:
+
+```text
+verify lock and every bundled wheel SHA-256
+  → reject the lock if external dependencies are declared
+  → create a pip-free virtual environment
+  → find that environment's pure-Python package directory
+  → reject unsafe wheel paths and extract the verified wheel
+  → import AutoData and verify its pinned version
+```
+
+The dependency check is deliberately fail-closed. If the plugin later gains
+dependencies, bootstrap refuses to guess how to install them; its locked
+installer design must be updated explicitly. Wheel members are also checked
+for path traversal before extraction.
+
+### Lifecycle and caching
+
+Run 9 sets an attempt-local plugin cache and executes bootstrap before starting
+the research agent. The resulting interpreter is reused for every AutoData
+phase, task, meta-optimization iteration, and AAR session within that chain
+attempt. It is not rebuilt per generated example.
+
+A new full AAR attempt currently prepares a new environment once because it
+gets a new attempt directory. This favors reproducibility and prevents stale
+cross-run environments. The setup is offline and lightweight; no package is
+installed globally and no network download is performed.
+
+Moving bootstrap to chain startup also makes a missing or incompatible runtime
+fail before the agent spends time on literature review, method authoring, or
+workspace construction.
+
+### Validation
+
+- Added `tests/test_plugin_bootstrap.py` for pip-free creation, import, cache
+  reuse, and lock validation.
+- The complete AutoData suite passed on the combined stabilized revision: 75
+  passed and 1 skipped.
+- The exact dedicated Python executable used on FAIR HPC successfully created
+  the environment and imported AutoData `1.0.0`.
+- The chain now logs a successful pinned bootstrap before starting an AAR agent.
+
+### Provenance
+
+- AutoData implementation and tests: `223af462f69b2fd2d5eca6849ae3a6f5fff47d5b`
+  (`Bootstrap plugin without ensurepip`)
+- AAR chain startup preflight and clearer subprocess diagnostics: `61257c2`
+- AutoData implementation: `plugin/autodata/scripts/bootstrap.py`
 
 ## Add a trusted AAR approval bridge for native AutoData gates
 
