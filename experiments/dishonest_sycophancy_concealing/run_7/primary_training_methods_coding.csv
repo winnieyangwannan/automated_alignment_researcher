@@ -1,0 +1,72 @@
+phase,method,candidate_submissions,primary_training_method,evidence
+original,anchored_belief_calib,2,Self-distillation objective (forward KL),forward-KL objective to the frozen base distribution
+original,bdpa_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,bdpa_v2,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,belief_calib_distill,3,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,calib_belief_distill,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,bdrd_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,cdhc_v1,2,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,cshc_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,dcc_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,ktcc_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,swap_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,caspr_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,fsr_selfconf,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,mdna_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,pdas_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,skca_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,skcfr_sft,2,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,faithful_anchor_sft,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,faithful_calib_dpo,1,Preference optimization (DPO / ORPO),DPO/ORPO/odds-ratio preference objective in method source
+original,faithful_report_dpo,2,Preference optimization (DPO / ORPO),DPO/ORPO/odds-ratio preference objective in method source
+original,faithful_report_sft,2,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,chac_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,coac_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,isca_v1,2,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,ntha_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+original,scgc_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,alpha/egca_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,alpha/egca_v2,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,alpha/egca_v3,2,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,alpha/gcsa_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,alpha/gcsa_v2,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,alpha/scec_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,alpha/scec_v2,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,beta/clbh_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,beta/cuesc_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,beta/cvc_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,beta/dmca_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,beta/dmca_v2,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,beta/dpsr_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,beta/fbh_v1,2,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,beta/ffh_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,beta/ptsr_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,delta/ckc_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,delta/dcvc_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,delta/dmcc_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,delta/dmcc_v2,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,delta/dvca_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,delta/gscc_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,delta/gvca_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,delta/scvc_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,epsilon/apr_v1,1,Preference optimization (DPO / ORPO),DPO/ORPO/odds-ratio preference objective in method source
+continuation,epsilon/cfc_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,epsilon/cjc_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,epsilon/csca_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,epsilon/dvca_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,epsilon/dvca_v2,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,epsilon/faithful_anchor_sft,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,epsilon/ntca_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,epsilon/scgc_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,epsilon/scm_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,gamma/bhsa_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,gamma/cgpr_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,gamma/dcap_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,gamma/decsa_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,gamma/fiba_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,gamma/scpo_v1,1,Preference optimization (DPO / ORPO),DPO/ORPO/odds-ratio preference objective in method source
+continuation,gamma/scpo_v2,1,Preference optimization (DPO / ORPO),DPO/ORPO/odds-ratio preference objective in method source
+continuation,gamma/smca_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,gamma/smca_v2,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,gamma/smca_v3,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective
+continuation,gamma/xsca_v1,1,Supervised fine-tuning (SFT),completion-only cross-entropy/NLL objective

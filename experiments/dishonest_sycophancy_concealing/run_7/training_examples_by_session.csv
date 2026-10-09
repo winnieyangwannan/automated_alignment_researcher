@@ -1,0 +1,82 @@
+phase,chain,research_session,attempt_in_session,method,training_records,evidence
+original,alpha,1,1,belief_calib_distill,300,recovered original training log/session summary
+original,alpha,1,2,belief_calib_distill,300,recovered original training log/session summary
+original,alpha,2,1,belief_calib_distill,300,recovered original training log/session summary
+original,alpha,3,1,calib_belief_distill,346,recovered original training log/session summary
+original,alpha,4,1,anchored_belief_calib,,unavailable after NFS loss
+original,alpha,5,1,anchored_belief_calib,,unavailable after NFS loss
+original,alpha,6,1,bdpa_v1,410,recovered original training log/session summary
+original,alpha,7,1,bdpa_v2,,unavailable after NFS loss
+original,beta,1,1,cdhc_v1,116,recovered original training log/session summary
+original,beta,1,2,cdhc_v1,523,recovered original training log/session summary
+original,beta,2,1,ktcc_v1,660,recovered original training log/session summary
+original,beta,3,1,cshc_v1,643,recovered original training log/session summary
+original,beta,4,1,bdrd_v1,,unavailable after NFS loss
+original,beta,5,1,swap_v1,501,recovered original training log/session summary
+original,beta,6,1,dcc_v1,501,recovered original training log/session summary
+original,gamma,1,1,isca_v1,333,recovered original training log/session summary
+original,gamma,1,2,isca_v1,333,recovered original training log/session summary
+original,gamma,2,1,scgc_v1,,unavailable after NFS loss
+original,gamma,3,1,coac_v1,,unavailable after NFS loss
+original,gamma,4,1,chac_v1,548,recovered original training log/session summary
+original,gamma,5,1,ntha_v1,640,recovered original training log/session summary
+original,delta,1,1,skcfr_sft,285,recovered original training log/session summary
+original,delta,1,2,skcfr_sft,285,recovered original training log/session summary
+original,delta,2,1,fsr_selfconf,64,recovered original training log/session summary
+original,delta,3,1,caspr_v1,283,recovered original training log/session summary
+original,delta,4,1,mdna_v1,409,recovered original training log/session summary
+original,delta,5,1,pdas_v1,500,recovered original training log/session summary
+original,delta,6,1,skca_v1,580,recovered original training log/session summary
+original,epsilon,1,1,faithful_report_dpo,141,recovered original training log/session summary
+original,epsilon,2,1,faithful_report_dpo,107,recovered original training log/session summary
+original,epsilon,3,1,faithful_calib_dpo,,unavailable after NFS loss
+original,epsilon,4,1,faithful_report_sft,125,recovered original training log/session summary
+original,epsilon,5,1,faithful_report_sft,135,recovered original training log/session summary
+original,epsilon,6,1,faithful_anchor_sft,181,recovered original training log/session summary
+continuation,alpha,8,1,scec_v1,294,durable train job log
+continuation,alpha,9,1,scec_v2,242,durable train job log
+continuation,alpha,10,1,egca_v1,241,durable train job log
+continuation,alpha,11,1,egca_v2,201,durable train job log
+continuation,alpha,12,1,egca_v3,241,durable train job log
+continuation,alpha,13,1,egca_v3,245,durable train job log
+continuation,alpha,14,1,gcsa_v1,326,durable train job log
+continuation,alpha,15,1,gcsa_v2,335,durable train job log
+continuation,beta,7,1,cuesc_v1,286,durable train job log
+continuation,beta,8,1,cvc_v1,326,durable train job log
+continuation,beta,9,1,dmca_v1,335,durable train job log
+continuation,beta,10,1,dmca_v2,497,durable train job log
+continuation,beta,11,1,dpsr_v1,227,durable train job log
+continuation,beta,12,1,ptsr_v1,230,durable train job log
+continuation,beta,13,1,ffh_v1,246,durable train job log
+continuation,beta,14,1,clbh_v1,309,durable train job log
+continuation,beta,15,1,fbh_v1,270,durable train job log
+continuation,beta,16,1,fbh_v1,272,durable train job log
+continuation,gamma,6,1,bhsa_v1,404,durable train job log
+continuation,gamma,7,1,fiba_v1,174,durable train job log
+continuation,gamma,8,1,dcap_v1,342,durable train job log
+continuation,gamma,9,1,cgpr_v1,411,durable train job log
+continuation,gamma,10,1,xsca_v1,250,durable train job log
+continuation,gamma,11,1,decsa_v1,260,durable train job log
+continuation,gamma,12,1,smca_v1,274,durable train job log
+continuation,gamma,13,1,smca_v2,311,durable train job log
+continuation,gamma,14,1,smca_v3,298,durable train job log
+continuation,gamma,15,1,scpo_v1,288,durable train job log
+continuation,gamma,16,1,scpo_v2,284,durable train job log
+continuation,delta,7,1,ckc_v1,415,durable train job log
+continuation,delta,8,1,dmcc_v1,446,durable train job log
+continuation,delta,9,1,dmcc_v2,363,durable train job log
+continuation,delta,10,1,scvc_v1,300,durable train job log
+continuation,delta,11,1,gscc_v1,279,durable train job log
+continuation,delta,12,1,dvca_v1,220,durable train job log
+continuation,delta,13,1,dcvc_v1,296,durable train job log
+continuation,delta,14,1,gvca_v1,247,durable train job log
+continuation,epsilon,7,1,faithful_anchor_sft,178,durable train job log
+continuation,epsilon,8,1,ntca_v1,190,durable train job log
+continuation,epsilon,9,1,csca_v1,206,durable train job log
+continuation,epsilon,10,1,cjc_v1,298,durable train job log
+continuation,epsilon,11,1,scm_v1,234,durable train job log
+continuation,epsilon,12,1,cfc_v1,223,durable train job log
+continuation,epsilon,13,1,apr_v1,208,durable train job log
+continuation,epsilon,14,1,scgc_v1,271,durable train job log
+continuation,epsilon,15,1,dvca_v1,288,durable train job log
+continuation,epsilon,16,1,dvca_v2,272,durable train job log

@@ -31,11 +31,31 @@ def cmd_agent(args, remaining):
     """Launch autonomous research agent."""
     import asyncio
 
-    cli_path = os.getenv("CLAUDE_CLI_PATH") or shutil.which("claude")
-    if not os.getenv("ANTHROPIC_API_KEY") and not (
-        cli_path and os.path.isfile(cli_path) and os.access(cli_path, os.X_OK)
-    ):
-        print("Error: agent mode requires ANTHROPIC_API_KEY or an executable Claude CLI")
+    backend = getattr(args, "backend", None) or os.getenv(
+        "AAR_AGENT_BACKEND", "claude"
+    )
+    backend = backend.strip().lower()
+    if backend == "claude":
+        cli_path = os.getenv("CLAUDE_CLI_PATH") or shutil.which("claude")
+        if not os.getenv("ANTHROPIC_API_KEY") and not (
+            cli_path and os.path.isfile(cli_path) and os.access(cli_path, os.X_OK)
+        ):
+            print("Error: agent mode requires ANTHROPIC_API_KEY or an executable Claude CLI")
+            sys.exit(1)
+        model = getattr(args, "model", None) or os.getenv(
+            "AAR_AGENT_MODEL", "claude-opus-4-8"
+        )
+    elif backend == "kimi":
+        cli_path = os.getenv("KIMI_CLI_PATH") or shutil.which("kimi")
+        if not (cli_path and os.path.isfile(cli_path) and os.access(cli_path, os.X_OK)):
+            print("Error: Kimi agent mode requires an executable KIMI_CLI_PATH or kimi on PATH")
+            sys.exit(1)
+        model = (
+            getattr(args, "model", None)
+            or os.getenv("KIMI_AGENT_MODEL")
+        )
+    else:
+        print("Error: --backend must be claude or kimi")
         sys.exit(1)
 
     local_mode = getattr(args, 'local', False)
@@ -65,7 +85,8 @@ def cmd_agent(args, remaining):
         idea_name=args.idea_name or "unknown",
         max_runtime_seconds=args.max_runtime,
         max_iterations=getattr(args, "max_iterations", None),
-        model=args.model,
+        model=model,
+        backend=backend,
         local_mode=local_mode,
     )
     result = asyncio.run(loop.run())
@@ -163,7 +184,17 @@ Examples:
                               help="Stop after this many iterations (= sessions)")
     agent_parser.add_argument("--max-runtime", type=int, default=5*24*3600,
                               help="Max runtime in seconds (default: 5 days)")
-    agent_parser.add_argument("--model", default=os.getenv("AAR_AGENT_MODEL", "claude-opus-4-8"), help="Claude model")
+    agent_parser.add_argument(
+        "--backend",
+        choices=("claude", "kimi"),
+        default=os.getenv("AAR_AGENT_BACKEND", "claude"),
+        help="Research agent backend (default: claude)",
+    )
+    agent_parser.add_argument(
+        "--model",
+        default=None,
+        help="Backend model (Claude defaults to claude-opus-4-8; Kimi uses its configured default)",
+    )
     agent_parser.add_argument("--local", action="store_true",
                               help="Local mode: server on localhost, no S3/findings sync")
 

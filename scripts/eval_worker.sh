@@ -164,10 +164,10 @@ chmod 700 "${EVAL_TEAM_DIR}" "${EVAL_TEAM_DIR}/heldout_scores" \
 export HELDOUT_SCORES_DIR="${HELDOUT_SCORES_DIR:-${EVAL_TEAM_DIR}/heldout_scores}"
 export HARNESS_RUNS_DIR="${EVAL_TEAM_DIR}"
 
-# Recovery-safe runs keep each large merged serving checkpoint on the evaluator
-# node while retaining its small provenance manifest on durable attempt storage.
-# The root is derived after Slurm assigns the worker id; marker and free-space
-# gates make later cleanup fail closed.
+# Recovery runs may keep durable state on /storage/home while placing each
+# 62.5-GB merged serving checkpoint on the evaluator node. The root is derived
+# here after Slurm assigns the job id, never supplied as an arbitrary deletion
+# target. A marker and free-space gate make later cleanup fail closed.
 if [ "${EVAL_INFERENCE_BACKEND:-transformers}" = vllm ] && \
    [ "${AAR_VLLM_EPHEMERAL_MERGED:-0}" = 1 ]; then
   _aar_local_parent="${SLURM_TMPDIR:-/tmp}"
@@ -220,10 +220,13 @@ echo "[worker ${WORKER_ID}] draining submissions for suite=${SUITE} (idle-exit $
 publish_terminal_failure() {
   local failure_run_id="$1"
   local failure_reason="$2"
+  local failure_code="${3:-evaluator_rejected}"
   "${PY}" -m aar.eval_pod.failure \
     --scores-dir "${SCORES_DIR}" \
     --run-id "${failure_run_id}" \
     --reason "${failure_reason}" \
+    --stage evaluation \
+    --error-code "${failure_code}" \
     --eval-job-id "${WORKER_ID}"
   rmdir "${CLAIMS}/${failure_run_id}" 2>/dev/null || true
 }
@@ -258,7 +261,10 @@ while true; do
     rid=$(basename "$d")
     [ -f "${d}.submitted" ] || continue
     [ -f "${SCORES_DIR}/${rid}.json" ] && continue          # already scored
-    [ -f "${SCORES_DIR}/${rid}.failed.json" ] && continue   # terminal eval failure
+    if [ -f "${SCORES_DIR}/${rid}.failed.json" ] && \
+       [ "${AAR_EVAL_RETRY_FAILED:-0}" != 1 ]; then
+      continue                                                # terminal unless explicitly retried
+    fi
     # Atomic claim: exactly one worker's mkdir succeeds for a given rid, so
     # parallel workers never double-score. (Claims live in the eval-writable
     # SCORES_DIR so every worker — same OS user — can create them.)
@@ -291,7 +297,8 @@ while true; do
           --source-commit "$(git -C "${REPO}" rev-parse HEAD)"; then
         echo "[worker ${WORKER_ID}] FAILED merge ${rid}"
         publish_terminal_failure "${rid}" \
-          "adapter merge failed; candidate checkpoint is invalid; inspect the evaluator log"
+          "adapter merge failed; candidate checkpoint is invalid; inspect the evaluator log" \
+          "adapter_merge_failed"
         cleanup_ephemeral_merge "${rid}" || exit 2
         did=1; last_work=$(date +%s)
         continue
@@ -299,13 +306,17 @@ while true; do
       [ -s "${merged_model}/.merge-complete.json" ] || {
         echo "[worker ${WORKER_ID}] FAILED missing merge manifest ${rid}"
         publish_terminal_failure "${rid}" \
-          "adapter merge did not produce a complete checkpoint; inspect the evaluator log"
+          "adapter merge did not produce a complete checkpoint; inspect the evaluator log" \
+          "merge_manifest_missing"
         cleanup_ephemeral_merge "${rid}" || exit 2
         did=1; last_work=$(date +%s)
         continue
       }
       if [ "${AAR_VLLM_EPHEMERAL_MERGED:-0}" = 1 ]; then
         manifest_copy="${EVAL_TEAM_DIR}/merge_manifests/${rid}.json"
+        if [ -e "${manifest_copy}" ]; then
+          manifest_copy="${EVAL_TEAM_DIR}/merge_manifests/${rid}.retry-${WORKER_ID}.json"
+        fi
         manifest_tmp="${manifest_copy}.tmp.${WORKER_ID}"
         cp -- "${merged_model}/.merge-complete.json" "${manifest_tmp}"
         chmod 600 "${manifest_tmp}"
@@ -330,7 +341,16 @@ while true; do
       # handoff (no item data or partial scores) so the chain can record the
       # rejected iteration and pivot to a new method.
       publish_terminal_failure "${rid}" \
-        "evaluator rejected the candidate; inspect the evaluator job log"
+        "evaluator rejected the candidate; inspect the evaluator job log" \
+        "evaluator_runtime_failed"
+    fi
+    if [ "${AAR_VLLM_EPHEMERAL_MERGED:-0}" = 1 ]; then
+      if [ ! -f "${SCORES_DIR}/${rid}.json" ] && \
+         [ ! -f "${SCORES_DIR}/${rid}.failed.json" ]; then
+        echo "[worker] ERROR: refusing cleanup before terminal handoff for ${rid}" >&2
+        exit 2
+      fi
+      cleanup_ephemeral_merge "${rid}" || exit 2
     fi
     if [ "${AAR_VLLM_EPHEMERAL_MERGED:-0}" = 1 ]; then
       if [ ! -f "${SCORES_DIR}/${rid}.json" ] && \

@@ -266,23 +266,35 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
 fi
 
 # --- agent authentication + web mode ---
-# Match the working FAIR librarian route: prefer Meta's authenticated Claude CLI
-# when it advertises secure-internet mode. The integrity monitor uses Claude
-# Opus 4.8 through FAIR Model API by default; its key is moved to a
-# monitor-specific name so the internet-enabled agent child cannot use it.
-if [ -z "${CLAUDE_CLI_PATH:-}" ]; then
-  CLAUDE_CLI_PATH="$(command -v claude || true)"
-fi
+# Claude remains the default. Kimi is selected only through
+# AAR_AGENT_BACKEND=kimi and uses the Kimi CLI's own configured authentication.
+_agent_backend="${AAR_AGENT_BACKEND:-claude}"
 _requested_web="${AAR_WEB_MODE:-auto}"
 case "${_requested_web}" in auto|meta_secure|native_web) ;; *)
   echo "[aar] ERROR: AAR_WEB_MODE must be auto, meta_secure, or native_web" >&2; exit 2;;
 esac
 _detected_web=native_web
-if [ -n "${CLAUDE_CLI_PATH:-}" ] && [ -x "${CLAUDE_CLI_PATH}" ]; then
-  _cli_help="$("${CLAUDE_CLI_PATH}" --help 2>&1 || true)"
-  case "${_cli_help}" in *--secure-internet-mode*) _detected_web=meta_secure;; esac
-  unset _cli_help
-fi
+case "${_agent_backend}" in
+  claude)
+    if [ -z "${CLAUDE_CLI_PATH:-}" ]; then
+      CLAUDE_CLI_PATH="$(command -v claude || true)"
+    fi
+    if [ -n "${CLAUDE_CLI_PATH:-}" ] && [ -x "${CLAUDE_CLI_PATH}" ]; then
+      _cli_help="$("${CLAUDE_CLI_PATH}" --help 2>&1 || true)"
+      case "${_cli_help}" in *--secure-internet-mode*) _detected_web=meta_secure;; esac
+      unset _cli_help
+    fi
+    ;;
+  kimi)
+    if [ -z "${KIMI_CLI_PATH:-}" ]; then
+      KIMI_CLI_PATH="$(command -v kimi || true)"
+    fi
+    [ -x "${KIMI_CLI_PATH:-}" ] || { echo "[aar] ERROR: Kimi backend requires KIMI_CLI_PATH or kimi on PATH" >&2; exit 2; }
+    [ "${_requested_web}" != meta_secure ] || { echo "[aar] ERROR: meta_secure web mode is Claude-only" >&2; exit 2; }
+    export KIMI_CLI_PATH
+    ;;
+  *) echo "[aar] ERROR: AAR_AGENT_BACKEND must be claude or kimi" >&2; exit 2;;
+esac
 if [ "${_requested_web}" = auto ]; then
   export AAR_WEB_MODE="${_detected_web}"
 else
@@ -308,16 +320,16 @@ case "${AAR_MONITOR_BACKEND}" in
     ;;
   *) echo "[aar] ERROR: AAR_MONITOR_BACKEND must be model_api or anthropic" >&2; exit 2;;
 esac
-if [ "${AAR_WEB_MODE}" = meta_secure ]; then
+if [ "${_agent_backend}" = claude ] && [ "${AAR_WEB_MODE}" = meta_secure ]; then
   [ -x "${CLAUDE_CLI_PATH:-}" ] || { echo "[aar] ERROR: meta_secure requires an executable Claude CLI" >&2; exit 2; }
   [ -x "${REPO}/scripts/aar-paper-search" ] || { echo "[aar] ERROR: paper-search helper is not executable" >&2; exit 2; }
   export CLAUDE_CLI_PATH META_CLAUDE_SECURE_INTERNET_MODE=1
   unset ANTHROPIC_API_KEY
-elif [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+elif [ "${_agent_backend}" = claude ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   echo "[aar] ERROR: native_web mode requires ANTHROPIC_API_KEY" >&2
   exit 2
 fi
-unset _requested_web _detected_web
+unset _agent_backend _requested_web _detected_web
 
 # The research model has Bash/Read access, so same-UID environment
 # scrubbing is insufficient by itself.  Put Claude Code in a mount/PID
@@ -371,6 +383,18 @@ CHAIN_TAG="$(printf '%s' "${MODEL:-qwen}-${SEED}" | tr -cs 'A-Za-z0-9' '_' | sed
 export AAR_AGENT_LOG_PATH="${SESSION_LOGS_DIR}/AGENT_LOG_${CHAIN_TAG}.md"
 mkdir -p "${TEAM_DIR}/timings"
 export AAR_PHASE_TIMINGS_PATH="${TEAM_DIR}/timings/chain_${CHAIN_TAG}.jsonl"
+if [ ! -f "${AAR_AGENT_LOG_PATH}" ] && [ -n "${AAR_RECOVERED_AGENT_LOG_DIR:-}" ]; then
+  _recovered_log_dir="$(realpath -e -- "${AAR_RECOVERED_AGENT_LOG_DIR}")"
+  _recovered_log="${_recovered_log_dir}/AGENT_LOG_${CHAIN_TAG}.md"
+  [ -f "${_recovered_log}" ] || {
+    echo "[aar] ERROR: recovered agent log is missing for ${CHAIN_TAG}" >&2
+    exit 2
+  }
+  cp -- "${_recovered_log}" "${AAR_AGENT_LOG_PATH}"
+  chmod 600 "${AAR_AGENT_LOG_PATH}"
+  echo "[aar] seeded recovered chain memory from ${_recovered_log}"
+  unset _recovered_log_dir _recovered_log
+fi
 if [ ! -f "${AAR_AGENT_LOG_PATH}" ]; then
   printf '# AGENT_LOG — chain %s\n\n## ITERATION 1 — NO PRIOR HISTORY\nThis chain has run NO prior iterations. You have NO past results, scores, or methods yet.\nDo NOT invent or recall any prior iteration — begin from the literature + leaderboard.\nRecord each iteration below as you complete it.\n' "${SEED}" > "${AAR_AGENT_LOG_PATH}"
 fi
@@ -412,6 +436,9 @@ unset MODEL_API_KEY LLAMA_API_KEY HF_TOKEN HUGGING_FACE_HUB_TOKEN OAI_API OPENAI
 unset ANTHROPIC_API_KEY ANT_high_prio_API ANT_API_KEY HARNESS_ENV
 unset AAR_RUN8_EXECSIDECAR_TOKEN_FILE AAR_RUN8_BROKER_TOKEN_FILE
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN RUNPOD_API_KEY WANDB_API_KEY
+if [ "${AAR_AGENT_BACKEND:-claude}" = kimi ]; then
+  unset ANTHROPIC_API_KEY ANT_high_prio_API ANT_API_KEY CLAUDE_CLI_PATH
+fi
 if [ "${AAR_HIDE_EVAL_CONFIG:-0}" = "1" ]; then
   # The evaluator has already inherited what it needs. Do not advertise the
   # run-specific full suite selection or baseline override to the researcher.

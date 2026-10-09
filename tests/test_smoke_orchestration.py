@@ -62,6 +62,8 @@ class SmokeOrchestrationTest(TestCase):
         self.assertEqual(observed["env_uid"], "smoke-uid")
         self.assertEqual(observed["env_name"], "single-node smoke")
         self.assertEqual(observed["max_iterations"], 1)
+        self.assertEqual(observed["backend"], "claude")
+        self.assertEqual(observed["model"], "claude-test")
 
     def test_max_iterations_caps_started_sessions_even_after_failure(self):
         sdk = types.ModuleType("claude_agent_sdk")

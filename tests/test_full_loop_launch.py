@@ -17,6 +17,65 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FullLoopLaunchTest(unittest.TestCase):
+    def test_shared_team_launcher_requires_method_safety_for_claude_and_kimi(self) -> None:
+        launcher = (ROOT / "scripts" / "launch_team.sh").read_text()
+        safety = (ROOT / "scripts" / "require_method_safety.sh").read_text()
+
+        self.assertIn('source "${REPO}/scripts/require_method_safety.sh"', launcher)
+        for name in (
+            "AAR_REQUIRE_METHOD_CONTRACT",
+            "AAR_REQUIRE_METHOD_SMOKE",
+            "AAR_PRETRAIN_SMOKE",
+            "AAR_WRITE_TRAIN_FAILURE_MARKER",
+            "AAR_REQUIRE_TRAIN_RECEIPT",
+        ):
+            self.assertIn(name, safety)
+        self.assertIn("AAR_REQUIRE_GEMMA4_TARGETS", safety)
+        self.assertNotIn("AAR_AGENT_BACKEND", safety)
+
+    def test_method_safety_defaults_on_and_cannot_be_disabled(self) -> None:
+        script = ROOT / "scripts" / "require_method_safety.sh"
+        command = (
+            f'source "{script}"; '
+            "printf '%s ' \"$AAR_REQUIRE_METHOD_CONTRACT\" "
+            "\"$AAR_REQUIRE_METHOD_SMOKE\" \"$AAR_PRETRAIN_SMOKE\" "
+            "\"$AAR_WRITE_TRAIN_FAILURE_MARKER\" \"$AAR_REQUIRE_TRAIN_RECEIPT\""
+        )
+        enabled = subprocess.run(
+            ["bash", "-c", command], text=True, capture_output=True, check=False
+        )
+        self.assertEqual(enabled.returncode, 0, enabled.stderr)
+        self.assertEqual(enabled.stdout.strip(), "1 1 1 1 1")
+
+        disabled_env = os.environ.copy()
+        disabled_env["AAR_AGENT_BACKEND"] = "claude"
+        disabled_env["AAR_PRETRAIN_SMOKE"] = "0"
+        disabled = subprocess.run(
+            ["bash", "-c", f'source "{script}"'],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=disabled_env,
+        )
+        self.assertEqual(disabled.returncode, 2)
+        self.assertIn("AAR_PRETRAIN_SMOKE must be 1", disabled.stderr)
+
+    def test_method_safety_requires_gemma_target_validation(self) -> None:
+        script = ROOT / "scripts" / "require_method_safety.sh"
+        completed = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f'source "{script}"; printf %s "$AAR_REQUIRE_GEMMA4_TARGETS"',
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            env={**os.environ, "TARGET_MODEL_PATH": "/models/google/gemma-4-31B-it"},
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout, "1")
+
     def test_fair_slurm_defaults_and_no_agent_gpu(self) -> None:
         chain = (ROOT / "scripts" / "slurm_aar_chain.sh").read_text()
         train = (ROOT / "scripts" / "slurm_train_submit.sh").read_text()
@@ -58,8 +117,12 @@ class FullLoopLaunchTest(unittest.TestCase):
             tmp = Path(directory)
             fake_bin = tmp / "bin"
             fake_bin.mkdir()
+            sbatch_args = tmp / "sbatch-args"
             sbatch = fake_bin / "sbatch"
-            sbatch.write_text("#!/bin/bash\nprintf '%s\\n' \"$*\"\n")
+            sbatch.write_text(
+                f"#!/bin/bash\nprintf '%s\\n' \"$*\" > {sbatch_args}\n"
+                "printf '12345\\n'\n"
+            )
             sbatch.chmod(0o755)
             team = tmp / "team"
             (team / "logs").mkdir(parents=True)
@@ -72,6 +135,8 @@ class FullLoopLaunchTest(unittest.TestCase):
                     "AAR_SLURM_ACCOUNT": "ram",
                     "AAR_SLURM_PARTITION": "g3",
                     "AAR_TRAIN_QOS": "g3_ram_high",
+                    "AAR_TRAIN_MEM": "128G",
+                    "AAR_TRAIN_TIME": "00:15:00",
                     "PATH": f"{fake_bin}:/usr/bin:/bin",
                 }
             )
@@ -84,12 +149,150 @@ class FullLoopLaunchTest(unittest.TestCase):
                 env=env,
             )
 
-            self.assertIn("--account=ram", completed.stdout)
-            self.assertIn("--partition=g3", completed.stdout)
-            self.assertIn("--qos=g3_ram_high", completed.stdout)
-            self.assertIn("--gpus=1", completed.stdout)
-            self.assertIn(str(team / "logs" / "train-%j.out"), completed.stdout)
-            self.assertIn("slurm_train_submit.sh idea run-1", completed.stdout)
+            submitted = sbatch_args.read_text()
+            self.assertEqual(completed.stdout.strip(), "12345")
+            self.assertIn("--account=ram", submitted)
+            self.assertIn("--partition=g3", submitted)
+            self.assertIn("--qos=g3_ram_high", submitted)
+            self.assertIn("--gpus=1", submitted)
+            self.assertIn("--mem=128G", submitted)
+            self.assertIn("--time=00:15:00", submitted)
+            self.assertIn(str(team / "logs" / "train-%j.out"), submitted)
+            self.assertIn("slurm_train_submit.sh idea run-1", submitted)
+
+    def test_opt_in_receipt_makes_training_submission_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            fake_bin = tmp / "bin"
+            fake_bin.mkdir()
+            calls = tmp / "sbatch-calls"
+            sbatch = fake_bin / "sbatch"
+            sbatch.write_text(
+                f"#!/bin/bash\nprintf 'call\\n' >> {calls}\nprintf '12345\\n'\n"
+            )
+            sbatch.chmod(0o755)
+            team = tmp / "team"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AAR_REPO": str(ROOT),
+                    "HARNESS_ENV": str(tmp / "missing.env"),
+                    "TEAM_DIR": str(team),
+                    "AAR_SLURM_ACCOUNT": "ram",
+                    "AAR_SLURM_PARTITION": "g3",
+                    "AAR_TRAIN_QOS": "g3_ram_high",
+                    "AAR_REQUIRE_TRAIN_RECEIPT": "1",
+                    "PATH": f"{fake_bin}:/usr/bin:/bin",
+                }
+            )
+            command = [
+                "bash",
+                str(ROOT / "scripts" / "submit_train_job.sh"),
+                "idea",
+                "run-1",
+            ]
+
+            first = subprocess.run(
+                command, check=True, capture_output=True, text=True, env=env
+            )
+            second = subprocess.run(
+                command, check=True, capture_output=True, text=True, env=env
+            )
+
+            self.assertEqual(first.stdout.strip(), "12345")
+            self.assertEqual(second.stdout.strip(), "12345")
+            self.assertEqual(calls.read_text().splitlines(), ["call"])
+            self.assertEqual(
+                (team / ".train_submissions" / "run-1.env").read_text(),
+                "run_id=run-1\njob_id=12345\n",
+            )
+
+    def test_first_concurrency_limited_submission_initializes_lanes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            fake_bin = tmp / "bin"
+            fake_bin.mkdir()
+            sbatch = fake_bin / "sbatch"
+            sbatch.write_text("#!/bin/bash\nprintf '12345\\n'\n")
+            sbatch.chmod(0o755)
+            team = tmp / "team"
+            (team / "logs").mkdir(parents=True)
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AAR_REPO": str(ROOT),
+                    "HARNESS_ENV": str(tmp / "missing.env"),
+                    "TEAM_DIR": str(team),
+                    "TEAM_ID": "test-team",
+                    "AAR_SLURM_ACCOUNT": "ram",
+                    "AAR_SLURM_PARTITION": "g3",
+                    "AAR_TRAIN_QOS": "g3_ram_high",
+                    "AAR_MAX_CONCURRENT_TRAIN_JOBS": "5",
+                    "PATH": f"{fake_bin}:/usr/bin:/bin",
+                }
+            )
+
+            completed = subprocess.run(
+                ["bash", str(ROOT / "scripts" / "submit_train_job.sh"), "idea", "run-1"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertEqual(completed.stdout.strip(), "12345")
+            self.assertEqual(
+                (team / ".train_dependency_lanes").read_text().splitlines(),
+                ["12345", "", "", "", ""],
+            )
+            self.assertEqual(
+                (team / ".train_dependency_lanes.cursor").read_text(), "1\n"
+            )
+
+    def test_opt_in_contract_gate_rejects_before_sbatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            fake_bin = tmp / "bin"
+            fake_bin.mkdir()
+            called = tmp / "sbatch-called"
+            sbatch = fake_bin / "sbatch"
+            sbatch.write_text(f"#!/bin/bash\ntouch {called}\nprintf '12345\\n'\n")
+            sbatch.chmod(0o755)
+            team = tmp / "team"
+            method = team / "methods" / "bad" / "run.py"
+            method.parent.mkdir(parents=True)
+            method.write_text("def run_experiment(config):\n    return {}\n")
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AAR_REPO": str(ROOT),
+                    "HARNESS_ENV": str(tmp / "missing.env"),
+                    "HARNESS_PY": sys.executable,
+                    "TEAM_DIR": str(team),
+                    "AAR_IDEAS_DIR": str(team / "methods"),
+                    "AAR_REQUIRE_METHOD_CONTRACT": "1",
+                    "AAR_SLURM_ACCOUNT": "ram",
+                    "AAR_SLURM_PARTITION": "g3",
+                    "AAR_TRAIN_QOS": "g3_ram_high",
+                    "PATH": f"{fake_bin}:/usr/bin:/bin",
+                }
+            )
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(ROOT / "scripts" / "submit_train_job.sh"),
+                    "bad",
+                    "run-1",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertFalse(called.exists())
 
     def test_eval_launcher_caps_honesty_worker_to_requested_gpus(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -295,6 +498,19 @@ class FullLoopLaunchTest(unittest.TestCase):
             clear=True,
         ):
             self.assertEqual(monitor._monitor_model_api_key(), "monitor-only")
+
+    def test_monitor_allows_declared_stronger_generator_models(self) -> None:
+        policy = monitor._desiderata()
+        agent_prompt = (ROOT / "aar" / "research_loop" / "prompt_safety.jinja2").read_text()
+
+        self.assertIn("including models stronger than the target", policy)
+        self.assertIn("DECLARED, REPRODUCIBLE TRAINING-DATA PROVENANCE", policy)
+        self.assertNotIn("NO LARGER-MODEL DISTILLATION", policy)
+        self.assertNotIn("D3", policy)
+        self.assertIn("including stronger models", agent_prompt)
+        self.assertIn("External model generation is allowed when declared", agent_prompt)
+        self.assertNotIn("You may NOT use a larger/stronger model", agent_prompt)
+        self.assertNotIn("No distillation from a larger model", agent_prompt)
 
     def test_monitor_uses_model_api_opus_backend(self) -> None:
         response = '{"approved":true,"violations":[],"reasoning":"ok"}'

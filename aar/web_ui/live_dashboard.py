@@ -452,10 +452,22 @@ def _headline(f: dict):
 
 
 def _chain_of(f: dict) -> str:
+    # Parallel AAR ideas use ``<model>-explore-<chain>`` names.  Parse the
+    # chain instead of keeping a fixed allowlist so dashboards with more than
+    # the original alpha/beta/gamma trio attribute every result correctly.
+    idea_name = f.get("idea_name") or ""
+    marker = "-explore-"
+    if marker in idea_name:
+        chain = idea_name.rsplit(marker, 1)[1]
+        if chain and re.fullmatch(r"[A-Za-z0-9_.-]+", chain):
+            return chain
+
+    # Older findings may omit idea_name but retain a UID formed by appending a
+    # numeric timestamp to the idea name.
     uid = f.get("idea_uid") or ""
-    for c in ("alpha", "beta", "gamma"):
-        if c in uid:
-            return c
+    match = re.search(r"-explore-([A-Za-z0-9_.-]+?)(?:-\d+)?$", uid)
+    if match:
+        return match.group(1)
     return "team"
 
 

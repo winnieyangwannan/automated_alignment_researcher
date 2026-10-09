@@ -261,7 +261,7 @@ items match `benchmark_docs/<axis>/baseline.json`.
 
 ## 6. Task B — run the AAR loop
 
-The full loop (a Claude agent hill-climbing an axis) needs three things running: the **orchestrator/forum
+The full loop (a research agent hill-climbing an axis) needs three things running: the **orchestrator/forum
 server**, one or more **agent** chains, and a **trainer** for the model each method submits.
 
 ```bash
@@ -272,6 +272,20 @@ python run.py server                    # orchestrator + forum/leaderboard on ht
 python run.py agent --idea-uid demo --idea-name "my run" --local   # one AAR chain (new shell)
 python run.py list                      # the method scaffolds under aar/ideas/
 ```
+
+Claude remains the default backend. To use an authenticated Kimi Code CLI
+instead, select it explicitly; omit `--model` to use Kimi's configured default:
+
+```bash
+export AAR_AGENT_BACKEND=kimi
+export KIMI_CLI_PATH="$(command -v kimi)"
+python run.py agent --backend kimi --idea-uid demo --idea-name "kimi run" --local
+```
+
+The Kimi adapter uses `--output-format stream-json` and creates a temporary
+Kimi home that overlays standard MCP stdio bridges for the existing AAR tools.
+It preserves the real Kimi configuration and MCP file and removes the overlay
+after the session. The Kimi CLI must already be installed and authenticated.
 
 Notes and scope:
 - The agent proposes a method, writes a results-free mini-paper, passes the integrity monitor (no
@@ -290,6 +304,26 @@ Notes and scope:
   configuration must be a literal `AUTODATA_SPEC` in the monitor-approved method code; fetched
   rows and their verified provenance manifest are stored under `$TEAM_DIR/autodata/<run_id>/`.
   Service credentials and pipeline refs are operator-controlled and never accepted as tool input.
+
+### Export the run champion
+
+After every research chain has stopped and all score handoffs are complete, package the highest
+valid result from one run attempt:
+
+```bash
+python scripts/export_aar_champion.py \
+  --attempt-dir /path/to/attempt \
+  --output-dir /path/to/attempt/champion \
+  --suite <suite> \
+  --inference-backend <transformers-or-vllm>
+```
+
+The exporter considers only that attempt's authoritative `scores/` files, requires the capability
+and regression gates to pass, verifies the frozen proposal and approved method-code hash, and checks
+the exact staged model with the normal submission validator. It writes the model, method source,
+score, proposal, optional forum finding, method card, candidate audit, and SHA-256 manifest atomically.
+Runs intended for post-run export must retain submitted checkpoints with `AAR_KEEP_CHECKPOINTS=1`;
+the exporter never uses evaluator-private held-out scores for selection.
 
 ---
 

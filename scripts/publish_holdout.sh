@@ -56,6 +56,14 @@ if [ -n "${AAR_SUITE_BENCHMARKS:-}" ]; then
   _ONLY_ARGS=(--only "${_only_names[@]}")
   echo "[publish] run-specific benchmark filter: ${_only_names[*]}"
 fi
+_SIZE_ARGS=()
+if [ -n "${AAR_PUBLISH_FORCE_N:-}" ]; then
+  case "${AAR_PUBLISH_FORCE_N}" in
+    ''|*[!0-9]*|0) echo "[publish] ERROR: AAR_PUBLISH_FORCE_N must be a positive integer" >&2; exit 2;;
+  esac
+  _SIZE_ARGS=(--force-n "${AAR_PUBLISH_FORCE_N}")
+  echo "[publish] run-specific item cap: ${AAR_PUBLISH_FORCE_N}"
+fi
 
 if [ -e "${HOLDOUT_DIR}/${SUITE_NAME}" ] && [ "${AAR_ALLOW_HOLDOUT_OVERWRITE:-0}" != "1" ]; then
   echo "[publish] ERROR: refusing to overwrite retained suite ${HOLDOUT_DIR}/${SUITE_NAME}" >&2
@@ -71,7 +79,7 @@ fi
 # 1) Holdout suite YAML + data (SECRET; includes the held-out) into the mode-700 holdout.
 "${PY}" "${REPO}/scripts/publish_suite.py" \
     --suite "${SUITE_NAME}" --target-model "${TARGET_MODEL}" --holdout-dir "${HOLDOUT_DIR}" \
-    "${_ONLY_ARGS[@]}"
+    "${_ONLY_ARGS[@]}" "${_SIZE_ARGS[@]}"
 
 # 2) Research-readable prompt baselines (held-out EXCLUDED), authoritative per-model.
 mkdir -p "$(dirname "${BASELINES_PATH}")"

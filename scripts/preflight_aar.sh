@@ -56,16 +56,28 @@ case "${SUITE_NAME}" in
 esac
 pass "axis/model contract: ${SUITE_NAME} / ${TARGET_MODEL}"
 
-CLI="${CLAUDE_CLI_PATH:-$(command -v claude || true)}"
-[ -x "${CLI:-}" ] || fail "Claude CLI is missing"
-"${CLI}" --help 2>&1 | grep -q -- '--secure-internet-mode' || fail "Claude CLI lacks secure-internet support"
-[ -x "${REPO}/scripts/aar-paper-search" ] || fail "bounded paper-search helper is missing"
-pass "Meta Claude CLI and bounded paper search"
-
 MONITOR_BACKEND="${AAR_MONITOR_BACKEND:-model_api}"
 JUDGE_BACKEND="${JUDGE_BACKEND:-model_api}"
-[ "${AAR_AGENT_MODEL:-claude-opus-4-8}" = claude-opus-4-8 ] || fail "research agent must use claude-opus-4-8"
-pass "research agent model is claude-opus-4-8"
+AGENT_BACKEND="${AAR_AGENT_BACKEND:-claude}"
+case "${AGENT_BACKEND}" in
+  claude)
+    CLI="${CLAUDE_CLI_PATH:-$(command -v claude || true)}"
+    [ -x "${CLI:-}" ] || fail "Claude CLI is missing"
+    "${CLI}" --help 2>&1 | grep -q -- '--secure-internet-mode' || fail "Claude CLI lacks secure-internet support"
+    [ -x "${REPO}/scripts/aar-paper-search" ] || fail "bounded paper-search helper is missing"
+    [ "${AAR_AGENT_MODEL:-claude-opus-4-8}" = claude-opus-4-8 ] || fail "research agent must use claude-opus-4-8"
+    pass "Meta Claude CLI and bounded paper search; model=claude-opus-4-8"
+    ;;
+  kimi)
+    CLI="${KIMI_CLI_PATH:-$(command -v kimi || true)}"
+    [ -x "${CLI:-}" ] || fail "Kimi CLI is missing"
+    _KIMI_HELP="$("${CLI}" --help 2>&1 || true)"
+    case "${_KIMI_HELP}" in *--prompt*--output-format*) ;; *) fail "Kimi CLI lacks structured prompt mode";; esac
+    unset _KIMI_HELP
+    pass "Kimi CLI structured prompt mode; model=${KIMI_AGENT_MODEL:-configured default}"
+    ;;
+  *) fail "unsupported AAR_AGENT_BACKEND=${AGENT_BACKEND}";;
+esac
 case "${MONITOR_BACKEND}" in
   model_api)
     [ -n "${MODEL_API_KEY:-}" ] || fail "MODEL_API_KEY is missing for monitor"

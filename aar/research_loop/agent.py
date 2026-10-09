@@ -1,5 +1,5 @@
 """
-Autonomous W2S research agent using Claude Agent SDK.
+Autonomous W2S research agent with Claude and Kimi backends.
 
 Merges agent_loop, base_agent, and stop_conditions into a single file.
 """
@@ -51,6 +51,7 @@ from .autodata_plugin import resolve_autodata_plugin
 from .tools.server_api_tools import create_server_api_tools_server
 from .tools.prior_work_tools import create_prior_work_tools_server
 from .tools.findings_sync import FindingsSync
+from .kimi_agent import KimiAgent
 
 
 # These values belong to the operator-side integrity monitor and other trusted
@@ -432,8 +433,6 @@ class BaseAgent:
         overloaded_retries = 0
 
         while True:
-            iteration_count = 0
-            messages = []
             try:
                 return await self._execute_once(task, start_time)
             except Exception as e:
@@ -551,7 +550,7 @@ class AutonomousAgentLoop:
     """
     Main agent loop for autonomous W2S research.
 
-    Each iteration is a fresh Claude session. Agent reads/writes findings.json
+    Each iteration is a fresh agent session. Agent reads/writes findings.json
     directly. Only stop condition: timeout.
     """
 
@@ -564,7 +563,8 @@ class AutonomousAgentLoop:
         max_iterations: Optional[int] = None,
         logs_dir: Optional[Path] = None,
         s3_bucket: Optional[str] = None,
-        model: str = os.getenv("AAR_AGENT_MODEL", "claude-opus-4-8"),
+        model: Optional[str] = None,
+        backend: str = os.getenv("AAR_AGENT_BACKEND", "claude"),
         local_mode: bool = False,
     ):
         if not idea_uid:
@@ -587,21 +587,30 @@ class AutonomousAgentLoop:
             int(os.getenv("MAX_ITERATIONS")) if os.getenv("MAX_ITERATIONS") else None)
         self.s3_bucket = s3_bucket or S3_BUCKET
         self.s3_prefix = f"{S3_IDEAS_PREFIX}{idea_uid}/{self.run_id}/"
-        self.model = model
+        self.backend = backend.strip().lower()
+        if self.backend not in ("claude", "kimi"):
+            raise ValueError("backend must be 'claude' or 'kimi'")
+        self.model = model or (
+            os.getenv("AAR_AGENT_MODEL", "claude-opus-4-8")
+            if self.backend == "claude"
+            else os.getenv("KIMI_AGENT_MODEL")
+        )
 
         self.stop_checker = _StopChecker(max_runtime=self.max_runtime_seconds)
 
-        # Create MCP servers (server API tools always needed — in local mode, server runs on localhost)
+        # Claude uses SDK-local MCP servers. Kimi starts standard stdio MCP
+        # bridges in its isolated CLI configuration.
         self.mcp_servers = {}
-        try:
-            self.mcp_servers["server-api-tools"] = create_server_api_tools_server()
-        except Exception as e:
-            print(f"[Init] Warning: server API tools unavailable: {e}")
-        if not local_mode:
+        if self.backend == "claude":
             try:
-                self.mcp_servers["prior-work-tools"] = create_prior_work_tools_server()
+                self.mcp_servers["server-api-tools"] = create_server_api_tools_server()
             except Exception as e:
-                print(f"[Init] Warning: prior work tools unavailable: {e}")
+                print(f"[Init] Warning: server API tools unavailable: {e}")
+            if not local_mode:
+                try:
+                    self.mcp_servers["prior-work-tools"] = create_prior_work_tools_server()
+                except Exception as e:
+                    print(f"[Init] Warning: prior work tools unavailable: {e}")
         # AutoData is an upstream local Claude plugin. AAR verifies the pinned
         # checkout, then lets the agent use the plugin's own skill and CLI.
         # No AAR-specific AutoData MCP server or lifecycle wrapper is created.
@@ -630,8 +639,49 @@ class AutonomousAgentLoop:
             self._prompt = resolve_prompt(template_path, resolved_path)
         return self._prompt
 
-    def _create_agent(self, session_id: str, message_callback=None) -> BaseAgent:
+    def _create_agent(self, session_id: str, message_callback=None):
         meta_secure_web = os.getenv("AAR_WEB_MODE", "native_web") == "meta_secure"
+        if getattr(self, "backend", "claude") == "kimi":
+            kimi_system_prompt = (
+                "You are running noninteractively. Complete the entire requested "
+                "research iteration using tools now. Never end with a statement of "
+                "future intent such as 'let me' or 'next I will'. The iteration is "
+                "complete only after a real score result is available and "
+                "share_finding succeeds. Follow the resolved research prompt's "
+                "training/evaluation flow exactly; when it says the asynchronous "
+                "training job produces the score, do not call evaluate_model. "
+                "During initial discovery, call get_literature exactly once with an "
+                "empty input to obtain compact summaries; do not request multiple "
+                "dimensions in parallel. If essential, make at most one focused "
+                "literature follow-up after selecting a method direction."
+            )
+            if meta_secure_web:
+                kimi_system_prompt += (
+                    " Use the repository's bounded arXiv helper for internet research. "
+                    "Do not use curl, wget, or arbitrary network URLs."
+                )
+            return KimiAgent(
+                name=f"autonomous-{session_id}",
+                workspace=self.workspace,
+                model=self.model,
+                cli_path=os.getenv("KIMI_CLI_PATH") or shutil.which("kimi"),
+                message_callback=message_callback,
+                system_prompt=kimi_system_prompt,
+                include_prior_work=not self.local_mode,
+                completion_tool="share_finding",
+                auto_approve=True,
+                force_checkpoint_tools=True,
+                disallowed_tools=[
+                    "CreateGoal",
+                    "UpdateGoal",
+                    "SetGoalBudget",
+                    "TodoList",
+                    "WaitFor",
+                    "Agent",
+                    "AgentSwarm",
+                ],
+            )
+
         autodata_plugin = getattr(self, "autodata_plugin", None)
         allowed_tools = [
             "Read", "Write", "Edit", "Bash", "Glob", "Grep",
@@ -695,6 +745,10 @@ class AutonomousAgentLoop:
         print(f"Autonomous Agent Loop ({mode_str} mode)")
         print(f"  Run ID: {self.run_id}")
         print(f"  Idea: {self.idea_name} ({self.idea_uid})")
+        backend = getattr(self, "backend", "claude")
+        model = getattr(self, "model", "claude-opus-4-8")
+        print(f"  Backend: {backend}")
+        print(f"  Model: {model or 'Kimi configured default'}")
         print(f"  Max Runtime: {self.max_runtime_seconds/3600:.1f}h")
         print(f"  Max Iterations: {self.max_iterations if self.max_iterations is not None else 'unbounded'}")
         print(f"{'='*60}\n")

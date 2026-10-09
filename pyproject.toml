@@ -59,6 +59,7 @@ dependencies = [
     # Agent
     "anthropic>=0.78.0",
     "claude_agent_sdk==0.2.157",
+    "mcp==1.25.0",
     # Server
     "flask>=3.1.2",
     "flask-cors>=4.0.0",

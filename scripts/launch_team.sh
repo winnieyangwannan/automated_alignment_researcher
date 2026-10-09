@@ -51,6 +51,11 @@ RUNTIME_ROOT="${AAR_RUNTIME_ROOT:-${REPO}/_runs}"
 # shellcheck disable=SC1091
 source "${REPO}/scripts/axis_env.sh"   # sets SUITE_NAME, HELD_OUT_BENCH, SAFETY_*, SEED_METHOD, TARGET_MODEL
 SUITE="${SUITE_NAME}"
+# Real research runs must not depend on an experiment-specific launcher to opt
+# into generated-method validation. This applies equally to Claude and Kimi.
+# shellcheck disable=SC1091
+source "${REPO}/scripts/require_method_safety.sh"
+echo "[team] method safety: CPU contract + one-step GPU preflight + failure marker + receipt required"
 if [ "${SUITE}" = "honesty_sycophancy" ]; then
   # Used by literature filtering and to tag papers researchers add during the run.
   export AAR_DIMENSIONS="${AAR_DIMENSIONS:-honesty,sycophancy}"
@@ -73,7 +78,12 @@ MAX_H="${3:-47}"
 # Agent-model tag (claude-opus-4-8 -> opus48): records WHICH research model produced this team —
 # invaluable when a model is retired mid-fleet (cf. claude-fable-5). Hyphen-free so the positional
 # parsers (dashboard.sh cut -f1/-f2; live_dashboard) keep axis=field1, model=field2, agent=field3.
-_AGENT_TAG="$(printf '%s' "${AAR_AGENT_MODEL:-claude-opus-4-8}" | sed 's/^claude-//; s/[^A-Za-z0-9]//g')"
+if [ "${AAR_AGENT_BACKEND:-claude}" = kimi ]; then
+  _AGENT_LABEL="${KIMI_AGENT_MODEL:-kimi-default}"
+else
+  _AGENT_LABEL="${AAR_AGENT_MODEL:-claude-opus-4-8}"
+fi
+_AGENT_TAG="$(printf '%s' "${_AGENT_LABEL}" | sed 's/^claude-//; s/[^A-Za-z0-9]//g')"
 if [ -n "${AAR_TEAM_ID:-}" ]; then
   TEAM_ID="$(printf '%s' "${AAR_TEAM_ID}" | tr -c 'A-Za-z0-9._-' '_')"
   [ "${TEAM_ID}" = "${AAR_TEAM_ID}" ] || {
@@ -331,6 +341,27 @@ if [ "${AAR_START_EVAL_WORKER:-${AAR_FUNCTIONAL_SMOKE:-0}}" = "1" ]; then
 fi
 
 for s in ${SEEDS}; do
+  _seed_max_iters="${MAX_ITERS}"
+  if [ -n "${AAR_MAX_ITERATIONS_BY_SEED:-}" ]; then
+    _seed_budget=''
+    IFS=',' read -r -a _seed_budget_items <<< "${AAR_MAX_ITERATIONS_BY_SEED}"
+    for _seed_budget_item in "${_seed_budget_items[@]}"; do
+      case "${_seed_budget_item}" in
+        "${s}="*) _seed_budget="${_seed_budget_item#*=}";;
+      esac
+    done
+    case "${_seed_budget}" in
+      ''|*[!0-9]*)
+        echo "[team] FATAL: missing or invalid recovered iteration budget for seed ${s}" >&2
+        exit 2
+        ;;
+    esac
+    [ "${_seed_budget}" -ge 1 ] || {
+      echo "[team] FATAL: recovered iteration budget for ${s} must be at least 1" >&2
+      exit 2
+    }
+    _seed_max_iters="${_seed_budget}"
+  fi
   # AXIS + MODEL are already exported at the top of this script, so Slurm's DEFAULT env
   # propagation carries them to the chain (which resolves the axis/model from axis_env.sh).
   # CRITICAL: do NOT write --export="ALL,AXIS=..,MODEL=..". That "ALL,VAR=val" form is
@@ -361,8 +392,9 @@ for s in ${SEEDS}; do
         --job-name="aar-${SUITE}-${MODEL}-${s}" \
         -o "${TEAM_DIR}/logs/%x_%j.out" \
         "${_chain_export_args[@]}" \
-        "${REPO}/scripts/slurm_aar_chain.sh" "explore-${s}" "${MAX_H}" "${MAX_ITERS}" "${TEAM_ID}")
+        "${REPO}/scripts/slurm_aar_chain.sh" "explore-${s}" "${MAX_H}" "${_seed_max_iters}" "${TEAM_ID}")
   echo "[team] chain ${s} -> job ${jid}"
+  echo "[team] chain ${s} session budget ${_seed_max_iters}"
 done
 echo "[team] EVAL SIDE (as eval user): publish the holdout for THIS axis+model, then run the worker"
 echo "[team]   pointed at THIS team's queue. The worker derives the eval-side per-team folder from"

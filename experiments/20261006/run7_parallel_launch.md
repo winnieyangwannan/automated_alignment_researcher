@@ -40,3 +40,69 @@ chains with at most 50 started sessions each, or 250 sessions total.
 
 Planned checks above are not completion claims; final synchronization and
 runtime state are reported from live verification after submission.
+
+## First training-submission recovery
+
+The first approved Run 7 candidate exposed a `set -u` initialization bug in
+`scripts/submit_train_job.sh`: when the per-team dependency-lane state file did
+not yet exist, failed `mapfile` input left `_lanes` undefined before its length
+was read. No Slurm job was submitted by that call. The Delta agent preserved
+the generated method, created the missing state file, and then submitted job
+`1742270` successfully.
+
+Initialize `_lanes` to an empty array before the optional state-file read and
+add a regression test that exercises the first concurrency-limited submission
+with no pre-existing lane file. Validate the focused launch tests and Bash
+syntax, commit on `multi_vllm`, then fast-forward the exact commit from the
+devserver worktree to the isolated HPC worktree through a temporary SSH Git
+ref. Preserve the active Run 7 attempt and all machine-local state.
+
+## Evaluator worker-snapshot recovery
+
+At 01:40 UTC, the first two valid adapters merged successfully but failed
+closed before vLLM startup because the configured shared deployment snapshot
+`aar-gemma-4-31b-it` had been removed externally at approximately 01:35 UTC.
+The Alpha and Epsilon failure JSON files and their completed merged checkpoints
+remain retained. Cancel only the five evaluator jobs so later submissions wait
+instead of receiving the same infrastructure failure; leave all five research
+chains running.
+
+Use the surviving `eval-gemma-4-31b-it` snapshot only after verifying its full
+worker directory is readable and its `worker_vllm.sh` SHA-256 is
+`913c3286e237ed2231c64de200a4bcfc65729292a05c6aa3a88100f8c0248361`, identical
+to the other retained Gemma snapshots. Add a hash-pinned evaluator-only Run 7
+recovery launcher that reuses the existing team queue, starts five new
+four-GPU evaluators, and never removes or overwrites terminal candidate
+artifacts. Fresh research iterations, not evaluator mutation, supply new run
+IDs after the infrastructure failure.
+
+## Second evaluator worker-snapshot recovery
+
+At 06:13 UTC, Alpha's `bdpa_v1` adapter completed training and an evaluator
+atomically merged it into a 13-shard, 62,546,336,448-byte checkpoint. Before
+the benchmark suite started, the evaluator failed closed because the configured
+`eval-gemma-4-31b-it` worker snapshot was unreadable. At 06:14 UTC that snapshot
+was moved into the shared deployment root's `.removed` directory by an external
+operator, so the five live evaluator jobs cannot recover through polling and
+would reject every subsequent candidate at the same preflight check. Preserve
+the BDPA failure JSON, submitted adapter, merged checkpoint, and evaluator log;
+do not count it as a score/result pair.
+
+The replacement snapshot
+`baseline_gemma-4-31b-ib/src/serve_api_v2/worker/worker_vllm.sh` is readable,
+owned by the Run 7 user, and has the already pinned SHA-256
+`913c3286e237ed2231c64de200a4bcfc65729292a05c6aa3a88100f8c0248361`.
+Update only Run 7's worker-snapshot path while retaining the hash gate. Cancel
+only evaluator jobs `1742454` through `1742458`, submit a replacement five-job
+pool through the committed evaluator-recovery launcher, and leave research jobs
+`1742199` through `1742203` running.
+
+The devserver and HPC source worktrees are both on `multi_vllm` at pre-change
+commit `a483b386c28eeffd294f36daae163bd508162375`. Transfer the focused recovery
+commit directly over SSH to a unique temporary `refs/aar-sync/` ref, require a
+fast-forward and path-collision checks, and preserve all HPC-local ignored
+state. Planned runtime checks are: five distinct replacement evaluator IDs,
+the hash-pinned worker path in each evaluator environment, and the mandatory
+`backend=vllm`, vLLM 0.25.1, exact merged checkpoint,
+`language_model_only=True`, and `lora_strategy=merged_checkpoint` markers on
+the first fresh candidate. These are planned checks, not completion claims.

@@ -59,6 +59,31 @@ export SUBMISSIONS_DIR="${SUBMISSIONS_DIR:-${TEAM_DIR:+${TEAM_DIR}/submissions}}
 export SUBMISSIONS_DIR="${SUBMISSIONS_DIR:-${REPO}/_runs/submissions}"
 export SCORES_DIR="${SCORES_DIR:-${TEAM_DIR:+${TEAM_DIR}/scores}}"
 export SCORES_DIR="${SCORES_DIR:-${REPO}/_runs/scores}"
+mkdir -p "${SCORES_DIR}"
+if [ -n "${TEAM_DIR:-}" ] && [ -n "${SLURM_JOB_ID:-}" ]; then
+  export AAR_TRAIN_LOG_PATH="${TEAM_DIR}/logs/train-${SLURM_JOB_ID}.out"
+fi
+_record_training_failure() {
+  _exit_code=$?
+  if [ "${_exit_code}" -ne 0 ] && [ "${AAR_WRITE_TRAIN_FAILURE_MARKER:-0}" = "1" ]; then
+    _failure_path="${SCORES_DIR}/${RUN_ID}.failed.json"
+    if [ ! -e "${SCORES_DIR}/${RUN_ID}.json" ] && [ ! -e "${_failure_path}" ]; then
+      _failure_python="${PY:-${HARNESS_PY:-python3}}"
+      "${_failure_python}" -m aar.eval_pod.failure \
+        --scores-dir "${SCORES_DIR}" \
+        --run-id "${RUN_ID}" \
+        --stage training \
+        --error-code training_process_failed \
+        --exit-code "${_exit_code}" \
+        --log-path "${AAR_TRAIN_LOG_PATH:-}" \
+        --reason "training process exited before model scoring; inspect log_path" \
+        >/dev/null 2>&1 || \
+        printf '{"schema_version":2,"run_id":"%s","status":"failed","stage":"training","error_code":"training_process_failed","retryable":false,"exit_code":%d,"error":"training process exited before model scoring","reason":"training process exited before model scoring"}\n' \
+          "${RUN_ID}" "${_exit_code}" > "${_failure_path}"
+    fi
+  fi
+}
+trap _record_training_failure EXIT
 # NOTE: deliberately do NOT set/read HOLDOUT_DIR — this side can't read it.
 PY="${HARNESS_PY}"
 [ -x "${PY}" ] || { echo "[train] ERROR: Python is not executable: ${PY}" >&2; exit 2; }
@@ -99,23 +124,95 @@ PYTHONUNBUFFERED=1 "${PY}" -c \
 
 echo "[train] ${IDEA} -> stage model + submit (run ${RUN_ID})"
 PYTHONUNBUFFERED=1 "${PY}" -u - <<PY
+import os
+from aar.eval_pod.failure import install_uncaught_exception_failure_hook
+
+install_uncaught_exception_failure_hook(
+    os.environ["SCORES_DIR"],
+    os.environ["AAR_CURRENT_RUN_ID"],
+    stage="training",
+    error_code="training_python_exception",
+    log_path=os.environ.get("AAR_TRAIN_LOG_PATH"),
+)
+
 try:
     from ${IDEA}.run import run_experiment, MethodConfig   # team method (AAR_IDEAS_DIR on path)
 except ModuleNotFoundError:
     from aar.ideas.${IDEA}.run import run_experiment, MethodConfig   # repo seed library
 from aar import transport
 from aar.phase_timing import phase, require_successful_phases
+import json
+import shutil
+from pathlib import Path
+smoke_run = "${AAR_METHOD_SMOKE:-0}".lower() in {"1", "true", "yes", "on"}
+pretrain_smoke = "${AAR_PRETRAIN_SMOKE:-0}".lower() in {"1", "true", "yes", "on"}
+config_kwargs = {"output_dir": "${STAGING}"}
+if smoke_run:
+    config_kwargs["smoke_run"] = True
+if pretrain_smoke and not smoke_run:
+    smoke_dir = Path("${STAGING}.preflight")
+    try:
+        with phase("train.preflight_smoke"):
+            smoke_out = run_experiment(MethodConfig(
+                output_dir=str(smoke_dir), smoke_run=True
+            ))
+            from peft import PeftConfig
+            from aar.transport import validate_model_submission
+            smoke_model = validate_model_submission(smoke_out["model_path"]).resolve()
+            PeftConfig.from_pretrained(smoke_model)
+            if not any(
+                (smoke_model / name).is_file()
+                and (smoke_model / name).stat().st_size > 0
+                for name in ("adapter_model.safetensors", "adapter_model.bin")
+            ):
+                raise RuntimeError("preflight smoke did not save PEFT adapter weights")
+        print("[train] per-method one-step GPU preflight passed for ${RUN_ID}")
+    finally:
+        shutil.rmtree(smoke_dir, ignore_errors=True)
 with phase("train.method_total"):
-    out = run_experiment(MethodConfig(output_dir="${STAGING}"))
+    out = run_experiment(MethodConfig(**config_kwargs))
 if "${AAR_AUTODATA:-0}" == "1":
     from aar.infrastructure.autodata_lifecycle import verify_consumption
     verify_consumption("${RUN_ID}")
 if "${AAR_REQUIRE_PHASE_TIMINGS:-0}".lower() in {"1", "true", "yes", "on"}:
     require_successful_phases("${AAR_PHASE_TIMINGS_PATH}")
-with phase("train.model_submission"):
-    transport.put_model(out["model_path"], "${RUN_ID}")
-print("[train] submitted ${RUN_ID}; waiting for eval worker to score it")
+if smoke_run:
+    with phase("train.smoke_validation"):
+        from peft import PeftConfig
+        from aar.transport import validate_model_submission
+
+        model_path = validate_model_submission(out["model_path"]).resolve()
+        PeftConfig.from_pretrained(model_path)
+        weights = [
+            path for name in ("adapter_model.safetensors", "adapter_model.bin")
+            if (path := model_path / name).is_file() and path.stat().st_size > 0
+        ]
+        if not weights:
+            raise RuntimeError("smoke run did not save non-empty PEFT adapter weights")
+        marker_dir = Path("${TEAM_DIR}") / "method_smoke"
+        marker_dir.mkdir(parents=True, exist_ok=True)
+        marker = marker_dir / "${RUN_ID}.passed.json"
+        temporary = marker.with_suffix(f".tmp.{os.getpid()}")
+        temporary.write_text(json.dumps({
+            "schema_version": 1,
+            "status": "passed",
+            "run_id": "${RUN_ID}",
+            "model_path": str(model_path),
+            "adapter_weight_file": weights[0].name,
+            "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+        }, sort_keys=True) + "\n")
+        os.replace(temporary, marker)
+    print("[train] real-GPU one-step method smoke passed for ${RUN_ID}")
+else:
+    with phase("train.model_submission"):
+        transport.put_model(out["model_path"], "${RUN_ID}")
+    print("[train] submitted ${RUN_ID}; waiting for eval worker to score it")
 PY
+
+if [ "${AAR_METHOD_SMOKE:-0}" = "1" ]; then
+  echo "=== METHOD SMOKE PASSED ==="
+  exit 0
+fi
 
 # AUTO-PRUNE (1/2): the model is now staged into the submissions channel; the local _train staging copy
 # is redundant. Drop it so the per-user quota doesn't fill (each checkpoint is ~6GB and a 47h run

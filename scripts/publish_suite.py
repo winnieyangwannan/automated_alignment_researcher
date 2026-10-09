@@ -2479,10 +2479,16 @@ def main() -> None:
                   f"(no baseline.json entry for {args.target_model}) — re-baseline before trusting",
                   file=sys.stderr)
 
+    functional_subset = False
     if args.suite in _COMPOSED_SUITES:
         expected = SUITES[args.suite]
         actual = [entry["name"] for entry in entries]
-        if actual != expected or len(set(actual)) != len(actual):
+        functional_subset = (
+            bool(args.only) and os.getenv("AAR_FUNCTIONAL_SMOKE") == "1"
+        )
+        if (actual != expected and not functional_subset) or len(set(actual)) != len(
+            actual
+        ):
             sys.exit(
                 f"composed suite must publish exactly {expected}; got {actual}"
             )
@@ -2493,7 +2499,7 @@ def main() -> None:
                 else "held_out" if name in held_out
                 else "safety"
             )
-            for name in expected
+            for name in actual
         }
         for entry in entries:
             name = entry["name"]
@@ -2516,12 +2522,18 @@ def main() -> None:
     import yaml
     suite_yaml = {"suite": args.suite, "target_model": args.target_model}
     if args.suite in _COMPOSED_SUITES:
+        dimensions = list(_COMPOSED_SUITES[args.suite])
+        if functional_subset:
+            active_dimensions = {
+                entry.get("dimension") for entry in entries if entry.get("dimension")
+            }
+            dimensions = [name for name in dimensions if name in active_dimensions]
         suite_yaml.update({
             "aggregation": "coverage_weighted_geometric_mean",
             "safety_regression_gate": True,
             "dimensions": [
                 {"name": dimension, "weight": 1.0}
-                for dimension in _COMPOSED_SUITES[args.suite]
+                for dimension in dimensions
             ],
             "evaluation_profiles": {
                 "gpt_5_6_luna": {

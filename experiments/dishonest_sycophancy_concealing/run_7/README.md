@@ -33,6 +33,101 @@ The attempt retains the parent launch ID in `metadata/submission.txt`, all ten
 child IDs in `metadata/children.env`, and the full launcher transcript in
 `metadata/launch_run7_vllm_submission.txt`.
 
+## Current durable continuation and result paths
+
+The original Run 7 attempt under `/checkpoint/ram` became inaccessible through
+NFS. The active continuation therefore writes to durable `/storage/home`
+instead of that old namespace. As of 2026-10-07 20:43 UTC, all five continuation
+chains are running. Three original evaluators remain healthy; the two malformed
+multi-node evaluator allocations were replaced by single-node jobs `1751149`
+and `1751150`. The launcher correction is commit
+`45d78f2e4650b734f978f0eafd6417611ff75090`.
+
+The comprehensive original-attempt and continuation incident audit is in
+[`FAILURE_INVESTIGATION.md`](FAILURE_INVESTIGATION.md).
+
+The canonical continuation attempt is:
+
+```text
+/storage/home/winnieyangwn/aar-recovery/run7_continuation_attempts/full_attempts/20261007T203258Z-a8fdf5b06629
+```
+
+The active team directory is:
+
+```text
+/storage/home/winnieyangwn/aar-recovery/run7_continuation_attempts/full_attempts/20261007T203258Z-a8fdf5b06629/aar_teams/honesty-sycophancy-concealing-gemma4_31b-opus48-run7-storage-continuation-1750282
+```
+
+Within that team directory:
+
+- `scores/*.json` contains newly completed public score records. A new Run 7
+  continuation iteration is counted only when its score has a matching finding.
+- `forum/*.json` contains the 14 reconstructed retained findings plus new
+  findings as chains complete evaluations.
+- `logs/AGENT_LOG_gemma4_31b_explore_<chain>.md` is the durable running memory
+  for each of `alpha`, `beta`, `gamma`, `delta`, and `epsilon`.
+- `logs/session_*_<chain>_*.log` contains individual research-session logs.
+- `logs/aar-*-<chain>_<job-id>.out` contains each chain's Slurm output.
+- `_eval_private/eval_worker_<job-id>.out` contains evaluator operational logs,
+  including the fail-closed vLLM markers. Evaluator-private material must not be
+  copied into research prompts or findings.
+- `_eval_private/merge_manifests/*.json` retains merge provenance after each
+  node-local merged checkpoint is deleted.
+
+The attempt-level metadata is under `metadata/`. In particular,
+`metadata/submission.txt` records launch job `1750282`, and
+`metadata/children.env` records evaluator jobs `1750344` through `1750348` and
+chain jobs `1750349` through `1750353` in alpha-to-epsilon order. Files named
+`metadata/evaluator_replacement_*.txt` record replacement evaluator IDs and
+their one-node/four-GPU topology.
+
+To inspect new durable results on `fair-cw-use2-1`:
+
+```bash
+export RUN7_ATTEMPT=/storage/home/winnieyangwn/aar-recovery/run7_continuation_attempts/full_attempts/20261007T203258Z-a8fdf5b06629
+export RUN7_TEAM="$RUN7_ATTEMPT/aar_teams/honesty-sycophancy-concealing-gemma4_31b-opus48-run7-storage-continuation-1750282"
+
+# Newly evaluated continuation scores; this starts empty and grows over time.
+find "$RUN7_TEAM/scores" -maxdepth 1 -type f -name '*.json' -printf '%TY-%Tm-%Td %TH:%TM:%TS %f\n' | sort
+
+# Retained and newly published findings, newest last.
+find "$RUN7_TEAM/forum" -maxdepth 1 -type f -name '*.json' -printf '%TY-%Tm-%Td %TH:%TM:%TS %f\n' | sort
+
+# Per-chain progress and live Slurm state.
+tail -n 80 "$RUN7_TEAM/logs"/AGENT_LOG_gemma4_31b_explore_*.md
+squeue -j 1750345,1750346,1750348,1751149,1751150,1750349,1750350,1750351,1750352,1750353
+```
+
+The exact 14-entry reconstructed pre-continuation history is also preserved
+separately at:
+
+```text
+/storage/home/winnieyangwn/aar-recovery/run7_continuation_attempts/full_attempts/20261007T203258Z-a8fdf5b06629/aar_teams/run7-recovered-history/forum
+```
+
+The passing one-iteration canary and its verification proof are retained at:
+
+```text
+/storage/home/winnieyangwn/aar-recovery/run7_continuation_attempts/canary_attempts/20261007T183515Z-a8fdf5b06629
+/storage/home/winnieyangwn/aar-recovery/run7_continuation_attempts/canary_attempts/20261007T183515Z-a8fdf5b06629/metadata/canary_passed.json
+```
+
+The old `/checkpoint/ram/aar/winnieyangwn/honesty-sycophancy-concealing-gemma4_31b-vllm-v0`
+path is not the source of truth for new results.
+
+If only the evaluator pool must be replaced after an external deployment
+snapshot disappears, preserve the attempt and its terminal failure artifacts,
+then launch the committed recovery path with the exact attempt directory:
+
+```bash
+bash experiments/dishonest_sycophancy_concealing/run_7/submit_eval_recovery.sh \
+  /checkpoint/ram/aar/$USER/honesty-sycophancy-concealing-gemma4-31b-vllm-v0/run7_attempts/<attempt-id>
+```
+
+The recovery validates the pinned worker snapshot hash and launches five new
+four-GPU evaluators against the existing shared queue. It does not retry or
+overwrite terminal candidate failures; research chains must use fresh run IDs.
+
 ## Phase timing contract
 
 Every generated method must record successful `data_generation`,

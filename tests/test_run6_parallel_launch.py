@@ -41,6 +41,9 @@ def test_merge_failure_is_terminal_instead_of_retried() -> None:
 
     assert 'publish_terminal_failure "${rid}"' in worker
     assert "adapter merge failed; candidate checkpoint is invalid" in worker
+    assert "adapter_merge_failed" in worker
+    assert "merge_manifest_missing" in worker
+    assert "evaluator_runtime_failed" in worker
 
 
 def test_run6_times_queue_merge_and_eval_phases() -> None:

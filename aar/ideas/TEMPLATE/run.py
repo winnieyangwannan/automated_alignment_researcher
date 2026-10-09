@@ -45,6 +45,10 @@ class MethodConfig:
     output_dir: str = "results/template/model"
     seed: int = 42
     dry_run: bool = False  # toy/smoke: skip training, return a stub model ref
+    # GPU integration smoke: load the real model, attach the real trainable
+    # parameters, run at most one optimizer step on at most eight examples, and
+    # save the real adapter. Unlike dry_run, this must exercise CUDA end to end.
+    smoke_run: bool = False
 
 
 def load_base_model_and_tokenizer(model_id: str, **kw):
@@ -100,6 +104,9 @@ def run_experiment(config: MethodConfig) -> dict[str, Any]:
     if config.dry_run:
         # Local smoke path: no training, return a stub ref the toy eval understands.
         return {"model_path": "stub:perfect", "method": "template"}
+
+    # Every concrete method must honor config.smoke_run in its data/training
+    # settings. The template raises below because it has no concrete trainer.
 
     # ----------------------------------------------------------------------
     # YOUR METHOD HERE. Typical shape:
