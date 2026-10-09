@@ -98,16 +98,15 @@ async def verify(workspace: Path) -> dict[str, object]:
         for item in forced_result.output.get("tool_uses", [])
         if str(item.get("tool", "")).rsplit("__", 1)[-1] == "Bash"
     ]
-    forced_command = (
-        str((forced_uses[0].get("input") or {}).get("command", ""))
-        if len(forced_uses) == 1
-        else ""
-    )
+    forced_commands = [
+        str((item.get("input") or {}).get("command", ""))
+        for item in forced_uses
+    ]
     forced_ok = (
         forced_result.success
         and forced_result.output.get("continuations", 0) >= 1
-        and len(forced_uses) == 1
-        and forced_command == "printf KIMI_FORCE_OK"
+        and bool(forced_commands)
+        and all(command == "printf KIMI_FORCE_OK" for command in forced_commands)
     )
     if not forced_ok:
         raise RuntimeError(
