@@ -78,3 +78,12 @@ def test_full_mode_requires_per_method_gpu_preflight() -> None:
     pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
 
     assert 'export AAR_PRETRAIN_SMOKE=1' in pipeline
+
+
+def test_kimi_preflight_records_the_requested_deployment() -> None:
+    verifier = (RUN10 / "verify_kimi_endpoint.py").read_text()
+
+    assert 'deployment = os.environ.get("AAR_KIMI_SERVE_DEPLOYMENT"' in verifier
+    assert 'expected_model = os.environ.get("AAR_KIMI_EXPECTED_MODEL"' in verifier
+    assert '"deployment": deployment' in verifier
+    assert '"model": expected_model' in verifier

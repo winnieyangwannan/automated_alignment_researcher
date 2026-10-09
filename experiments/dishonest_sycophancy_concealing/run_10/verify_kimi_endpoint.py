@@ -13,6 +13,12 @@ from aar.research_loop.kimi_agent import KimiAgent
 
 
 async def verify(workspace: Path) -> dict[str, object]:
+    deployment = os.environ.get("AAR_KIMI_SERVE_DEPLOYMENT", "").strip()
+    expected_model = os.environ.get("AAR_KIMI_EXPECTED_MODEL", "").strip()
+    if not deployment or not expected_model:
+        raise RuntimeError(
+            "AAR_KIMI_SERVE_DEPLOYMENT and AAR_KIMI_EXPECTED_MODEL are required"
+        )
     result = await KimiAgent(
         "run10-preflight",
         workspace,
@@ -117,8 +123,8 @@ async def verify(workspace: Path) -> dict[str, object]:
         )
     return {
         "status": "passed",
-        "model": "Kimi-K2.6",
-        "deployment": "steerability_8-kimi26",
+        "model": expected_model,
+        "deployment": deployment,
         "bash_tool_roundtrip": True,
         "mcp_tool_roundtrip": True,
         "sequential_mcp_tool_roundtrips": 1,
