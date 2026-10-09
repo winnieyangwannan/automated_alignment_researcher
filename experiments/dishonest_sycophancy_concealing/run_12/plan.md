@@ -193,6 +193,18 @@ but it does not replace this automatic-promotion test.
 - Leave native approval, evidence analysis, candidate mutation,
   meta-optimization, production, and export semantics unchanged.
 
+### 12. Gate the relaunch with one real bootstrap canary
+
+- Run the production launcher in `bootstrap-canary` mode with one isolated
+  chain, one base target lane, and one evaluator lane.
+- Stop at the earliest retained proof that proposal approval produced a
+  `workspace-bootstrap.json`, registered the same workspace with the native
+  lifecycle supervisor, and reached a real native AutoData action.
+- Preserve the canary attempt and retire its temporary jobs/endpoints before
+  launching the canonical five-chain, five-pair run.
+- Keep `full` mode fail-closed on the canonical seeds and pair count so canary
+  overrides cannot accidentally shrink the scored experiment.
+
 ## Success criteria
 
 Run 12 succeeds only when all of the following are true:

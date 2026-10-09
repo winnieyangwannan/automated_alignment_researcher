@@ -30,6 +30,11 @@ if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; 
   exit 2
 fi
 mkdir -p "${HF_HOME}" "${ATTEMPT}/metadata"
+SEEDS_RAW="${AAR_RUN12_SEEDS:-alpha beta gamma delta epsilon}"
+CHAIN_COUNT="${AAR_RUN12_CHAIN_COUNT:-5}"
+TARGET_PAIRS="${AAR_RUN12_TARGET_PAIRS:-5}"
+read -r -a seeds <<< "${SEEDS_RAW}"
+[ "${#seeds[@]}" -eq "${CHAIN_COUNT}" ] || { echo "Run 12 chain count drift" >&2; exit 2; }
 
 export AAR_EXPECTED_BRANCH=autodata AAR_RUNTIME_ROOT="${ATTEMPT}"
 export AAR_BASELINE_OVERRIDES="${ATTEMPT}/metadata/gemma4_31b_multidimensional_baseline.json"
@@ -91,7 +96,7 @@ bash "${REPO}/scripts/publish_holdout.sh"
 
 children="${ATTEMPT}/metadata/children.tsv"
 : > "${children}"
-for seed in alpha beta gamma delta epsilon; do
+for seed in "${seeds[@]}"; do
   chain_root="${ATTEMPT}/chains/${seed}"
   team_id="run12-gemma4-31b-kimi26-${seed}-${SLURM_JOB_ID}"
   export AAR_TEAM_ID="${team_id}"
@@ -118,7 +123,8 @@ for seed in alpha beta gamma delta epsilon; do
     | tee -a "${children}"
 done
 
-[ "$(wc -l < "${children}")" -eq 5 ] || { echo "did not launch five chains" >&2; exit 1; }
-printf 'research_backend=kimi\nresearch_model=Kimi-K2.6\nchains=5\ntarget_pairs_per_chain=5\n' \
+[ "$(wc -l < "${children}")" -eq "${CHAIN_COUNT}" ] || { echo "did not launch all configured chains" >&2; exit 1; }
+printf 'research_backend=kimi\nresearch_model=Kimi-K2.6\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\n' \
+  "${CHAIN_COUNT}" "${TARGET_PAIRS}" "${SEEDS_RAW}" \
   > "${ATTEMPT}/metadata/full-launch.env"
-echo "[run12] five isolated Kimi chains launched; controllers will rotate each chain target after every durable iteration"
+echo "[run12] ${CHAIN_COUNT} isolated Kimi chain(s) launched; controllers will rotate each chain target after every durable iteration"

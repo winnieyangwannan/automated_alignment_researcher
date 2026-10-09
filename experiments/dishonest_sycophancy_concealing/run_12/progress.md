@@ -1,6 +1,24 @@
 # Run 12 progress
 
-Last updated: 2026-10-09 16:00 PDT
+Last updated: 2026-10-09 16:10 PDT
+
+## Fixed-bootstrap relaunch gate
+
+Commit `6017b58ce4f6fa979ec835de2a7986430848ac1d` was fast-forwarded to the
+clean HPC `autodata` worktree. ARM64 validation passed: Ruff reported no
+issues and all 69 focused AutoData/Kimi/lifecycle tests passed.
+
+The failed pre-fix attempt was then retired after a final audit still showed
+zero durable score/result pairs and no workspace-bootstrap receipt. Its exact
+remaining researchers, controllers, evaluators, and five base target
+deployments were stopped; its logs, ledgers, and state remain retained.
+
+The launcher now has a fail-closed `bootstrap-canary` mode. It permits exactly
+one allowlisted chain seed and one target pair in a separate run/checkpoint
+namespace. Canonical `full` mode still requires all five seeds and five target
+pairs. The canary will be stopped as soon as it proves that proposal approval
+created and registered the native workspace and reached a native AutoData
+action; it is not intended to spend a full production data-generation budget.
 
 ## Five-chain attempt: proposal bootstrap failure isolated
 

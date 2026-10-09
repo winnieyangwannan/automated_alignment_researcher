@@ -16,6 +16,32 @@ SV="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
 REQUIRED_AUTODATA_SHA=34f0a22c89a2a40e605afd43f3a7b11c25003ab7
 GENERATOR_DEPLOYMENT=aar_8-kimi26
+RUN_MODE="${AAR_RUN12_MODE:-full}"
+SEEDS_RAW="${AAR_RUN12_SEEDS:-alpha beta gamma delta epsilon}"
+TARGET_PAIRS="${AAR_RUN12_TARGET_PAIRS:-5}"
+
+case "${RUN_MODE}" in
+  full|bootstrap-canary) ;;
+  *) echo "AAR_RUN12_MODE must be full or bootstrap-canary" >&2; exit 2 ;;
+esac
+read -r -a seeds <<< "${SEEDS_RAW}"
+[ "${#seeds[@]}" -gt 0 ] || { echo "Run 12 requires at least one chain seed" >&2; exit 2; }
+for seed in "${seeds[@]}"; do
+  case "${seed}" in alpha|beta|gamma|delta|epsilon) ;; *) echo "invalid Run 12 seed: ${seed}" >&2; exit 2;; esac
+done
+case "${TARGET_PAIRS}" in ''|*[!0-9]*) echo "target pairs must be an integer" >&2; exit 2;; esac
+[ "${TARGET_PAIRS}" -ge 1 ] && [ "${TARGET_PAIRS}" -le 5 ] || {
+  echo "target pairs must be between 1 and 5" >&2; exit 2;
+}
+if [ "${RUN_MODE}" = full ]; then
+  [ "${SEEDS_RAW}" = "alpha beta gamma delta epsilon" ] && [ "${TARGET_PAIRS}" = 5 ] || {
+    echo "full mode requires the canonical five seeds and five target pairs" >&2; exit 2;
+  }
+else
+  [ "${#seeds[@]}" -eq 1 ] && [ "${TARGET_PAIRS}" = 1 ] || {
+    echo "bootstrap-canary mode requires exactly one seed and one target pair" >&2; exit 2;
+  }
+fi
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "Run 12 requires branch autodata" >&2; exit 2; }
 if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; then
@@ -61,8 +87,10 @@ export LLM_UNCERTAINTY_SRC="${source_root}/data" LLM_UNCERTAINTY_SOURCE_MANIFEST
 
 commit="$(git -C "${REPO}" rev-parse HEAD)"
 attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "${REPO}" rev-parse --short=12 HEAD)"
-attempt="/storage/home/${USER}/aar-runs/run12-full/${attempt_id}"
-checkpoint_root="/checkpoint/ram/aar/${USER}/run12-full/${attempt_id}"
+run_namespace="run12-full"
+[ "${RUN_MODE}" = full ] || run_namespace="run12-bootstrap-canary"
+attempt="/storage/home/${USER}/aar-runs/${run_namespace}/${attempt_id}"
+checkpoint_root="/checkpoint/ram/aar/${USER}/${run_namespace}/${attempt_id}"
 mkdir -p "${attempt}/"{metadata,logs,secrets,chains,runtime}
 mkdir -p "${checkpoint_root}/chains"
 chmod 700 "${attempt}" "${attempt}/"{metadata,logs,secrets,chains}
@@ -91,7 +119,7 @@ unset KIMI_AGENT_MODEL
 
 suffix="$(printf '%s' "${attempt_id}" | sha256sum | cut -c1-8)"
 deployments=()
-for seed in alpha beta gamma delta epsilon; do
+for seed in "${seeds[@]}"; do
   chain_root="${attempt}/chains/${seed}"
   mkdir -p "${chain_root}/"{bindings,deployments,logs,metadata,secrets}
   mkdir -p "${checkpoint_root}/chains/${seed}/merged_candidates"
@@ -155,10 +183,16 @@ export AAR_AUTODATA_APPROVAL_ACTOR=aar-integrity-monitor
 export AAR_AUTODATA_APPROVAL_POLICY_VERSION=aar-autodata/run12-full-v1
 export AAR_AUTODATA_RESOURCES_READY=1
 export AAR_MONITOR_MODEL_API_KEY="${MODEL_API_KEY}"
+export AAR_RUN12_MODE="${RUN_MODE}"
+export AAR_RUN12_SEEDS="${SEEDS_RAW}"
+export AAR_RUN12_CHAIN_COUNT="${#seeds[@]}"
+export AAR_RUN12_TARGET_PAIRS="${TARGET_PAIRS}"
+[ "${RUN_MODE}" = full ] || export AAR_RUN12_MAX_CHAIN_ATTEMPTS=2
 
 job="$(sbatch --parsable --output="${attempt}/logs/pipeline-%j.out" --export=ALL \
   "${SCRIPT_DIR}/run_12_full_pipeline.sbatch")"
-printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nkimi_deployment=%s\nchains=5\ntarget_pairs_per_chain=5\nbase_deployments=%s\n' \
-  "${job}" "${attempt}" "${checkpoint_root}" "${commit}" "${GENERATOR_DEPLOYMENT}" "${deployments[*]}" \
+printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nmode=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nkimi_deployment=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\n' \
+  "${job}" "${attempt}" "${checkpoint_root}" "${commit}" "${RUN_MODE}" \
+  "${GENERATOR_DEPLOYMENT}" "${#seeds[@]}" "${TARGET_PAIRS}" "${SEEDS_RAW}" "${deployments[*]}" \
   | tee "${attempt}/metadata/submission.txt"
 unset MODEL_API_KEY HF_TOKEN
