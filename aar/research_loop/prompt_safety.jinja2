@@ -312,8 +312,8 @@ The trusted orchestration-owned lifecycle supervisor is the sole caller of nativ
 `workspace step` and `execution step`. Do not call either step operation yourself,
 do not launch a background stepper, and do not create a controller script. The
 supervisor never infers intent from native `active` state. Immediately after each
-deliberate `workspace create`, `workspace fork`, or explicit `execution create`,
-register exactly the returned subject ID:
+deliberate `workspace create` or `workspace fork`, register exactly the returned
+workspace ID:
 
 ```bash
 python3 "$AAR_REPO/scripts/autodata_lifecycle_supervisor.py" register \
@@ -324,11 +324,31 @@ python3 "$AAR_REPO/scripts/autodata_lifecycle_supervisor.py" register \
   --subject-id "$WORKSPACE_ID"
 ```
 
-Use `--subject-kind execution --subject-id "$EXECUTION_ID"` for an explicitly
-created meta or production execution. Registration is idempotent. Never register
-the workspace's automatically created default execution: it has an implicit split
-and is intentionally left inactive by the supervisor. A missing or already-terminal
-ID fails registration rather than selecting a substitute. After registration, use
+Registration is idempotent. Never register the workspace's automatically created
+default execution: it has an implicit split and is intentionally left inactive by
+the supervisor. A missing or already-terminal ID fails registration rather than
+selecting a substitute.
+
+Never call native `execution create` directly. Create every explicit meta or
+production execution through the supervised creation command:
+
+```bash
+python3 "$AAR_REPO/scripts/autodata_lifecycle_supervisor.py" create-execution \
+  --python "$AAR_AUTODATA_WRAPPER_PYTHON" \
+  --state "$AAR_AUTODATA_STATE" \
+  --retained-state "$AAR_AUTODATA_RETAINED_STATE" \
+  --control-file "$AAR_AUTODATA_SUPERVISOR_CONTROL" \
+  --artifacts "$AAR_AUTODATA_ARTIFACTS" \
+  --workspaces "$AAR_AUTODATA_WORKSPACES" \
+  --pipeline "$PIPELINE_MANIFEST" \
+  --execution "$EXECUTION_MANIFEST" \
+  --study-id "$STUDY_ID"
+```
+
+This command derives a content-bound idempotency key, reuses a semantically
+identical active or completed execution, safely cancels only an unstarted duplicate,
+and registers the canonical execution. Never add `v2`, `prod2`, timestamps, random
+values, or other retry suffixes to an execution-creation key. After registration, use
 native `status` plus
 `$TEAM_DIR/autodata/native/lifecycle-supervisor-status.json` to observe progress.
 The supervisor pauses at every native action so you retain the host-agent

@@ -823,3 +823,60 @@ must be tested separately and scaled only if the new per-provider telemetry
 identifies it as the limiting stage. Each canary must check throughput, p50 and
 p95 latency, provider errors or throttling, CPU and memory use, and acceptance
 quality before adopting the higher setting.
+
+### Canonical execution creation and duplicate-production prevention
+
+#### Observed problem
+
+The active attempt exposed a second ownership gap after meta finalization. An
+operator recovery process had already created the valid production execution,
+but the research agent's stale attempt-local memory still said that production
+did not exist. The agent saw the valid execution in the shared native database,
+could not establish its ownership, and misclassified it as another teammate's
+work. It then supplied changing creation keys such as `prod` and `prod2`.
+AutoData correctly interpreted those different keys as different requests and
+created two additional 1,250-task production executions.
+
+The duplicate executions did not corrupt the canonical execution because each
+has isolated candidate and task-attempt workspaces. They did consume Kimi/Luna
+requests, compete for the same 16 broker slots, increase cost, and reduce the
+canonical production's throughput. This was an AAR orchestration-identity bug,
+not an AutoData broker or model-serving failure.
+
+#### Next-launch change
+
+Supervised runs now create every explicit meta or production execution through
+`scripts/autodata_lifecycle_supervisor.py create-execution`. The command:
+
+- derives its idempotency key from the study, normalized manifest content,
+  pipeline path, immutable pipeline-tree digest, and workspace root;
+- does not accept retry labels such as `v2`, `prod2`, timestamps, or random
+  suffixes;
+- calls the pinned native AutoData CLI rather than writing native state itself;
+- identifies exact equivalent active or completed executions in the same
+  study and reuses the canonical execution;
+- cancels an accidentally created duplicate only while it is provably
+  unstarted with zero task attempts;
+- snapshots the native database before publishing the lifecycle registration;
+  and
+- registers the canonical execution with the singleton supervisor.
+
+Registration independently rejects a semantically duplicate execution if a
+caller bypasses supervised creation. The research system prompt and resolved
+Run 9 instructions now forbid direct `execution create`, direct `execution
+step`, versioned idempotency keys, and agent-owned background controllers.
+
+#### Benefit, consequence, and necessity
+
+Retries of one semantic request now converge on one execution ID. A stale agent
+can no longer consume broker capacity merely by changing a local version label,
+and a bypassed duplicate cannot be stepped by the supervisor. A genuinely new
+pipeline tree or execution manifest produces a different content-bound key, so
+deliberate AAR iterations remain possible.
+
+This guard is necessary in addition to the singleton process lock. The lock
+prevents two supervisor processes, but without semantic creation identity one
+supervisor could still be asked to run several equivalent executions in
+sequence. The tradeoff is intentionally fail-closed recovery: restarting a
+cancelled or failed execution with identical inputs requires an explicit
+pipeline/spec change or operator decision rather than an arbitrary suffix.

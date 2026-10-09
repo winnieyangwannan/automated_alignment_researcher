@@ -715,6 +715,23 @@ class AutonomousAgentLoop:
                 "AAR-specific AutoData MCP interface exists. Keep all state, "
                 "workspaces, and exports below the writable run directory."
             )
+            if os.getenv("AAR_AUTODATA_LIFECYCLE_SUPERVISED", "0").lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }:
+                system_parts.append(
+                    "The orchestration-owned AutoData lifecycle supervisor is the "
+                    "only process allowed to call workspace step or execution step. "
+                    "Never launch a stepper, detached controller, or direct step call. "
+                    "Create meta and production executions only through "
+                    "scripts/autodata_lifecycle_supervisor.py create-execution; "
+                    "inspect its --help for required paths. This command derives a "
+                    "stable content-bound idempotency key, registers the canonical "
+                    "execution, and reuses an equivalent active or completed execution. "
+                    "Never add a retry/version suffix to an execution idempotency key."
+                )
 
         return BaseAgent(
             name=f"autonomous-{session_id}",

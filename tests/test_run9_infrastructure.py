@@ -182,6 +182,10 @@ def test_run9_uses_one_supervised_node_local_autodata_lifecycle() -> None:
     assert "autodata_lifecycle_supervisor.py\" snapshot" in submit_train
     assert "sole caller of native" in prompt
     assert "never infers intent" in prompt
-    assert "Never register\nthe workspace's automatically created default execution" in prompt
+    assert "Never call native `execution create` directly" in prompt
+    assert "create-execution" in prompt
+    assert "content-bound idempotency key" in prompt
+    assert "Never add `v2`, `prod2`" in prompt
+    assert "Never register the workspace's automatically created" in prompt
     assert "AAR_AUTODATA_RETAINED_STATE" in prompt
     assert "34f0a22c89a2a40e605afd43f3a7b11c25003ab7" in submitter

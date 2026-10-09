@@ -17,6 +17,7 @@ import json
 import os
 import signal
 import sqlite3
+import stat
 import subprocess
 import time
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ META_STALL_SECONDS = 20 * 60
 PRODUCTION_STALL_SECONDS = 30 * 60
 DEFAULT_SNAPSHOT_INTERVAL_SECONDS = 5 * 60
 CONTROL_SCHEMA = "aar.autodata.lifecycle-control/v1"
+SUPERVISED_EXECUTION_KEY_SCHEMA = "aar.autodata.supervised-execution/v1"
 
 
 def _utc_now() -> str:
@@ -44,6 +46,66 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _pipeline_tree_digest(root: Path) -> str:
+    """Return a deterministic digest for one safe, immutable pipeline tree."""
+    if root.is_symlink() or not root.is_dir():
+        raise RuntimeError("AutoData pipeline root must be a real directory")
+    resolved = root.resolve(strict=True)
+    files: dict[str, str] = {}
+    for base, directories, names in os.walk(resolved, followlinks=False):
+        for name in [*directories, *names]:
+            path = Path(base, name)
+            mode = path.lstat().st_mode
+            if stat.S_ISLNK(mode) or not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                raise RuntimeError("AutoData pipeline tree contains an unsafe entry")
+        for name in names:
+            path = Path(base, name)
+            relative = path.relative_to(resolved).as_posix()
+            if relative == ".autodata" or relative.startswith(".autodata/"):
+                continue
+            files[relative] = _sha256(path)
+    payload = json.dumps(files, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _json_object(path: Path, label: str) -> dict[str, Any]:
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError(f"{label} must be a real JSON file")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"{label} is not valid JSON") from error
+    if not isinstance(value, dict):
+        raise RuntimeError(f"{label} must contain one JSON object")
+    return value
+
+
+def execution_creation_key(
+    pipeline: Path,
+    execution: Path,
+    *,
+    study_id: str,
+    workspaces: Path,
+) -> str:
+    """Bind execution creation retries to one semantic, run-local request."""
+    pipeline = pipeline.resolve(strict=True)
+    execution = execution.resolve(strict=True)
+    workspaces = workspaces.resolve(strict=True)
+    identity = {
+        "schema": SUPERVISED_EXECUTION_KEY_SCHEMA,
+        "study_id": study_id,
+        "pipeline_path": str(pipeline),
+        "pipeline": _json_object(pipeline, "AutoData pipeline manifest"),
+        "pipeline_tree_digest": _pipeline_tree_digest(pipeline.parent),
+        "execution": _json_object(execution, "AutoData execution manifest"),
+        "workspaces": str(workspaces),
+    }
+    encoded = json.dumps(
+        identity, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    return "aar-supervised:" + hashlib.sha256(encoded).hexdigest()
 
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
@@ -223,6 +285,204 @@ def _native_subject(state: Path, kind: str, subject_id: str) -> dict[str, Any]:
     return dict(row)
 
 
+def _execution_identity(
+    connection: sqlite3.Connection, row: sqlite3.Row
+) -> str:
+    columns = set(row.keys())
+    study_id = None
+    if "study_members" in _table_names(connection):
+        membership = connection.execute(
+            "SELECT studyId FROM study_members "
+            "WHERE subjectKind='execution' AND subjectId=?",
+            (str(row["id"]),),
+        ).fetchone()
+        study_id = str(membership[0]) if membership is not None else None
+
+    def value(name: str) -> Any:
+        return row[name] if name in columns else None
+
+    def document(name: str) -> Any:
+        raw = value(name)
+        return json.loads(str(raw)) if raw is not None else None
+
+    baseline_tree_digest = None
+    workspace_root = value("workspaceRoot")
+    if workspace_root is not None:
+        baseline = (
+            Path(str(workspace_root))
+            / str(row["id"])
+            / "candidates"
+            / "r0000"
+        )
+        if baseline.is_dir():
+            baseline_tree_digest = _pipeline_tree_digest(baseline)
+
+    identity = {
+        "study_id": study_id,
+        "workspace_id": value("workspaceId"),
+        "snapshot_id": value("snapshotId"),
+        "pipeline": document("pipelineJson"),
+        "pipeline_tree_digest": baseline_tree_digest,
+        "execution": document("executionJson"),
+        "pipeline_root": value("pipelineRoot"),
+        "workspace_root": value("workspaceRoot"),
+    }
+    encoded = json.dumps(
+        identity, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _equivalent_executions(state: Path, execution_id: str) -> list[dict[str, Any]]:
+    """List active/completed executions with the exact same semantic request."""
+    with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
+        connection.row_factory = sqlite3.Row
+        target = connection.execute(
+            "SELECT * FROM executions WHERE id=?", (execution_id,)
+        ).fetchone()
+        if target is None:
+            raise RuntimeError(f"native AutoData execution {execution_id} does not exist")
+        identity = _execution_identity(connection, target)
+        matches = [
+            dict(row)
+            for row in connection.execute("SELECT * FROM executions").fetchall()
+            if str(row["status"]) in {"active", "completed"}
+            and _execution_identity(connection, row) == identity
+        ]
+    return sorted(
+        matches,
+        key=lambda row: (
+            0 if row["status"] == "completed" else 1,
+            str(row.get("createdAt") or ""),
+            str(row["id"]),
+        ),
+    )
+
+
+def _native_cli(
+    python: Path,
+    state: Path,
+    artifacts: Path,
+    workspaces: Path,
+    *arguments: str,
+) -> dict[str, Any]:
+    completed = subprocess.run(
+        [
+            str(python),
+            "-m",
+            "autodata.cli",
+            "--state",
+            str(state),
+            "--artifacts",
+            str(artifacts),
+            "--workspaces",
+            str(workspaces),
+            *arguments,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip()[-2000:]
+        raise RuntimeError(f"native AutoData CLI failed: {detail}")
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("native AutoData CLI returned invalid JSON") from error
+    if not isinstance(value, dict):
+        raise RuntimeError("native AutoData CLI did not return one JSON object")
+    return value
+
+
+def create_or_reuse_execution(
+    *,
+    python: Path,
+    state: Path,
+    retained_state: Path,
+    control_file: Path,
+    artifacts: Path,
+    workspaces: Path,
+    pipeline: Path,
+    execution: Path,
+    study_id: str,
+) -> dict[str, Any]:
+    """Create and register exactly one semantic execution in a study."""
+    key = execution_creation_key(
+        pipeline, execution, study_id=study_id, workspaces=workspaces
+    )
+    created = _native_cli(
+        python,
+        state,
+        artifacts,
+        workspaces,
+        "execution",
+        "create",
+        "--pipeline",
+        str(pipeline.resolve(strict=True)),
+        "--execution",
+        str(execution.resolve(strict=True)),
+        "--study-id",
+        study_id,
+        "--idempotency-key",
+        key,
+    )
+    execution_id = created.get("execution_id")
+    if not isinstance(execution_id, str) or not execution_id:
+        raise RuntimeError("native AutoData creation returned no execution id")
+    equivalents = _equivalent_executions(state, execution_id)
+    if not equivalents:
+        raise RuntimeError("created execution vanished from native AutoData state")
+    canonical = equivalents[0]
+    canonical_id = str(canonical["id"])
+    discarded_duplicate = None
+    if canonical_id != execution_id:
+        duplicate = _native_subject(state, "execution", execution_id)
+        if (
+            duplicate.get("status") != "active"
+            or int(duplicate.get("taskAttemptsUsed") or 0) != 0
+            or duplicate.get("phase") not in {"created", "baseline_pending"}
+        ):
+            raise RuntimeError(
+                "semantic duplicate execution has already begun; refusing automatic cleanup"
+            )
+        _native_cli(
+            python,
+            state,
+            artifacts,
+            workspaces,
+            "cancel",
+            execution_id,
+        )
+        discarded_duplicate = execution_id
+        execution_id = canonical_id
+    row = _native_subject(state, "execution", execution_id)
+    if not snapshot_database(
+        state,
+        retained_state,
+        reason=f"supervised-creation:execution:{execution_id}",
+    ):
+        raise RuntimeError("cannot retain a supervised execution without live state")
+    registration = None
+    if row.get("status") == "active":
+        registration = register_subject(
+            state, control_file, kind="execution", subject_id=execution_id
+        )
+    elif row.get("status") != "completed":
+        raise RuntimeError(
+            f"canonical execution {execution_id} is terminal as {row.get('status')}"
+        )
+    return {
+        "execution_id": execution_id,
+        "study_id": study_id,
+        "status": row.get("status"),
+        "registered": registration is not None,
+        "idempotency_key": key,
+        "deduplicated": discarded_duplicate is not None,
+        "discarded_duplicate_execution_id": discarded_duplicate,
+    }
+
+
 def register_subject(
     state: Path, control_file: Path, *, kind: str, subject_id: str
 ) -> dict[str, Any]:
@@ -234,6 +494,13 @@ def register_subject(
         )
     lock = _with_control_lock(control_file)
     try:
+        if kind == "execution":
+            equivalents = _equivalent_executions(state, subject_id)
+            if equivalents and equivalents[0]["id"] != subject_id:
+                raise RuntimeError(
+                    f"execution {subject_id} duplicates canonical execution "
+                    f"{equivalents[0]['id']}; register the canonical execution"
+                )
         control = _load_control(control_file)
         for entry in control["subjects"]:
             if entry["kind"] == kind and entry["subject_id"] == subject_id:
@@ -569,6 +836,17 @@ def _parser() -> argparse.ArgumentParser:
     )
     register.add_argument("--subject-id", required=True)
 
+    create_execution = subparsers.add_parser("create-execution")
+    create_execution.add_argument("--python", type=_path, required=True)
+    create_execution.add_argument("--state", type=_path, required=True)
+    create_execution.add_argument("--retained-state", type=_path, required=True)
+    create_execution.add_argument("--control-file", type=_path, required=True)
+    create_execution.add_argument("--artifacts", type=_path, required=True)
+    create_execution.add_argument("--workspaces", type=_path, required=True)
+    create_execution.add_argument("--pipeline", type=_path, required=True)
+    create_execution.add_argument("--execution", type=_path, required=True)
+    create_execution.add_argument("--study-id", required=True)
+
     run = subparsers.add_parser("run")
     run.add_argument("--python", type=_path, required=True)
     run.add_argument("--state", type=_path, required=True)
@@ -621,6 +899,20 @@ def main() -> int:
             args.control_file,
             kind=args.subject_kind,
             subject_id=args.subject_id,
+        )
+        print(json.dumps(result, sort_keys=True))
+        return 0
+    if args.command == "create-execution":
+        result = create_or_reuse_execution(
+            python=args.python,
+            state=args.state,
+            retained_state=args.retained_state,
+            control_file=args.control_file,
+            artifacts=args.artifacts,
+            workspaces=args.workspaces,
+            pipeline=args.pipeline,
+            execution=args.execution,
+            study_id=args.study_id,
         )
         print(json.dumps(result, sort_keys=True))
         return 0

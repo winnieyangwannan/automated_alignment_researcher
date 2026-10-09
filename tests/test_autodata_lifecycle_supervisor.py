@@ -9,11 +9,14 @@ from pathlib import Path
 
 import pytest
 
+import scripts.autodata_lifecycle_supervisor as lifecycle_supervisor
 from scripts.autodata_lifecycle_supervisor import (
     META_STALL_SECONDS,
     META_TIMEOUT_SECONDS,
     PRODUCTION_STALL_SECONDS,
     PRODUCTION_TIMEOUT_SECONDS,
+    create_or_reuse_execution,
+    execution_creation_key,
     next_subject,
     register_subject,
     restore_database,
@@ -246,6 +249,143 @@ def test_registration_is_idempotent_and_rejects_terminal_or_missing_subjects(
         register_subject(state, control, kind="workspace", subject_id="ws_frozen")
     with pytest.raises(RuntimeError, match="does not exist"):
         register_subject(state, control, kind="execution", subject_id="exe_missing")
+
+
+def test_registration_rejects_semantic_duplicate_execution(tmp_path: Path) -> None:
+    state = tmp_path / "state.db"
+    control = tmp_path / "control.json"
+    _state(state)
+    spec = json.dumps({"mode": "production", "split_seed": 7})
+    with sqlite3.connect(state) as connection:
+        connection.execute(
+            "INSERT INTO executions VALUES (?,?,?,?,?,?)",
+            ("exe_primary", "active", "final_pending", "2026-01-01", spec, 6300),
+        )
+        connection.execute(
+            "INSERT INTO executions VALUES (?,?,?,?,?,?)",
+            ("exe_duplicate", "active", "final_pending", "2026-01-02", spec, 6300),
+        )
+
+    registered = register_subject(
+        state, control, kind="execution", subject_id="exe_primary"
+    )
+    assert registered["subject_id"] == "exe_primary"
+    with pytest.raises(RuntimeError, match="duplicates canonical execution exe_primary"):
+        register_subject(
+            state, control, kind="execution", subject_id="exe_duplicate"
+        )
+
+
+def test_execution_creation_key_is_content_bound_and_ignores_retry_labels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pipeline_root = tmp_path / "pipeline"
+    pipeline_root.mkdir()
+    pipeline = pipeline_root / "autodata.pipeline.json"
+    pipeline.write_text(json.dumps({"schema": "pipeline/v1", "name": "test"}))
+    (pipeline_root / "recipe.py").write_text("VALUE = 1\n")
+    execution = tmp_path / "execution.json"
+    execution.write_text(json.dumps({"schema": "execution/v1", "mode": "production"}))
+    workspaces = tmp_path / "workspaces"
+    workspaces.mkdir()
+
+    monkeypatch.setenv("AD_VER", "prod")
+    first = execution_creation_key(
+        pipeline, execution, study_id="study_one", workspaces=workspaces
+    )
+    monkeypatch.setenv("AD_VER", "prod2")
+    second = execution_creation_key(
+        pipeline, execution, study_id="study_one", workspaces=workspaces
+    )
+    assert first == second
+    assert first.startswith("aar-supervised:")
+
+    (pipeline_root / "recipe.py").write_text("VALUE = 2\n")
+    changed = execution_creation_key(
+        pipeline, execution, study_id="study_one", workspaces=workspaces
+    )
+    assert changed != first
+
+
+def test_supervised_creation_reuses_and_cancels_unstarted_duplicate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = tmp_path / "state.db"
+    retained = tmp_path / "retained.db"
+    control = tmp_path / "control.json"
+    artifacts = tmp_path / "artifacts"
+    workspaces = tmp_path / "workspaces"
+    pipeline_root = tmp_path / "pipeline"
+    for path in (artifacts, workspaces, pipeline_root):
+        path.mkdir()
+    pipeline = pipeline_root / "autodata.pipeline.json"
+    pipeline.write_text(json.dumps({"schema": "pipeline/v1", "name": "test"}))
+    execution = tmp_path / "execution.json"
+    spec = {"schema": "execution/v1", "mode": "production"}
+    execution.write_text(json.dumps(spec))
+    _state(state)
+    stored_spec = json.dumps(spec)
+    with sqlite3.connect(state) as connection:
+        connection.execute(
+            "INSERT INTO executions VALUES (?,?,?,?,?,?)",
+            (
+                "exe_primary",
+                "active",
+                "final_pending",
+                "2026-01-01",
+                stored_spec,
+                6300,
+            ),
+        )
+
+    calls: list[tuple[str, ...]] = []
+
+    def fake_native_cli(*args: object) -> dict[str, object]:
+        arguments = tuple(str(value) for value in args[4:])
+        calls.append(arguments)
+        if arguments[:2] == ("execution", "create"):
+            with sqlite3.connect(state) as connection:
+                connection.execute(
+                    "INSERT INTO executions VALUES (?,?,?,?,?,?)",
+                    (
+                        "exe_duplicate",
+                        "active",
+                        "baseline_pending",
+                        "2026-01-02",
+                        stored_spec,
+                        6300,
+                    ),
+                )
+            return {"execution_id": "exe_duplicate", "status": "active"}
+        assert arguments == ("cancel", "exe_duplicate")
+        with sqlite3.connect(state) as connection:
+            connection.execute(
+                "UPDATE executions SET status='cancelled',phase='cancelled' "
+                "WHERE id='exe_duplicate'"
+            )
+        return {"execution_id": "exe_duplicate", "status": "cancelled"}
+
+    monkeypatch.setattr(lifecycle_supervisor, "_native_cli", fake_native_cli)
+    result = create_or_reuse_execution(
+        python=Path(sys.executable),
+        state=state,
+        retained_state=retained,
+        control_file=control,
+        artifacts=artifacts,
+        workspaces=workspaces,
+        pipeline=pipeline,
+        execution=execution,
+        study_id="study_one",
+    )
+
+    assert result["execution_id"] == "exe_primary"
+    assert result["deduplicated"] is True
+    assert result["discarded_duplicate_execution_id"] == "exe_duplicate"
+    assert calls[0][:2] == ("execution", "create")
+    assert calls[1] == ("cancel", "exe_duplicate")
+    assert retained.is_file()
+    subjects = json.loads(control.read_text(encoding="utf-8"))["subjects"]
+    assert [entry["subject_id"] for entry in subjects] == ["exe_primary"]
 
 
 def test_register_cli_snapshots_before_publishing_control(tmp_path: Path) -> None:
