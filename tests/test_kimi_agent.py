@@ -375,29 +375,88 @@ class KimiAgentTest(unittest.TestCase):
         self.assertEqual(result.output["text_outputs"], ["Let me continue.", "done"])
 
     def test_share_finding_continuations_advance_missing_milestone(self) -> None:
-        agent = KimiAgent(
-            "test-agent",
-            Path.cwd(),
-            cli_path="/bin/true",
-            completion_tool="share_finding",
-        )
-
-        def prompt(*tools: str) -> str:
-            return agent._continuation_prompt(
-                {"tool_uses": [{"tool": tool, "input": {}} for tool in tools]}
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ideas = root / "methods"
+            ideas.mkdir()
+            score = root / "score.json"
+            agent = KimiAgent(
+                "test-agent",
+                Path.cwd(),
+                cli_path="/bin/true",
+                completion_tool="share_finding",
             )
 
-        self.assertIn("Write or Edit", prompt("get_literature", "Read"))
-        self.assertIn("submit_idea_proposal", prompt("Write"))
-        self.assertIn("training submitter", prompt("Write", "submit_idea_proposal"))
-        self.assertIn(
-            "evaluate_model",
-            prompt("Write", "mcp__server-api-tools__submit_idea_proposal", "Bash"),
-        )
-        self.assertIn(
-            "share_finding",
-            prompt("mcp__server-api-tools__evaluate_model"),
-        )
+            def prompt(*uses: tuple[str, dict[str, str]]) -> str:
+                return agent._continuation_prompt(
+                    {
+                        "tool_uses": [
+                            {"tool": tool, "input": tool_input}
+                            for tool, tool_input in uses
+                        ]
+                    }
+                )
+
+            template = str(Path.cwd() / "aar/ideas/TEMPLATE/run.py")
+            module = "test_chain__kimi_candidate"
+            method = str(ideas / module / "run.py")
+            read = ("Read", {"path": template})
+            scaffold = (
+                "Bash",
+                {"command": f"cp -a aar/ideas/TEMPLATE/. {ideas / module}/"},
+            )
+            write = ("Write", {"path": method, "content": "method code"})
+            validate = ("Bash", {"command": f"python -m py_compile {method}"})
+            proposal = (
+                "mcp__server-api-tools__submit_idea_proposal",
+                {"idea_name": "candidate"},
+            )
+            training = (
+                "Bash",
+                {"command": f"scripts/submit_train_job.sh {module} run-id"},
+            )
+
+            with patch.dict(
+                os.environ,
+                {"AAR_IDEAS_DIR": str(ideas), "IDEA_NAME": "test-chain"},
+            ):
+                self.assertIn("Read tool exactly once", prompt())
+                self.assertIn("candidate scaffold", prompt(read))
+                self.assertIn("Write tool exactly once", prompt(read, scaffold))
+                self.assertIn("py_compile", prompt(read, scaffold, write))
+                self.assertIn(
+                    "submit_idea_proposal",
+                    prompt(read, scaffold, write, validate),
+                )
+                self.assertIn(
+                    "submit_train_job.sh",
+                    prompt(read, scaffold, write, validate, proposal),
+                )
+                self.assertIn(
+                    "foreground-poll",
+                    prompt(read, scaffold, write, validate, proposal, training),
+                )
+                score.write_text('{"composite": 0.1}\n')
+                with patch.object(
+                    agent, "_current_score_path", return_value=score
+                ):
+                    self.assertIn(
+                        "Read tool exactly once",
+                        prompt(read, scaffold, write, validate, proposal, training),
+                    )
+                    score_read = ("Read", {"path": str(score)})
+                    self.assertIn(
+                        "share_finding",
+                        prompt(
+                            read,
+                            scaffold,
+                            write,
+                            validate,
+                            proposal,
+                            training,
+                            score_read,
+                        ),
+                    )
 
     def test_standard_mcp_bridge_advertises_existing_tool_objects(self) -> None:
         self.assertIn("evaluate_model", {

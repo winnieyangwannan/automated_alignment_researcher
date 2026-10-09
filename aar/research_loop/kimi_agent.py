@@ -332,7 +332,7 @@ class KimiAgent:
         return str(item.get("tool", "")).rsplit("__", 1)[-1]
 
     def _continuation_prompt(self, output: dict[str, Any]) -> str:
-        """Give a bounded next milestone instead of replaying the whole task."""
+        """Require one concrete next milestone instead of replaying the task."""
         if self.completion_tool != "share_finding":
             return (
                 "Your previous turn stopped before the required tool call. In this "
@@ -340,57 +340,159 @@ class KimiAgent:
                 f"printing them, and call {self.completion_tool}."
             )
 
-        names = [self._tool_name(item) for item in output["tool_uses"]]
-        if "evaluate_model" in names:
-            return (
-                "Evaluation has already been requested. Call share_finding now with "
-                "the actual run_id and results. Emit the native structured MCP call; "
-                "do not describe, quote, or print a proposed call."
-            )
+        uses = output["tool_uses"]
+        names = [self._tool_name(item) for item in uses]
+        inputs = [item.get("input") or {} for item in uses]
+        template_path = (self.workspace / "aar/ideas/TEMPLATE/run.py").resolve()
+        idea_name = os.environ.get("IDEA_NAME", "chain")
+        chain_id = re.sub(r"[^A-Za-z0-9]+", "_", idea_name).strip("_") or "chain"
+        method_module = f"{chain_id}__kimi_candidate"
+        ideas_root = Path(os.environ.get("AAR_IDEAS_DIR", "$AAR_IDEAS_DIR"))
+        method_dir = ideas_root / method_module
+        method_path = method_dir / "run.py"
 
-        proposal_index = (
-            max(
+        def input_text(index: int, key: str) -> str:
+            value = inputs[index].get(key, "")
+            return value if isinstance(value, str) else str(value)
+
+        template_seen = any(
+            name == "Read"
+            and input_text(index, "path").endswith("aar/ideas/TEMPLATE/run.py")
+            for index, name in enumerate(names)
+        )
+        scaffold_seen = any(
+            name == "Bash"
+            and method_module in input_text(index, "command")
+            and "TEMPLATE" in input_text(index, "command")
+            for index, name in enumerate(names)
+        )
+        edit_indices = [
+            index
+            for index, name in enumerate(names)
+            if name in {"Write", "Edit"}
+            and method_module in input_text(index, "path")
+            and input_text(index, "path").endswith("run.py")
+        ]
+        edit_index = max(edit_indices, default=-1)
+        validation_index = max(
+            (
+                index
+                for index, name in enumerate(names)
+                if name == "Bash"
+                and index > edit_index
+                and "py_compile" in input_text(index, "command")
+                and method_module in input_text(index, "command")
+            ),
+            default=-1,
+        )
+        proposal_index = max(
+            (
                 index
                 for index, name in enumerate(names)
                 if name == "submit_idea_proposal"
-            )
-            if "submit_idea_proposal" in names
-            else -1
+                and index > edit_index
+            ),
+            default=-1,
         )
-        edit_indices = [
-            index for index, name in enumerate(names) if name in {"Write", "Edit"}
-        ]
-        edit_index = max(edit_indices, default=-1)
-        bash_after_proposal = any(
-            name == "Bash" and index > proposal_index
-            for index, name in enumerate(names)
+        training_index = max(
+            (
+                index
+                for index, name in enumerate(names)
+                if name == "Bash"
+                and index > proposal_index
+                and "submit_train_job.sh" in input_text(index, "command")
+            ),
+            default=-1,
         )
 
-        if proposal_index >= 0 and bash_after_proposal:
+        if training_index >= 0:
+            score_path = self._current_score_path()
+            score_read = score_path is not None and any(
+                name == "Read"
+                and Path(input_text(index, "path")) == score_path
+                for index, name in enumerate(names)
+            )
+            if score_path is not None and score_path.is_file() and score_read:
+                return (
+                    "Call the native structured MCP tool share_finding exactly once "
+                    "now, using the approved run_id and the real score you already "
+                    "read. Do not emit prose or call evaluate_model."
+                )
+            if score_path is not None and score_path.is_file():
+                return (
+                    "Call the native Read tool exactly once now with path="
+                    f"{json.dumps(str(score_path))}. Do not emit prose or another tool."
+                )
             return (
-                "The method proposal and a later shell action are recorded. Call "
-                "evaluate_model now for the trained method and wait for its real "
-                "result. If training was not actually submitted, use Bash first to "
-                "run the repository training submitter. Emit tool calls, not prose."
+                "Call the native Bash tool exactly once now. Do not resubmit training. "
+                "Use the persisted /tmp/run_id_current and /tmp/jobid_<run_id> to "
+                "foreground-poll until $SCORES_DIR/<run_id>.json or "
+                "<run_id>.failed.json exists, then print that file. Do not emit prose."
             )
         if proposal_index >= 0:
             return (
-                "The proposal is recorded. Use Bash now to launch the method with the "
-                "repository training submitter, wait as required by the AAR workflow, "
-                "then call evaluate_model. Emit native tool calls, not prose."
+                "Inspect the actual submit_idea_proposal result. If it is approved, "
+                "call the native Bash tool exactly once now to persist its run_id and "
+                f"run scripts/submit_train_job.sh {method_module} \"$RUN_ID\" exactly "
+                "once, persisting the returned job id as instructed by the research "
+                "prompt. If rejected, call Write exactly once to revise the same "
+                "run.py from the monitor feedback. Do not emit prose."
+            )
+        if edit_index >= 0 and validation_index >= 0:
+            return (
+                "Call the native structured MCP tool submit_idea_proposal exactly once "
+                f"now for the implemented method {method_module}. Fill every required "
+                "method-paper and compliance field from the code and literature. Do "
+                "not emit prose or another tool."
             )
         if edit_index >= 0:
+            command = f"python -m py_compile {method_path}"
             return (
-                "A method edit is recorded. Call submit_idea_proposal now for that "
-                "specific method, then continue to training. Emit the native "
-                "structured MCP call; do not describe or print a proposed call."
+                "Call the native Bash tool exactly once now with command="
+                f"{json.dumps(command)} to validate the method. Do not emit prose or "
+                "another tool."
+            )
+        if scaffold_seen:
+            return (
+                "Call the native Write tool exactly once now with path="
+                f"{json.dumps(str(method_path))} and full replacement content for a "
+                "concrete, compliant multidimensional training method based on the "
+                "template and literature already read. Include all five required "
+                "phase contexts. Do not emit prose or another tool."
+            )
+        if template_seen:
+            command = (
+                f"mkdir -p {method_dir} && "
+                f"cp -a {self.workspace / 'aar/ideas/TEMPLATE'}/. {method_dir}/"
+            )
+            return (
+                "Call the native Bash tool exactly once now with command="
+                f"{json.dumps(command)}. This creates the candidate scaffold. Do not "
+                "emit prose or another tool."
             )
         return (
-            "Discovery is complete. Do not call get_literature again and do not "
-            "describe future actions. Read aar/ideas/TEMPLATE/run.py if still needed, "
-            "then use the native Write or Edit tool now to create a concrete method "
-            "under $AAR_IDEAS_DIR. Emit tool calls rather than XML or prose."
+            "Call the native Read tool exactly once now with path="
+            f"{json.dumps(str(template_path))}. Do not call literature, emit prose, "
+            "or call another tool."
         )
+
+    @staticmethod
+    def _current_score_path() -> Optional[Path]:
+        run_id_file = Path("/tmp/run_id_current")
+        scores_dir = os.environ.get("SCORES_DIR", "").strip()
+        if not run_id_file.is_file() or not scores_dir:
+            return None
+        try:
+            run_id = run_id_file.read_text().strip()
+        except OSError:
+            return None
+        if not run_id or not re.fullmatch(r"[A-Za-z0-9._-]+", run_id):
+            return None
+        score_path = Path(scores_dir) / f"{run_id}.json"
+        if score_path.is_file():
+            return score_path
+        failed_path = Path(scores_dir) / f"{run_id}.failed.json"
+        return failed_path if failed_path.is_file() else score_path
 
     def _build_environment(self, overlay_home: Path) -> dict[str, str]:
         """Create an isolated Kimi home with AAR's MCP servers overlaid."""

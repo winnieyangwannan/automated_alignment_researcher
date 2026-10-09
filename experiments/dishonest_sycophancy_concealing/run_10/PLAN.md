@@ -19,7 +19,7 @@ The endpoint's vLLM chat template enables reasoning by default and ignores Kimi 
 
 Kimi Code may treat a textual statement of future intent as the end of a noninteractive prompt. The Kimi-only adapter therefore resumes the same CLI session until `share_finding` is called, with a bounded maximum of 24 continuation prompts. This does not alter the Claude SDK path.
 
-Continuation prompts are milestone-aware rather than identical task replays. They advance the next missing action in order: method file edit, idea proposal, training submission, evaluation, and finding publication. Each recovery prompt explicitly requires native structured tool calls and forbids prose/XML representations of proposed calls.
+Continuation prompts are single-action checkpoints rather than identical task replays. They advance only after the recorded tool arguments prove the previous action: exact template read, scaffold copy, method write, syntax/phase validation, idea proposal, one training submission, foreground score polling, score read, and finding publication. Each recovery prompt requires exactly one native structured tool call and forbids prose/XML representations of proposed calls. The no-local-GPU workflow consumes the score produced by the asynchronous training/evaluator path and never calls `evaluate_model` redundantly.
 
 The AAR session uses a Kimi agent profile with actual system-level instructions. Kimi Code's internal goal, subagent, and to-do tools are disabled for this profile so its separate goal-continuation runtime cannot compete with AAR's session loop. Initial literature discovery is one compact unfiltered call, with at most one focused follow-up, to avoid filling the context with multiple redundant full-detail surveys.
 
