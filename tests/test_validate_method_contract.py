@@ -95,6 +95,47 @@ SFTConfig(
         self.assertTrue(any("use max_length and warmup_steps" in error for error in errors))
         self.assertTrue(any("must set max_steps=1, not 8" in error for error in errors))
 
+    def test_rejects_invalid_serve_v2_call_and_silent_fallback(self) -> None:
+        tree = ast.parse(
+            """
+def generate(model, messages):
+    return chat_completion(
+        model,
+        messages,
+        top_p=0.9,
+        chat_template_kwargs={"enable_thinking": True},
+    )
+
+try:
+    rows.extend(generate(model, messages))
+except Exception:
+    pass
+"""
+        )
+
+        errors = _unsafe_training_api_errors(tree)
+
+        self.assertEqual(len(errors), 3)
+        self.assertTrue(any("exactly one positional argument" in error for error in errors))
+        self.assertTrue(any("chat_template_kwargs, top_p" in error for error in errors))
+        self.assertTrue(any("fail closed" in error for error in errors))
+
+    def test_accepts_supported_serve_v2_call_that_propagates_failures(self) -> None:
+        tree = ast.parse(
+            """
+result = chat_completion(
+    messages,
+    model=model,
+    enable_thinking=True,
+    max_tokens=256,
+    temperature=0.3,
+    timeout=180.0,
+)
+"""
+        )
+
+        self.assertEqual(_unsafe_training_api_errors(tree), [])
+
     def _run(self, source: str) -> tuple[subprocess.CompletedProcess[str], dict]:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

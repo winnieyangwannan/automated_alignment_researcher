@@ -173,6 +173,27 @@ def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
                 else function.attr if isinstance(function, ast.Attribute) else ""
             )
             keywords = {kw.arg for kw in node.keywords if kw.arg is not None}
+            if name == "chat_completion":
+                supported = {
+                    "deployment_dir",
+                    "model",
+                    "enable_thinking",
+                    "max_tokens",
+                    "temperature",
+                    "timeout",
+                }
+                unsupported = sorted(keywords - supported)
+                if len(node.args) > 1:
+                    errors.add(
+                        "chat_completion accepts exactly one positional argument "
+                        "(messages); pass model= as a keyword"
+                    )
+                if unsupported:
+                    errors.add(
+                        "chat_completion keyword(s) are unsupported by the locked "
+                        "Serve API client: "
+                        + ", ".join(unsupported)
+                    )
             if name in {"DPOTrainer", "DPOConfig"}:
                 errors.add(
                     "DPOTrainer/DPOConfig is unavailable in the locked target "
@@ -250,6 +271,43 @@ def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
                         "a per-item loop; load once and reuse the object"
                     )
                     break
+
+        if isinstance(node, ast.Try) and any(
+            isinstance(child, ast.Call)
+            and (
+                (
+                    isinstance(child.func, ast.Name)
+                    and child.func.id == "chat_completion"
+                )
+                or (
+                    isinstance(child.func, ast.Name)
+                    and child.func.id in {
+                        function.name
+                        for function in ast.walk(tree)
+                        if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and any(
+                            isinstance(grandchild, ast.Call)
+                            and isinstance(grandchild.func, ast.Name)
+                            and grandchild.func.id == "chat_completion"
+                            for grandchild in ast.walk(function)
+                        )
+                    }
+                )
+            )
+            for child in node.body
+            for child in ast.walk(child)
+        ):
+            for handler in node.handlers:
+                catches_everything = handler.type is None or (
+                    isinstance(handler.type, ast.Name)
+                    and handler.type.id in {"Exception", "BaseException"}
+                )
+                reraises = any(isinstance(child, ast.Raise) for child in ast.walk(handler))
+                if catches_everything and not reraises:
+                    errors.add(
+                        "chat_completion failures may not be swallowed by a broad "
+                        "exception handler; target-data generation must fail closed"
+                    )
 
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             value = node.value
