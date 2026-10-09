@@ -18,6 +18,7 @@ from .server_api_tools import (
     evaluate_predictions,
     get_leaderboard,
     get_literature,
+    review_autodata_action,
     share_finding,
     share_literature,
     submit_idea_proposal,
@@ -33,6 +34,7 @@ SERVER_TOOLS = {
         get_literature,
         share_literature,
         submit_idea_proposal,
+        review_autodata_action,
     ],
     "prior-work-tools": [download_snapshot],
 }

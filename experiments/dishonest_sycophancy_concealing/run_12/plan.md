@@ -181,6 +181,18 @@ but it does not replace this automatic-promotion test.
 - Stop the launch if any chain uses a different researcher backend or cannot
   prove its Kimi deployment/model identity.
 
+### 11. Keep proposal-to-workspace bootstrap deterministic
+
+- On proposal approval, have the trusted shared MCP service create/resume and
+  register the run-scoped native workspace.
+- Bind the idempotency key to run ID, method name, approved code hash, reviewed
+  brief, and workspace root.
+- Retry the same transition before both Kimi and Claude sessions; never require
+  either model to rediscover workspace creation commands.
+- Persist no broker capability value in the brief or bootstrap receipt.
+- Leave native approval, evidence analysis, candidate mutation,
+  meta-optimization, production, and export semantics unchanged.
+
 ## Success criteria
 
 Run 12 succeeds only when all of the following are true:

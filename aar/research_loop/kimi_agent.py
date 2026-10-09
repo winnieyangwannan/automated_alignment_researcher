@@ -540,13 +540,27 @@ class KimiAgent:
             and self._autodata_enabled()
             and not self._autodata_handoff_ready(approved_run_id)
         ):
+            workspace_id = self._autodata_workspace_id(approved_run_id)
+            if workspace_id is not None:
+                return (
+                    f"The proposal is approved with run_id={approved_run_id}, and "
+                    "trusted orchestration already created and registered native "
+                    f"AutoData workspace_id={workspace_id}. Do not load a skill, "
+                    "create/fork/register a workspace, edit the approved method, or "
+                    "submit another proposal. Use a native Bash tool call now to "
+                    f"inspect status for {workspace_id}, then fulfill only its exact "
+                    "pending visible host action. The lifecycle supervisor alone "
+                    "calls workspace/execution step. Continue meta-optimization and "
+                    "production until the verified training-handoff exists; emit a "
+                    "real tool call, not planning prose."
+                )
             return (
                 f"The proposal is already approved with run_id={approved_run_id}. "
                 "Do not submit training, change the approved method, or submit "
                 "another proposal. Continue the required native AutoData workflow "
-                "now: load the autodata skill if needed, inspect the reviewed recipe, "
-                "create or resume and register the run-scoped workspace, obtain only "
-                "the delegated native approvals, complete meta-optimization and the "
+                "now. Trusted orchestration must create and register the run-scoped "
+                "workspace; do not attempt that bootstrap manually. Obtain only the "
+                "delegated native approvals, complete meta-optimization and the "
                 "dedicated production execution, then write the verified "
                 f"$TEAM_DIR/autodata/{approved_run_id}/training-handoff.json. "
                 "Use concrete native tool calls; approval alone is not completion."
@@ -882,6 +896,30 @@ class KimiAgent:
             Path(team_dir) / "autodata" / run_id / "training-handoff.json"
         ).is_file()
 
+    @staticmethod
+    def _autodata_workspace_id(run_id: str) -> str | None:
+        if not re.fullmatch(r"[A-Za-z0-9._:-]+", run_id):
+            return None
+        team_dir = os.getenv("TEAM_DIR", "").strip()
+        if not team_dir:
+            return None
+        path = (
+            Path(team_dir)
+            / "autodata"
+            / run_id
+            / "workspace-bootstrap.json"
+        )
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        workspace_id = value.get("workspace_id")
+        if isinstance(workspace_id, str) and re.fullmatch(
+            r"ws_[0-9a-f]{32}", workspace_id
+        ):
+            return workspace_id
+        return None
+
     def _with_resumable_approved_run(self, task: str) -> str:
         if not self._resume_approved_proposal_enabled():
             return task
@@ -889,12 +927,16 @@ class KimiAgent:
         if run_id is None:
             return task
         if self._autodata_enabled() and not self._autodata_handoff_ready(run_id):
+            workspace_id = self._autodata_workspace_id(run_id)
             return (
                 task
                 + "\n\nAUTOMATIC RESUME CONTEXT: This is a retry of the same "
                 f"outer iteration. Proposal run_id={run_id} is already approved. "
                 "Do not restart literature review, author another method, or submit "
-                "another proposal. Resume the existing native AutoData workspace or "
+                "another proposal. Trusted orchestration has already created and "
+                "registered the native AutoData workspace"
+                + (f" workspace_id={workspace_id}" if workspace_id else "")
+                + ". Resume its visible host action or "
                 "execution and finish its verified production handoff before training."
             )
         return task

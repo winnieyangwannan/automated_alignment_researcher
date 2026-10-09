@@ -1589,6 +1589,40 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
                     print(f"[submit_idea_proposal] froze pre-run paper to run_id={_minted}")
             except Exception as _e:
                 print(f"[submit_idea_proposal] freeze-at-approval stamp failed (continuing): {_e}")
+        if (
+            verdict.get("approved")
+            and os.getenv("AAR_AUTODATA", "0").strip().lower()
+            in {"1", "true", "yes", "on"}
+            and isinstance(verdict.get("run_id"), str)
+        ):
+            try:
+                from aar.research_loop.autodata_bootstrap import ensure_workspace
+
+                bootstrap = ensure_workspace(
+                    run_id=verdict["run_id"],
+                    idea_name=idea_name,
+                    code_hash=str(code_hash or ""),
+                )
+                verdict["autodata_bootstrap"] = {
+                    "status": "ready",
+                    **bootstrap,
+                }
+                marker = json.loads(_proposal_marker_path().read_text())
+                marker["autodata_bootstrap"] = verdict["autodata_bootstrap"]
+                _proposal_marker_path().write_text(json.dumps(marker, indent=2))
+                print(
+                    "[submit_idea_proposal] bootstrapped and registered AutoData "
+                    f"workspace={bootstrap['workspace_id']}"
+                )
+            except Exception as error:
+                # The integrity approval remains immutable and can be resumed.  A
+                # later host session retries this idempotent infrastructure step
+                # before either researcher backend is started.
+                verdict["autodata_bootstrap"] = {
+                    "status": "failed",
+                    "error": str(error),
+                }
+                print(f"[submit_idea_proposal] AutoData bootstrap failed: {error}")
         return {"content": [{"type": "text", "text": json.dumps(verdict, indent=2)}]}
     except Exception as e:
         return {"content": [{"type": "text", "text": json.dumps({"approved": False, "error": str(e)}, indent=2)}]}

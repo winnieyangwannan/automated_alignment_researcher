@@ -184,3 +184,22 @@ AutoData generator, local Bubblewrap brokers, five four-GPU evaluator lanes,
 and five one-GPU persistent Gemma research lanes. It starts at AutoData
 concurrency eight per chain, bounding fleet-wide generation concurrency at
 forty while retaining substantial parallelism.
+
+## Backend-independent AutoData bootstrap
+
+After `submit_idea_proposal` approves and freezes a method, trusted AAR
+orchestration—not the research model—now performs the deterministic native
+bootstrap:
+
+1. derive the run-scoped workspace brief from the reviewed recipe and pinned
+   campaign policy;
+2. install only the delegated-approval public key;
+3. create or resume the workspace with a proposal-bound idempotency key; and
+4. register that exact workspace with the lifecycle supervisor.
+
+The transition is retried before every later research session, so a process or
+model-call failure cannot strand an approved proposal between approval and
+workspace creation. The implementation is shared by the Kimi and Claude
+research backends. It does not automate scientific `analyze_results` or
+`mutate_candidate` actions, change the recipe, approve evidence, or bypass the
+native AutoData lifecycle.

@@ -1,6 +1,30 @@
 # Run 12 progress
 
-Last updated: 2026-10-09 10:05 PDT
+Last updated: 2026-10-09 16:00 PDT
+
+## Five-chain attempt: proposal bootstrap failure isolated
+
+Attempt `20261009T170629Z-08f3d6a9be40` launched five Kimi researchers and five
+healthy evaluator lanes, but produced zero durable score/result pairs. All five
+chains remained on outer iteration 1. Kimi could obtain integrity approval,
+then repeatedly emitted planning text or malformed tool calls while trying to
+create the native AutoData workspace. No workspace, meta execution, production
+generation, training, or candidate evaluation began. Beta and Delta exhausted
+their eight-attempt controller budgets; Alpha, Gamma, and Epsilon were still
+retrying when the failure was diagnosed.
+
+The recovery removes this deterministic infrastructure transition from the
+research-model conversation. The shared approval service now creates/resumes
+and registers a proposal-bound workspace immediately after approval. The common
+agent loop retries the same idempotent bootstrap before either Kimi or Claude
+starts, and Kimi continuation prompts consume the retained workspace ID instead
+of asking the model to load a skill and rediscover creation commands. Scientific
+AutoData actions remain model-driven and all delegated approvals remain signed.
+
+Focused validation: 69 tests passed, including both researcher backends,
+idempotent recovery, proposal identity binding, secret non-persistence, Kimi
+continuation behavior, native approval binding, lifecycle supervision, plugin
+resolution, and recipe contracts.
 
 ## Full-run launch gate: failed fast and fixed
 

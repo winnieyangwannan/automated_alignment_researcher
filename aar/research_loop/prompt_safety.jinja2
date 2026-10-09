@@ -248,7 +248,10 @@ approval: honor the native skill's visible approval-action rules.
 **Required AutoData ordering:** inspect the reviewed recipe, then write the complete
 `$AAR_IDEAS_DIR/<idea_name>/run.py` that will consume its exported dataset and call
 `submit_idea_proposal`. Only after it returns `approved: true` and a `run_id` may you
-create an AutoData workspace or request any delegated native approval. Use that returned
+request any delegated native approval. The trusted proposal service automatically creates
+or resumes and registers the run-scoped native workspace from the reviewed brief; its
+response includes `autodata_bootstrap.workspace_id`. Do not repeat `workspace create`,
+`workspace fork`, or lifecycle registration for that initial workspace. Use the returned
 `run_id` for the workspace/export/training paths. `review_autodata_action` fails closed
 unless the current code-hash-bound proposal is approved, and its grounding decision
 binds that proposal to one live workspace. A cancelled or failed workspace may be
@@ -315,9 +318,9 @@ the same execution in a later session if necessary.
 The trusted orchestration-owned lifecycle supervisor is the sole caller of native
 `workspace step` and `execution step`. Do not call either step operation yourself,
 do not launch a background stepper, and do not create a controller script. The
-supervisor never infers intent from native `active` state. Immediately after each
-deliberate `workspace create` or `workspace fork`, register exactly the returned
-workspace ID:
+supervisor never infers intent from native `active` state. The initial approved workspace
+is created and registered automatically. Only after a later deliberate scientific
+`workspace fork` must you register exactly the returned workspace ID:
 
 ```bash
 python3 "$AAR_REPO/scripts/autodata_lifecycle_supervisor.py" register \
@@ -604,8 +607,9 @@ without an approval.** Once approved → train + `evaluate_model` **that approve
    approved `submit_idea_proposal` RETURNED** — do NOT mint your own. It is already namespaced by your chain
    (so it can never collide with another chain's run — the cause of cross-chain score mix-ups) AND your
      mini-paper is already frozen to it. Persist it, then submit ONE training job:
-{% if autodata %}   Before submitting training, launch the approved method's Autodata job with
-   first load `autodata:autodata`, then use the plugin's native CLI workflow to finish
+{% if autodata %}   Before submitting training, continue the approved method's automatically
+   bootstrapped AutoData workspace. Load `autodata:autodata` when available, then use
+   the plugin's native CLI workflow to finish
    and export the required execution below `$TEAM_DIR/autodata/$RUN_ID/`. Do not use or
    look for AAR AutoData MCP tools. If the native execution or export fails, do not
    train; record the failure and end the session. Confirm that the approved method code

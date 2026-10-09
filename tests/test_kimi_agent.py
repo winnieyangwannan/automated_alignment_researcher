@@ -1103,6 +1103,22 @@ class KimiAgentTest(unittest.TestCase):
                 self.assertNotIn("submit_train_job.sh", prompt)
                 self.assertIsNone(agent._continuation_tool(output))
 
+                bootstrap = (
+                    root
+                    / "team"
+                    / "autodata"
+                    / run_id
+                    / "workspace-bootstrap.json"
+                )
+                bootstrap.parent.mkdir(parents=True)
+                workspace_id = "ws_" + "1" * 32
+                bootstrap.write_text(json.dumps({"workspace_id": workspace_id}))
+                bootstrapped_prompt = agent._continuation_prompt(output)
+                self.assertIn("trusted orchestration already created", bootstrapped_prompt)
+                self.assertIn(workspace_id, bootstrapped_prompt)
+                self.assertIn("Do not load a skill", bootstrapped_prompt)
+                self.assertNotIn("create or resume", bootstrapped_prompt)
+
                 with patch.dict(
                     os.environ, {"AAR_RESUME_APPROVED_PROPOSAL": "1"}, clear=False
                 ):
@@ -1111,9 +1127,9 @@ class KimiAgentTest(unittest.TestCase):
                     self.assertIn(run_id, resumed)
 
     def test_standard_mcp_bridge_advertises_existing_tool_objects(self) -> None:
-        self.assertIn("evaluate_model", {
-            tool.name for tool in SERVER_TOOLS["server-api-tools"]
-        })
+        names = {tool.name for tool in SERVER_TOOLS["server-api-tools"]}
+        self.assertIn("evaluate_model", names)
+        self.assertIn("review_autodata_action", names)
         options = create_server("server-api-tools").create_initialization_options()
         self.assertIsNotNone(options.capabilities.tools)
 

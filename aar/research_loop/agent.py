@@ -755,6 +755,44 @@ class AutonomousAgentLoop:
             skills=["autodata:autodata"] if autodata_plugin is not None else None,
         )
 
+    def _ensure_approved_autodata_workspace(self) -> None:
+        """Resume proposal-to-workspace bootstrap before either model backend starts."""
+        if os.getenv("AAR_AUTODATA", "0").strip().lower() not in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return
+        from aar.research_loop.autodata_bootstrap import ensure_workspace
+        from aar.research_loop.tools.server_api_tools import (
+            _proposal_approved,
+            _proposal_marker_path,
+        )
+
+        approved, reason = _proposal_approved()
+        if not approved:
+            if "no idea proposal" not in reason:
+                print(f"[AutoData bootstrap] proposal not resumable: {reason}")
+            return
+        marker = json.loads(_proposal_marker_path().read_text(encoding="utf-8"))
+        identity = (
+            marker.get("run_id"),
+            marker.get("idea_name"),
+            marker.get("code_hash"),
+        )
+        if not all(isinstance(value, str) and value for value in identity):
+            raise RuntimeError("approved proposal lacks AutoData bootstrap identity")
+        result = ensure_workspace(
+            run_id=identity[0],
+            idea_name=identity[1],
+            code_hash=identity[2],
+        )
+        print(
+            "[AutoData bootstrap] workspace ready "
+            f"workspace={result['workspace_id']} idempotent={result['idempotent']}"
+        )
+
     async def run(self) -> Dict[str, Any]:
         """Run the autonomous agent loop."""
         mode_str = "local" if self.local_mode else "server"
@@ -926,6 +964,8 @@ class AutonomousAgentLoop:
         os.environ["AAR_CURRENT_SESSION_ID"] = session_id
 
         print(f"\n[Session {self.session_count}] {session_id}")
+
+        self._ensure_approved_autodata_workspace()
 
         prompt = self._get_prompt()
 
