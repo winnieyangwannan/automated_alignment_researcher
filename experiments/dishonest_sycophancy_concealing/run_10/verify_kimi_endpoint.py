@@ -32,6 +32,7 @@ async def verify(workspace: Path) -> dict[str, object]:
             "Agent",
             "AgentSwarm",
         ],
+        completion_tool="get_literature",
     ).execute(
         "Call the get_leaderboard MCP tool exactly once with its valid empty input. "
         "Only after receiving that result, call the get_literature MCP tool exactly "
@@ -55,7 +56,9 @@ async def verify(workspace: Path) -> dict[str, object]:
         and len(literature_positions) == 1
         and leaderboard_positions[0] < literature_positions[0]
     )
-    response_ok = any("KIMI_MCP_CANARY_OK" in text for text in texts)
+    response_ok = any(
+        text.strip().endswith("KIMI_MCP_CANARY_OK") for text in texts
+    )
     if not result.success or not tool_ok or not response_ok:
         stderr_tail = str(result.output.get("stderr", ""))[-2000:]
         raise RuntimeError(
