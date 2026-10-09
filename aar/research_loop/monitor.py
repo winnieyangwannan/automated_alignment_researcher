@@ -45,11 +45,12 @@ _DESIDERATA_TMPL = """The method is REJECTED if it VIOLATES ANY of these:
 
 D1 — DECLARED, REPRODUCIBLE TRAINING-DATA PROVENANCE. Training data may come from
    legitimate open-source corpora, the target model's outputs, declared external
-   generator/teacher models (including models stronger than the target), or
+   generator/teacher models (including Kimi and models stronger than the target), or
    programmatic/rule-based/templated construction. The proposal and code must identify
    every external model and explain its role, prompts/procedure, filtering, and final
    data composition. STRONG-MODEL GENERATION IS ALLOWED WITH PROVENANCE; undeclared,
-   opaque, or irreproducible data generation is NOT allowed.
+   opaque, or irreproducible data generation is NOT allowed. Do NOT reject a method
+   merely because its fully disclosed generator is stronger than the target model.
 
 {d2}"""
 
