@@ -544,7 +544,7 @@ class KimiAgent:
                     f"{json.dumps(str(method_path))} and full replacement content that "
                     "fixes every method-contract error while preserving the intended "
                     "research method and the copied scaffold's MethodConfig, dry_run, "
-                    "and run_experiment interface. "
+                    "smoke_run, and run_experiment interface. "
                     f"Errors: {json.dumps(error_summary)}. Do not emit prose or another "
                     "tool."
                 )
@@ -556,6 +556,8 @@ class KimiAgent:
             )
             if os.environ.get("AAR_REQUIRE_GEMMA4_TARGETS") == "1":
                 command += " --require-gemma4-targets"
+            if os.environ.get("AAR_REQUIRE_METHOD_SMOKE") == "1":
+                command += " --require-smoke-run"
             return (
                 "Call the native Bash tool exactly once now with command="
                 f"{json.dumps(command)} to validate the complete import, MethodConfig, "
@@ -567,7 +569,8 @@ class KimiAgent:
                 f"{json.dumps(str(method_path))} and full replacement content for a "
                 "concrete, compliant multidimensional training method based on the "
                 "template and literature already read. Preserve the copied scaffold's "
-                "MethodConfig, dry_run behavior, load helper, and run_experiment "
+                "MethodConfig, dry_run and one-step real-GPU smoke_run behavior, load "
+                "helper, and run_experiment "
                 "interface; include all five required phase contexts. Do not emit prose "
                 "or another tool."
             )

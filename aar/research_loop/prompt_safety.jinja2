@@ -300,7 +300,9 @@ without an approval.** Once approved → train + `evaluate_model` **that approve
    approval. Put optional filtering/rejection sampling in `phase("data_selection")` and source reads
    in `phase("data_loading")`. A deterministic/template-built dataset still uses
    `data_generation`; never report a cache load as generation. Each context must surround the real
-   operation rather than an empty marker,
+   operation rather than an empty marker. Preserve `MethodConfig.smoke_run`. When it is true, run the
+   SAME real CUDA/model/PEFT/trainer/save path on at most eight examples for exactly one optimizer
+   step, then save a loadable PEFT adapter; do not substitute a stub or skip model loading,
    then call **`submit_idea_proposal`**. This REGISTERS your method's **self-contained, results-free
    mini method paper** — the exact fields a forecaster will later read and predict from — AND gates
    execution. Provide (all required): `idea_name` + the paper sections `title`, `abstract`

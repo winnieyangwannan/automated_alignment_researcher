@@ -60,6 +60,9 @@ if [ "${AAR_REQUIRE_METHOD_CONTRACT:-0}" = "1" ]; then
   if [ "${AAR_REQUIRE_GEMMA4_TARGETS:-0}" = "1" ]; then
     _contract_args+=(--require-gemma4-targets)
   fi
+  if [ "${AAR_REQUIRE_METHOD_SMOKE:-0}" = "1" ]; then
+    _contract_args+=(--require-smoke-run)
+  fi
   timeout 60s "${HARNESS_PY:-python}" "${REPO}/scripts/validate_method_contract.py" \
     "${_contract_args[@]}" >&2
 fi
@@ -98,6 +101,13 @@ if [ -n "${AAR_TRAIN_MEM:-}" ]; then
     exit 2
   }
   _resource_args+=(--mem="${AAR_TRAIN_MEM}")
+fi
+if [ -n "${AAR_TRAIN_TIME:-}" ]; then
+  [[ "${AAR_TRAIN_TIME}" =~ ^([0-9]+-)?[0-9]{2}:[0-9]{2}:[0-9]{2}$ ]] || {
+    echo "submit_train_job: AAR_TRAIN_TIME must use Slurm D-HH:MM:SS format" >&2
+    exit 2
+  }
+  _resource_args+=(--time="${AAR_TRAIN_TIME}")
 fi
 
 _jid="$(sbatch --parsable \

@@ -8,8 +8,9 @@ Run 10 changes only the research-agent backend from Claude to Kimi-K2.6. The Gem
 2. Install the pinned ARM64 Node 22.22.0 and Kimi Code 2.1.1 runtime on HPC; verify `node-pty`.
 3. Synchronize a clean, committed `multi_kimi` checkout and build its own ARM64 `.venv` on a GPU compute node.
 4. Prove a complete Kimi → AAR MCP tool → Kimi round trip without printing or persisting the endpoint key.
-5. Run one fresh chain for one iteration with one four-GPU evaluator. Require a score/finding pair, vLLM 0.25.1 language-model-only markers, merged-checkpoint provenance, retained merge manifest, and deletion of the ephemeral merged checkpoint.
-6. Only after the canary proof passes, launch five fresh chains (`alpha` through `epsilon`) for 50 sessions each and five distinct four-GPU evaluators.
+5. Run the focused CPU replay suite and live Kimi tool-protocol gate. Start one CPU-only Kimi chain with zero evaluators. Require its approved generated method to pass a time-bounded real-GPU smoke: real Gemma load, real PEFT/trainer path, at most eight examples, one optimizer step, adapter save, structural submission validation, and PEFT adapter reload.
+6. Only after the method smoke passes, stage that exact adapter and launch one four-GPU evaluator on demand. Require a score/finding pair, vLLM 0.25.1 language-model-only markers, merged-checkpoint provenance, retained merge manifest, and deletion of the ephemeral merged checkpoint.
+7. Only after the combined proof passes, launch five fresh chains (`alpha` through `epsilon`) for 50 sessions each and five distinct four-GPU evaluators.
 
 Fifty iterations means 50 research sessions started per chain. A session that fails before scoring still consumes an iteration, so completion is reported with both started-session and successful score/result counts.
 
@@ -26,6 +27,8 @@ For these fail-closed continuation checkpoints only, the Kimi request proxy expo
 Candidate validation imports the generated module and proves the complete training interface: `MethodConfig(output_dir=..., dry_run=True)`, a successful no-GPU `run_experiment(config)` result, all required phase contexts, available quantization dependencies, and the required language-tower-only Gemma-4 PEFT target regex. The proof records the candidate source hash; a later edit invalidates it automatically. A failed proof sends Kimi back to a forced `Write` checkpoint with the concrete errors instead of allowing proposal or training. The submission wrapper independently repeats this gate, and Run-10 training failures publish a terminal failure marker so neither the research chain nor evaluator waits indefinitely.
 
 Training submission is receipt-driven rather than inferred from Kimi's Bash text. The Run-10-only receipt binds the approved run ID to a numeric Slurm job ID under the team directory, serializes retries, and makes repeated submission idempotent. Run 10 overrides training host memory to 128 GiB after the 64 GiB canary crossed its cgroup limit during Gemma training; the shared 64 GiB default and Claude path are unchanged.
+
+The lightweight gate never allocates an evaluator while Kimi is researching, revising a proposal, queuing training, or repairing a method. `MethodConfig.smoke_run=True` must exercise the same real model/PEFT/trainer/save path with one optimizer step; `dry_run` remains the separate no-model interface check. A 15-minute Slurm limit bounds a method that fails to honor the smoke contract. The adapter is structurally validated and reopened through PEFT before it can enter the evaluation queue. The on-demand evaluator receives that same source-hash-bound, approved adapter rather than a newly generated candidate.
 
 The AAR Kimi session uses Kimi Code's documented `defaultPermissionMode = "auto"` (Never Ask) configuration. This is required because Kimi Code forbids the `--auto` flag with noninteractive `--prompt`, while the Slurm research chain cannot answer permission prompts for scaffold writes or training commands. The setting is written only into the session's temporary Kimi home; the generic Kimi adapter default, user configuration, and Claude SDK path remain unchanged.
 

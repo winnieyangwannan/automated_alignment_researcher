@@ -111,14 +111,54 @@ except ModuleNotFoundError:
     from aar.ideas.${IDEA}.run import run_experiment, MethodConfig   # repo seed library
 from aar import transport
 from aar.phase_timing import phase, require_successful_phases
+import json
+import os
+from pathlib import Path
+smoke_run = "${AAR_METHOD_SMOKE:-0}".lower() in {"1", "true", "yes", "on"}
+config_kwargs = {"output_dir": "${STAGING}"}
+if smoke_run:
+    config_kwargs["smoke_run"] = True
 with phase("train.method_total"):
-    out = run_experiment(MethodConfig(output_dir="${STAGING}"))
+    out = run_experiment(MethodConfig(**config_kwargs))
 if "${AAR_REQUIRE_PHASE_TIMINGS:-0}".lower() in {"1", "true", "yes", "on"}:
     require_successful_phases("${AAR_PHASE_TIMINGS_PATH}")
-with phase("train.model_submission"):
-    transport.put_model(out["model_path"], "${RUN_ID}")
-print("[train] submitted ${RUN_ID}; waiting for eval worker to score it")
+if smoke_run:
+    with phase("train.smoke_validation"):
+        from peft import PeftConfig
+        from aar.transport import validate_model_submission
+
+        model_path = validate_model_submission(out["model_path"]).resolve()
+        PeftConfig.from_pretrained(model_path)
+        weights = [
+            path for name in ("adapter_model.safetensors", "adapter_model.bin")
+            if (path := model_path / name).is_file() and path.stat().st_size > 0
+        ]
+        if not weights:
+            raise RuntimeError("smoke run did not save non-empty PEFT adapter weights")
+        marker_dir = Path("${TEAM_DIR}") / "method_smoke"
+        marker_dir.mkdir(parents=True, exist_ok=True)
+        marker = marker_dir / "${RUN_ID}.passed.json"
+        temporary = marker.with_suffix(f".tmp.{os.getpid()}")
+        temporary.write_text(json.dumps({
+            "schema_version": 1,
+            "status": "passed",
+            "run_id": "${RUN_ID}",
+            "model_path": str(model_path),
+            "adapter_weight_file": weights[0].name,
+            "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+        }, sort_keys=True) + "\n")
+        os.replace(temporary, marker)
+    print("[train] real-GPU one-step method smoke passed for ${RUN_ID}")
+else:
+    with phase("train.model_submission"):
+        transport.put_model(out["model_path"], "${RUN_ID}")
+    print("[train] submitted ${RUN_ID}; waiting for eval worker to score it")
 PY
+
+if [ "${AAR_METHOD_SMOKE:-0}" = "1" ]; then
+  echo "=== METHOD SMOKE PASSED ==="
+  exit 0
+fi
 
 # AUTO-PRUNE (1/2): the model is now staged into the submissions channel; the local _train staging copy
 # is redundant. Drop it so the per-user quota doesn't fill (each checkpoint is ~6GB and a 47h run

@@ -92,6 +92,7 @@ def validate(
     *,
     run_dry_run: bool = False,
     require_gemma4_targets: bool = False,
+    require_smoke_run: bool = False,
 ) -> dict[str, Any]:
     method_path = method_path.resolve()
     source = method_path.read_bytes()
@@ -132,6 +133,17 @@ def validate(
                     "not a list, set, or tuple; PEFT treats collection entries as "
                     "literal module suffixes"
                 )
+        if require_smoke_run and not any(
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "config"
+            and node.attr == "smoke_run"
+            for node in ast.walk(tree)
+        ):
+            errors.append(
+                "run_experiment must use config.smoke_run for the one-step real-GPU "
+                "training path"
+            )
 
     module = None
     if tree is not None:
@@ -164,6 +176,8 @@ def validate(
                 }
                 if run_dry_run:
                     config_kwargs["dry_run"] = True
+                if require_smoke_run:
+                    config_kwargs["smoke_run"] = False
                 config = method_config(**config_kwargs)
             except Exception as error:  # noqa: BLE001 - report candidate contract errors
                 errors.append(
@@ -214,6 +228,7 @@ def main() -> None:
     parser.add_argument("--proof", type=Path)
     parser.add_argument("--run-dry-run", action="store_true")
     parser.add_argument("--require-gemma4-targets", action="store_true")
+    parser.add_argument("--require-smoke-run", action="store_true")
     args = parser.parse_args()
     proof = args.proof or args.method_path.parent / ".aar-method-contract.json"
     try:
@@ -239,6 +254,7 @@ def main() -> None:
             args.method_path,
             run_dry_run=args.run_dry_run,
             require_gemma4_targets=args.require_gemma4_targets,
+            require_smoke_run=args.require_smoke_run,
         )
     except Exception as error:  # noqa: BLE001 - always leave a diagnostic proof
         result = {

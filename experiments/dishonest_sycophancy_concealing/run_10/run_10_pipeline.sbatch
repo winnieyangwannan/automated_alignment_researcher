@@ -54,7 +54,7 @@ export KIMI_MODEL_MAX_CONTEXT_SIZE=262144 KIMI_MODEL_MAX_OUTPUT_SIZE=65536
 export KIMI_MODEL_MAX_COMPLETION_TOKENS=65536
 export KIMI_MODEL_CAPABILITIES=tool_use KIMI_MODEL_REASONING_KEY=reasoning_content
 export AAR_KIMI_MCP_MAX_TEXT_CHARS=16000
-export AAR_REQUIRE_METHOD_CONTRACT=1 AAR_REQUIRE_GEMMA4_TARGETS=1
+export AAR_REQUIRE_METHOD_CONTRACT=1 AAR_REQUIRE_GEMMA4_TARGETS=1 AAR_REQUIRE_METHOD_SMOKE=1
 export AAR_WRITE_TRAIN_FAILURE_MARKER=1
 export AAR_TRAIN_MEM=128G AAR_REQUIRE_TRAIN_RECEIPT=1
 unset KIMI_AGENT_MODEL
@@ -63,7 +63,13 @@ export AAR_TEAM_ID="honesty-sycophancy-concealing-gemma4_31b-kimi26-run10-${MODE
 export AAR_GPT_JUDGE_SPEND_CAP_USD=500 OVERLOADED_MAX_RETRIES=0
 export AAR_REQUIRE_SUCCESSFUL_ITERATIONS=1 AAR_REQUIRE_PHASE_TIMINGS=1 AAR_VERIFY_TWO_ITERATION_ARTIFACTS=0
 export AAR_FUNCTIONAL_SMOKE=1 AAR_MULTIDIM_SCORING_CONFIRMED=1 AAR_START_EVAL_WORKER=1
-if [ "${MODE}" = canary ]; then
+if [ "${MODE}" = smoke ]; then
+  seeds=smoke; iterations=1; hours=2
+  export AAR_START_EVAL_WORKER=0 AAR_EVAL_WORKERS=0
+  export AAR_MAX_CONCURRENT_TRAIN_JOBS=1 AAR_METHOD_SMOKE=1
+  export AAR_TRAIN_TIME=00:15:00
+  export AAR_KEEP_CHECKPOINTS=1
+elif [ "${MODE}" = canary ]; then
   seeds=canary; iterations=1; hours=17
   export AAR_MAX_CONCURRENT_TRAIN_JOBS=1 AAR_EVAL_WORKERS=1 AAR_EVAL_GPUS=4 AAR_EVAL_GPU_CAP=4
   export AAR_EVAL_TIME=18:00:00 AAR_EVAL_IDLE_SECONDS=61200
@@ -92,21 +98,59 @@ mkdir -p "${ATTEMPT_DIR}/metadata"
   --recovered-source-dir "${RECOVERED_SOURCES}" --provenance-output "${ATTEMPT_DIR}/metadata/baseline_reuse_provenance.json" >/dev/null
 cp -- "${REUSED_BASELINE}" "${AAR_BASELINE_OVERRIDES}"
 "${HARNESS_PY}" "${REPO}/scripts/validate_reused_multidimensional_baseline.py" "${AAR_BASELINE_OVERRIDES}" --recovered-source-dir "${RECOVERED_SOURCES}" >/dev/null
-bash "${REPO}/scripts/publish_holdout.sh"
+if [ "${MODE}" != smoke ]; then
+  bash "${REPO}/scripts/publish_holdout.sh"
+fi
 
 launch_log="${ATTEMPT_DIR}/metadata/launch_run10_${MODE}.txt"
 bash "${REPO}/scripts/launch_team.sh" "${seeds}" "${iterations}" "${hours}" | tee "${launch_log}"
 mapfile -t evaluator_ids < <(awk '/^\[launch\] evaluator [0-9]+\/[0-9]+ -> job [0-9]+$/{print $NF}' "${launch_log}")
 mapfile -t chain_ids < <(awk '/^\[team\] chain [a-z]+ -> job [0-9]+$/{print $NF}' "${launch_log}")
-expected=1; [ "${MODE}" = canary ] || expected=5
-[ "${#evaluator_ids[@]}" -eq "${expected}" ] && [ "${#chain_ids[@]}" -eq "${expected}" ] || { echo "missing child job IDs" >&2; exit 1; }
-[ "$(printf '%s\n' "${evaluator_ids[@]}" | sort -u | wc -l)" -eq "${expected}" ] || { echo "duplicate evaluator IDs" >&2; exit 1; }
+expected=1; [ "${MODE}" = full ] && expected=5
+expected_evaluators="${expected}"; [ "${MODE}" = smoke ] && expected_evaluators=0
+[ "${#evaluator_ids[@]}" -eq "${expected_evaluators}" ] && [ "${#chain_ids[@]}" -eq "${expected}" ] || { echo "missing child job IDs" >&2; exit 1; }
+if [ "${expected_evaluators}" -gt 0 ]; then
+  [ "$(printf '%s\n' "${evaluator_ids[@]}" | sort -u | wc -l)" -eq "${expected_evaluators}" ] || { echo "duplicate evaluator IDs" >&2; exit 1; }
+fi
 [ "$(printf '%s\n' "${chain_ids[@]}" | sort -u | wc -l)" -eq "${expected}" ] || { echo "duplicate chain IDs" >&2; exit 1; }
 {
   printf 'evaluator_jobs=%s\n' "${evaluator_ids[*]}"
   printf 'research_chain_jobs=%s\n' "${chain_ids[*]}"
   printf 'research_seeds=%s\n' "${seeds}"
   printf 'max_iterations_per_chain=%s\n' "${iterations}"
-  printf 'evaluator_gpus_per_job=4\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nephemeral_merged_checkpoints=1\n'
+  printf 'evaluator_gpus_per_job=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nephemeral_merged_checkpoints=1\n' "$([ "${MODE}" = smoke ] && echo 0 || echo 4)"
 } > "${ATTEMPT_DIR}/metadata/children.env"
-echo "[run10] ${MODE} launch verified with ${expected} distinct chain/evaluator pair(s)"
+echo "[run10] ${MODE} launch verified with ${expected} chain(s) and ${expected_evaluators} evaluator(s)"
+
+if [ "${MODE}" = smoke ]; then
+  echo "[run10] waiting for the generated method's real-GPU one-step smoke"
+  "${HARNESS_PY}" "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/monitor_method_smoke.py" \
+    "${ATTEMPT_DIR}" --timeout-seconds 6900 --poll-seconds 10
+  smoke_proof="${ATTEMPT_DIR}/metadata/method_smoke_passed.json"
+  run_id="$(jq -r '.run_id' "${smoke_proof}")"
+  adapter_path="$(jq -r '.adapter_path' "${smoke_proof}")"
+  export TEAM_DIR="${ATTEMPT_DIR}/aar_teams/${AAR_TEAM_ID}"
+  export SUBMISSIONS_DIR="${TEAM_DIR}/submissions" SCORES_DIR="${TEAM_DIR}/scores"
+
+  echo "[run10] method smoke passed; publishing holdout and staging the same adapter"
+  bash "${REPO}/scripts/publish_holdout.sh"
+  "${HARNESS_PY}" -c \
+    'import sys; from aar.transport import put_model; print(put_model(sys.argv[1], sys.argv[2]))' \
+    "${adapter_path}" "${run_id}"
+
+  export AAR_EVAL_WORKERS=1 AAR_EVAL_GPUS=4 AAR_EVAL_GPU_CAP=4
+  export AAR_EVAL_TIME=18:00:00 AAR_EVAL_IDLE_SECONDS=61200
+  eval_launch_log="${ATTEMPT_DIR}/metadata/launch_on_demand_evaluator.txt"
+  "${REPO}/scripts/launch_eval_worker.sh" "${SUITE_NAME}" "${AAR_EVAL_IDLE_SECONDS}" 1 | tee "${eval_launch_log}"
+  mapfile -t evaluator_ids < <(awk '/^\[launch\] evaluator 1\/1 -> job [0-9]+$/{print $NF}' "${eval_launch_log}")
+  [ "${#evaluator_ids[@]}" -eq 1 ] || { echo "on-demand evaluator ID missing" >&2; exit 1; }
+  {
+    printf 'evaluator_jobs=%s\n' "${evaluator_ids[0]}"
+    printf 'research_chain_jobs=%s\n' "${chain_ids[*]}"
+    printf 'research_seeds=%s\n' "${seeds}"
+    printf 'max_iterations_per_chain=%s\n' "${iterations}"
+    printf 'evaluator_gpus_per_job=4\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nephemeral_merged_checkpoints=1\n'
+    printf 'method_smoke_passed=1\non_demand_evaluator=1\n'
+  } > "${ATTEMPT_DIR}/metadata/children.env"
+  echo "[run10] on-demand evaluator ${evaluator_ids[0]} launched for smoked run ${run_id}"
+fi

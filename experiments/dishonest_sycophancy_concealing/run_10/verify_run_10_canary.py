@@ -25,6 +25,12 @@ def main() -> None:
         line.split("=", 1) for line in submission_lines if "=" in line
     )
     preflight = load_json(attempt / "metadata/kimi_mcp_preflight.json")
+    method_smoke = load_json(attempt / "metadata/method_smoke_passed.json")
+    children = dict(
+        line.split("=", 1)
+        for line in (attempt / "metadata/children.env").read_text().splitlines()
+        if "=" in line
+    )
     scores = list(attempt.glob("aar_teams/*/scores/*.json"))
     findings = list(attempt.glob("aar_teams/*/forum/*.json"))
     score_uids = {load_json(path).get("idea_uid") for path in scores}
@@ -54,6 +60,10 @@ def main() -> None:
         "merge_manifest_retained": merge_manifest_retained,
         "ephemeral_merge_removed": ephemeral_merge_removed and ephemeral_root_absent,
         "kimi_mcp_tool_roundtrip": preflight.get("mcp_tool_roundtrip") is True,
+        "method_gpu_smoke": method_smoke.get("real_gpu_smoke") is True,
+        "adapter_reload_validation": method_smoke.get("adapter_reload_validation")
+        is True,
+        "on_demand_evaluator": children.get("on_demand_evaluator") == "1",
         "score_files": len(scores),
         "finding_files": len(findings),
     }
@@ -64,6 +74,9 @@ def main() -> None:
         "merge_manifest_retained",
         "ephemeral_merge_removed",
         "kimi_mcp_tool_roundtrip",
+        "method_gpu_smoke",
+        "adapter_reload_validation",
+        "on_demand_evaluator",
     )
     failed = [field for field in required if not proof.get(field)]
     if failed:

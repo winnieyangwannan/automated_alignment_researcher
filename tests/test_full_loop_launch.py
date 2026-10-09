@@ -77,6 +77,7 @@ class FullLoopLaunchTest(unittest.TestCase):
                     "AAR_SLURM_PARTITION": "g3",
                     "AAR_TRAIN_QOS": "g3_ram_high",
                     "AAR_TRAIN_MEM": "128G",
+                    "AAR_TRAIN_TIME": "00:15:00",
                     "PATH": f"{fake_bin}:/usr/bin:/bin",
                 }
             )
@@ -96,6 +97,7 @@ class FullLoopLaunchTest(unittest.TestCase):
             self.assertIn("--qos=g3_ram_high", submitted)
             self.assertIn("--gpus=1", submitted)
             self.assertIn("--mem=128G", submitted)
+            self.assertIn("--time=00:15:00", submitted)
             self.assertIn(str(team / "logs" / "train-%j.out"), submitted)
             self.assertIn("slurm_train_submit.sh idea run-1", submitted)
 

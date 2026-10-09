@@ -1,10 +1,10 @@
 #!/bin/bash
-# Submit either the one-iteration canary or the five-chain Run 10 experiment.
+# Submit the no-evaluator method smoke, scored canary, or full Run 10 experiment.
 set -euo pipefail
 umask 077
 
 MODE="${1:-canary}"
-case "${MODE}" in canary|full) ;; *) echo "usage: $0 canary|full [canary-proof]" >&2; exit 2;; esac
+case "${MODE}" in smoke|canary|full) ;; *) echo "usage: $0 smoke|canary|full [canary-proof]" >&2; exit 2;; esac
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
 RECOVERY_BUNDLE="${AAR_RUN10_RECOVERY_BUNDLE:-/storage/home/winnieyangwn/aar-recovery/run7_20261007T004406Z-1b3303d02821/baseline_salvage}"
@@ -32,7 +32,7 @@ CANARY_PROOF=""
 if [ "${MODE}" = full ]; then
   CANARY_PROOF="$(realpath -e -- "${2:?full launch requires canary_passed.json}")"
   [ "$(jq -r '.status' "${CANARY_PROOF}")" = passed ] || { echo "canary proof is not passed" >&2; exit 2; }
-  for field in score_result_pair fail_closed_markers merge_manifest_retained ephemeral_merge_removed kimi_mcp_tool_roundtrip; do
+  for field in score_result_pair fail_closed_markers merge_manifest_retained ephemeral_merge_removed kimi_mcp_tool_roundtrip method_gpu_smoke adapter_reload_validation on_demand_evaluator; do
     [ "$(jq -r --arg field "${field}" '.[$field]' "${CANARY_PROOF}")" = true ] || { echo "canary did not prove ${field}" >&2; exit 2; }
   done
   git -C "${REPO}" merge-base --is-ancestor "$(jq -r '.canary_git_commit' "${CANARY_PROOF}")" HEAD || {
@@ -73,6 +73,17 @@ export AAR_SERVE_API_V2_ROOT="/storage/home/${USER}/ram_common/vllm_tools/serve_
 export KIMI_MODEL_CAPABILITIES=tool_use
 export AAR_KIMI_MCP_MAX_TEXT_CHARS=16000
 unset KIMI_AGENT_MODEL
+if [ "${MODE}" = smoke ]; then
+  "${REPO}/.venv/bin/python" -m pytest -q \
+    "${REPO}/tests/test_kimi_agent.py" \
+    "${REPO}/tests/test_full_loop_launch.py" \
+    "${REPO}/tests/test_validate_method_contract.py" \
+    > "${attempt_dir}/metadata/cpu_replay_gate.txt"
+  "${REPO}/.venv/bin/ruff" check \
+    "${REPO}/aar/research_loop/kimi_agent.py" \
+    "${REPO}/scripts/validate_method_contract.py" \
+    >> "${attempt_dir}/metadata/cpu_replay_gate.txt"
+fi
 "${REPO}/.venv/bin/python" "${SCRIPT_DIR}/verify_kimi_endpoint.py" \
   --workspace "${REPO}" --output "${attempt_dir}/metadata/kimi_mcp_preflight.json"
 
@@ -83,7 +94,12 @@ job_id="$(sbatch --parsable --account=ram --partition=g3 --qos=g3_ram_high \
   --cpus-per-task=16 --mem=128G --time=02:00:00 \
   --job-name="aar-run10-kimi-${MODE}-launch" --output="${attempt_dir}/logs/pipeline-%j.out" \
   --export=ALL "${SCRIPT_DIR}/run_10_pipeline.sbatch")"
-printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nmode=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\ndeployment=steerability_8-kimi26\nresearch_chains=%s\nmax_iterations_per_chain=%s\nevaluator_jobs=%s\nevaluator_gpus_per_job=4\n' \
+research_chains=1; max_iterations=1; evaluator_jobs=1; evaluator_gpus=4
+if [ "${MODE}" = full ]; then
+  research_chains=5; max_iterations=50; evaluator_jobs=5
+elif [ "${MODE}" = smoke ]; then
+  evaluator_jobs=0; evaluator_gpus=0
+fi
+printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nmode=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\ndeployment=steerability_8-kimi26\nresearch_chains=%s\nmax_iterations_per_chain=%s\nevaluator_jobs=%s\nevaluator_gpus_per_job=%s\n' \
   "${job_id}" "${attempt_dir}" "${commit}" "${MODE}" \
-  "$([ "${MODE}" = full ] && echo 5 || echo 1)" "$([ "${MODE}" = full ] && echo 50 || echo 1)" \
-  "$([ "${MODE}" = full ] && echo 5 || echo 1)" | tee "${attempt_dir}/metadata/submission.txt"
+  "${research_chains}" "${max_iterations}" "${evaluator_jobs}" "${evaluator_gpus}" | tee "${attempt_dir}/metadata/submission.txt"

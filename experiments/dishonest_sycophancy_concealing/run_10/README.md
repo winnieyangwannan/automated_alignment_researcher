@@ -30,14 +30,16 @@ From the isolated HPC `multi_kimi` checkout:
 
 ```bash
 experiments/dishonest_sycophancy_concealing/run_10/install_kimi_runtime.sh
-experiments/dishonest_sycophancy_concealing/run_10/submit_run_10.sh canary
+experiments/dishonest_sycophancy_concealing/run_10/submit_run_10.sh smoke
 ```
 
-After the canary chain finishes and its evaluator produces a score/result pair:
+The smoke mode first runs the CPU replay and live Kimi protocol gates. It then starts one CPU-only Kimi chain with no evaluator. Once Kimi produces an approved method, a time-bounded one-GPU job loads the real Gemma model, runs the method's real CUDA/PEFT path for one optimizer step, saves and reload-validates the adapter, and exits. Only after that proof passes does the launcher publish the holdout, stage that exact adapter, and start one four-GPU evaluator on demand. The original Kimi chain remains alive to consume the score and publish the finding.
+
+After the on-demand evaluator produces a score/result pair:
 
 ```bash
-python experiments/dishonest_sycophancy_concealing/run_10/verify_run_10_canary.py <canary-attempt>
-experiments/dishonest_sycophancy_concealing/run_10/submit_run_10.sh full <canary-attempt>/metadata/canary_passed.json
+python experiments/dishonest_sycophancy_concealing/run_10/verify_run_10_canary.py <smoke-attempt>
+experiments/dishonest_sycophancy_concealing/run_10/submit_run_10.sh full <smoke-attempt>/metadata/canary_passed.json
 ```
 
 The full run is active only after `metadata/children.env` records five distinct evaluator IDs and five distinct research-chain IDs.
@@ -68,7 +70,7 @@ ephemeral, so the champion package contains the evaluated adapter and records th
 Use `scripts/merge_peft_adapter.py` afterward only if the receiving system requires a full merged
 checkpoint.
 
-The scored canary is fail-closed on the research backend and evaluator protocol. Its `metadata/canary_passed.json` must prove the Kimi MCP round trip, one score/finding pair, vLLM 0.25.1 language-model-only execution, merged-checkpoint strategy, retained merge manifest, and ephemeral checkpoint cleanup.
+The scored smoke/canary is fail-closed on the research backend and evaluator protocol. Its `metadata/canary_passed.json` must prove the Kimi MCP round trip, real-GPU generated-method smoke, adapter reload, on-demand evaluator launch, one score/finding pair, vLLM 0.25.1 language-model-only execution, merged-checkpoint strategy, retained merge manifest, and ephemeral checkpoint cleanup.
 
 ## Isolation and provenance
 

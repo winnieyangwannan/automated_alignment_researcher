@@ -56,6 +56,30 @@ class ValidateMethodContractTest(unittest.TestCase):
             )
             return result, json.loads(proof.read_text())
 
+    def _run_with_smoke_required(
+        self, source: str
+    ) -> tuple[subprocess.CompletedProcess[str], dict]:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            method = root / "run.py"
+            proof = root / "proof.json"
+            method.write_text(source)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/validate_method_contract.py",
+                    str(method),
+                    "--proof",
+                    str(proof),
+                    "--run-dry-run",
+                    "--require-smoke-run",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            return result, json.loads(proof.read_text())
+
     def test_accepts_complete_training_contract(self) -> None:
         phases = "\n".join(
             f'    with phase("{name}"):\n        pass'
@@ -160,6 +184,54 @@ class ValidateMethodContractTest(unittest.TestCase):
         self.assertTrue(
             any("must be passed as a string" in error for error in proof["errors"])
         )
+
+    def test_requires_real_gpu_smoke_interface(self) -> None:
+        phases = "\n".join(
+            f'    with phase("{name}"):\n        pass'
+            for name in (
+                "data_generation",
+                "tokenization",
+                "model_loading",
+                "training",
+                "checkpoint_save",
+            )
+        )
+        common = (
+            "from contextlib import contextmanager\n"
+            "@contextmanager\n"
+            "def phase(_name):\n"
+            "    yield\n"
+        )
+        missing_result, missing_proof = self._run_with_smoke_required(
+            common
+            + "class MethodConfig:\n"
+            "    def __init__(self, output_dir='out', dry_run=False):\n"
+            "        self.output_dir = output_dir\n"
+            "        self.dry_run = dry_run\n"
+            "def run_experiment(config):\n"
+            f"{phases}\n"
+            "    return {'model_path': config.output_dir, 'method': 'test'}\n"
+        )
+        self.assertNotEqual(missing_result.returncode, 0)
+        self.assertTrue(
+            any("config.smoke_run" in error for error in missing_proof["errors"])
+        )
+
+        passing_result, passing_proof = self._run_with_smoke_required(
+            common
+            + "class MethodConfig:\n"
+            "    def __init__(self, output_dir='out', dry_run=False, smoke_run=False):\n"
+            "        self.output_dir = output_dir\n"
+            "        self.dry_run = dry_run\n"
+            "        self.smoke_run = smoke_run\n"
+            "def run_experiment(config):\n"
+            "    if config.dry_run:\n"
+            "        return {'model_path': config.output_dir, 'method': 'test'}\n"
+            "    max_steps = 1 if config.smoke_run else 10\n"
+            f"{phases}\n"
+            "    return {'model_path': config.output_dir, 'method': str(max_steps)}\n"
+        )
+        self.assertEqual(passing_result.returncode, 0, passing_proof)
 
 
 if __name__ == "__main__":
