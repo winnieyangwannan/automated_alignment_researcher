@@ -32,7 +32,9 @@ export AAR_AUTODATA=1
 export AAR_AUTODATA_BROKER_RUNNER="${AAR_AUTODATA_BROKER_RUNNER:?}"
 export AAR_AUTODATA_ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:?}"
 export AAR_AUTODATA_CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:?}"
-export AAR_AUTODATA_META_MAX_ITERATIONS=10
+# Three complete optimization rounds satisfy the study plan while bounding the
+# repeated model-generation cost in each of the five outer AAR sessions.
+export AAR_AUTODATA_META_MAX_ITERATIONS=3
 export AAR_AUTODATA_META_MIN_ITERATIONS=3
 export AAR_AUTODATA_META_EARLY_STOP_PATIENCE=3
 export AAR_AUTODATA_TUNING_TASKS=64
@@ -40,7 +42,9 @@ export AAR_AUTODATA_VALIDATION_TASKS=32
 export AAR_AUTODATA_TEST_TASKS=32
 export AAR_AUTODATA_PRODUCTION_ROWS=1000
 export AAR_AUTODATA_PRODUCTION_INITIAL_TASKS=1250
-export AAR_AUTODATA_PRODUCTION_MAX_TASKS=1500
+# The validated judge acceptance rate varied around 62.5--81.25%.  A 1,500-task
+# ceiling cannot reliably retain 1,000 rows at the lower observed rate.
+export AAR_AUTODATA_PRODUCTION_MAX_TASKS=2000
 export AAR_AUTODATA_RECIPE_ROOT="${REPO}/aar/autodata_recipes/dishonest_sycophancy_concealing"
 
 export AAR_VLLM_CONTAINER_RW_MOUNT="${ATTEMPT_DIR}"

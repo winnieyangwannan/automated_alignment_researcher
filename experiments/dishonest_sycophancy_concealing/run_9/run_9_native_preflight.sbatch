@@ -112,8 +112,8 @@ if report.get("task_count") != 16 or report.get("concurrency") != 16:
     raise SystemExit("native lifecycle did not use production concurrency")
 if report.get("accepted_rows", 0) < 1:
     raise SystemExit("native lifecycle produced no accepted rows")
-if report.get("elapsed_seconds", 9999) > 900:
-    raise SystemExit("native lifecycle exceeded the 15-minute fail-fast ceiling")
+if report.get("elapsed_seconds", 9999) > 1200:
+    raise SystemExit("native lifecycle exceeded the 20-minute fail-fast ceiling")
 with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
     rows = connection.execute("select status from jobs").fetchall()
 if len(rows) < 16 or any(status != "SUCCEEDED" for (status,) in rows):

@@ -79,8 +79,19 @@ def test_run9_native_preflight_covers_the_real_lifecycle() -> None:
     assert "AAR_AUTODATA_WRAPPER_PYTHON" in preflight
     assert "native-preflight/v1" in preflight
     assert "RUN9_NATIVE_PREFLIGHT_PASS" in preflight
+    assert 'report.get("elapsed_seconds", 9999) > 1200' in preflight
     assert '"runner": "${RUNNER}"' in submitter
     assert '"AUTODATA_GENERATOR_HOST_HEADER"' in submitter
+
+
+def test_run9_bounds_meta_work_and_has_production_acceptance_headroom() -> None:
+    pipeline = (RUN9 / "run_9_pipeline.sbatch").read_text()
+
+    assert "AAR_AUTODATA_META_MIN_ITERATIONS=3" in pipeline
+    assert "AAR_AUTODATA_META_MAX_ITERATIONS=3" in pipeline
+    assert "AAR_AUTODATA_PRODUCTION_ROWS=1000" in pipeline
+    assert "AAR_AUTODATA_PRODUCTION_INITIAL_TASKS=1250" in pipeline
+    assert "AAR_AUTODATA_PRODUCTION_MAX_TASKS=2000" in pipeline
 
 
 def test_generic_launchers_include_run7_first_use_fixes() -> None:
