@@ -130,6 +130,13 @@ def test_generic_launchers_include_run7_first_use_fixes() -> None:
     assert '--nodes=1 --ntasks=1 --gpus="${GPUS}"' in evaluator
 
 
+def test_agent_prompt_requires_chat_template_token_normalization() -> None:
+    prompt = (ROOT / "aar" / "research_loop" / "prompt_safety.jinja2").read_text()
+
+    assert "normalize_chat_template_ids" in prompt
+    assert "BatchEncoding" in prompt
+
+
 def test_chain_initializes_python_before_autodata_health_probe() -> None:
     chain = (ROOT / "scripts" / "slurm_aar_chain.sh").read_text()
 

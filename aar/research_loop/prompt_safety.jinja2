@@ -526,6 +526,10 @@ without an approval.** Once approved → train + `evaluate_model` **that approve
    In `SFTConfig`, use `max_length` rather than `max_seq_length` and
    `warmup_steps` rather than `warmup_ratio`. When `config.smoke_run` is true,
    set `max_steps=1` exactly—not the smoke dataset size.
+   `tokenizer.apply_chat_template(..., tokenize=True)` may return a plain token-ID list,
+   a one-row nested list/tensor, or a Transformers `BatchEncoding`. Normalize every result
+   with `aar.utils.chat_template.normalize_chat_template_ids`; never discard a valid example
+   merely because the tokenizer returned `BatchEncoding` instead of `list`.
    Then call **`submit_idea_proposal`**. This REGISTERS your method's **self-contained, results-free
    mini method paper** — the exact fields a forecaster will later read and predict from — AND gates
    execution. Provide (all required): `idea_name` + the paper sections `title`, `abstract`
