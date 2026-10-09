@@ -312,6 +312,81 @@ workspace construction.
 - AAR chain startup preflight and clearer subprocess diagnostics: `61257c2`
 - AutoData implementation: `plugin/autodata/scripts/bootstrap.py`
 
+## Bound meta-optimization and add production acceptance headroom
+
+### Evidence from the native lifecycle preflight
+
+The lightweight preflight completed the real native path in 963.12 seconds:
+
+```text
+budget preflight
+  → signed grounding approval
+  → signed baseline approval
+  → frozen workspace
+  → meta-optimization
+  → fixed-winner production
+  → dataset export and training-side consumption
+```
+
+It produced 13 accepted production rows from 16 tasks, retained both approval
+audits, and verified the exported dataset digest. The report status was
+`passed`. Slurm marked the job failed only because the initial fail-fast check
+required completion within 900 seconds, so a functionally successful lifecycle
+missed that provisional ceiling by 63.12 seconds.
+
+The ceiling is now 1,200 seconds. This remains a strict 20-minute end-to-end
+gate inside a 30-minute Slurm job, but it is grounded in the measured healthy
+runtime rather than rejecting the proven path at 16 minutes.
+
+### Meta-optimization bound
+
+The production configuration previously allowed between 3 and 10 native
+meta-optimization iterations. Each additional iteration generates and judges
+new tuning, validation, and test partitions. With five sequential outer AAR
+sessions, the seven optional iterations could multiply model traffic without
+being required by the Run 9 study design.
+
+The production chain now sets both the minimum and maximum to three iterations.
+This guarantees the required three complete optimization rounds while reducing
+the worst-case meta-optimization count by 70% relative to the former ceiling.
+It does not skip iteration 0, validation, comparison, winner selection, or the
+separate fixed-winner production execution.
+
+### Production acceptance headroom
+
+The retained local canary accepted 10 of 16 examples (62.5%), while the native
+lifecycle preflight accepted 13 of 16 (81.25%). The former 1,500-task ceiling
+could retain only about 938 rows at the lower observed rate, below the required
+1,000-row dataset.
+
+The final production controls are:
+
+```text
+accepted-row target:       1,000
+initial generation tasks:  1,250
+maximum generation tasks:  2,000
+validated concurrency:     16
+meta iterations:           exactly 3
+```
+
+AutoData can therefore replenish after the initial batch and still reach 1,000
+rows at a 50% aggregate acceptance rate. The target dataset size is unchanged;
+only the bounded attempt headroom increased. The campaign-wide USD reservation
+limit remains `$299` and continues to fail closed before work that cannot be
+funded.
+
+Concurrency remains 16 because that exact load passed. It was not raised to 32
+without a separate endpoint and node-capacity test.
+
+### Validation and provenance
+
+- Focused Run 9 infrastructure, native lifecycle, and approval tests passed: 15
+  passed.
+- Both modified Slurm scripts passed Bash syntax validation.
+- Production-setting implementation and regression assertions: `50da35f`
+- Successful native report:
+  `native-preflight-20261009T031217Z-61257c251bb7/lifecycle/report.json`
+
 ## Add a trusted AAR approval bridge for native AutoData gates
 
 ### Problem
