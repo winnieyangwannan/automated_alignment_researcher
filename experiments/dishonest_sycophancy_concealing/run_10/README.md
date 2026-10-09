@@ -16,6 +16,8 @@ The research prompt is installed as a Kimi agent profile, so its constraints are
 
 Kimi AAR sessions set Kimi Code's `defaultPermissionMode = "auto"` in the temporary session configuration because `--prompt` cannot be combined with the `--auto` CLI flag. This lets the checkpointed scaffold, edit, validation, and training commands execute without an unanswered approval prompt. It is opt-in for this backend and does not change the user's Kimi configuration, generic Kimi invocations, or Claude.
 
+Run-10's Kimi-only request shim uses one-shot named `tool_choice` on exact continuation checkpoints. Initial research and tool arguments remain model-selected; the shim only ensures that a checkpoint requiring `Read`, `Bash`, `Write`, or an AAR MCP function is emitted as a real structured call rather than narrated as prose.
+
 The Kimi MCP bridge bounds text responses at 16,000 characters. Large literature lists are reduced at complete-entry boundaries and carry truncation metadata, keeping discovery context directly usable instead of triggering Kimi Code's external tool-result spill file.
 
 ## Launch sequence

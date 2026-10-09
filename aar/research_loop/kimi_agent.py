@@ -49,9 +49,14 @@ class KimiAgentResult:
 
 
 def _policy_proxy_handler(
-    *, upstream_origin: str, upstream_api_key: str, allowed_prefix: str
+    *,
+    upstream_origin: str,
+    upstream_api_key: str,
+    allowed_prefix: str,
+    disable_thinking: bool,
+    tool_choice_controller: "_ToolChoiceController",
 ) -> type[BaseHTTPRequestHandler]:
-    """Build a loopback handler that adds the vLLM Kimi thinking control."""
+    """Build a loopback handler for request fields absent from Kimi config."""
 
     class RequestPolicyHandler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.0"
@@ -83,12 +88,21 @@ def _policy_proxy_handler(
                     payload = json.loads(body)
                     if not isinstance(payload, dict):
                         raise ValueError("request body must be an object")
-                    template_options = payload.setdefault(
-                        "chat_template_kwargs", {}
+                    if disable_thinking:
+                        template_options = payload.setdefault(
+                            "chat_template_kwargs", {}
+                        )
+                        if not isinstance(template_options, dict):
+                            raise ValueError("chat_template_kwargs must be an object")
+                        template_options["enable_thinking"] = False
+                    requested_tool = tool_choice_controller.consume(
+                        payload.get("tools")
                     )
-                    if not isinstance(template_options, dict):
-                        raise ValueError("chat_template_kwargs must be an object")
-                    template_options["enable_thinking"] = False
+                    if requested_tool:
+                        payload["tool_choice"] = {
+                            "type": "function",
+                            "function": {"name": requested_tool},
+                        }
                     body = json.dumps(payload).encode()
                 except (json.JSONDecodeError, ValueError) as error:
                     self.send_error(400, str(error))
@@ -139,6 +153,52 @@ def _policy_proxy_handler(
     return RequestPolicyHandler
 
 
+class _ToolChoiceController:
+    """One-shot named tool selection shared with the loopback request proxy."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._pending: Optional[str] = None
+
+    def arm(self, tool_name: Optional[str]) -> None:
+        with self._lock:
+            self._pending = tool_name
+
+    def consume(self, tools: Any) -> Optional[str]:
+        with self._lock:
+            if not self._pending:
+                return None
+            available: list[str] = []
+            if isinstance(tools, list):
+                for item in tools:
+                    if not isinstance(item, dict):
+                        continue
+                    function = item.get("function")
+                    if not isinstance(function, dict):
+                        continue
+                    name = function.get("name")
+                    if isinstance(name, str):
+                        available.append(name)
+            requested = self._pending
+            matches = [
+                name
+                for name in available
+                if name == requested or name.endswith(f"__{requested}")
+            ]
+            if not matches:
+                if available:
+                    raise ValueError(
+                        f"required Kimi checkpoint tool {requested!r} is unavailable"
+                    )
+                return None
+            if len(matches) != 1:
+                raise ValueError(
+                    f"required Kimi checkpoint tool {requested!r} is ambiguous"
+                )
+            self._pending = None
+            return matches[0]
+
+
 class KimiAgent:
     """Run one AAR session through Kimi Code's structured prompt mode."""
 
@@ -156,6 +216,7 @@ class KimiAgent:
         max_continuations: int = 24,
         disallowed_tools: Optional[list[str]] = None,
         auto_approve: bool = False,
+        force_checkpoint_tools: bool = False,
     ) -> None:
         self.name = name
         self.workspace = Path(workspace)
@@ -168,6 +229,7 @@ class KimiAgent:
         self.max_continuations = max_continuations
         self.disallowed_tools = disallowed_tools or []
         self.auto_approve = auto_approve
+        self.force_checkpoint_tools = force_checkpoint_tools
 
     async def execute(self, task: str) -> KimiAgentResult:
         start_time = time.time()
@@ -204,7 +266,7 @@ class KimiAgent:
             overlay_home = Path(temp_dir)
             env = self._build_environment(overlay_home)
             agent_file = self._write_agent_profile(overlay_home)
-            with self._request_policy_proxy(env):
+            with self._request_policy_proxy(env) as tool_choice_controller:
                 while True:
                     command = [executable]
                     if self.model:
@@ -212,10 +274,15 @@ class KimiAgent:
                     if continuation_count:
                         command.append("--continue")
                         current_prompt = self._continuation_prompt(output)
+                        required_tool = self._continuation_tool(output)
                     else:
                         if agent_file is not None:
                             command.extend(["--agent-file", str(agent_file)])
                         current_prompt = prompt
+                        required_tool = None
+                    tool_choice_controller.arm(
+                        required_tool if self.force_checkpoint_tools else None
+                    )
                     command.extend(
                         ["--prompt", current_prompt, "--output-format", "stream-json"]
                     )
@@ -478,6 +545,44 @@ class KimiAgent:
             "or call another tool."
         )
 
+    def _continuation_tool(self, output: dict[str, Any]) -> Optional[str]:
+        """Return the one tool required by the current fail-closed checkpoint."""
+        if self.completion_tool != "share_finding":
+            return self.completion_tool
+        prompt = self._continuation_prompt(output)
+        if prompt.startswith("Inspect the actual submit_idea_proposal result"):
+            approved = self._proposal_is_approved()
+            if approved is True:
+                return "Bash"
+            if approved is False:
+                return "Write"
+            return None
+        if "MCP tool share_finding exactly once" in prompt:
+            return "share_finding"
+        if "MCP tool submit_idea_proposal exactly once" in prompt:
+            return "submit_idea_proposal"
+        if "native Read tool exactly once" in prompt:
+            return "Read"
+        if "native Write tool exactly once" in prompt:
+            return "Write"
+        if "native Bash tool exactly once" in prompt:
+            return "Bash"
+        return None
+
+    @staticmethod
+    def _proposal_is_approved() -> Optional[bool]:
+        scores_dir = os.environ.get("SCORES_DIR", "").strip()
+        idea_uid = os.environ.get("IDEA_UID") or os.environ.get("IDEA_NAME")
+        if not scores_dir or not idea_uid:
+            return None
+        marker = Path(scores_dir) / ".proposals" / f"{idea_uid}.json"
+        try:
+            payload = json.loads(marker.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+        approved = payload.get("approved")
+        return approved if isinstance(approved, bool) else None
+
     @staticmethod
     def _current_score_path() -> Optional[Path]:
         run_id_file = Path("/tmp/run_id_current")
@@ -688,15 +793,19 @@ class KimiAgent:
         )
 
     @contextlib.contextmanager
-    def _request_policy_proxy(self, env: dict[str, str]) -> Iterator[None]:
+    def _request_policy_proxy(
+        self, env: dict[str, str]
+    ) -> Iterator[_ToolChoiceController]:
         """Apply opt-in request fields unsupported by Kimi Code's provider config."""
-        if env.get("AAR_KIMI_DISABLE_THINKING", "").lower() not in {
+        disable_thinking = env.get("AAR_KIMI_DISABLE_THINKING", "").lower() in {
             "1",
             "true",
             "yes",
             "on",
-        }:
-            yield
+        }
+        controller = _ToolChoiceController()
+        if not disable_thinking and not self.force_checkpoint_tools:
+            yield controller
             return
 
         upstream_base_url = env.get("KIMI_MODEL_BASE_URL", "")
@@ -719,6 +828,8 @@ class KimiAgent:
             upstream_origin=upstream_origin,
             upstream_api_key=upstream_api_key,
             allowed_prefix=allowed_prefix,
+            disable_thinking=disable_thinking,
+            tool_choice_controller=controller,
         )
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         server.daemon_threads = True
@@ -734,7 +845,7 @@ class KimiAgent:
         env["KIMI_MODEL_BASE_URL"] = local_base_url
         env["KIMI_MODEL_API_KEY"] = "aar-local-request-policy"
         try:
-            yield
+            yield controller
         finally:
             env["KIMI_MODEL_BASE_URL"] = upstream_base_url
             env["KIMI_MODEL_API_KEY"] = upstream_api_key

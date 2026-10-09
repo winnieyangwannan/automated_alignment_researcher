@@ -333,6 +333,64 @@ class KimiAgentTest(unittest.TestCase):
             {"other": "preserved", "enable_thinking": False},
         )
 
+    def test_opt_in_proxy_forces_one_named_checkpoint_tool(self) -> None:
+        observed = []
+
+        class UpstreamHandler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers["Content-Length"])
+                observed.append(json.loads(self.rfile.read(length)))
+                response = json.dumps({"ok": True}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+
+            def log_message(self, _format: str, *args: object) -> None:
+                return
+
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
+        thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        thread.start()
+        env = {
+            "KIMI_MODEL_BASE_URL": f"http://127.0.0.1:{upstream.server_port}/v1",
+            "KIMI_MODEL_API_KEY": "secret",
+        }
+        agent = KimiAgent(
+            "test-agent",
+            Path.cwd(),
+            cli_path="/bin/true",
+            force_checkpoint_tools=True,
+        )
+        try:
+            with agent._request_policy_proxy(env) as controller:
+                controller.arm("Bash")
+                request = {
+                    "model": "Kimi-K2.6",
+                    "tools": [
+                        {"type": "function", "function": {"name": "Read"}},
+                        {"type": "function", "function": {"name": "Bash"}},
+                    ],
+                }
+                for _ in range(2):
+                    response = requests.post(
+                        f"{env['KIMI_MODEL_BASE_URL']}/chat/completions",
+                        json=request,
+                        timeout=5,
+                    )
+                    response.raise_for_status()
+        finally:
+            upstream.shutdown()
+            upstream.server_close()
+            thread.join(timeout=5)
+
+        self.assertEqual(
+            observed[0]["tool_choice"],
+            {"type": "function", "function": {"name": "Bash"}},
+        )
+        self.assertNotIn("tool_choice", observed[1])
+
     def test_nonzero_cli_exit_is_a_failed_agent_result(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -404,6 +462,16 @@ class KimiAgentTest(unittest.TestCase):
                     }
                 )
 
+            def forced_tool(*uses: tuple[str, dict[str, str]]) -> str | None:
+                return agent._continuation_tool(
+                    {
+                        "tool_uses": [
+                            {"tool": tool, "input": tool_input}
+                            for tool, tool_input in uses
+                        ]
+                    }
+                )
+
             template = str(Path.cwd() / "aar/ideas/TEMPLATE/run.py")
             module = "test_chain__kimi_candidate"
             method = str(ideas / module / "run.py")
@@ -425,23 +493,48 @@ class KimiAgentTest(unittest.TestCase):
 
             with patch.dict(
                 os.environ,
-                {"AAR_IDEAS_DIR": str(ideas), "IDEA_NAME": "test-chain"},
+                {
+                    "AAR_IDEAS_DIR": str(ideas),
+                    "IDEA_NAME": "test-chain",
+                    "IDEA_UID": "test-chain-uid",
+                    "SCORES_DIR": str(root),
+                },
             ):
                 self.assertIn("Read tool exactly once", prompt())
+                self.assertEqual(forced_tool(), "Read")
                 self.assertIn("candidate scaffold", prompt(read))
+                self.assertEqual(forced_tool(read), "Bash")
                 self.assertIn("Write tool exactly once", prompt(read, scaffold))
+                self.assertEqual(forced_tool(read, scaffold), "Write")
                 self.assertIn("py_compile", prompt(read, scaffold, write))
+                self.assertEqual(forced_tool(read, scaffold, write), "Bash")
                 self.assertIn(
                     "submit_idea_proposal",
                     prompt(read, scaffold, write, validate),
+                )
+                self.assertEqual(
+                    forced_tool(read, scaffold, write, validate),
+                    "submit_idea_proposal",
                 )
                 self.assertIn(
                     "submit_train_job.sh",
                     prompt(read, scaffold, write, validate, proposal),
                 )
+                proposal_dir = root / ".proposals"
+                proposal_dir.mkdir()
+                marker = proposal_dir / "test-chain-uid.json"
+                marker.write_text('{"approved": true}\n')
+                self.assertEqual(
+                    forced_tool(read, scaffold, write, validate, proposal),
+                    "Bash",
+                )
                 self.assertIn(
                     "foreground-poll",
                     prompt(read, scaffold, write, validate, proposal, training),
+                )
+                self.assertEqual(
+                    forced_tool(read, scaffold, write, validate, proposal, training),
+                    "Bash",
                 )
                 score.write_text('{"composite": 0.1}\n')
                 with patch.object(
@@ -450,6 +543,12 @@ class KimiAgentTest(unittest.TestCase):
                     self.assertIn(
                         "Read tool exactly once",
                         prompt(read, scaffold, write, validate, proposal, training),
+                    )
+                    self.assertEqual(
+                        forced_tool(
+                            read, scaffold, write, validate, proposal, training
+                        ),
+                        "Read",
                     )
                     score_read = ("Read", {"path": str(score)})
                     self.assertIn(
@@ -463,6 +562,18 @@ class KimiAgentTest(unittest.TestCase):
                             training,
                             score_read,
                         ),
+                    )
+                    self.assertEqual(
+                        forced_tool(
+                            read,
+                            scaffold,
+                            write,
+                            validate,
+                            proposal,
+                            training,
+                            score_read,
+                        ),
+                        "share_finding",
                     )
 
     def test_standard_mcp_bridge_advertises_existing_tool_objects(self) -> None:

@@ -573,6 +573,7 @@ class AutonomousAgentLoop:
                 include_prior_work=not self.local_mode,
                 completion_tool="share_finding",
                 auto_approve=True,
+                force_checkpoint_tools=True,
                 disallowed_tools=[
                     "CreateGoal",
                     "UpdateGoal",

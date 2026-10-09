@@ -72,6 +72,58 @@ async def verify(workspace: Path) -> dict[str, object]:
             f"Kimi MCP round trip failed: success={result.success}, tools={tools}, "
             f"response_ok={response_ok}, error={result.error}, stderr={stderr_tail}"
         )
+
+    forced_result = await KimiAgent(
+        "run10-forced-tool-preflight",
+        workspace,
+        model=None,
+        cli_path=os.environ.get("KIMI_CLI_PATH"),
+        include_prior_work=False,
+        system_prompt=(
+            "You are a noninteractive endpoint verifier. Follow the user's exact "
+            "two-turn instruction and do not create or manage a separate goal."
+        ),
+        disallowed_tools=[
+            "CreateGoal",
+            "UpdateGoal",
+            "SetGoalBudget",
+            "TodoList",
+            "WaitFor",
+            "Agent",
+            "AgentSwarm",
+        ],
+        completion_tool="Bash",
+        max_continuations=2,
+        auto_approve=True,
+        force_checkpoint_tools=True,
+    ).execute(
+        "In this first turn, do not call any tool; reply exactly "
+        "KIMI_FORCE_READY. On the later turn that requires Bash, call it with "
+        'command `test -w "$PWD" && printf KIMI_FORCE_OK`.'
+    )
+    forced_uses = [
+        item
+        for item in forced_result.output.get("tool_uses", [])
+        if str(item.get("tool", "")).rsplit("__", 1)[-1] == "Bash"
+    ]
+    forced_command = (
+        str((forced_uses[0].get("input") or {}).get("command", ""))
+        if len(forced_uses) == 1
+        else ""
+    )
+    forced_ok = (
+        forced_result.success
+        and forced_result.output.get("continuations", 0) >= 1
+        and len(forced_uses) == 1
+        and forced_command == 'test -w "$PWD" && printf KIMI_FORCE_OK'
+    )
+    if not forced_ok:
+        raise RuntimeError(
+            "Kimi named tool-choice checkpoint failed: "
+            f"success={forced_result.success}, continuations="
+            f"{forced_result.output.get('continuations')}, tools={forced_uses}, "
+            f"error={forced_result.error}"
+        )
     return {
         "status": "passed",
         "model": "Kimi-K2.6",
@@ -79,6 +131,7 @@ async def verify(workspace: Path) -> dict[str, object]:
         "bash_tool_roundtrip": True,
         "mcp_tool_roundtrip": True,
         "sequential_mcp_tool_roundtrips": 2,
+        "named_tool_choice_checkpoint": True,
         "tools": tools,
     }
 
