@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from aar.phase_timing import REQUIRED_METHOD_PHASES
+from aar.phase_timing import REQUIRED_METHOD_PHASES  # noqa: E402
 
 
 def _required_phases(tree: ast.AST) -> set[str]:
