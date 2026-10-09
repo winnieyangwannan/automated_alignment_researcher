@@ -94,11 +94,27 @@ PY="${HARNESS_PY}"
 [ -x "${PY}" ] || { echo "[aar] ERROR: Python is not executable: ${PY}" >&2; exit 2; }
 
 _autodata_broker_pid=''
+_autodata_broker_database=''
+_autodata_broker_database_retained=''
+snapshot_autodata_broker_database() {
+  if [ -n "${_autodata_broker_database}" ] \
+      && [ -f "${_autodata_broker_database}" ] \
+      && [ -n "${_autodata_broker_database_retained}" ]; then
+    "${AAR_AUTODATA_BROKER_PYTHON:-python3}" -c \
+      'import sqlite3,sys; connection=sqlite3.connect(sys.argv[1]); connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall(); connection.close()' \
+      "${_autodata_broker_database}"
+    _autodata_broker_database_staging="${_autodata_broker_database_retained}.tmp.$$"
+    cp -- "${_autodata_broker_database}" "${_autodata_broker_database_staging}"
+    chmod 600 "${_autodata_broker_database_staging}"
+    mv -- "${_autodata_broker_database_staging}" "${_autodata_broker_database_retained}"
+  fi
+}
 cleanup_autodata_broker() {
   if [ -n "${_autodata_broker_pid}" ] && kill -0 "${_autodata_broker_pid}" 2>/dev/null; then
     kill "${_autodata_broker_pid}" 2>/dev/null || true
     wait "${_autodata_broker_pid}" 2>/dev/null || true
   fi
+  snapshot_autodata_broker_database || true
 }
 trap cleanup_autodata_broker EXIT
 if [ "${AAR_AUTODATA:-0}" = 1 ]; then
@@ -113,6 +129,11 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   _autodata_root="${TEAM_DIR}/autodata/broker"
   mkdir -p "${_autodata_root}"
   chmod 700 "${TEAM_DIR}/autodata" "${_autodata_root}"
+  _autodata_broker_database_root="${SLURM_TMPDIR:-/tmp}/aar-autodata-broker-${SLURM_JOB_ID:-$$}"
+  mkdir -p "${_autodata_broker_database_root}"
+  chmod 700 "${_autodata_broker_database_root}"
+  _autodata_broker_database="${_autodata_broker_database_root}/broker.db"
+  _autodata_broker_database_retained="${_autodata_root}/broker.db"
   export AAR_AUTODATA_STATE="${TEAM_DIR}/autodata/native/state.db"
   export AAR_AUTODATA_ARTIFACTS="${TEAM_DIR}/autodata/native/artifacts"
   export AAR_AUTODATA_WORKSPACES="${TEAM_DIR}/autodata/native/workspaces"
@@ -129,6 +150,7 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   _autodata_broker_args=(
     --runner "${AAR_AUTODATA_BROKER_RUNNER}"
     --root "${_autodata_root}"
+    --database "${_autodata_broker_database}"
     --host 127.0.0.1 --port "${_autodata_port}"
     --max-concurrent "${AAR_AUTODATA_CONCURRENCY:?}"
     --auth-token-file "${_autodata_capability_file}"
@@ -163,8 +185,9 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
     sleep 1
   done
   kill -0 "${_autodata_broker_pid}" 2>/dev/null || { echo "[aar] ERROR: AutoData broker is not running" >&2; exit 2; }
-  echo "[aar] campaign-scoped AutoData broker ready (pid=${_autodata_broker_pid}, runner=${AAR_AUTODATA_BROKER_RUNNER}, concurrency=${AAR_AUTODATA_CONCURRENCY})"
-  unset _autodata_broker_args _autodata_capability_file _autodata_probe _autodata_port
+  echo "[aar] campaign-scoped AutoData broker ready (pid=${_autodata_broker_pid}, runner=${AAR_AUTODATA_BROKER_RUNNER}, concurrency=${AAR_AUTODATA_CONCURRENCY}, database=node-local)"
+  unset _autodata_broker_args _autodata_broker_database_root \
+    _autodata_capability_file _autodata_probe _autodata_port
 fi
 
 # --- agent authentication + web mode ---

@@ -282,6 +282,14 @@ source tasks, and stop unsuccessfully at 1,500 total attempts rather than
 weakening the judge. Use Firecracker tier `$AAR_AUTODATA_ENVIRONMENT` and
 concurrency `$AAR_AUTODATA_CONCURRENCY`.
 
+The campaign policy at `$AAR_AUTODATA_CAMPAIGN_POLICY` is the source of truth for
+the executor. Copy its complete `required_solve_env` mapping into
+`executor.non_secret_env` for both authoring and explicit execution configs; do
+not omit, rename, or infer these entries. Create the meta execution explicitly
+with the required 64/32 split and preserve the additional 32 test tasks outside
+the execution selection sets. Do not accept an automatically created default
+execution with an implicit split.
+
 These are hard completion requirements, not suggestions to shrink when SandoQ is
 slow. Cold Firecracker starts and multi-hour generation are expected. Never cancel,
 skip, or replace an incomplete `meta_optimize` execution merely to fit one agent

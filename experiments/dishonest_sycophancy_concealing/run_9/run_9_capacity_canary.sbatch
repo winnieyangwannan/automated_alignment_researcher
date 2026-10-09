@@ -21,18 +21,35 @@ CAPABILITY_FILE="${AAR_AUTODATA_CAPABILITY_FILE:?missing capability file}"
 port=$(( 10000 + (${SLURM_JOB_ID:?} % 40000) ))
 broker_url="http://127.0.0.1:${port}"
 broker_pid=""
+broker_database_root="${SLURM_TMPDIR:-/tmp}/aar-run9-canary-broker-${SLURM_JOB_ID}"
+broker_database="${broker_database_root}/broker.db"
+retained_broker_database="${ROOT}/broker/broker.db"
+snapshot_broker_database() {
+  if [ -f "${broker_database}" ]; then
+    "${BROKER_PYTHON}" -c \
+      'import sqlite3,sys; connection=sqlite3.connect(sys.argv[1]); connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall(); connection.close()' \
+      "${broker_database}"
+    staging="${retained_broker_database}.tmp.$$"
+    cp -- "${broker_database}" "${staging}"
+    chmod 600 "${staging}"
+    mv -- "${staging}" "${retained_broker_database}"
+  fi
+}
 cleanup() {
   if [ -n "${broker_pid}" ]; then
     kill "${broker_pid}" 2>/dev/null || true
     wait "${broker_pid}" 2>/dev/null || true
   fi
+  snapshot_broker_database || true
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "${ROOT}/broker" "${ROOT}/reports"
+mkdir -p "${ROOT}/broker" "${ROOT}/reports" "${broker_database_root}"
+chmod 700 "${broker_database_root}"
 broker_args=(
   --runner "${RUNNER}"
   --root "${ROOT}/broker"
+  --database "${broker_database}"
   --host 127.0.0.1 --port "${port}"
   --max-concurrent "${CONCURRENCY}"
   --auth-token-file "${CAPABILITY_FILE}"
@@ -90,11 +107,11 @@ done
 failed=0
 for pid in "${pids[@]}"; do
   if ! wait "${pid}"; then
-    failed=1
+    failed=$((failed + 1))
   fi
 done
 
-PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" - "${ROOT}" "${RUNNER}" "${ENVIRONMENT}" "${CONCURRENCY}" "${failed}" <<'PY'
+PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" - "${ROOT}" "${RUNNER}" "${ENVIRONMENT}" "${CONCURRENCY}" "${failed}" "${broker_database}" <<'PY'
 import json
 import pathlib
 import sqlite3
@@ -105,10 +122,11 @@ runner = sys.argv[2]
 environment = sys.argv[3]
 concurrency = int(sys.argv[4])
 client_failure_count = int(sys.argv[5])
+broker_database = pathlib.Path(sys.argv[6])
 reports = [json.loads(path.read_text()) for path in sorted((root / "reports").glob("canary-*.json"))]
 if any(report.get("environment") != environment for report in reports):
     raise SystemExit("capacity canary used the wrong Firecracker environment")
-connection = sqlite3.connect(f"file:{root / 'broker' / 'broker.db'}?mode=ro", uri=True)
+connection = sqlite3.connect(f"file:{broker_database}?mode=ro", uri=True)
 try:
     rows = connection.execute(
         "select id,status,sessionId,solveExitCode,specJson from jobs order by createdAt"

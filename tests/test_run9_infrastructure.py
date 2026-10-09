@@ -82,3 +82,17 @@ def test_chain_initializes_python_before_autodata_health_probe() -> None:
     assert chain.index('PY="${HARNESS_PY}"') < chain.index(
         'if "${PY}" -c \'import os,urllib.request'
     )
+
+
+def test_run9_keeps_the_hot_broker_database_on_node_local_storage() -> None:
+    chain = (ROOT / "scripts" / "slurm_aar_chain.sh").read_text()
+    canary = (RUN9 / "run_9_capacity_canary.sbatch").read_text()
+
+    assert '${SLURM_TMPDIR:-/tmp}/aar-autodata-broker-' in chain
+    assert '--database "${_autodata_broker_database}"' in chain
+    assert 'snapshot_autodata_broker_database' in chain
+    assert "wal_checkpoint(TRUNCATE)" in chain
+    assert '${SLURM_TMPDIR:-/tmp}/aar-run9-canary-broker-' in canary
+    assert '--database "${broker_database}"' in canary
+    assert 'snapshot_broker_database' in canary
+    assert "wal_checkpoint(TRUNCATE)" in canary

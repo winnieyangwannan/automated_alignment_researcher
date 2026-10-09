@@ -227,5 +227,7 @@ def test_aar_prompt_defines_outer_loop_freedom_and_approval_roles() -> None:
     assert "Never cancel,\nskip, or replace an incomplete `meta_optimize`" in prompt
     assert "exactly one foreground" in prompt
     assert "execution export-winner" in prompt
+    assert "complete `required_solve_env` mapping" in prompt
+    assert "Do not accept an automatically created default" in prompt
     assert "training-handoff.json" in prompt
     assert "load_autodata_campaign_datasets" in prompt
