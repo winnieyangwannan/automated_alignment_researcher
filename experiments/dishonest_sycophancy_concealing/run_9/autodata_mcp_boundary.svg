@@ -19,7 +19,7 @@
     </style>
   </defs>
   <rect width="1400" height="780" fill="#f8fafc"/>
-  <text x="700" y="45" text-anchor="middle" class="title">How AAR, MCP, and AutoData fit together</text>
+  <text x="700" y="45" text-anchor="middle" class="title">How AAR and AutoData Integration Works</text>
 
   <rect x="30" y="95" width="270" height="180" class="box" fill="#e0f2fe" stroke="#0284c7"/>
   <text x="165" y="132" text-anchor="middle" class="label">Research agent</text>
