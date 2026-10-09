@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
-import os
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -114,6 +116,7 @@ def test_judge_rejected_row_is_not_exportable_training_data(tmp_path: Path) -> N
     generator_usage = {"role": "generator"}
     judge_usage = {"role": "judge"}
     with (
+        patch.object(task, "_target_config", return_value=None),
         patch.object(
             task,
             "_generate",
@@ -216,6 +219,208 @@ def test_generator_can_route_through_cluster_internal_gateway() -> None:
         "X-Deployment-Id": "winnieyangwn-kimi26",
         "Host": "gateway.example.",
     }
+
+
+def test_target_settings_are_all_or_nothing() -> None:
+    task = _load_module(
+        "aar_autodata_recipe_task_target_config", RECIPE / "recipe" / "task.py"
+    )
+    with patch.dict(
+        os.environ,
+        {"AUTODATA_TARGET_URL": "http://internal.example/v1"},
+        clear=True,
+    ):
+        with pytest.raises(RuntimeError, match="AUTODATA_TARGET_CHECKPOINT_HASH"):
+            task._target_config()
+
+
+def test_target_probe_routes_to_pinned_deployment_and_records_checkpoint() -> None:
+    task = _load_module(
+        "aar_autodata_recipe_task_target", RECIPE / "recipe" / "task.py"
+    )
+    response = {
+        "id": "target-request",
+        "usage": {"prompt_tokens": 10, "completion_tokens": 7},
+        "choices": [{"message": {"content": "I agree with the user's claim."}}],
+    }
+    digest = "ab" * 32
+    environment = {
+        "AUTODATA_TARGET_URL": "http://internal.example/v1",
+        "AUTODATA_TARGET_HOST_HEADER": "gateway.example.",
+        "AUTODATA_TARGET_MODEL": "google/gemma-4-31B-it",
+        "AUTODATA_TARGET_DEPLOYMENT_ID": "gemma-base-research",
+        "AUTODATA_TARGET_CHECKPOINT_HASH": digest,
+    }
+    with patch.dict(os.environ, environment, clear=True), patch.object(
+        task, "_post_json", return_value=response
+    ) as post:
+        config = task._target_config()
+        assert config is not None
+        observation, usage = task._probe_target(
+            {
+                "prompt": "The user insists. Is the unsupported claim true?",
+                "response": "No.",
+            },
+            {"seed": 17},
+            config,
+        )
+
+    assert observation == {
+        "response": "I agree with the user's claim.",
+        "model": "google/gemma-4-31B-it",
+        "deployment_id": "gemma-base-research",
+        "checkpoint_hash": "sha256:" + digest,
+    }
+    assert usage["role"] == "target"
+    assert usage["estimated_cost_usd"] == "0"
+    assert usage["deployment_id"] == "gemma-base-research"
+    assert usage["checkpoint_hash"] == "sha256:" + digest
+    assert post.call_args.args[0] == "http://internal.example/v1/chat/completions"
+    assert post.call_args.args[1]["model"] == "google/gemma-4-31B-it"
+    assert post.call_args.kwargs["headers"] == {
+        "X-Deployment-Id": "gemma-base-research",
+        "Host": "gateway.example.",
+    }
+
+
+def test_judge_requires_a_material_target_failure_for_target_aware_rows() -> None:
+    task = _load_module(
+        "aar_autodata_recipe_task_target_judge", RECIPE / "recipe" / "task.py"
+    )
+    names = (
+        "self_containment",
+        "factual_honesty",
+        "sycophancy_resistance",
+        "uncertainty_disclosure",
+        "helpfulness",
+        "safety",
+    )
+    response = {
+        "id": "target-judge-request",
+        "usage": {"input_tokens": 10, "output_tokens": 10},
+        "output_text": json.dumps(
+            {
+                "accept": True,
+                "dimensions": {
+                    name: {"pass": True, "score": 2} for name in names
+                },
+                "reason": "The teacher row passes.",
+                "target_behavior": {
+                    "challenging": True,
+                    "score": 2,
+                    "failure_modes": ["sycophancy"],
+                    "reason": "The target agreed under social pressure.",
+                },
+            }
+        ),
+    }
+    environment = {
+        "AUTODATA_JUDGE_URL": "https://example.invalid/v1/responses",
+        "AUTODATA_JUDGE_MODEL": "gpt-5-6-luna",
+        "AUTODATA_JUDGE_INPUT_USD_PER_MILLION": "1",
+        "AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": "4",
+        "AUTODATA_JUDGE_MAX_INPUT": "4096",
+        "AUTODATA_JUDGE_MAX_OUTPUT": "512",
+        "AUTODATA_JUDGE_TIMEOUT": "90",
+        "MODEL_API_KEY": "test-only",
+    }
+    target = {
+        "response": "Yes, your unsupported claim is right.",
+        "model": "google/gemma-4-31B-it",
+        "deployment_id": "gemma-base-research",
+        "checkpoint_hash": "sha256:" + "ab" * 32,
+    }
+    with patch.dict(os.environ, environment, clear=True), patch.object(
+        task, "_post_json", return_value=response
+    ) as post:
+        verdict, _ = task._judge(
+            {"prompt": "p", "response": "r"}, target
+        )
+
+    assert verdict["accept"] is True
+    assert verdict["target_behavior"]["score"] == 2
+    judge_input = post.call_args.args[1]["input"]
+    assert target["response"] in judge_input
+    assert target["checkpoint_hash"] in judge_input
+
+
+def test_target_aware_task_retains_only_challenging_rows(tmp_path: Path) -> None:
+    task = _load_module(
+        "aar_autodata_recipe_task_target_main", RECIPE / "recipe" / "task.py"
+    )
+    input_path = tmp_path / "input.json"
+    output_path = tmp_path / "result.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "id": "target-aware-example",
+                    "seed": 1,
+                    "payload": {
+                        "domain": "science explanation",
+                        "behavior_pattern": "pressure to agree",
+                    },
+                }
+            }
+        )
+    )
+    target = {
+        "response": "Certainly—the user's unsupported claim is correct.",
+        "model": "google/gemma-4-31B-it",
+        "deployment_id": "gemma-base-research",
+        "checkpoint_hash": "sha256:" + "ab" * 32,
+    }
+    target_behavior = {
+        "challenging": True,
+        "score": 2,
+        "failure_modes": ["sycophancy"],
+        "reason": "The target endorsed the unsupported claim.",
+    }
+    with (
+        patch.object(
+            task,
+            "_generate",
+            return_value=(
+                {"prompt": "unsupported claim", "response": "calibrated correction"},
+                {"role": "generator"},
+            ),
+        ),
+        patch.object(task, "_target_config", return_value={"configured": "yes"}),
+        patch.object(
+            task, "_probe_target", return_value=(target, {"role": "target"})
+        ),
+        patch.object(
+            task,
+            "_judge",
+            return_value=(
+                {
+                    "accept": True,
+                    "teacher_accepted": True,
+                    "score": 1.0,
+                    "reason": "high-quality hard example",
+                    "target_behavior": target_behavior,
+                },
+                {"role": "judge"},
+            ),
+        ),
+        patch.object(
+            sys,
+            "argv",
+            ["task.py", "--input", str(input_path), "--output", str(output_path)],
+        ),
+    ):
+        assert task.main() == 0
+
+    result = json.loads(output_path.read_text())
+    assert result["metrics"] == {"challenge": 1.0, "quality": 1.0, "valid": 1.0}
+    assert [call["role"] for call in result["provider_usage"]] == [
+        "generator",
+        "target",
+        "judge",
+    ]
+    metadata = result["generated_items"][0]["metadata"]
+    assert metadata["target_checkpoint_hash"] == target["checkpoint_hash"]
+    assert metadata["target_failure_modes"] == ["sycophancy"]
 
 
 def test_aar_prompt_defines_outer_loop_freedom_and_approval_roles() -> None:

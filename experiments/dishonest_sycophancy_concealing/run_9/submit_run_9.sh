@@ -36,6 +36,31 @@ else
   AUTODATA_GENERATOR_URL="https://ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud/v1"
   AUTODATA_GENERATOR_HOST_HEADER="ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud"
 fi
+target_setting_names=(
+  AUTODATA_TARGET_URL
+  AUTODATA_TARGET_MODEL
+  AUTODATA_TARGET_DEPLOYMENT_ID
+  AUTODATA_TARGET_CHECKPOINT_HASH
+)
+target_setting_count=0
+for name in "${target_setting_names[@]}"; do
+  [ -z "${!name:-}" ] || target_setting_count=$((target_setting_count + 1))
+done
+case "${target_setting_count}" in
+  0) target_enabled=0 ;;
+  4) target_enabled=1 ;;
+  *) echo "target-aware AutoData requires all four AUTODATA_TARGET_* settings" >&2; exit 2 ;;
+esac
+if [ "${target_enabled}" = 1 ]; then
+  case "${AUTODATA_TARGET_CHECKPOINT_HASH}" in
+    sha256:*) target_digest="${AUTODATA_TARGET_CHECKPOINT_HASH#sha256:}" ;;
+    *) target_digest="${AUTODATA_TARGET_CHECKPOINT_HASH}" ;;
+  esac
+  [[ "${target_digest}" =~ ^[0-9a-fA-F]{64}$ ]] || {
+    echo "AUTODATA_TARGET_CHECKPOINT_HASH must be a SHA-256 digest" >&2
+    exit 2
+  }
+fi
 for required in "${SECRET_ENV}" "${REUSED_BASELINE}" "${SCRIPT_DIR}/snapshot_vllm_runtime.sh"; do
   [ -f "${required}" ] || { echo "missing required input: ${required}" >&2; exit 2; }
 done
@@ -114,6 +139,31 @@ cat > "${policy}" <<EOF
   }
 }
 EOF
+if [ "${target_enabled}" = 1 ]; then
+  "${REPO}/.venv/bin/python" - "${policy}" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+value = json.loads(path.read_text(encoding="utf-8"))
+required = value["required_solve_env"]
+for name in (
+    "AUTODATA_TARGET_URL",
+    "AUTODATA_TARGET_MODEL",
+    "AUTODATA_TARGET_DEPLOYMENT_ID",
+    "AUTODATA_TARGET_CHECKPOINT_HASH",
+):
+    required[name] = os.environ[name]
+host_header = os.environ.get("AUTODATA_TARGET_HOST_HEADER", "").strip()
+if host_header:
+    required["AUTODATA_TARGET_HOST_HEADER"] = host_header
+temporary = path.with_name(path.name + ".tmp")
+temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+temporary.replace(path)
+PY
+fi
 
 export LLM_UNCERTAINTY_SRC="${REPO}/data/LLM-Uncertainty-Bench/data"
 export LLM_UNCERTAINTY_SOURCE_MANIFEST="${REPO}/data/LLM-Uncertainty-Bench/.aar-source.json"
@@ -143,7 +193,7 @@ job_id="$(sbatch --parsable \
   --output="${attempt_dir}/logs/pipeline-%j.out" \
   --export=ALL \
   "${SCRIPT_DIR}/run_9_pipeline.sbatch")"
-printf 'launch_job_id=%s\nattempt_dir=%s\naar_git_commit=%s\nautodata_git_commit=%s\nbroker_runner=%s\nenvironment=%s\nconcurrency=%s\nvllm_worker_sha256=%s\n' \
-  "${job_id}" "${attempt_dir}" "${commit}" "${autodata_sha}" "${AAR_AUTODATA_BROKER_RUNNER}" "${AAR_AUTODATA_ENVIRONMENT}" "${AAR_AUTODATA_CONCURRENCY}" "${VLLM_WORKER_SHA256}" \
+printf 'launch_job_id=%s\nattempt_dir=%s\naar_git_commit=%s\nautodata_git_commit=%s\nbroker_runner=%s\nenvironment=%s\nconcurrency=%s\ntarget_aware=%s\nvllm_worker_sha256=%s\n' \
+  "${job_id}" "${attempt_dir}" "${commit}" "${autodata_sha}" "${AAR_AUTODATA_BROKER_RUNNER}" "${AAR_AUTODATA_ENVIRONMENT}" "${AAR_AUTODATA_CONCURRENCY}" "${target_enabled}" "${VLLM_WORKER_SHA256}" \
   | tee "${attempt_dir}/metadata/submission.txt"
 unset capability MODEL_API_KEY ANTHROPIC_API_KEY HF_TOKEN

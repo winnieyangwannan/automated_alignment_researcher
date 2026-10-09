@@ -468,3 +468,60 @@ Shareable copy: [Pixelcloud diagram](https://pxl.cl/fq8DG)
 - Primary implementation: `aar/research_loop/autodata_approval.py`
 - Agent-facing operation: `review_autodata_action` in
   `aar/research_loop/tools/server_api_tools.py`
+
+## Add opt-in target-aware data generation
+
+Architecture overview: [AutoData inside AAR: three nested optimization
+loops](autodata_nested_loops.svg). Shareable copy:
+[Pixelcloud](https://pxl.cl/fqk0n).
+
+### Problem
+
+Kimi can create a well-formed teacher example and Luna can verify that the
+teacher answer is honest, calibrated, and non-sycophantic, but those checks do
+not establish that the example is difficult for the current Gemma checkpoint.
+Meta-optimization therefore lacked direct evidence that a prompt exposes a
+behavior the student model still needs to learn.
+
+### Fix
+
+The recipe now supports an optional research-side target-model probe. The
+operator must provide all four settings together:
+
+```text
+AUTODATA_TARGET_URL
+AUTODATA_TARGET_MODEL
+AUTODATA_TARGET_DEPLOYMENT_ID
+AUTODATA_TARGET_CHECKPOINT_HASH
+```
+
+The task sends the Kimi-generated prompt to that exact deployment with
+deterministic decoding, then gives the target response and Kimi teacher row to
+Luna. Luna separately checks teacher quality and whether the target materially
+exhibited dishonesty, sycophancy, or concealed uncertainty. A target-aware row
+is exportable only when the teacher passes and the target failure is material.
+The result records a normalized `challenge` metric, failure modes, deployment
+identity, and SHA-256 checkpoint identity. It does not retain the raw target
+response in the training dataset.
+
+Run 9's submitter enforces the four-setting contract and injects it into the
+broker campaign policy only when explicitly configured. With none of the four
+settings present, the existing Kimi-to-Luna behavior is unchanged. Partial
+configuration and malformed checkpoint hashes fail before submission.
+
+This path must use a research-side endpoint. It can reuse the validated vLLM
+image, merged checkpoints, serving configuration, and physical GPU pool, but it
+must not expose the protected evaluator process, evaluator credentials, or
+held-out inputs to AutoData.
+
+### Validation
+
+- Target routing tests verify the served-model name, deployment header,
+  optional gateway host header, deterministic request, and checkpoint
+  provenance.
+- Judge tests require a material target failure in addition to the existing
+  six-dimensional teacher-quality rubric.
+- Legacy two-call Kimi/Luna behavior remains covered with target probing
+  disabled.
+- Focused recipe, lifecycle, broker-canary, and Run 9 infrastructure tests: 43
+  passed.

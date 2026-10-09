@@ -94,6 +94,31 @@ def test_run9_bounds_meta_work_and_has_production_acceptance_headroom() -> None:
     assert "AAR_AUTODATA_PRODUCTION_MAX_TASKS=2000" in pipeline
 
 
+def test_run9_supports_opt_in_target_aware_autodata() -> None:
+    submitter = (RUN9 / "submit_run_9.sh").read_text()
+    recipe = (
+        ROOT
+        / "aar"
+        / "autodata_recipes"
+        / "dishonest_sycophancy_concealing"
+        / "recipe"
+        / "task.py"
+    ).read_text()
+
+    for name in (
+        "AUTODATA_TARGET_URL",
+        "AUTODATA_TARGET_MODEL",
+        "AUTODATA_TARGET_DEPLOYMENT_ID",
+        "AUTODATA_TARGET_CHECKPOINT_HASH",
+    ):
+        assert name in submitter
+        assert name in recipe
+    assert "target_setting_count" in submitter
+    assert "target_aware=%s" in submitter
+    assert 'role="target"' in recipe
+    assert 'metrics["challenge"]' in recipe
+
+
 def test_generic_launchers_include_run7_first_use_fixes() -> None:
     trainer = (ROOT / "scripts" / "submit_train_job.sh").read_text()
     evaluator = (ROOT / "scripts" / "launch_eval_worker.sh").read_text()

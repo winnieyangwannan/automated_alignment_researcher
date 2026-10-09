@@ -225,7 +225,8 @@ It contains:
 - `grounding/coverage.json`: outer-loop-editable domains, behavior patterns,
   axes, and minimum coverage;
 - `grounding/build_manifest.py`: deterministic synthetic scenario builder;
-- `recipe/task.py`: Kimi generation and GPT-5.6 Luna judging task;
+- `recipe/task.py`: Kimi generation, optional target-model challenge probing,
+  and GPT-5.6 Luna judging task;
 - `recipe/check.py`: local request and recipe validation;
 - `recipe/generation_strategy.json`: structured inner-loop-mutable generation
   prompt and sampling strategy;
@@ -237,6 +238,25 @@ It contains:
 These files are recipe inputs, not SDK registrations. The source checkout is
 read-only to the research subprocess, so a run must copy the approved starting
 files into its writable workspace before native authoring actions edit them.
+
+Target-aware generation is opt-in. A broker campaign must provide all four of
+the following non-secret workload settings together:
+
+- `AUTODATA_TARGET_URL`: research-side OpenAI-compatible endpoint base URL;
+- `AUTODATA_TARGET_MODEL`: served-model name used in the request body;
+- `AUTODATA_TARGET_DEPLOYMENT_ID`: deployment selected by the gateway header;
+- `AUTODATA_TARGET_CHECKPOINT_HASH`: SHA-256 identity of the exact checkpoint.
+
+`AUTODATA_TARGET_HOST_HEADER` is optional for gateway routing. Token ceilings,
+timeouts, and accounting rates use the corresponding
+`AUTODATA_TARGET_MAX_INPUT`, `AUTODATA_TARGET_MAX_OUTPUT`,
+`AUTODATA_TARGET_TIMEOUT`, `AUTODATA_TARGET_INPUT_USD_PER_MILLION`, and
+`AUTODATA_TARGET_OUTPUT_USD_PER_MILLION` settings. When the target contract is
+enabled, Luna must accept the teacher row and identify a material target-model
+failure before the row is exportable. The task records a normalized
+`challenge` metric and checkpoint provenance, but never stores the target's raw
+response in the training dataset. The endpoint must be research-side; do not
+expose the protected evaluator process or held-out inputs to AutoData.
 
 ## Credentials
 
