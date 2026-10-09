@@ -17,6 +17,65 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FullLoopLaunchTest(unittest.TestCase):
+    def test_shared_team_launcher_requires_method_safety_for_claude_and_kimi(self) -> None:
+        launcher = (ROOT / "scripts" / "launch_team.sh").read_text()
+        safety = (ROOT / "scripts" / "require_method_safety.sh").read_text()
+
+        self.assertIn('source "${REPO}/scripts/require_method_safety.sh"', launcher)
+        for name in (
+            "AAR_REQUIRE_METHOD_CONTRACT",
+            "AAR_REQUIRE_METHOD_SMOKE",
+            "AAR_PRETRAIN_SMOKE",
+            "AAR_WRITE_TRAIN_FAILURE_MARKER",
+            "AAR_REQUIRE_TRAIN_RECEIPT",
+        ):
+            self.assertIn(name, safety)
+        self.assertIn("AAR_REQUIRE_GEMMA4_TARGETS", safety)
+        self.assertNotIn("AAR_AGENT_BACKEND", safety)
+
+    def test_method_safety_defaults_on_and_cannot_be_disabled(self) -> None:
+        script = ROOT / "scripts" / "require_method_safety.sh"
+        command = (
+            f'source "{script}"; '
+            "printf '%s ' \"$AAR_REQUIRE_METHOD_CONTRACT\" "
+            "\"$AAR_REQUIRE_METHOD_SMOKE\" \"$AAR_PRETRAIN_SMOKE\" "
+            "\"$AAR_WRITE_TRAIN_FAILURE_MARKER\" \"$AAR_REQUIRE_TRAIN_RECEIPT\""
+        )
+        enabled = subprocess.run(
+            ["bash", "-c", command], text=True, capture_output=True, check=False
+        )
+        self.assertEqual(enabled.returncode, 0, enabled.stderr)
+        self.assertEqual(enabled.stdout.strip(), "1 1 1 1 1")
+
+        disabled_env = os.environ.copy()
+        disabled_env["AAR_AGENT_BACKEND"] = "claude"
+        disabled_env["AAR_PRETRAIN_SMOKE"] = "0"
+        disabled = subprocess.run(
+            ["bash", "-c", f'source "{script}"'],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=disabled_env,
+        )
+        self.assertEqual(disabled.returncode, 2)
+        self.assertIn("AAR_PRETRAIN_SMOKE must be 1", disabled.stderr)
+
+    def test_method_safety_requires_gemma_target_validation(self) -> None:
+        script = ROOT / "scripts" / "require_method_safety.sh"
+        completed = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f'source "{script}"; printf %s "$AAR_REQUIRE_GEMMA4_TARGETS"',
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            env={**os.environ, "TARGET_MODEL_PATH": "/models/google/gemma-4-31B-it"},
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout, "1")
+
     def test_fair_slurm_defaults_and_no_agent_gpu(self) -> None:
         chain = (ROOT / "scripts" / "slurm_aar_chain.sh").read_text()
         train = (ROOT / "scripts" / "slurm_train_submit.sh").read_text()

@@ -51,6 +51,11 @@ RUNTIME_ROOT="${AAR_RUNTIME_ROOT:-${REPO}/_runs}"
 # shellcheck disable=SC1091
 source "${REPO}/scripts/axis_env.sh"   # sets SUITE_NAME, HELD_OUT_BENCH, SAFETY_*, SEED_METHOD, TARGET_MODEL
 SUITE="${SUITE_NAME}"
+# Real research runs must not depend on an experiment-specific launcher to opt
+# into generated-method validation. This applies equally to Claude and Kimi.
+# shellcheck disable=SC1091
+source "${REPO}/scripts/require_method_safety.sh"
+echo "[team] method safety: CPU contract + one-step GPU preflight + failure marker + receipt required"
 if [ "${SUITE}" = "honesty_sycophancy" ]; then
   # Used by literature filtering and to tag papers researchers add during the run.
   export AAR_DIMENSIONS="${AAR_DIMENSIONS:-honesty,sycophancy}"
