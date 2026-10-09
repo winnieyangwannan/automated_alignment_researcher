@@ -150,7 +150,8 @@ if [ "${MODE}" = smoke ]; then
   export TEAM_DIR="${ATTEMPT_DIR}/aar_teams/${AAR_TEAM_ID}"
   export SUBMISSIONS_DIR="${TEAM_DIR}/submissions" SCORES_DIR="${TEAM_DIR}/scores"
 
-  echo "[run10] method smoke passed; publishing holdout and staging the same adapter"
+  echo "[run10] method smoke passed; publishing two-item lifecycle evaluation and staging the same adapter"
+  export AAR_SUITE_BENCHMARKS=verbalized_ece AAR_PUBLISH_FORCE_N=2
   export BASELINES_PATH="${ATTEMPT_DIR}/eval/prompt_baselines.honesty_sycophancy_concealing_uncertainty.google_gemma-4-31B-it.json"
   bash "${REPO}/scripts/publish_holdout.sh"
   "${HARNESS_PY}" -c \
@@ -158,7 +159,8 @@ if [ "${MODE}" = smoke ]; then
     "${adapter_path}" "${run_id}"
 
   export AAR_EVAL_WORKERS=1 AAR_EVAL_GPUS=4 AAR_EVAL_GPU_CAP=4
-  export AAR_EVAL_TIME=18:00:00 AAR_EVAL_IDLE_SECONDS=61200
+  export AAR_EVAL_TIME=01:00:00 AAR_EVAL_IDLE_SECONDS=120
+  export EVAL_VLLM_MAX_NUM_SEQS=8 EVAL_VLLM_MAX_NUM_BATCHED_TOKENS=8192
   eval_launch_log="${ATTEMPT_DIR}/metadata/launch_on_demand_evaluator.txt"
   "${REPO}/scripts/launch_eval_worker.sh" "${SUITE_NAME}" "${AAR_EVAL_IDLE_SECONDS}" 1 | tee "${eval_launch_log}"
   mapfile -t evaluator_ids < <(awk '/^\[launch\] evaluator 1\/1 -> job [0-9]+$/{print $NF}' "${eval_launch_log}")
