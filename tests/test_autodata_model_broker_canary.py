@@ -9,6 +9,9 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from aar.autodata_target_binding import create_binding, write_binding
+from tests.test_autodata_target_binding import make_checkpoint_fixture
+
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "autodata_model_broker_canary.py"
@@ -242,6 +245,89 @@ class ModelBrokerCanaryTest(unittest.TestCase):
             token_file.chmod(0o644)
             with self.assertRaisesRegex(RuntimeError, "mode-0600"):
                 self.module._read_owned_token(token_file)
+
+    def test_target_binding_runs_three_provider_calls_and_allows_rejection(self):
+        runtime = self.module._Runtime(
+            _FakeBrokerClient,
+            _FakeBrokerJobSpec,
+            _build_archive,
+            _extract_archive,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base, adapter, merged = make_checkpoint_fixture(root)
+            binding = create_binding(
+                iteration=2,
+                incumbent_run_id="candidate-1",
+                base_checkpoint=str(base),
+                adapter_checkpoint=str(adapter),
+                merged_checkpoint=str(merged),
+                endpoint={
+                    "url": "http://gateway.example/v1",
+                    "host_header": "ram-inference-gateway.ingress.",
+                    "model": "gemma-4-31B-it",
+                    "deployment_id": "run12-target",
+                },
+            )
+            binding_path = root / "binding.json"
+            write_binding(binding_path, binding)
+            token_file = root / "broker.token"
+            token_file.write_text("broker-secret")
+            token_file.chmod(0o600)
+            generator = _usage(
+                "kimi-request", "generator", "Kimi-K2.6", 10, 5, "0.00003"
+            )
+            target = _usage(
+                "gemma-request", "target", "gemma-4-31B-it", 30, 8, "0"
+            )
+            target.update(
+                {
+                    "deployment_id": "run12-target",
+                    "checkpoint_hash": binding.checkpoint_hash,
+                }
+            )
+            judge = _usage(
+                "luna-request", "judge", "gpt-5-6-luna", 20, 7, "0.000048"
+            )
+            _FakeBrokerClient.result = {
+                "schema": "autodata.task-result/v1",
+                "task_id": "run12-adapter-target-canary",
+                "outcome": "succeeded",
+                "generated_items": [],
+                "metrics": {
+                    "quality": 0.8,
+                    "valid": 0.0,
+                    "challenge": 0.0,
+                    "quality_challenge_utility": 0.0,
+                },
+                "provider_usage": [generator, target, judge],
+                "reason_code": "target_not_challenging",
+                "trajectory_artifacts": [],
+            }
+            args = self.module._parser().parse_args(
+                [
+                    "--broker-url",
+                    "https://broker.example",
+                    "--broker-auth-token-file",
+                    str(token_file),
+                    "--recipe-root",
+                    str(RECIPE),
+                    "--target-binding",
+                    str(binding_path),
+                    "--output",
+                    str(root / "report.json"),
+                ]
+            )
+            report = self.module.run(args, runtime=runtime)
+
+        environment = _FakeBrokerJobSpec.captured["solve"]["env"]
+        self.assertEqual(environment["AUTODATA_TARGET_ENABLED"], "1")
+        self.assertEqual(
+            environment["AUTODATA_TARGET_CHECKPOINT_HASH"], binding.checkpoint_hash
+        )
+        self.assertEqual(report["provider_call_count"], 3)
+        self.assertEqual(report["accepted_row_count"], 0)
+        self.assertEqual(report["target_deployment_id"], "run12-target")
 
     def test_static_routes_delegate_credentials_to_broker_and_recipe(self):
         canary_source = SCRIPT.read_text()
