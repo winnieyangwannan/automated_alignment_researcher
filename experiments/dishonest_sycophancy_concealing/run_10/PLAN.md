@@ -19,6 +19,8 @@ The endpoint's vLLM chat template enables reasoning by default and ignores Kimi 
 
 Kimi Code may treat a textual statement of future intent as the end of a noninteractive prompt. The Kimi-only adapter therefore resumes the same CLI session until `share_finding` is called, with a bounded maximum of 24 continuation prompts. This does not alter the Claude SDK path.
 
+Continuation prompts are milestone-aware rather than identical task replays. They advance the next missing action in order: method file edit, idea proposal, training submission, evaluation, and finding publication. Each recovery prompt explicitly requires native structured tool calls and forbids prose/XML representations of proposed calls.
+
 The AAR session uses a Kimi agent profile with actual system-level instructions. Kimi Code's internal goal, subagent, and to-do tools are disabled for this profile so its separate goal-continuation runtime cannot compete with AAR's session loop. Initial literature discovery is one compact unfiltered call, with at most one focused follow-up, to avoid filling the context with multiple redundant full-detail surveys.
 
 Kimi MCP text responses are bounded to 16,000 characters. Oversized literature results remain valid JSON and include as many complete summary entries as fit plus explicit truncation metadata. This prevents Kimi Code from replacing an 80,000-character discovery result with a spill-file reference that the model then fails to read.

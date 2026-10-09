@@ -209,19 +209,7 @@ class KimiAgent:
                         command.extend(["--model", self.model])
                     if continuation_count:
                         command.append("--continue")
-                        if self.completion_tool == "share_finding":
-                            current_prompt = (
-                                "Continue executing the requested research iteration now. "
-                                "Do not merely announce, summarize, or promise a next action. "
-                                "Use the available tools and do not stop until evaluate_model "
-                                "has returned and share_finding has succeeded."
-                            )
-                        else:
-                            current_prompt = (
-                                "Continue executing the requested task now. Do not merely "
-                                "announce, summarize, or promise a next action. Use the "
-                                f"available tools and call {self.completion_tool}."
-                            )
+                        current_prompt = self._continuation_prompt(output)
                     else:
                         if agent_file is not None:
                             command.extend(["--agent-file", str(agent_file)])
@@ -337,6 +325,71 @@ class KimiAgent:
                 or str(item.get("tool", "")).endswith(f"__{expected}")
                 for item in output["tool_uses"]
             )
+        )
+
+    @staticmethod
+    def _tool_name(item: dict[str, Any]) -> str:
+        return str(item.get("tool", "")).rsplit("__", 1)[-1]
+
+    def _continuation_prompt(self, output: dict[str, Any]) -> str:
+        """Give a bounded next milestone instead of replaying the whole task."""
+        if self.completion_tool != "share_finding":
+            return (
+                "Your previous turn stopped before the required tool call. In this "
+                "turn, emit native structured tool calls rather than describing or "
+                f"printing them, and call {self.completion_tool}."
+            )
+
+        names = [self._tool_name(item) for item in output["tool_uses"]]
+        if "evaluate_model" in names:
+            return (
+                "Evaluation has already been requested. Call share_finding now with "
+                "the actual run_id and results. Emit the native structured MCP call; "
+                "do not describe, quote, or print a proposed call."
+            )
+
+        proposal_index = (
+            max(
+                index
+                for index, name in enumerate(names)
+                if name == "submit_idea_proposal"
+            )
+            if "submit_idea_proposal" in names
+            else -1
+        )
+        edit_indices = [
+            index for index, name in enumerate(names) if name in {"Write", "Edit"}
+        ]
+        edit_index = max(edit_indices, default=-1)
+        bash_after_proposal = any(
+            name == "Bash" and index > proposal_index
+            for index, name in enumerate(names)
+        )
+
+        if proposal_index >= 0 and bash_after_proposal:
+            return (
+                "The method proposal and a later shell action are recorded. Call "
+                "evaluate_model now for the trained method and wait for its real "
+                "result. If training was not actually submitted, use Bash first to "
+                "run the repository training submitter. Emit tool calls, not prose."
+            )
+        if proposal_index >= 0:
+            return (
+                "The proposal is recorded. Use Bash now to launch the method with the "
+                "repository training submitter, wait as required by the AAR workflow, "
+                "then call evaluate_model. Emit native tool calls, not prose."
+            )
+        if edit_index >= 0:
+            return (
+                "A method edit is recorded. Call submit_idea_proposal now for that "
+                "specific method, then continue to training. Emit the native "
+                "structured MCP call; do not describe or print a proposed call."
+            )
+        return (
+            "Discovery is complete. Do not call get_literature again and do not "
+            "describe future actions. Read aar/ideas/TEMPLATE/run.py if still needed, "
+            "then use the native Write or Edit tool now to create a concrete method "
+            "under $AAR_IDEAS_DIR. Emit tool calls rather than XML or prose."
         )
 
     def _build_environment(self, overlay_home: Path) -> dict[str, str]:

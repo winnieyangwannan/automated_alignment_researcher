@@ -374,6 +374,31 @@ class KimiAgentTest(unittest.TestCase):
         self.assertEqual(result.iteration_count, 1)
         self.assertEqual(result.output["text_outputs"], ["Let me continue.", "done"])
 
+    def test_share_finding_continuations_advance_missing_milestone(self) -> None:
+        agent = KimiAgent(
+            "test-agent",
+            Path.cwd(),
+            cli_path="/bin/true",
+            completion_tool="share_finding",
+        )
+
+        def prompt(*tools: str) -> str:
+            return agent._continuation_prompt(
+                {"tool_uses": [{"tool": tool, "input": {}} for tool in tools]}
+            )
+
+        self.assertIn("Write or Edit", prompt("get_literature", "Read"))
+        self.assertIn("submit_idea_proposal", prompt("Write"))
+        self.assertIn("training submitter", prompt("Write", "submit_idea_proposal"))
+        self.assertIn(
+            "evaluate_model",
+            prompt("Write", "mcp__server-api-tools__submit_idea_proposal", "Bash"),
+        )
+        self.assertIn(
+            "share_finding",
+            prompt("mcp__server-api-tools__evaluate_model"),
+        )
+
     def test_standard_mcp_bridge_advertises_existing_tool_objects(self) -> None:
         self.assertIn("evaluate_model", {
             tool.name for tool in SERVER_TOOLS["server-api-tools"]
