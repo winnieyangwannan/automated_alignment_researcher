@@ -30,8 +30,17 @@ fi
 for proof in preflight.json canary-report.json target-binding.json; do
   [ -s "${CANARY_ROOT}/${proof}" ] || { echo "missing Run 12 canary proof ${proof}" >&2; exit 2; }
 done
-[ "$(jq -r '.outcome' "${CANARY_ROOT}/canary-report.json")" = succeeded ] || { echo "Run 12 target canary did not succeed" >&2; exit 2; }
-[ "$(jq -r '.provider_calls | length' "${CANARY_ROOT}/canary-report.json")" -eq 3 ] || { echo "Run 12 canary did not prove three-provider routing" >&2; exit 2; }
+jq -e '
+  .success == true
+  and .broker_status == "SUCCEEDED"
+  and .task_result_outcome == "succeeded"
+  and .task_result_schema_valid == true
+  and .provider_call_count == 3
+  and ([.provider_usage[].role] == ["generator", "target", "judge"])
+' "${CANARY_ROOT}/canary-report.json" >/dev/null || {
+  echo "Run 12 canary did not prove successful three-provider routing" >&2
+  exit 2
+}
 
 export AAR_REPO="${REPO}" HARNESS_ENV="${SECRET_ENV}"
 # shellcheck disable=SC1091
