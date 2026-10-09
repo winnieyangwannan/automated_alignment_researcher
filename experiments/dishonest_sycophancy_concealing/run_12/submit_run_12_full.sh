@@ -22,6 +22,10 @@ if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; 
   echo "tracked worktree is dirty" >&2
   exit 2
 fi
+if [ "$(git -C "${AUTODATA_CHECKOUT}" branch --show-current)" != main ]; then
+  echo "AutoData checkout must be on main" >&2
+  exit 2
+fi
 if [ ! -x "${REPO}/.venv/bin/python" ] || [ ! -x "${BROKER_PYTHON}" ]; then
   echo "missing runtime" >&2
   exit 2
