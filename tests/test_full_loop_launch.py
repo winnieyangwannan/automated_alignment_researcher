@@ -133,6 +133,51 @@ class FullLoopLaunchTest(unittest.TestCase):
                 (team / ".train_dependency_lanes.cursor").read_text(), "1\n"
             )
 
+    def test_opt_in_contract_gate_rejects_before_sbatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            fake_bin = tmp / "bin"
+            fake_bin.mkdir()
+            called = tmp / "sbatch-called"
+            sbatch = fake_bin / "sbatch"
+            sbatch.write_text(f"#!/bin/bash\ntouch {called}\nprintf '12345\\n'\n")
+            sbatch.chmod(0o755)
+            team = tmp / "team"
+            method = team / "methods" / "bad" / "run.py"
+            method.parent.mkdir(parents=True)
+            method.write_text("def run_experiment(config):\n    return {}\n")
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AAR_REPO": str(ROOT),
+                    "HARNESS_ENV": str(tmp / "missing.env"),
+                    "HARNESS_PY": sys.executable,
+                    "TEAM_DIR": str(team),
+                    "AAR_IDEAS_DIR": str(team / "methods"),
+                    "AAR_REQUIRE_METHOD_CONTRACT": "1",
+                    "AAR_SLURM_ACCOUNT": "ram",
+                    "AAR_SLURM_PARTITION": "g3",
+                    "AAR_TRAIN_QOS": "g3_ram_high",
+                    "PATH": f"{fake_bin}:/usr/bin:/bin",
+                }
+            )
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(ROOT / "scripts" / "submit_train_job.sh"),
+                    "bad",
+                    "run-1",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertFalse(called.exists())
+
     def test_eval_launcher_caps_honesty_worker_to_requested_gpus(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             tmp = Path(directory)

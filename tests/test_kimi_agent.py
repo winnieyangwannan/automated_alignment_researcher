@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import sys
@@ -481,7 +482,10 @@ class KimiAgentTest(unittest.TestCase):
                 {"command": f"cp -a aar/ideas/TEMPLATE/. {ideas / module}/"},
             )
             write = ("Write", {"path": method, "content": "method code"})
-            validate = ("Bash", {"command": f"python -m py_compile {method}"})
+            validate = (
+                "Bash",
+                {"command": f"python scripts/validate_method_contract.py {method}"},
+            )
             proposal = (
                 "mcp__server-api-tools__submit_idea_proposal",
                 {"idea_name": "candidate"},
@@ -506,8 +510,24 @@ class KimiAgentTest(unittest.TestCase):
                 self.assertEqual(forced_tool(read), "Bash")
                 self.assertIn("Write tool exactly once", prompt(read, scaffold))
                 self.assertEqual(forced_tool(read, scaffold), "Write")
-                self.assertIn("py_compile", prompt(read, scaffold, write))
+                self.assertIn(
+                    "validate_method_contract.py", prompt(read, scaffold, write)
+                )
                 self.assertEqual(forced_tool(read, scaffold, write), "Bash")
+                Path(method).parent.mkdir(parents=True, exist_ok=True)
+                Path(method).write_text("method code")
+                proof = Path(method).parent / ".aar-method-contract.json"
+                proof.write_text(
+                    json.dumps(
+                        {
+                            "status": "passed",
+                            "source_sha256": hashlib.sha256(
+                                Path(method).read_bytes()
+                            ).hexdigest(),
+                            "errors": [],
+                        }
+                    )
+                )
                 self.assertIn(
                     "submit_idea_proposal",
                     prompt(read, scaffold, write, validate),

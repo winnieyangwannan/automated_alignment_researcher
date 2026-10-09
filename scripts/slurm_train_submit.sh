@@ -59,6 +59,18 @@ export SUBMISSIONS_DIR="${SUBMISSIONS_DIR:-${TEAM_DIR:+${TEAM_DIR}/submissions}}
 export SUBMISSIONS_DIR="${SUBMISSIONS_DIR:-${REPO}/_runs/submissions}"
 export SCORES_DIR="${SCORES_DIR:-${TEAM_DIR:+${TEAM_DIR}/scores}}"
 export SCORES_DIR="${SCORES_DIR:-${REPO}/_runs/scores}"
+mkdir -p "${SCORES_DIR}"
+_record_training_failure() {
+  _exit_code=$?
+  if [ "${_exit_code}" -ne 0 ] && [ "${AAR_WRITE_TRAIN_FAILURE_MARKER:-0}" = "1" ]; then
+    _failure_path="${SCORES_DIR}/${RUN_ID}.failed.json"
+    if [ ! -e "${SCORES_DIR}/${RUN_ID}.json" ] && [ ! -e "${_failure_path}" ]; then
+      printf '{"run_id":"%s","status":"failed","stage":"training","exit_code":%d,"error":"training job exited before model scoring"}\n' \
+        "${RUN_ID}" "${_exit_code}" > "${_failure_path}"
+    fi
+  fi
+}
+trap _record_training_failure EXIT
 # NOTE: deliberately do NOT set/read HOLDOUT_DIR — this side can't read it.
 PY="${HARNESS_PY}"
 [ -x "${PY}" ] || { echo "[train] ERROR: Python is not executable: ${PY}" >&2; exit 2; }

@@ -20,6 +20,19 @@ source "${REPO}/scripts/aar_runtime_env.sh"
 
 [ -n "${TEAM_DIR:-}" ] || { echo "submit_train_job: TEAM_DIR is required" >&2; exit 2; }
 mkdir -p "${TEAM_DIR}/logs"
+
+if [ "${AAR_REQUIRE_METHOD_CONTRACT:-0}" = "1" ]; then
+  _ideas_dir="${AAR_IDEAS_DIR:-${TEAM_DIR}/methods}"
+  _method_path="${_ideas_dir}/${IDEA}/run.py"
+  _proof_path="${_ideas_dir}/${IDEA}/.aar-method-contract.json"
+  [ -f "${_method_path}" ] || {
+    echo "submit_train_job: method is missing: ${_method_path}" >&2
+    exit 2
+  }
+  timeout 60s "${HARNESS_PY:-python}" "${REPO}/scripts/validate_method_contract.py" \
+    "${_method_path}" --proof "${_proof_path}" --run-dry-run >&2
+fi
+
 AAR_TRAIN_SUBMITTED_AT_NS="$(date +%s%N)"
 export AAR_TRAIN_SUBMITTED_AT_NS
 

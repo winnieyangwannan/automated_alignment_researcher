@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -443,17 +444,7 @@ class KimiAgent:
             and input_text(index, "path").endswith("run.py")
         ]
         edit_index = max(edit_indices, default=-1)
-        validation_index = max(
-            (
-                index
-                for index, name in enumerate(names)
-                if name == "Bash"
-                and index > edit_index
-                and "py_compile" in input_text(index, "command")
-                and method_module in input_text(index, "command")
-            ),
-            default=-1,
-        )
+        contract_status, contract_errors = self._method_contract_status(method_path)
         proposal_index = max(
             (
                 index
@@ -507,7 +498,7 @@ class KimiAgent:
                 "prompt. If rejected, call Write exactly once to revise the same "
                 "run.py from the monitor feedback. Do not emit prose."
             )
-        if edit_index >= 0 and validation_index >= 0:
+        if edit_index >= 0 and contract_status == "passed":
             return (
                 "Call the native structured MCP tool submit_idea_proposal exactly once "
                 f"now for the implemented method {method_module}. Fill every required "
@@ -515,19 +506,37 @@ class KimiAgent:
                 "not emit prose or another tool."
             )
         if edit_index >= 0:
-            command = f"python -m py_compile {method_path}"
+            if contract_status == "failed":
+                error_summary = "; ".join(contract_errors)[:4000]
+                return (
+                    "Call the native Write tool exactly once now with path="
+                    f"{json.dumps(str(method_path))} and full replacement content that "
+                    "fixes every method-contract error while preserving the intended "
+                    "research method and the copied scaffold's MethodConfig, dry_run, "
+                    "and run_experiment interface. "
+                    f"Errors: {json.dumps(error_summary)}. Do not emit prose or another "
+                    "tool."
+                )
+            validator = self.workspace / "scripts/validate_method_contract.py"
+            proof = method_dir / ".aar-method-contract.json"
+            command = (
+                f"timeout 60s python {validator} {method_path} --proof {proof} "
+                "--run-dry-run"
+            )
             return (
                 "Call the native Bash tool exactly once now with command="
-                f"{json.dumps(command)} to validate the method. Do not emit prose or "
-                "another tool."
+                f"{json.dumps(command)} to validate the complete import, MethodConfig, "
+                "run_experiment, and phase contract. Do not emit prose or another tool."
             )
         if scaffold_seen:
             return (
                 "Call the native Write tool exactly once now with path="
                 f"{json.dumps(str(method_path))} and full replacement content for a "
                 "concrete, compliant multidimensional training method based on the "
-                "template and literature already read. Include all five required "
-                "phase contexts. Do not emit prose or another tool."
+                "template and literature already read. Preserve the copied scaffold's "
+                "MethodConfig, dry_run behavior, load helper, and run_experiment "
+                "interface; include all five required phase contexts. Do not emit prose "
+                "or another tool."
             )
         if template_seen:
             command = (
@@ -568,6 +577,22 @@ class KimiAgent:
         if "native Bash tool exactly once" in prompt:
             return "Bash"
         return None
+
+    @staticmethod
+    def _method_contract_status(method_path: Path) -> tuple[Optional[str], list[str]]:
+        proof_path = method_path.parent / ".aar-method-contract.json"
+        try:
+            source_hash = hashlib.sha256(method_path.read_bytes()).hexdigest()
+            proof = json.loads(proof_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None, []
+        if proof.get("source_sha256") != source_hash:
+            return None, []
+        status = proof.get("status")
+        errors = proof.get("errors")
+        if status not in {"passed", "failed"} or not isinstance(errors, list):
+            return None, []
+        return status, [str(error) for error in errors]
 
     @staticmethod
     def _proposal_is_approved() -> Optional[bool]:
