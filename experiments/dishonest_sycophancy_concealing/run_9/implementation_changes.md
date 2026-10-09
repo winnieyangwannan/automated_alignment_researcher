@@ -448,7 +448,7 @@ scores individual Kimi-generated examples.
 
 ![AAR, MCP, and AutoData trust boundary](autodata_mcp_boundary.svg)
 
-Shareable copy: [Pixelcloud diagram](https://pxl.cl/fq5l4)
+Shareable copy: [Pixelcloud diagram](https://pxl.cl/fq88B)
 
 ### Validation
 
