@@ -19,6 +19,19 @@ async def verify(workspace: Path) -> dict[str, object]:
         model=None,
         cli_path=os.environ.get("KIMI_CLI_PATH"),
         include_prior_work=True,
+        system_prompt=(
+            "You are a noninteractive endpoint verifier. Follow the user's exact "
+            "tool sequence and do not create or manage a separate goal."
+        ),
+        disallowed_tools=[
+            "CreateGoal",
+            "UpdateGoal",
+            "SetGoalBudget",
+            "TodoList",
+            "WaitFor",
+            "Agent",
+            "AgentSwarm",
+        ],
     ).execute(
         "Call the get_leaderboard MCP tool exactly once with its valid empty input. "
         "Only after receiving that result, call the get_literature MCP tool exactly "
