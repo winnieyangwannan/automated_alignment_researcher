@@ -66,6 +66,29 @@ def _package(workspace: str, kind: str) -> dict[str, object]:
     }
 
 
+def test_result_dedup_allows_retry_of_same_authoritative_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scores = tmp_path / "scores"
+    scores.mkdir()
+    monkeypatch.setenv("SCORES_DIR", str(scores))
+    auth = {
+        "model_fingerprint": "v1:test",
+        "per_benchmark": {
+            "public": {"mean": 0.5, "ci_low": 0.4, "ci_high": 0.6}
+        },
+    }
+
+    first = server_api_tools._result_dedup(auth, None, "run-1")
+    retry = server_api_tools._result_dedup(auth, "candidate", "run-1")
+    duplicate = server_api_tools._result_dedup(auth, "other", "run-2")
+
+    assert first == (True, None, None)
+    assert retry == (True, None, None)
+    assert duplicate[0] is False
+    assert duplicate[1]["run_id"] == "run-1"
+
+
 def test_grounding_refuses_before_approved_proposal(tmp_path: Path) -> None:
     state = _state(tmp_path / "state.db")
     registry = _registry(tmp_path / "bindings.json")

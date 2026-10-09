@@ -456,6 +456,12 @@ def _result_dedup(auth: dict, idea_name: str | None, run_id: str | None):
                     owner = json.loads((claim / "owner.json").read_text())
                 except Exception:
                     owner = {}
+                if owner.get("run_id") == run_id:
+                    # A rejected publication attempt may have claimed the result
+                    # key before later validation (for example, a missing
+                    # results_writeup).  Retrying that exact authoritative run is
+                    # recovery of the same result, never a cross-run duplicate.
+                    continue
                 if owner.get("idea_name") != idea_name:
                     return False, owner, kind     # duplicate of a DIFFERENT idea → reject
                 # same idea reusing its key = honest reproduction → keep checking remaining keys
