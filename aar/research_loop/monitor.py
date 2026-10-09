@@ -296,10 +296,13 @@ def _post_retry(url: str, headers: dict, body: dict, timeout: float, tries: int 
             r = httpx.post(url, headers=headers, json=body, timeout=timeout)
             if r.status_code in (429, 500, 502, 503, 529):
                 last = httpx.HTTPStatusError(f"transient HTTP {r.status_code}", request=r.request, response=r)
-                _t.sleep(min(60.0, 5.0 * (2 ** i))); continue
+                _t.sleep(min(60.0, 5.0 * (2**i)))
+                continue
             return r
         except (httpx.TimeoutException, httpx.TransportError) as e:
-            last = e; _t.sleep(min(60.0, 5.0 * (2 ** i))); continue
+            last = e
+            _t.sleep(min(60.0, 5.0 * (2**i)))
+            continue
     raise last if last is not None else RuntimeError("monitor POST failed with no response")
 
 

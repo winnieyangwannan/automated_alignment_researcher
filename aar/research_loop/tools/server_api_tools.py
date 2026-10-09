@@ -11,7 +11,7 @@ import ast
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from claude_agent_sdk import tool, create_sdk_mcp_server
 
@@ -940,7 +940,6 @@ async def share_finding(args: Dict[str, Any]) -> Dict[str, Any]:
 
         # Optional fields (only include if non-None)
         optional_fields = {
-            "title": title,
             "idea_name": idea_name,
             "config": config,
             "worked": worked,
