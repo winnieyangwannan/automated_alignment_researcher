@@ -1,13 +1,14 @@
 # Run 13 progress
 
-Last updated: 2026-10-09 03:20 PDT
+Last updated: 2026-10-09 03:37 PDT
 
 ## Current state
 
-Run 13 documentation and its endpoint-preflight/target-canary submitter are
-implemented with Claude Opus 4.8 selected as the AAR researcher. No Run 13
-endpoint deployment, preflight, AutoData canary, training, evaluation, or full
-chain has been launched yet.
+Run 13's dedicated merged-Gemma endpoint is serving and its endpoint preflight
+passed. The target-aware AutoData canary has not been submitted yet; two fixes
+learned from Run 12 are validated locally and awaiting commit/synchronization
+before canary submission. Training, evaluation, and the full chain have not
+been launched.
 
 ## Completed
 
@@ -27,39 +28,46 @@ chain has been launched yet.
   environment-variable namespace.
 - Shell syntax validation: passed.
 - Focused target-binding, broker-canary, and Run 13 launch tests: 10 passed.
+- Fast-forwarded the initial Run 13 implementation to the HPC `autodata`
+  worktree.
+- Launched dedicated deployment `winnieyangwn-run13-gemma4-cshc` from the
+  clean pinned Gemma model-card checkout.
+- Verified vLLM 0.25.1, language-model-only mode, the exact merged checkpoint,
+  one healthy worker, authenticated direct model listing, smoke generation,
+  gateway registration by deployment ID, and no gateway-default claim.
+- Endpoint preflight job `1784170` passed against checkpoint binding
+  `sha256:f4ca9e6a4ce4ad301b717a37a26373dff9938974dcb5653d53ca39f12a69b9d6`.
+- Ported Run 12's validated Kimi deployment ID and AutoData `PYTHONPATH` fixes
+  into Run 13; 10 focused tests pass with those changes.
 
 ## Live infrastructure
 
-- Run 13 coordinator job: not submitted
-- Run 13 endpoint workers ready: 0
-- Run 13 proxy ready: no
-- Run 13 gateway route ready: no
-- Run 13 endpoint preflight: not submitted
+- Run 13 coordinator job: `1784007`, running
+- Run 13 endpoint worker job: `1784022`, 1 of 1 ready
+- Run 13 proxy job: `1784107`, ready
+- Run 13 gateway route ready: yes, deployment-specific only
+- Run 13 endpoint preflight: passed, job `1784170`
 - Run 13 one-task AutoData canary: not submitted
 
 No Run 12 job or deployment is claimed as Run 13 infrastructure.
 
 ## Next actions
 
-1. Commit the Run 13 files and focused supporting changes.
-2. Fast-forward the exact commit to the clean HPC `autodata` worktree.
-3. Re-run validation in the HPC environment.
-4. Launch and verify deployment `winnieyangwn-run13-gemma4-cshc` against the
-   exact configured merged checkpoint.
-5. Submit `submit_run_13.sh preflight` and wait for `preflight.json`.
-6. Submit `submit_run_13.sh canary <attempt-root>` and wait for
+1. Commit and synchronize the validated Run 13 canary fixes.
+2. Re-run focused validation in the HPC environment.
+3. Submit `submit_run_13.sh canary <attempt-root>` and wait for
    `canary-report.json`.
-7. Verify three provider calls and exact target provenance.
-8. Record timing and any failure/acceptance result.
-9. Stop the temporary deployment after the retained evidence is complete.
+4. Verify three provider calls and exact target provenance.
+5. Record timing and any failure/acceptance result.
+6. Stop the temporary deployment after the retained evidence is complete.
 
 ## Timing so far
 
 - Run 13 documentation initialized: 2026-10-09 03:15 PDT.
 - Source implementation and focused validation: complete on the devserver.
-- Endpoint deployment: not submitted.
-- Endpoint startup duration: not started.
-- Endpoint preflight duration: not started.
+- Endpoint deployment submitted: 2026-10-09 03:22 PDT.
+- Endpoint serving: 2026-10-09 03:36 PDT.
+- Endpoint preflight duration: 0.255 seconds.
 - One-task AutoData duration: not started.
 
 ## Known non-blocking distinction

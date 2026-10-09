@@ -13,6 +13,7 @@ def test_run_13_submitter_is_isolated_and_selects_claude_opus_48() -> None:
     assert "run13-adapter-target" in submitter
     assert "winnieyangwn-run13-gemma4-cshc" in submitter
     assert "run13-adapter-target-canary" in submitter
+    assert "aar_8-kimi26" in submitter
     assert "run12" not in submitter.lower()
     assert "AAR_RUN12" not in submitter
 
@@ -27,5 +28,6 @@ def test_run_13_jobs_use_run_13_namespace_and_expected_provider_order() -> None:
     assert '"research_model": "claude-opus-4-8"' in preflight
     assert "AAR_RUN13_ROOT" in canary
     assert "AAR_RUN13_TARGET_BINDING" in canary
+    assert 'CANARY_PYTHONPATH="${AUTODATA}/src:${REPO}"' in canary
     assert '[\n    "generator", "target", "judge"\n]' in canary
     assert "run12" not in (preflight + canary).lower()
