@@ -42,3 +42,12 @@ def test_evaluator_is_launched_only_after_method_smoke_passes() -> None:
     assert "on_demand_evaluator=1" in pipeline
     assert '"method_gpu_smoke"' in verifier
     assert '"on_demand_evaluator"' in verifier
+
+
+def test_passed_smoke_can_resume_without_research_or_training_relaunch() -> None:
+    pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
+
+    assert 'RESUME_SMOKE="${AAR_RUN10_RESUME_SMOKE:-0}"' in pipeline
+    assert "no research or training relaunch" in pipeline
+    assert 'if [ "${RESUME_SMOKE}" = 0 ]; then' in pipeline
+    assert '${ATTEMPT_DIR}/eval/prompt_baselines.' in pipeline

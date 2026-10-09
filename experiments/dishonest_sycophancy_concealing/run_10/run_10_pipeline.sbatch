@@ -15,6 +15,9 @@ EXPECTED_COMMIT="${AAR_BASELINE_GIT_COMMIT:?missing commit}"
 REUSED_BASELINE="${AAR_REUSED_BASELINE:?missing baseline}"
 RECOVERED_SOURCES="${AAR_RECOVERED_BASELINE_SOURCES:?missing sources}"
 MODE="${AAR_RUN10_MODE:?missing canary/full mode}"
+RESUME_SMOKE="${AAR_RUN10_RESUME_SMOKE:-0}"
+case "${RESUME_SMOKE}" in 0|1) ;; *) echo "invalid AAR_RUN10_RESUME_SMOKE" >&2; exit 2;; esac
+[ "${RESUME_SMOKE}" = 0 ] || [ "${MODE}" = smoke ] || { echo "resume is smoke-only" >&2; exit 2; }
 export HF_HOME="${ATTEMPT_DIR}/cache/huggingface"
 
 # shellcheck disable=SC1091
@@ -103,30 +106,44 @@ if [ "${MODE}" != smoke ]; then
   bash "${REPO}/scripts/publish_holdout.sh"
 fi
 
-launch_log="${ATTEMPT_DIR}/metadata/launch_run10_${MODE}.txt"
-bash "${REPO}/scripts/launch_team.sh" "${seeds}" "${iterations}" "${hours}" | tee "${launch_log}"
-mapfile -t evaluator_ids < <(awk '/^\[launch\] evaluator [0-9]+\/[0-9]+ -> job [0-9]+$/{print $NF}' "${launch_log}")
-mapfile -t chain_ids < <(awk '/^\[team\] chain [a-z]+ -> job [0-9]+$/{print $NF}' "${launch_log}")
-expected=1; [ "${MODE}" = full ] && expected=5
-expected_evaluators="${expected}"; [ "${MODE}" = smoke ] && expected_evaluators=0
-[ "${#evaluator_ids[@]}" -eq "${expected_evaluators}" ] && [ "${#chain_ids[@]}" -eq "${expected}" ] || { echo "missing child job IDs" >&2; exit 1; }
-if [ "${expected_evaluators}" -gt 0 ]; then
-  [ "$(printf '%s\n' "${evaluator_ids[@]}" | sort -u | wc -l)" -eq "${expected_evaluators}" ] || { echo "duplicate evaluator IDs" >&2; exit 1; }
+if [ "${RESUME_SMOKE}" = 1 ]; then
+  smoke_proof="${ATTEMPT_DIR}/metadata/method_smoke_passed.json"
+  [ "$(jq -r '.status' "${smoke_proof}")" = passed ] || { echo "passed smoke proof missing" >&2; exit 2; }
+  adapter_path="$(jq -r '.adapter_path' "${smoke_proof}")"
+  original_team_dir="$(dirname -- "$(dirname -- "${adapter_path}")")"
+  [ -d "${original_team_dir}" ] || { echo "original smoke team is missing" >&2; exit 2; }
+  export AAR_TEAM_ID="$(basename -- "${original_team_dir}")"
+  chain_ids=("$(jq -r '.research_chain_job' "${smoke_proof}")")
+  evaluator_ids=()
+  echo "[run10] resuming passed smoke for team ${AAR_TEAM_ID}; no research or training relaunch"
+else
+  launch_log="${ATTEMPT_DIR}/metadata/launch_run10_${MODE}.txt"
+  bash "${REPO}/scripts/launch_team.sh" "${seeds}" "${iterations}" "${hours}" | tee "${launch_log}"
+  mapfile -t evaluator_ids < <(awk '/^\[launch\] evaluator [0-9]+\/[0-9]+ -> job [0-9]+$/{print $NF}' "${launch_log}")
+  mapfile -t chain_ids < <(awk '/^\[team\] chain [a-z]+ -> job [0-9]+$/{print $NF}' "${launch_log}")
+  expected=1; [ "${MODE}" = full ] && expected=5
+  expected_evaluators="${expected}"; [ "${MODE}" = smoke ] && expected_evaluators=0
+  [ "${#evaluator_ids[@]}" -eq "${expected_evaluators}" ] && [ "${#chain_ids[@]}" -eq "${expected}" ] || { echo "missing child job IDs" >&2; exit 1; }
+  if [ "${expected_evaluators}" -gt 0 ]; then
+    [ "$(printf '%s\n' "${evaluator_ids[@]}" | sort -u | wc -l)" -eq "${expected_evaluators}" ] || { echo "duplicate evaluator IDs" >&2; exit 1; }
+  fi
+  [ "$(printf '%s\n' "${chain_ids[@]}" | sort -u | wc -l)" -eq "${expected}" ] || { echo "duplicate chain IDs" >&2; exit 1; }
+  {
+    printf 'evaluator_jobs=%s\n' "${evaluator_ids[*]}"
+    printf 'research_chain_jobs=%s\n' "${chain_ids[*]}"
+    printf 'research_seeds=%s\n' "${seeds}"
+    printf 'max_iterations_per_chain=%s\n' "${iterations}"
+    printf 'evaluator_gpus_per_job=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nephemeral_merged_checkpoints=1\n' "$([ "${MODE}" = smoke ] && echo 0 || echo 4)"
+  } > "${ATTEMPT_DIR}/metadata/children.env"
+  echo "[run10] ${MODE} launch verified with ${expected} chain(s) and ${expected_evaluators} evaluator(s)"
 fi
-[ "$(printf '%s\n' "${chain_ids[@]}" | sort -u | wc -l)" -eq "${expected}" ] || { echo "duplicate chain IDs" >&2; exit 1; }
-{
-  printf 'evaluator_jobs=%s\n' "${evaluator_ids[*]}"
-  printf 'research_chain_jobs=%s\n' "${chain_ids[*]}"
-  printf 'research_seeds=%s\n' "${seeds}"
-  printf 'max_iterations_per_chain=%s\n' "${iterations}"
-  printf 'evaluator_gpus_per_job=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nephemeral_merged_checkpoints=1\n' "$([ "${MODE}" = smoke ] && echo 0 || echo 4)"
-} > "${ATTEMPT_DIR}/metadata/children.env"
-echo "[run10] ${MODE} launch verified with ${expected} chain(s) and ${expected_evaluators} evaluator(s)"
 
 if [ "${MODE}" = smoke ]; then
-  echo "[run10] waiting for the generated method's real-GPU one-step smoke"
-  "${HARNESS_PY}" "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/monitor_method_smoke.py" \
-    "${ATTEMPT_DIR}" --timeout-seconds 6900 --poll-seconds 10
+  if [ "${RESUME_SMOKE}" = 0 ]; then
+    echo "[run10] waiting for the generated method's real-GPU one-step smoke"
+    "${HARNESS_PY}" "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/monitor_method_smoke.py" \
+      "${ATTEMPT_DIR}" --timeout-seconds 6900 --poll-seconds 10
+  fi
   smoke_proof="${ATTEMPT_DIR}/metadata/method_smoke_passed.json"
   run_id="$(jq -r '.run_id' "${smoke_proof}")"
   adapter_path="$(jq -r '.adapter_path' "${smoke_proof}")"
@@ -134,6 +151,7 @@ if [ "${MODE}" = smoke ]; then
   export SUBMISSIONS_DIR="${TEAM_DIR}/submissions" SCORES_DIR="${TEAM_DIR}/scores"
 
   echo "[run10] method smoke passed; publishing holdout and staging the same adapter"
+  export BASELINES_PATH="${ATTEMPT_DIR}/eval/prompt_baselines.honesty_sycophancy_concealing_uncertainty.google_gemma-4-31B-it.json"
   bash "${REPO}/scripts/publish_holdout.sh"
   "${HARNESS_PY}" -c \
     'import sys; from aar.transport import put_model; print(put_model(sys.argv[1], sys.argv[2]))' \
