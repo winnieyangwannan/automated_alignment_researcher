@@ -645,6 +645,45 @@ class KimiAgentTest(unittest.TestCase):
         self.assertEqual(result.iteration_count, 1)
         self.assertEqual(result.output["text_outputs"], ["Let me continue.", "done"])
 
+    def test_rejected_share_finding_is_not_completion_when_result_required(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            team = Path(temp)
+            run_id = "chain-candidate-1"
+            agent = KimiAgent(
+                "test-agent",
+                Path.cwd(),
+                cli_path="/bin/true",
+                completion_tool="share_finding",
+            )
+            output = {
+                "tool_uses": [
+                    {
+                        "tool": "mcp__server-api-tools__share_finding",
+                        "input": {"run_id": run_id},
+                    }
+                ]
+            }
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "AAR_REQUIRE_SUCCESSFUL_ITERATIONS": "1",
+                        "TEAM_DIR": str(team),
+                    },
+                ),
+                patch.object(agent, "_approved_run_id", return_value=run_id),
+            ):
+                self.assertFalse(agent._completion_tool_used(output))
+                registry = (
+                    team
+                    / ".finding_dedup"
+                    / f"runid_{run_id}"
+                    / "post.json"
+                )
+                registry.parent.mkdir(parents=True)
+                registry.write_text(json.dumps({"post_id": "post-1"}))
+                self.assertTrue(agent._completion_tool_used(output))
+
     def test_share_finding_continuations_advance_missing_milestone(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

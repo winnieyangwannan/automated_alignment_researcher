@@ -424,7 +424,7 @@ class KimiAgent:
 
     def _completion_tool_used(self, output: dict[str, Any]) -> bool:
         expected = self.completion_tool
-        return bool(
+        used = bool(
             expected
             and any(
                 item.get("tool") == expected
@@ -432,6 +432,29 @@ class KimiAgent:
                 for item in output["tool_uses"]
             )
         )
+        if not used or expected != "share_finding":
+            return used
+        if os.getenv("AAR_REQUIRE_SUCCESSFUL_ITERATIONS", "0").lower() not in {
+            "1",
+            "true",
+            "yes",
+        }:
+            return True
+        run_id = self._approved_run_id()
+        if run_id is None:
+            return False
+        team_dir = os.environ.get("TEAM_DIR", "").strip()
+        if not team_dir:
+            return False
+        safe_run_id = "".join(
+            char if (char.isalnum() or char in "_.-") else "_" for char in run_id
+        )
+        post = Path(team_dir) / ".finding_dedup" / f"runid_{safe_run_id}" / "post.json"
+        try:
+            persisted = json.loads(post.read_text())
+        except (OSError, json.JSONDecodeError):
+            return False
+        return bool(persisted.get("post_id") or persisted.get("finding_id"))
 
     @staticmethod
     def _tool_name(item: dict[str, Any]) -> str:
@@ -515,7 +538,10 @@ class KimiAgent:
                 return (
                     "Call the native structured MCP tool share_finding exactly once "
                     "now, using the approved run_id and the real score you already "
-                    "read. Do not emit prose or call evaluate_model."
+                    "read. Include a results_writeup of at least 80 characters that "
+                    "explains which public benchmarks moved, capability behavior, "
+                    "mechanism, and limitations. Do not emit prose or call "
+                    "evaluate_model."
                 )
             if score_path is not None and score_path.is_file():
                 return (
