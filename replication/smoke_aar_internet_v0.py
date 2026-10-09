@@ -56,7 +56,8 @@ Perform this preflight exactly once per step:
 2. Run `{gpu_check}` and report whether a CUDA GPU is allocated.
 3. Run `{helper} search "sycophancy language models alignment" --limit 1`.
 4. Extract its arXiv id and run `{helper} fetch <that-id>`; read the returned title,
-   authors, id, and visible text or labeled abstract fallback.
+   authors, id, visible-text chunk or labeled abstract fallback, and pagination
+   metadata. If `has_more` is true, report `next_offset` (do not fetch another chunk).
 5. Call share_literature once with a clearly labeled disposable smoke entry based
    only on that fetched paper. Do not call any other command or network tool.
 """

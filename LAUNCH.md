@@ -64,12 +64,17 @@ Hugging Face, OpenAI, AWS, Runpod, and W&B variables—are removed from the Meta
 secure librarian child because they are unrelated to its authentication. The
 portable native/direct-key route retains its provider credentials.
 
-The helper accepts only `search <query> [--limit 1..10]` and `fetch <arxiv-id>`.
+The helper accepts only `search <query> [--limit 1]` and
+`fetch <arxiv-id> [--offset N] [--chars N]`.
 It uses `/usr/bin/curl` with a fixed argument vector, response/time bounds, and
-fixed arXiv API and HTML endpoints; it never accepts a URL or invokes a shell.
-Fetch returns bounded visible paper text when arXiv HTML is available and an
-explicitly labeled abstract fallback otherwise. The prompt prohibits claims not
-supported by the returned content. `/usr/bin/curl` and the tracked helper are
+fixed OpenAlex and arXiv API/HTML endpoints; it never accepts a URL or invokes a
+shell.
+Fetch returns at most 20,000 visible-text characters per call when arXiv HTML is
+available. Its `has_more` and `next_offset` fields support sequential reading up
+to a separate bounded document limit without overflowing the inline tool result;
+an unavailable HTML paper produces an explicitly labeled abstract fallback. The
+prompt prohibits claims not supported by the returned content. `/usr/bin/curl`
+and the tracked helper are
 checked before a FAIR job starts. This is a Claude tool-policy boundary, not
 kernel isolation, so continue to use the disposable librarian workspace and do
 not place secrets there.
