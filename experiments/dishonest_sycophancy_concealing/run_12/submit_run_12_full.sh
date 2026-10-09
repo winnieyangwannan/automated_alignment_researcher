@@ -103,6 +103,7 @@ for seed in alpha beta gamma delta epsilon; do
     -u NO_PROXY -u no_proxy \
     "${SV}/serve.sh" deploy "${deployment}" --model gemma-4-31B-it \
       --checkpoint "${BASE_CHECKPOINT}" --endpoints 1 --cluster fair-cw-use2-1 \
+      --image docker.io/vllm/vllm-openai:v0.25.1 \
       --partition g3 --account ram --qos g3_ram_high \
       --gateway-register --lifetime 7d --no-watch
   "${REPO}/.venv/bin/python" -m aar.autodata_campaign_policy create-base-target \
@@ -120,6 +121,10 @@ done
 for deployment in "${deployments[@]}"; do
   ready=0
   for _ in $(seq 1 160); do
+    [ -d "/checkpoint/ram/shared/vllm_deployments_v2/${deployment}" ] || {
+      echo "deployment was archived before serving: ${deployment}" >&2
+      break
+    }
     phase="$("${SV}/serve.sh" status "${deployment}" --json 2>/dev/null | jq -r '.phase // empty' || true)"
     if [ "${phase}" = serving ]; then ready=1; break; fi
     case "${phase}" in failed|stopped|expired) break;; esac

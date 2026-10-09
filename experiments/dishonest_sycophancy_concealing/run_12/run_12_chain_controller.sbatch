@@ -84,6 +84,7 @@ PY
 wait_deployment() {
   local deployment="$1" phase=""
   for _ in $(seq 1 160); do
+    [ -d "/checkpoint/ram/shared/vllm_deployments_v2/${deployment}" ] || return 1
     phase="$("${SV}/serve.sh" status "${deployment}" --json 2>/dev/null | jq -r '.phase // empty' || true)"
     if [ "${phase}" = serving ]; then
       "${SV}/serve.sh" test "${deployment}" >/dev/null
@@ -103,6 +104,7 @@ deploy_checkpoint() {
     -u NO_PROXY -u no_proxy \
     "${SV}/serve.sh" deploy "${deployment}" \
       --model gemma-4-31B-it --checkpoint "${checkpoint}" --endpoints 1 \
+      --image docker.io/vllm/vllm-openai:v0.25.1 \
       --cluster fair-cw-use2-1 --partition g3 --account ram --qos g3_ram_high \
       --gateway-register --lifetime 7d --no-watch
   wait_deployment "${deployment}"
