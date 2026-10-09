@@ -36,3 +36,17 @@ def test_run_13_jobs_use_run_13_namespace_and_expected_provider_order() -> None:
     assert "--target-canary-id-prefix run13-adapter-target-canary" in canary
     assert '[\n    "generator", "target", "judge"\n]' in canary
     assert "run12" not in (preflight + canary).lower()
+
+
+def test_research_canary_explicitly_launches_one_claude_opus_chain() -> None:
+    submitter = (RUN / "submit_run_13_research_canary.sh").read_text()
+    pipeline = (RUN / "run_13_research_canary.sbatch").read_text()
+
+    assert "research_backend=claude" in submitter
+    assert "research_model=claude-opus-4-8" in submitter
+    assert "AAR_AGENT_BACKEND=claude" in pipeline
+    assert "AAR_AGENT_MODEL=claude-opus-4-8" in pipeline
+    assert 'launch_team.sh" canary 1 17' in pipeline
+    assert "AAR_KEEP_CHECKPOINTS=1" in pipeline
+    assert "EVAL_INFERENCE_BACKEND=vllm" in pipeline
+    assert "EVAL_VLLM_LORA_STRATEGY=merged_checkpoint" in pipeline
