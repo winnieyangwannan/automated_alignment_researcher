@@ -51,7 +51,7 @@ def monitor(attempt: Path, timeout_seconds: int, poll_seconds: int) -> dict:
             receipt = receipts[0]
             break
         chain_state = _job_state(chain_ids[0])
-        if chain_state not in {"PENDING", "RUNNING"}:
+        if chain_state and chain_state not in {"PENDING", "RUNNING"}:
             raise RuntimeError(f"research chain ended before training receipt: {chain_state}")
         time.sleep(poll_seconds)
     if receipt is None:

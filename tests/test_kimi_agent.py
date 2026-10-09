@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -620,6 +621,57 @@ class KimiAgentTest(unittest.TestCase):
                         ),
                         "share_finding",
                     )
+
+    def test_approved_training_submission_is_adapter_controlled(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            proposal_dir = root / "scores" / ".proposals"
+            runs = proposal_dir / "runs"
+            runs.mkdir(parents=True)
+            marker = {
+                "approved": True,
+                "idea_name": "chain__kimi_candidate",
+                "code_hash": "hash-1",
+            }
+            (proposal_dir / "chain-uid.json").write_text(json.dumps(marker))
+            run_id = "chain-uid-chain__kimi_candidate-1"
+            (runs / f"{run_id}.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "idea_name": "chain__kimi_candidate",
+                        "code_hash": "hash-1",
+                        "stamped_ts": 1,
+                    }
+                )
+            )
+            receipt = root / "team" / ".train_submissions" / f"{run_id}.env"
+
+            def submit(command, **kwargs):
+                self.assertEqual(command[-2:], ["chain__kimi_candidate", run_id])
+                self.assertFalse(kwargs.get("shell", False))
+                receipt.parent.mkdir(parents=True)
+                receipt.write_text(f"run_id={run_id}\njob_id=12345\n")
+                return subprocess.CompletedProcess(command, 0, "12345\n", "")
+
+            agent = KimiAgent(
+                "test-agent", root, cli_path="/bin/true", completion_tool="share_finding"
+            )
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "AAR_REQUIRE_TRAIN_RECEIPT": "1",
+                        "SCORES_DIR": str(root / "scores"),
+                        "TEAM_DIR": str(root / "team"),
+                        "IDEA_UID": "chain-uid",
+                    },
+                ),
+                patch("aar.research_loop.kimi_agent.subprocess.run", side_effect=submit),
+            ):
+                agent._ensure_approved_training_submission()
+
+            self.assertEqual(receipt.read_text(), f"run_id={run_id}\njob_id=12345\n")
 
     def test_standard_mcp_bridge_advertises_existing_tool_objects(self) -> None:
         self.assertIn("evaluate_model", {

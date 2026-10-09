@@ -302,6 +302,8 @@ class KimiAgent:
                             f"Kimi Code exited with status {return_code}: "
                             f"{detail or 'no error detail'}"
                         )
+                    self._ensure_approved_training_submission()
+                    await self._wait_for_training_result()
                     training_failure = self._current_training_failure()
                     if training_failure is not None:
                         raise RuntimeError(
@@ -687,6 +689,91 @@ class KimiAgent:
         if values.get("run_id") != run_id or not re.fullmatch(r"[0-9]+", job_id):
             return None
         return job_id
+
+    def _ensure_approved_training_submission(self) -> None:
+        """Submit approved work deterministically; never delegate shell quoting to Kimi."""
+        if (
+            self.completion_tool != "share_finding"
+            or os.environ.get("AAR_REQUIRE_TRAIN_RECEIPT") != "1"
+        ):
+            return
+        run_id = self._approved_run_id()
+        if run_id is None or self._current_training_job_id(run_id) is not None:
+            return
+        scores_dir = os.environ.get("SCORES_DIR", "").strip()
+        idea_uid = os.environ.get("IDEA_UID") or os.environ.get("IDEA_NAME")
+        if not scores_dir or not idea_uid:
+            return
+        marker = Path(scores_dir) / ".proposals" / f"{idea_uid}.json"
+        try:
+            payload = json.loads(marker.read_text())
+        except (OSError, json.JSONDecodeError):
+            return
+        idea_name = payload.get("idea_name")
+        if not isinstance(idea_name, str) or not re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*", idea_name
+        ):
+            raise RuntimeError("approved proposal has an unsafe method module name")
+        command = [
+            "bash",
+            str(self.workspace / "scripts/submit_train_job.sh"),
+            idea_name,
+            run_id,
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=self.workspace,
+                env=os.environ.copy(),
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError("approved training submission timed out") from error
+        job_id = completed.stdout.strip()
+        if completed.returncode != 0 or not re.fullmatch(r"[0-9]+", job_id):
+            detail = completed.stderr.strip() or completed.stdout.strip()
+            raise RuntimeError(
+                "approved training submission failed: " + detail[-4000:]
+            )
+        receipt_job = self._current_training_job_id(run_id)
+        if receipt_job != job_id:
+            raise RuntimeError("training submission did not publish its verified receipt")
+        print(f"[Kimi] deterministically submitted approved training job {job_id}")
+
+    async def _wait_for_training_result(self) -> None:
+        """Keep Kimi out of shell polling while the asynchronous job/evaluator runs."""
+        if self.completion_tool != "share_finding":
+            return
+        run_id = self._approved_run_id()
+        if run_id is None or self._current_training_job_id(run_id) is None:
+            return
+        score_path = self._score_path_for_run(run_id)
+        if score_path is None or score_path.is_file():
+            return
+        timeout_seconds = int(os.environ.get("AAR_KIMI_SCORE_WAIT_SECONDS", "10800"))
+        deadline = time.monotonic() + timeout_seconds
+        next_update = time.monotonic()
+        while time.monotonic() < deadline:
+            failure = self._current_training_failure()
+            if failure is not None:
+                raise RuntimeError(
+                    "Kimi training failed closed: "
+                    + json.dumps(failure, sort_keys=True)[:2000]
+                )
+            if score_path.is_file():
+                print(f"[Kimi] score ready for approved run {run_id}")
+                return
+            if time.monotonic() >= next_update:
+                job_id = self._current_training_job_id(run_id)
+                print(f"[Kimi] waiting for score from training job {job_id}")
+                next_update = time.monotonic() + 60
+            await asyncio.sleep(10)
+        raise RuntimeError(
+            f"timed out waiting for score or failure marker for approved run {run_id}"
+        )
 
     @classmethod
     def _current_training_failure(cls) -> Optional[dict[str, Any]]:
