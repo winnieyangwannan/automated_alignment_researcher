@@ -69,6 +69,63 @@ class KimiAgentTest(unittest.TestCase):
 
             self.assertTrue(result.success, result.error)
 
+    def test_pre_marker_rejection_cannot_reuse_prior_approved_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            scores = root / "scores"
+            proposals = scores / ".proposals"
+            proposals.mkdir(parents=True)
+            idea_uid = "kimi-stale-approval"
+            marker = proposals / f"{idea_uid}.json"
+            marker.write_text(
+                json.dumps(
+                    {
+                        "approved": True,
+                        "idea_name": "old_candidate",
+                        "code_hash": "old-code",
+                    }
+                )
+            )
+            agent = KimiAgent("test-agent", root, cli_path="/bin/true")
+
+            with patch.dict(
+                os.environ,
+                {"SCORES_DIR": str(scores), "IDEA_UID": idea_uid},
+                clear=False,
+            ):
+                agent._proposal_marker_fingerprint_at_start = (
+                    agent._proposal_marker_fingerprint()
+                )
+                self.assertFalse(agent._proposal_marker_changed_this_session())
+
+                # Early proposal validation errors return before writing a new
+                # marker.  The durable approved marker must therefore remain
+                # ineligible for training actions in this new session.
+                self.assertTrue(
+                    agent._submitted_proposal_in_output(
+                        {
+                            "tool_uses": [
+                                {
+                                    "tool": "submit_idea_proposal",
+                                    "input": {"idea_name": "missing_candidate"},
+                                }
+                            ]
+                        }
+                    )
+                )
+                self.assertFalse(agent._proposal_marker_changed_this_session())
+
+                marker.write_text(
+                    json.dumps(
+                        {
+                            "approved": False,
+                            "idea_name": "new_candidate",
+                            "code_hash": "new-code",
+                        }
+                    )
+                )
+                self.assertTrue(agent._proposal_marker_changed_this_session())
+
 
     def test_successful_retry_score_takes_precedence_over_retained_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

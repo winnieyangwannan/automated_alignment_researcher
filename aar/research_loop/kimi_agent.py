@@ -258,6 +258,13 @@ class KimiAgent:
             )
 
         prompt = self._with_previous_failure_feedback(task)
+        # Proposal markers are intentionally durable across loop sessions.  Bind
+        # training actions to a marker mutation from *this* execute call so a
+        # pre-marker proposal rejection cannot inherit the previous session's
+        # approved run ID and terminal score/failure marker.
+        self._proposal_marker_fingerprint_at_start = (
+            self._proposal_marker_fingerprint()
+        )
 
         output: dict[str, Any] = {
             "text_outputs": [],
@@ -306,7 +313,10 @@ class KimiAgent:
                     # Only the session that actually submitted the proposal may act
                     # on that marker; otherwise one failed run poisons every later
                     # session and burns the iteration budget without allowing a fix.
-                    if self._submitted_proposal_in_output(output):
+                    if (
+                        self._submitted_proposal_in_output(output)
+                        and self._proposal_marker_changed_this_session()
+                    ):
                         self._ensure_approved_training_submission()
                         await self._wait_for_training_result()
                         training_failure = self._current_training_failure()
@@ -520,7 +530,11 @@ class KimiAgent:
                 "emit prose."
             )
         if proposal_index >= 0:
-            approved = self._proposal_is_approved()
+            approved = (
+                self._proposal_is_approved()
+                if self._proposal_marker_changed_this_session()
+                else False
+            )
             if approved is True and approved_run_id is not None:
                 submitter = self.workspace / "scripts/submit_train_job.sh"
                 run_id_q = shlex.quote(approved_run_id)
@@ -660,6 +674,23 @@ class KimiAgent:
             return None
         approved = payload.get("approved")
         return approved if isinstance(approved, bool) else None
+
+    @staticmethod
+    def _proposal_marker_fingerprint() -> Optional[str]:
+        scores_dir = os.environ.get("SCORES_DIR", "").strip()
+        idea_uid = os.environ.get("IDEA_UID") or os.environ.get("IDEA_NAME")
+        if not scores_dir or not idea_uid:
+            return None
+        marker = Path(scores_dir) / ".proposals" / f"{idea_uid}.json"
+        try:
+            return hashlib.sha256(marker.read_bytes()).hexdigest()
+        except OSError:
+            return None
+
+    def _proposal_marker_changed_this_session(self) -> bool:
+        return self._proposal_marker_fingerprint() != getattr(
+            self, "_proposal_marker_fingerprint_at_start", None
+        )
 
     @staticmethod
     def _approved_run_id() -> Optional[str]:
