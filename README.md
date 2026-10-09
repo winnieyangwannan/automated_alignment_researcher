@@ -298,6 +298,26 @@ Notes and scope:
   smoke in [`LAUNCH.md`](LAUNCH.md). Historical baseline/watcher/dashboard scripts may still
   carry deployment-specific defaults; see [`PORTABILITY.md`](PORTABILITY.md).
 
+### Export the run champion
+
+After every research chain has stopped and all score handoffs are complete, package the highest
+valid result from one run attempt:
+
+```bash
+python scripts/export_aar_champion.py \
+  --attempt-dir /path/to/attempt \
+  --output-dir /path/to/attempt/champion \
+  --suite <suite> \
+  --inference-backend <transformers-or-vllm>
+```
+
+The exporter considers only that attempt's authoritative `scores/` files, requires the capability
+and regression gates to pass, verifies the frozen proposal and approved method-code hash, and checks
+the exact staged model with the normal submission validator. It writes the model, method source,
+score, proposal, optional forum finding, method card, candidate audit, and SHA-256 manifest atomically.
+Runs intended for post-run export must retain submitted checkpoints with `AAR_KEEP_CHECKPOINTS=1`;
+the exporter never uses evaluator-private held-out scores for selection.
+
 ---
 
 ## 7. How the pieces connect

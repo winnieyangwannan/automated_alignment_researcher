@@ -22,6 +22,7 @@ def main() -> None:
         "findings": sum(len(list(team.glob("forum/*.json"))) for team in teams),
         "session_logs": sum(len(list(team.glob("logs/session_*.log"))) for team in teams),
         "children_recorded": (attempt / "metadata/children.env").exists(),
+        "champion_exported": (attempt / "champion/champion.json").exists(),
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
 

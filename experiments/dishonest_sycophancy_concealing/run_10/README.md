@@ -45,6 +45,25 @@ python experiments/dishonest_sycophancy_concealing/run_10/status_run_10.py <atte
 squeue -j <launch-and-child-job-ids> -o '%.18i %.30j %.10T %.10M %R'
 ```
 
+## Exporting the champion
+
+After all research-chain jobs have reached a terminal state and their final scores have landed, run:
+
+```bash
+python scripts/export_aar_champion.py \
+  --attempt-dir /storage/home/winnieyangwn/aar-runs/run10_kimi/full_attempts/<attempt> \
+  --output-dir /storage/home/winnieyangwn/aar-runs/run10_kimi/full_attempts/<attempt>/champion \
+  --suite honesty_sycophancy_concealing_uncertainty \
+  --inference-backend vllm \
+  --require-artifact-type adapter \
+  --base-model google/gemma-4-31B-it
+```
+
+Run 10 retains the exact submitted PEFT adapters. The merged vLLM checkpoints are intentionally
+ephemeral, so the champion package contains the evaluated adapter and records the frozen base model.
+Use `scripts/merge_peft_adapter.py` afterward only if the receiving system requires a full merged
+checkpoint.
+
 The scored canary is fail-closed on the research backend and evaluator protocol. Its `metadata/canary_passed.json` must prove the Kimi MCP round trip, one score/finding pair, vLLM 0.25.1 language-model-only execution, merged-checkpoint strategy, retained merge manifest, and ephemeral checkpoint cleanup.
 
 ## Isolation and provenance
