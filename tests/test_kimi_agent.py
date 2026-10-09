@@ -176,6 +176,70 @@ class KimiAgentTest(unittest.TestCase):
             ):
                 asyncio.run(agent._wait_for_training_result())
 
+    def test_slurm_timeout_publishes_failure_instead_of_waiting_forever(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            scores = root / "scores"
+            proposals = scores / ".proposals"
+            runs = proposals / "runs"
+            receipts = root / ".train_submissions"
+            runs.mkdir(parents=True)
+            receipts.mkdir()
+            idea_uid = "kimi-timeout"
+            run_id = f"{idea_uid}-candidate-1"
+            marker = {
+                "approved": True,
+                "idea_name": "kimi_candidate",
+                "code_hash": "abc123",
+            }
+            (proposals / f"{idea_uid}.json").write_text(json.dumps(marker))
+            (runs / "candidate.json").write_text(
+                json.dumps({**marker, "run_id": run_id, "stamped_ts": 1})
+            )
+            (receipts / f"{run_id}.env").write_text(
+                f"run_id={run_id}\njob_id=12345\n"
+            )
+            agent = KimiAgent(
+                "test-agent",
+                root,
+                cli_path="/bin/true",
+                completion_tool="share_finding",
+            )
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "SCORES_DIR": str(scores),
+                        "TEAM_DIR": str(root),
+                        "IDEA_UID": idea_uid,
+                    },
+                    clear=False,
+                ),
+                patch.object(
+                    KimiAgent,
+                    "_slurm_job_result",
+                    return_value=("TIMEOUT", 0),
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "training_slurm_timeout"):
+                    asyncio.run(agent._wait_for_training_result())
+
+            failure = json.loads((scores / f"{run_id}.failed.json").read_text())
+            self.assertEqual(failure["stage"], "training")
+            self.assertEqual(failure["error_code"], "training_slurm_timeout")
+            self.assertEqual(failure["exit_code"], 0)
+            self.assertEqual(failure["log_path"], str(root / "logs" / "train-12345.out"))
+
+    def test_slurm_result_normalizes_signal_exit_and_state_suffix(self) -> None:
+        completed = subprocess.CompletedProcess(
+            ["sacct"], 0, "TIMEOUT+|0:9|\n", ""
+        )
+        with patch(
+            "aar.research_loop.kimi_agent.subprocess.run", return_value=completed
+        ):
+            self.assertEqual(KimiAgent._slurm_job_result("12345"), ("TIMEOUT", 137))
+
     def test_previous_failure_is_injected_into_next_kimi_session(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

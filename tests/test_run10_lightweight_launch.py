@@ -8,7 +8,10 @@ RUN10 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_10"
 
 
 def test_smoke_mode_uses_one_chain_and_no_evaluator() -> None:
-    pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
+    pipeline = (
+        (RUN10 / "configure_run_10_environment.sh").read_text()
+        + (RUN10 / "run_10_pipeline.sbatch").read_text()
+    )
     submitter = (RUN10 / "submit_run_10.sh").read_text()
 
     assert "smoke|canary|full" in submitter
@@ -90,7 +93,10 @@ def test_kimi_preflight_records_the_requested_deployment() -> None:
 
 
 def test_run10_canary_keeps_historical_defaults_but_allows_trusted_overrides() -> None:
-    pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
+    pipeline = (
+        (RUN10 / "configure_run_10_environment.sh").read_text()
+        + (RUN10 / "run_10_pipeline.sbatch").read_text()
+    )
     submitter = (RUN10 / "submit_run_10.sh").read_text()
 
     assert 'EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-multi_kimi}"' in submitter
@@ -113,3 +119,24 @@ def test_run10_canary_supports_bounded_recovered_continuation() -> None:
     assert 'recovered-agent-log' in submitter
     assert 'export AAR_RECOVERED_AGENT_LOG_DIR="${recovered_agent_log_for_launch}"' in submitter
     assert 'recovered_agent_log_dir=%s' in submitter
+
+
+def test_initial_launch_and_targeted_resume_share_runtime_configuration() -> None:
+    pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
+    resume = (RUN10 / "resume_run_10.sh").read_text()
+    shared = "configure_run_10_environment.sh"
+
+    assert shared in pipeline
+    assert shared in resume
+
+
+def test_targeted_resume_is_budgeted_and_duplicate_safe() -> None:
+    resume = (RUN10 / "resume_run_10.sh").read_text()
+
+    assert "seed_has_active_job" in resume
+    assert "refusing duplicate active chain" in resume
+    assert "max_sessions - started" in resume
+    assert 'session_*_${seed}_*.log' in resume
+    assert "recovery_jobs.tsv" in resume
+    assert "expected exactly one Run 10 team" in resume
+    assert "launch_eval_worker.sh" in resume

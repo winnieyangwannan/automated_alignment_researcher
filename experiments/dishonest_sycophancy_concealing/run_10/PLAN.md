@@ -41,3 +41,7 @@ Kimi MCP text responses are bounded to 16,000 characters. Oversized literature r
 ## Monitoring and recovery
 
 The durable attempts live under `/storage/home/winnieyangwn/aar-runs/run10_kimi/`. Monitoring checks Slurm state, `metadata/children.env`, session counts, score/finding pairs, evaluator fail-closed markers, merge manifests, and free space. A failed evaluator may be replaced against the same queue; research-chain history and retained results are never deleted or overwritten.
+
+Every receipt-bound Kimi training submission must eventually have either a score or a structured failure marker. While waiting, the adapter reconciles the receipt against Slurm accounting; terminal states such as `TIMEOUT`, `FAILED`, `OUT_OF_MEMORY`, or `CANCELLED` atomically produce the missing held-out-safe marker when a hard scheduler termination prevented the training shell's exit trap from running.
+
+Chain recovery is seed-local. The Run 10 resume helper refuses to submit a second active job for the same seed, counts durable session logs, and gives the replacement only the unconsumed part of the original 50-session budget. It preserves the team, methods, scores, findings, and private chain memory. Evaluators are replenished only to the original pool size, and every recovery job and source commit is appended to the attempt metadata.
