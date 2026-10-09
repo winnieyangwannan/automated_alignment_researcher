@@ -100,10 +100,14 @@ def _policy_proxy_handler(
                         payload.get("tools")
                     )
                     if requested_tool:
-                        payload["tool_choice"] = {
-                            "type": "function",
-                            "function": {"name": requested_tool},
-                        }
+                        payload["tools"] = [
+                            tool
+                            for tool in payload["tools"]
+                            if isinstance(tool, dict)
+                            and isinstance(tool.get("function"), dict)
+                            and tool["function"].get("name") == requested_tool
+                        ]
+                        payload["tool_choice"] = "required"
                     body = json.dumps(payload).encode()
                 except (json.JSONDecodeError, ValueError) as error:
                     self.send_error(400, str(error))
@@ -155,7 +159,7 @@ def _policy_proxy_handler(
 
 
 class _ToolChoiceController:
-    """One-shot named tool selection shared with the loopback request proxy."""
+    """One-shot required tool selection shared with the request proxy."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()

@@ -386,9 +386,10 @@ class KimiAgentTest(unittest.TestCase):
             upstream.server_close()
             thread.join(timeout=5)
 
+        self.assertEqual(observed[0]["tool_choice"], "required")
         self.assertEqual(
-            observed[0]["tool_choice"],
-            {"type": "function", "function": {"name": "Bash"}},
+            observed[0]["tools"],
+            [{"type": "function", "function": {"name": "Bash"}}],
         )
         self.assertNotIn("tool_choice", observed[1])
 
