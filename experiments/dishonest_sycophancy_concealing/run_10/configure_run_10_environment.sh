@@ -14,6 +14,7 @@ case "${MODE}" in smoke|canary|full) ;; *)
 esac
 
 export HF_HOME="${ATTEMPT_DIR}/cache/huggingface"
+export AAR_EXPECTED_BRANCH=multi_kimi AAR_RUNTIME_ROOT="${ATTEMPT_DIR}"
 # shellcheck disable=SC1091
 source "${REPO}/replication/env_multidimensional.sh"
 # shellcheck disable=SC1091
@@ -27,7 +28,6 @@ source "${REPO}/scripts/axis_env.sh"
 }
 mkdir -p "${HF_HOME}"
 
-export AAR_EXPECTED_BRANCH=multi_kimi AAR_RUNTIME_ROOT="${ATTEMPT_DIR}"
 export AAR_BASELINE_OVERRIDES="${ATTEMPT_DIR}/metadata/gemma4_31b_multidimensional_baseline.json"
 export HOLDOUT_DIR="${ATTEMPT_DIR}/eval/holdout/gemma4_31b"
 export BASELINES_PATH="${ATTEMPT_DIR}/baselines.honesty_sycophancy_concealing_uncertainty.google_gemma-4-31B-it.json"
