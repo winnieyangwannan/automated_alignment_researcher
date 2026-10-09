@@ -62,6 +62,154 @@ control-plane persistence optimization inside AutoData.
 - The commits were synchronized to the FAIR HPC AutoData checkout used by the
   Run 9 preflight.
 
+## Switch trusted question-only generation from Firecracker to local Bubblewrap
+
+### Why Firecracker was selected initially
+
+Firecracker itself is a lightweight micro-VM technology, not an AutoData
+invention. AutoData provides a broker runner that obtains a SandoQ Firecracker
+lease, pulls and verifies a digest-pinned OCI image, runs the declared phases,
+returns only allowlisted results, and releases the VM. This is AutoData's
+prominent general-purpose execution path and provides strong isolation for
+arbitrary code, OCI-dependent environments, and sealed-test verification.
+
+Starting with Firecracker was therefore a conservative security choice.
+However, Run 9 data generation is a fixed, operator-reviewed, question-only
+Python recipe. It makes Kimi generation and Luna judging calls, writes one
+declared result, and does not need an arbitrary OCI environment, hidden inputs,
+or a verifier phase. Firecracker's stronger VM boundary added machinery that
+this workload did not use.
+
+AutoData already documents a more specific fit in
+`docs/firecracker-broker.md` under **Trusted question-only local runner**. That
+runner preserves the broker boundary while executing each solve phase in a
+local Bubblewrap process sandbox.
+
+### Observed Firecracker bottleneck
+
+Every simultaneous Firecracker task required a separate lease from a finite
+SandoQ warm pool:
+
+```text
+16 requested tasks
+  → 16 Firecracker VM leases required
+  → warm pool has fewer available VMs
+  → HTTP 429, lease waiting, or timeout
+```
+
+The retained capacity probes showed:
+
+- `oci-runner-firecracker-small` repeatedly had no available pod;
+- `medium` admitted only three of four concurrent sessions before its fourth
+  request exhausted the bounded lease wait; and
+- `large` admitted four sessions in one canary, but a subsequent real attempt
+  still encountered pool-exhaustion HTTP 429 responses at concurrency four.
+
+Live events from the retained Firecracker attempt showed a median broker-task
+duration of approximately 37 seconds: 19 seconds leasing a VM, 5 seconds
+preparing it, and only about 9 seconds in the Kimi-plus-Luna solve. Firecracker
+therefore spent substantially more time provisioning the execution boundary
+than performing the actual Run 9 work.
+
+### Change
+
+Run 9 now selects AutoData's existing `local-bwrap` broker runner on a dedicated
+CPU Slurm allocation:
+
+```text
+One CPU Slurm allocation
+  → one authenticated loopback AutoData broker
+  → up to 16 local Bubblewrap task sandboxes
+  → Kimi generation and Luna judging
+```
+
+The broker implementation was not replaced or forked for this change. It still
+owns the attempt-scoped authentication capability, model credential injection,
+campaign cost reservations, idempotency ledger, result allowlist, and output
+secret scan. AutoData still owns corpus fan-out, budgets, retries, candidate
+history, meta-optimization, and comparison policy.
+
+Bubblewrap removes the external VM-lease pool and the per-task VM/image
+preparation path. The switch therefore removes these failure and latency
+sources:
+
+- SandoQ warm-pool dependence;
+- lease HTTP 429 responses and lease timeouts;
+- VM startup, renewal, release, and ambiguous disconnects;
+- per-task OCI image preparation; and
+- Firecracker gateway, registry, and token dependencies that a question-only
+  task does not require.
+
+### Internal model routing
+
+The first local-runner probes correctly removed inherited proxy variables but
+then showed that the external inference-gateway hostname was not reachable from
+the HPC task environment. The local runner was updated to use FAIR's
+cluster-internal inference ingress while preserving the required host,
+deployment, and model headers. This did not change the generator: it remains
+the same `Kimi-K2.6` deployment. It changed only the network route used from the
+compute node.
+
+### Node-local broker ledger
+
+The broker's hot SQLite idempotency ledger now lives under the compute node's
+`$SLURM_TMPDIR` rather than inside the retained network-filesystem directory.
+Uploads and declared results remain on retained storage, and clean shutdown
+checkpoints and copies a broker-database snapshot into the attempt directory.
+
+This follows the AutoData broker runbook for a network-backed broker root. It is
+separate from the AutoData `ExecutionEngine` SQLite fix above: the engine fix
+reduces repeated writes to native lifecycle state, while node-local placement
+keeps the broker's distinct job ledger away from network-filesystem lock and
+WAL latency.
+
+Without this placement, a low-load run might still work, but concurrent broker
+state transitions are more likely to suffer slow locking, delayed idempotency
+lookups, write timeouts, or misleading broker stalls. The node-local ledger is
+therefore stability hardening rather than a change to job semantics.
+
+### Validation and measured effect
+
+- The corrected concurrency-16 local canary completed in 2 minutes 3 seconds.
+  All 16 broker jobs and task envelopes succeeded and recorded both Kimi and
+  Luna usage. Ten samples were accepted and six were intentionally filtered by
+  the judge; there were no model, parsing, broker, lease, or routing failures.
+- Subsequent local broker jobs completed in approximately 7–12 seconds, with a
+  median near 9.1 seconds, compared with the observed Firecracker median near
+  37 seconds.
+- The measured per-task reduction is approximately 28 seconds, or 76%, making
+  the broker task about four times faster before considering concurrency.
+- Validated concurrency increased from approximately four Firecracker sessions
+  to 16 local tasks. The improvement comes from using the CPU allocation
+  already held by the run rather than requesting one scarce external VM per
+  example.
+
+There is no clean full-production A/B because the Firecracker attempts failed
+or were stopped before completing the same production workload. The 37-second
+to 9.1-second comparison is a broker-task measurement, not a guarantee for
+end-to-end AutoData duration. AutoData lifecycle work, SQLite ingestion, model
+rate limits, and quality acceptance still affect total runtime.
+
+### Security and scaling boundary
+
+Local Bubblewrap is appropriate here only because the recipe is trusted,
+operator-reviewed, solve-only, and question-only. Firecracker remains the
+correct choice for arbitrary or adversarial code, task-specific OCI images,
+sealed inputs, alternate work directories, or hidden-test verification.
+
+Concurrency 16 is validated. Concurrency 32 is not assumed safe: Bubblewrap
+removes the Firecracker lease constraint, but higher concurrency can still
+exhaust the Slurm allocation or hit Kimi/Luna endpoint limits and must pass a
+separate load test.
+
+### Provenance
+
+- Select the trusted local broker path: `c8dea84`
+- Route local Kimi calls through internal ingress: `583673b`
+- Record the successful local concurrency canary: `1cd196a`
+- Keep the broker ledger node-local with retained snapshots: `eb57e64`
+- The original AutoData broker and `local-bwrap` runner code remain unchanged.
+
 ## Add a trusted AAR approval bridge for native AutoData gates
 
 ### Problem
