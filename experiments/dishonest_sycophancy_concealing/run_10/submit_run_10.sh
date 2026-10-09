@@ -74,12 +74,19 @@ export KIMI_MODEL_CAPABILITIES=tool_use
 export AAR_KIMI_MCP_MAX_TEXT_CHARS=16000
 unset KIMI_AGENT_MODEL
 if [ "${MODE}" = smoke ]; then
-  "${REPO}/.venv/bin/python" -m pytest -q \
+  _cpu_gate_env=(env \
+    -u AAR_AGENT_BACKEND -u AAR_AGENT_MODEL -u AAR_WEB_MODE \
+    -u KIMI_AGENT_MODEL -u KIMI_CLI_PATH -u KIMI_CODE_HOME \
+    -u AAR_KIMI_SERVE_DEPLOYMENT -u AAR_KIMI_EXPECTED_MODEL \
+    -u AAR_KIMI_PROVIDER_TYPE -u AAR_KIMI_DISABLE_THINKING \
+    -u AAR_SERVE_API_V2_ROOT -u KIMI_MODEL_PROVIDER_TYPE \
+    -u KIMI_MODEL_NAME -u KIMI_MODEL_BASE_URL -u KIMI_MODEL_API_KEY)
+  "${_cpu_gate_env[@]}" "${REPO}/.venv/bin/python" -m pytest -q \
     "${REPO}/tests/test_kimi_agent.py" \
     "${REPO}/tests/test_full_loop_launch.py" \
     "${REPO}/tests/test_validate_method_contract.py" \
     > "${attempt_dir}/metadata/cpu_replay_gate.txt"
-  "${REPO}/.venv/bin/ruff" check \
+  "${_cpu_gate_env[@]}" "${REPO}/.venv/bin/ruff" check \
     "${REPO}/aar/research_loop/kimi_agent.py" \
     "${REPO}/scripts/validate_method_contract.py" \
     >> "${attempt_dir}/metadata/cpu_replay_gate.txt"
