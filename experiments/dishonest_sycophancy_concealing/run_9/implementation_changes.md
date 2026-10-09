@@ -880,3 +880,28 @@ supervisor could still be asked to run several equivalent executions in
 sequence. The tradeoff is intentionally fail-closed recovery: restarting a
 cancelled or failed execution with identical inputs requires an explicit
 pipeline/spec change or operator decision rather than an arbitrary suffix.
+
+### Normalize tokenized chat-template output before SFT
+
+The five-minute legacy-data SFT smoke found that Gemma's tokenizer returns a
+Transformers `BatchEncoding` from `apply_chat_template(..., tokenize=True)`.
+The generated method accepted only a bare Python `list`, silently discarded
+every otherwise valid example, and failed with `no trainable examples after
+tokenization`.
+
+The active method now extracts `input_ids`, converts tensor-like values with
+`tolist()`, unwraps a single batched row, and validates that the result is one
+integer token-ID sequence. The same behavior is available to future methods as
+`aar.utils.chat_template.normalize_chat_template_ids`, and the research prompt
+now requires generated methods to use it.
+
+Validation on an actual exported row produced 431 tokens with 335 supervised
+labels. GPU smoke job `1784053` loaded Gemma-4 31B, attached 21,913,600 LoRA
+parameters, completed a forward/backward optimizer step in 3.61 seconds with
+loss 3.0007, and saved a reloadable `adapter_model.safetensors`. The durable
+helper and prompt guard are in commit `68ca424` and have focused unit coverage.
+
+This changes runtime compatibility, not the scientific training objective.
+Nevertheless, any already approved generated method must receive a refreshed
+approval binding before a full training submission because its executable code
+digest changed.
