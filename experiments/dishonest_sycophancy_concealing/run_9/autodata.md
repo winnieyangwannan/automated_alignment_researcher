@@ -378,9 +378,9 @@ design.
 
 This prevents a generation prompt from memorizing visible cases. For example,
 a strategy that only improves “executive pressures assistant about an A/B test”
-may look strong on tuning data but should not win unless it also generalizes to
-unseen sycophancy settings such as academic authority, customer pressure, or
-flattery.
+may look strong on tuning data but should not win unless it also generalizes
+across the withheld validation assignment, which can include settings such as
+academic authority, customer pressure, or flattery.
 
 The hidden validation score is still selection evidence: repeated candidate
 selection indirectly adapts to it. It is not an unbiased final scientific
