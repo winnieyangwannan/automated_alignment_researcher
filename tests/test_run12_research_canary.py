@@ -32,3 +32,19 @@ def test_run12_target_binding_accepts_a_newly_promoted_incumbent() -> None:
     assert "AAR_RUN12_MERGED_CHECKPOINT" in launcher
     assert "AAR_RUN12_TARGET_ITERATION" in launcher
     assert '--iteration "${TARGET_ITERATION}"' in launcher
+
+
+def test_run12_full_chain_rotates_the_training_contract_with_its_target() -> None:
+    launcher = (RUN12 / "submit_run_12_full.sh").read_text()
+    pipeline = (RUN12 / "run_12_full_pipeline.sbatch").read_text()
+    controller = (RUN12 / "run_12_chain_controller.sbatch").read_text()
+
+    contract = "autodata-training-data-contract.json"
+    assert contract in launcher
+    assert "aar.infrastructure.autodata_contract" in launcher
+    assert "AAR_AUTODATA_TRAINING_DATA_CONTRACT" in pipeline
+    assert contract in controller
+    assert "aar.infrastructure.autodata_contract" in controller
+    assert controller.index("create-policy") < controller.index(
+        "aar.infrastructure.autodata_contract"
+    ) < controller.index('job="$(submit_session)"')

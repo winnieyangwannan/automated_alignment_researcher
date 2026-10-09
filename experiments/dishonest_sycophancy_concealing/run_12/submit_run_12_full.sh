@@ -150,6 +150,11 @@ for seed in "${seeds[@]}"; do
     --campaign-id "run12-${seed}" --target-manifest "${chain_root}/bindings/iteration-1.json" \
     --generator-deployment-id "${GENERATOR_DEPLOYMENT}" --max-cost-usd 299 \
     --output "${chain_root}/metadata/campaign-policy.json"
+  "${REPO}/.venv/bin/python" -m aar.infrastructure.autodata_contract \
+    --create --campaign-policy "${chain_root}/metadata/campaign-policy.json" \
+    --required-rows 1000 --minimum-successful-task-fraction 0.95 \
+    --judge-rubric-version run9-axis-conditioned-v2 \
+    --output "${chain_root}/metadata/autodata-training-data-contract.json" >/dev/null
 done
 
 for deployment in "${deployments[@]}"; do

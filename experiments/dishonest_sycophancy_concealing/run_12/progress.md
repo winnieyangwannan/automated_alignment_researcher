@@ -30,6 +30,15 @@ retaining the full 262,144-token context window. This turns malformed or
 non-terminating tool behavior into a prompt diagnostic instead of an unbounded
 launcher stall.
 
+The next canary reached distinct evaluator/research/controller jobs but the
+research job failed in 15 seconds, before Kimi started, because Run 12 had not
+exported the now-required trusted training-data contract. The launcher now
+derives and validates a per-chain contract from each iteration's campaign
+policy before submission. The chain controller atomically regenerates that
+contract whenever it rotates the target binding, so generator, judge, and the
+current `base + adapter` target provenance remain consistent across outer AAR
+iterations.
+
 ## Five-chain attempt: proposal bootstrap failure isolated
 
 Attempt `20261009T170629Z-08f3d6a9be40` launched five Kimi researchers and five

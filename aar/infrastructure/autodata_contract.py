@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -141,6 +142,60 @@ def validate_training_data_contract(
     return contract
 
 
+def training_data_contract_from_campaign_policy(
+    campaign_policy: Mapping[str, Any],
+    *,
+    required_rows: int,
+    minimum_successful_task_fraction: float,
+    judge_rubric_version: str,
+) -> dict[str, Any]:
+    """Derive the immutable training contract from one trusted campaign policy."""
+    policy = _object(dict(campaign_policy), "campaign policy")
+    environment = _object(
+        policy.get("required_solve_env"), "campaign required_solve_env"
+    )
+    target_enabled = environment.get("AUTODATA_TARGET_ENABLED")
+    if target_enabled not in {"0", "1"}:
+        raise ValueError("campaign policy has invalid AUTODATA_TARGET_ENABLED")
+    target: dict[str, Any] = {"required": target_enabled == "1"}
+    if target["required"]:
+        target.update(
+            model=environment.get("AUTODATA_TARGET_MODEL"),
+            deployment_id=environment.get("AUTODATA_TARGET_DEPLOYMENT_ID"),
+            checkpoint_hash=environment.get("AUTODATA_TARGET_CHECKPOINT_HASH"),
+        )
+    contract = {
+        "schema": CONTRACT_SCHEMA,
+        "training_objective": "sft",
+        "required_item_fields": ["prompt", "response"],
+        "required_rows": required_rows,
+        "minimum_successful_task_fraction": minimum_successful_task_fraction,
+        "judge_rubric_version": judge_rubric_version,
+        "generator": {
+            "model": environment.get("AUTODATA_GENERATOR_MODEL"),
+            "deployment_id": environment.get("AUTODATA_GENERATOR_DEPLOYMENT_ID"),
+        },
+        "judge": {"model": environment.get("AUTODATA_JUDGE_MODEL")},
+        "target": target,
+    }
+    return validate_training_data_contract(contract, campaign_policy=policy)
+
+
+def _atomic_write_contract(path: Path, contract: Mapping[str, Any]) -> None:
+    if path.is_symlink() or not path.parent.is_dir():
+        raise ValueError("contract output must have a real existing parent")
+    temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    try:
+        temporary.write_text(
+            json.dumps(dict(contract), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary.chmod(0o600)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def validate_generation_inputs(
     *,
     pipeline_manifest: Path,
@@ -222,13 +277,32 @@ def validate_dataset_items(items: Any, contract: Mapping[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--contract", type=Path, required=True)
+    parser.add_argument("--contract", type=Path)
     parser.add_argument("--campaign-policy", type=Path, required=True)
+    parser.add_argument("--create", action="store_true")
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--required-rows", type=int, default=1000)
+    parser.add_argument("--minimum-successful-task-fraction", type=float, default=0.95)
+    parser.add_argument("--judge-rubric-version", default="run9-axis-conditioned-v2")
     args = parser.parse_args()
-    contract = validate_training_data_contract(
-        _load(args.contract, "training-data contract"),
-        campaign_policy=_load(args.campaign_policy, "campaign policy"),
-    )
+    policy = _load(args.campaign_policy, "campaign policy")
+    if args.create:
+        if args.contract is not None or args.output is None:
+            parser.error("--create requires --output and forbids --contract")
+        contract = training_data_contract_from_campaign_policy(
+            policy,
+            required_rows=args.required_rows,
+            minimum_successful_task_fraction=args.minimum_successful_task_fraction,
+            judge_rubric_version=args.judge_rubric_version,
+        )
+        _atomic_write_contract(args.output, contract)
+    else:
+        if args.contract is None or args.output is not None:
+            parser.error("validation requires --contract and forbids --output")
+        contract = validate_training_data_contract(
+            _load(args.contract, "training-data contract"),
+            campaign_policy=policy,
+        )
     print(
         json.dumps({"valid": True, "digest": contract_sha256(contract)}, sort_keys=True)
     )

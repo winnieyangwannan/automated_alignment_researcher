@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from aar.infrastructure.autodata_contract import (
+    training_data_contract_from_campaign_policy,
     validate_generation_inputs,
     validate_training_data_contract,
 )
@@ -57,6 +58,17 @@ def test_contract_accepts_sft_and_dpo_and_rejects_wrong_schema() -> None:
     broken["required_item_fields"] = ["prompt", "response"]
     with pytest.raises(ValueError, match="do not match"):
         validate_training_data_contract(broken)
+
+
+def test_contract_is_derived_from_the_iteration_campaign_policy() -> None:
+    contract = training_data_contract_from_campaign_policy(
+        _policy(),
+        required_rows=1000,
+        minimum_successful_task_fraction=0.95,
+        judge_rubric_version="run9-axis-conditioned-v2",
+    )
+
+    assert contract == _contract()
 
 
 def test_generation_inputs_bind_contract_policy_pipeline_and_finalization(
