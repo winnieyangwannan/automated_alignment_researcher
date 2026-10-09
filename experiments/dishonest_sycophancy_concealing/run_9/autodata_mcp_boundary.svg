@@ -73,7 +73,7 @@
   <text x="1170" y="497" text-anchor="middle" class="body">Semantic judgment only</text>
   <text x="1170" y="526" text-anchor="middle" class="body">No AutoData tools or workspace writes</text>
   <text x="1170" y="555" text-anchor="middle" class="body">No approval signing key</text>
-  <text x="1170" y="590" text-anchor="middle" class="small">Luna in preflight; Opus 4.8 full-chain default</text>
+  <text x="1170" y="590" text-anchor="middle" class="small">Returns approve/revise verdict + feedback</text>
 
   <path d="M165 275 C165 355 280 405 350 450" class="dash"/>
   <text x="205" y="350" class="purple-small">request review(action_id)</text>
