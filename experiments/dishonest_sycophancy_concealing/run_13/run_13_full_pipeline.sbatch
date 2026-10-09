@@ -102,6 +102,7 @@ for seed in alpha beta gamma delta epsilon; do
   export AAR_IDEA_UID_OVERRIDE="run13-${seed}-iteration-1"
   export AAR_RESUME_APPROVED_PROPOSAL=0
   export AAR_AUTODATA_CAMPAIGN_POLICY="${chain_root}/metadata/campaign-policy.json"
+  export AAR_AUTODATA_TRAINING_DATA_CONTRACT="${chain_root}/metadata/autodata-training-data-contract.json"
   export AAR_AUTODATA_PROPOSAL_BINDINGS="${chain_root}/secrets/proposal-bindings.json"
   export AAR_VLLM_MERGED_ROOT="${AAR_RUN13_CHECKPOINT_ROOT:?}/chains/${seed}/merged_candidates"
   AAR_AUTODATA_CAPABILITY="$(<"${chain_root}/secrets/capability")"

@@ -54,6 +54,20 @@ class AutoDataCampaignPolicyTest(unittest.TestCase):
         self.assertIn("AAR_RESUME_APPROVED_PROPOSAL=1", controller)
         self.assertIn("AAR_RUN13_CHECKPOINT_ROOT", pipeline)
         self.assertIn("AAR_RUN13_CHECKPOINT_ROOT", controller)
+        contract = "autodata-training-data-contract.json"
+        self.assertIn(contract, submitter)
+        self.assertIn("aar.infrastructure.autodata_contract", submitter)
+        self.assertIn("AAR_AUTODATA_TRAINING_DATA_CONTRACT", pipeline)
+        self.assertIn(contract, controller)
+        self.assertIn("aar.infrastructure.autodata_contract", controller)
+        self.assertLess(
+            controller.index("create-policy"),
+            controller.index("aar.infrastructure.autodata_contract"),
+        )
+        self.assertLess(
+            controller.index("aar.infrastructure.autodata_contract"),
+            controller.index('job="$(submit_session)"'),
+        )
 
     def test_base_target_round_trip_and_policy(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
