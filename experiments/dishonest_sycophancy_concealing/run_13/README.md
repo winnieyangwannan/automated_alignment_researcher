@@ -183,6 +183,11 @@ Launch the full run from the clean synchronized HPC `autodata` worktree:
 bash experiments/dishonest_sycophancy_concealing/run_13/submit_run_13_full.sh
 ```
 
+The submitter uses the dedicated detached AutoData worktree
+`/storage/home/$USER/autodata-pipelines-worktrees/run13`, pinned to commit
+`34f0a22c89a2a40e605afd43f3a7b11c25003ab7`. This avoids changing the shared
+AutoData checkout while another run is active.
+
 The retained submission and full-launch manifests must record
 `research_backend=claude`, `research_model=claude-opus-4-8`, `chains=5`, and
 `target_pairs_per_chain=5`. Kimi-K2.6 remains the AutoData example generator;

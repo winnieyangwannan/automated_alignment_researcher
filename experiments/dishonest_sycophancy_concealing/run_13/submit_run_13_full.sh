@@ -5,7 +5,7 @@ umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
-AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pipelines}"
+AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata-pipelines-worktrees/run13}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
 SECRET_ENV="$(realpath -e -- "${AAR_RUN13_SECRET_ENV:-${REPO}/.env}")"
 RECOVERY_BUNDLE="$(realpath -e -- "${AAR_RUN13_RECOVERY_BUNDLE:-/storage/home/${USER}/aar-recovery/run7_20261007T004406Z-1b3303d02821/baseline_salvage}")"
@@ -22,8 +22,9 @@ if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; 
   echo "tracked worktree is dirty" >&2
   exit 2
 fi
-if [ "$(git -C "${AUTODATA_CHECKOUT}" branch --show-current)" != main ]; then
-  echo "AutoData checkout must be on main" >&2
+if ! git -C "${AUTODATA_CHECKOUT}" diff --quiet || \
+    ! git -C "${AUTODATA_CHECKOUT}" diff --cached --quiet; then
+  echo "tracked AutoData worktree is dirty" >&2
   exit 2
 fi
 if [ ! -x "${REPO}/.venv/bin/python" ] || [ ! -x "${BROKER_PYTHON}" ]; then
