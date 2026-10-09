@@ -58,8 +58,12 @@ class FullLoopLaunchTest(unittest.TestCase):
             tmp = Path(directory)
             fake_bin = tmp / "bin"
             fake_bin.mkdir()
+            sbatch_args = tmp / "sbatch-args"
             sbatch = fake_bin / "sbatch"
-            sbatch.write_text("#!/bin/bash\nprintf '%s\\n' \"$*\"\n")
+            sbatch.write_text(
+                f"#!/bin/bash\nprintf '%s\\n' \"$*\" > {sbatch_args}\n"
+                "printf '12345\\n'\n"
+            )
             sbatch.chmod(0o755)
             team = tmp / "team"
             (team / "logs").mkdir(parents=True)
@@ -72,6 +76,7 @@ class FullLoopLaunchTest(unittest.TestCase):
                     "AAR_SLURM_ACCOUNT": "ram",
                     "AAR_SLURM_PARTITION": "g3",
                     "AAR_TRAIN_QOS": "g3_ram_high",
+                    "AAR_TRAIN_MEM": "128G",
                     "PATH": f"{fake_bin}:/usr/bin:/bin",
                 }
             )
@@ -84,12 +89,62 @@ class FullLoopLaunchTest(unittest.TestCase):
                 env=env,
             )
 
-            self.assertIn("--account=ram", completed.stdout)
-            self.assertIn("--partition=g3", completed.stdout)
-            self.assertIn("--qos=g3_ram_high", completed.stdout)
-            self.assertIn("--gpus=1", completed.stdout)
-            self.assertIn(str(team / "logs" / "train-%j.out"), completed.stdout)
-            self.assertIn("slurm_train_submit.sh idea run-1", completed.stdout)
+            submitted = sbatch_args.read_text()
+            self.assertEqual(completed.stdout.strip(), "12345")
+            self.assertIn("--account=ram", submitted)
+            self.assertIn("--partition=g3", submitted)
+            self.assertIn("--qos=g3_ram_high", submitted)
+            self.assertIn("--gpus=1", submitted)
+            self.assertIn("--mem=128G", submitted)
+            self.assertIn(str(team / "logs" / "train-%j.out"), submitted)
+            self.assertIn("slurm_train_submit.sh idea run-1", submitted)
+
+    def test_opt_in_receipt_makes_training_submission_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            fake_bin = tmp / "bin"
+            fake_bin.mkdir()
+            calls = tmp / "sbatch-calls"
+            sbatch = fake_bin / "sbatch"
+            sbatch.write_text(
+                f"#!/bin/bash\nprintf 'call\\n' >> {calls}\nprintf '12345\\n'\n"
+            )
+            sbatch.chmod(0o755)
+            team = tmp / "team"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AAR_REPO": str(ROOT),
+                    "HARNESS_ENV": str(tmp / "missing.env"),
+                    "TEAM_DIR": str(team),
+                    "AAR_SLURM_ACCOUNT": "ram",
+                    "AAR_SLURM_PARTITION": "g3",
+                    "AAR_TRAIN_QOS": "g3_ram_high",
+                    "AAR_REQUIRE_TRAIN_RECEIPT": "1",
+                    "PATH": f"{fake_bin}:/usr/bin:/bin",
+                }
+            )
+            command = [
+                "bash",
+                str(ROOT / "scripts" / "submit_train_job.sh"),
+                "idea",
+                "run-1",
+            ]
+
+            first = subprocess.run(
+                command, check=True, capture_output=True, text=True, env=env
+            )
+            second = subprocess.run(
+                command, check=True, capture_output=True, text=True, env=env
+            )
+
+            self.assertEqual(first.stdout.strip(), "12345")
+            self.assertEqual(second.stdout.strip(), "12345")
+            self.assertEqual(calls.read_text().splitlines(), ["call"])
+            self.assertEqual(
+                (team / ".train_submissions" / "run-1.env").read_text(),
+                "run_id=run-1\njob_id=12345\n",
+            )
 
     def test_first_concurrency_limited_submission_initializes_lanes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

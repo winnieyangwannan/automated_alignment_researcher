@@ -503,6 +503,7 @@ class KimiAgentTest(unittest.TestCase):
                     "IDEA_NAME": "test-chain",
                     "IDEA_UID": "test-chain-uid",
                     "SCORES_DIR": str(root),
+                    "TEAM_DIR": str(root),
                 },
             ):
                 self.assertIn("Read tool exactly once", prompt())
@@ -537,18 +538,41 @@ class KimiAgentTest(unittest.TestCase):
                     forced_tool(read, scaffold, write, validate),
                     "submit_idea_proposal",
                 )
+                proposal_dir = root / ".proposals"
+                proposal_dir.mkdir()
+                marker = proposal_dir / "test-chain-uid.json"
+                marker.write_text(
+                    json.dumps(
+                        {
+                            "approved": True,
+                            "idea_name": module,
+                            "code_hash": "hash-1",
+                        }
+                    )
+                )
+                runs = proposal_dir / "runs"
+                runs.mkdir()
+                (runs / "test-chain-uid-run-1.json").write_text(
+                    json.dumps(
+                        {
+                            "run_id": "test-chain-uid-run-1",
+                            "idea_name": module,
+                            "code_hash": "hash-1",
+                            "stamped_ts": 1,
+                        }
+                    )
+                )
                 self.assertIn(
                     "submit_train_job.sh",
                     prompt(read, scaffold, write, validate, proposal),
                 )
-                proposal_dir = root / ".proposals"
-                proposal_dir.mkdir()
-                marker = proposal_dir / "test-chain-uid.json"
-                marker.write_text('{"approved": true}\n')
                 self.assertEqual(
                     forced_tool(read, scaffold, write, validate, proposal),
                     "Bash",
                 )
+                receipt = root / ".train_submissions" / "test-chain-uid-run-1.env"
+                receipt.parent.mkdir()
+                receipt.write_text("run_id=test-chain-uid-run-1\njob_id=12345\n")
                 self.assertIn(
                     "foreground-poll",
                     prompt(read, scaffold, write, validate, proposal, training),
@@ -559,7 +583,7 @@ class KimiAgentTest(unittest.TestCase):
                 )
                 score.write_text('{"composite": 0.1}\n')
                 with patch.object(
-                    agent, "_current_score_path", return_value=score
+                    agent, "_score_path_for_run", return_value=score
                 ):
                     self.assertIn(
                         "Read tool exactly once",

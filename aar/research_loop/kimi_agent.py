@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -301,6 +302,12 @@ class KimiAgent:
                             f"Kimi Code exited with status {return_code}: "
                             f"{detail or 'no error detail'}"
                         )
+                    training_failure = self._current_training_failure()
+                    if training_failure is not None:
+                        raise RuntimeError(
+                            "Kimi training failed closed: "
+                            + json.dumps(training_failure, sort_keys=True)[:2000]
+                        )
                     if not self.completion_tool or self._completion_tool_used(output):
                         break
                     if continuation_count >= self.max_continuations:
@@ -458,19 +465,15 @@ class KimiAgent:
             ),
             default=-1,
         )
-        training_index = max(
-            (
-                index
-                for index, name in enumerate(names)
-                if name == "Bash"
-                and index > proposal_index
-                and "submit_train_job.sh" in input_text(index, "command")
-            ),
-            default=-1,
+        approved_run_id = self._approved_run_id() if proposal_index >= 0 else None
+        training_job_id = (
+            self._current_training_job_id(approved_run_id)
+            if approved_run_id is not None
+            else None
         )
 
-        if training_index >= 0:
-            score_path = self._current_score_path()
+        if training_job_id is not None:
+            score_path = self._score_path_for_run(approved_run_id)
             score_read = score_path is not None and any(
                 name == "Read"
                 and Path(input_text(index, "path")) == score_path
@@ -489,18 +492,42 @@ class KimiAgent:
                 )
             return (
                 "Call the native Bash tool exactly once now. Do not resubmit training. "
-                "Use the persisted /tmp/run_id_current and /tmp/jobid_<run_id> to "
-                "foreground-poll until $SCORES_DIR/<run_id>.json or "
-                "<run_id>.failed.json exists, then print that file. Do not emit prose."
+                f"foreground-poll Slurm job {training_job_id} until "
+                f"$SCORES_DIR/{approved_run_id}.json or "
+                f"{approved_run_id}.failed.json exists, then print that file. Do not "
+                "emit prose."
             )
         if proposal_index >= 0:
+            approved = self._proposal_is_approved()
+            if approved is True and approved_run_id is not None:
+                submitter = self.workspace / "scripts/submit_train_job.sh"
+                run_id_q = shlex.quote(approved_run_id)
+                module_q = shlex.quote(method_module)
+                submitter_q = shlex.quote(str(submitter))
+                command = (
+                    f"RUN_ID={run_id_q}; printf '%s\\n' \"$RUN_ID\" > "
+                    "/tmp/run_id_current; "
+                    f"jobid=$(bash {submitter_q} {module_q} \"$RUN_ID\"); "
+                    "case \"$jobid\" in ''|*[!0-9]*) echo 'invalid Slurm job id' "
+                    " >&2; exit 2;; esac; printf '%s\\n' \"$jobid\" > "
+                    '"/tmp/jobid_$RUN_ID"; printf \'%s\\n\' "$jobid"'
+                )
+                return (
+                    "Call the native Bash tool exactly once now with command="
+                    f"{json.dumps(command)}. This exact idempotent command submits the "
+                    "approved run and persists its verified Slurm receipt. Do not alter "
+                    "the command, emit prose, or call another tool."
+                )
+            if approved is False:
+                return (
+                    "Call the native Write tool exactly once now to revise the same "
+                    "run.py from the submit_idea_proposal monitor feedback. Do not emit "
+                    "prose or call another tool."
+                )
             return (
                 "Inspect the actual submit_idea_proposal result. If it is approved, "
-                "call the native Bash tool exactly once now to persist its run_id and "
-                f"run scripts/submit_train_job.sh {method_module} \"$RUN_ID\" exactly "
-                "once, persisting the returned job id as instructed by the research "
-                "prompt. If rejected, call Write exactly once to revise the same "
-                "run.py from the monitor feedback. Do not emit prose."
+                "use its run_id exactly. If rejected, revise the same run.py from the "
+                "monitor feedback. Do not invent a run id or emit prose."
             )
         if edit_index >= 0 and contract_status == "passed":
             return (
@@ -565,13 +592,6 @@ class KimiAgent:
         if self.completion_tool != "share_finding":
             return self.completion_tool
         prompt = self._continuation_prompt(output)
-        if prompt.startswith("Inspect the actual submit_idea_proposal result"):
-            approved = self._proposal_is_approved()
-            if approved is True:
-                return "Bash"
-            if approved is False:
-                return "Write"
-            return None
         if "MCP tool share_finding exactly once" in prompt:
             return "share_finding"
         if "MCP tool submit_idea_proposal exactly once" in prompt:
@@ -613,6 +633,77 @@ class KimiAgent:
             return None
         approved = payload.get("approved")
         return approved if isinstance(approved, bool) else None
+
+    @staticmethod
+    def _approved_run_id() -> Optional[str]:
+        scores_dir = os.environ.get("SCORES_DIR", "").strip()
+        idea_uid = os.environ.get("IDEA_UID") or os.environ.get("IDEA_NAME")
+        if not scores_dir or not idea_uid:
+            return None
+        marker_path = Path(scores_dir) / ".proposals" / f"{idea_uid}.json"
+        try:
+            marker = json.loads(marker_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+        if marker.get("approved") is not True:
+            return None
+        idea_name = marker.get("idea_name")
+        code_hash = marker.get("code_hash")
+        candidates: list[tuple[float, str]] = []
+        for path in (marker_path.parent / "runs").glob("*.json"):
+            try:
+                payload = json.loads(path.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            run_id = payload.get("run_id")
+            if (
+                payload.get("idea_name") == idea_name
+                and payload.get("code_hash") == code_hash
+                and isinstance(run_id, str)
+                and re.fullmatch(r"[A-Za-z0-9._-]+", run_id)
+                and run_id.startswith(f"{idea_uid}-")
+            ):
+                candidates.append((float(payload.get("stamped_ts", 0)), run_id))
+        return max(candidates, default=(0.0, None))[1]
+
+    @staticmethod
+    def _current_training_job_id(run_id: str) -> Optional[str]:
+        team_dir = os.environ.get("TEAM_DIR", "").strip()
+        if not team_dir:
+            return None
+        receipt = Path(team_dir) / ".train_submissions" / f"{run_id}.env"
+        try:
+            values = dict(
+                line.split("=", 1)
+                for line in receipt.read_text().splitlines()
+                if "=" in line
+            )
+        except OSError:
+            return None
+        job_id = values.get("job_id", "")
+        if values.get("run_id") != run_id or not re.fullmatch(r"[0-9]+", job_id):
+            return None
+        return job_id
+
+    @classmethod
+    def _current_training_failure(cls) -> Optional[dict[str, Any]]:
+        run_id = cls._approved_run_id()
+        scores_dir = os.environ.get("SCORES_DIR", "").strip()
+        if run_id is None or not scores_dir:
+            return None
+        path = Path(scores_dir) / f"{run_id}.failed.json"
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else {"error": str(payload)}
+
+    @staticmethod
+    def _score_path_for_run(run_id: str) -> Optional[Path]:
+        scores_dir = os.environ.get("SCORES_DIR", "").strip()
+        if not scores_dir:
+            return None
+        return Path(scores_dir) / f"{run_id}.json"
 
     @staticmethod
     def _current_score_path() -> Optional[Path]:

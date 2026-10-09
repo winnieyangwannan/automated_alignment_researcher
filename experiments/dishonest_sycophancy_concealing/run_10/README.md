@@ -20,6 +20,8 @@ Run-10's Kimi-only request shim exposes one required function on exact continuat
 
 Before proposal submission, Run 10 also requires a source-hash-bound method-contract proof with a no-GPU dry run. This catches import failures, unavailable BitsAndBytes use, invalid Gemma-4 PEFT targets, and missing `MethodConfig`, `run_experiment`, result fields, or timing phases that syntax compilation cannot detect. The training submitter repeats the proof independently and emits a terminal failure marker on any later training failure.
 
+Run-10 training jobs request 128 GiB of host memory; the shared launcher retains its 64 GiB default for Claude and other runs. Every approved Run-10 submission also writes an atomic run-ID-to-Slurm-ID receipt. Repeating the same submission returns the existing job ID instead of creating a duplicate, and Kimi advances to polling only after that receipt exists.
+
 The Kimi MCP bridge bounds text responses at 16,000 characters. Large literature lists are reduced at complete-entry boundaries and carry truncation metadata, keeping discovery context directly usable instead of triggering Kimi Code's external tool-result spill file.
 
 ## Launch sequence

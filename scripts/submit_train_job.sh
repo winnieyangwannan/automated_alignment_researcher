@@ -21,6 +21,33 @@ source "${REPO}/scripts/aar_runtime_env.sh"
 [ -n "${TEAM_DIR:-}" ] || { echo "submit_train_job: TEAM_DIR is required" >&2; exit 2; }
 mkdir -p "${TEAM_DIR}/logs"
 
+_receipt_path=""
+if [ "${AAR_REQUIRE_TRAIN_RECEIPT:-0}" = "1" ]; then
+  command -v flock >/dev/null || {
+    echo "submit_train_job: flock is required for submission receipts" >&2
+    exit 2
+  }
+  [[ "${RUN_ID}" =~ ^[A-Za-z0-9._-]+$ ]] || {
+    echo "submit_train_job: run id is unsafe for a receipt: ${RUN_ID}" >&2
+    exit 2
+  }
+  _receipt_dir="${TEAM_DIR}/.train_submissions"
+  mkdir -p "${_receipt_dir}"
+  _receipt_path="${_receipt_dir}/${RUN_ID}.env"
+  exec 8>"${_receipt_path}.lock"
+  flock 8
+  if [ -f "${_receipt_path}" ]; then
+    _existing_run="$(awk -F= '$1 == "run_id" {print substr($0, index($0, "=") + 1)}' "${_receipt_path}")"
+    _existing_job="$(awk -F= '$1 == "job_id" {print $2}' "${_receipt_path}")"
+    if [ "${_existing_run}" = "${RUN_ID}" ] && [[ "${_existing_job}" =~ ^[0-9]+$ ]]; then
+      printf '%s\n' "${_existing_job}"
+      exit 0
+    fi
+    echo "submit_train_job: invalid existing receipt: ${_receipt_path}" >&2
+    exit 2
+  fi
+fi
+
 if [ "${AAR_REQUIRE_METHOD_CONTRACT:-0}" = "1" ]; then
   _ideas_dir="${AAR_IDEAS_DIR:-${TEAM_DIR}/methods}"
   _method_path="${_ideas_dir}/${IDEA}/run.py"
@@ -64,6 +91,15 @@ if [ "${_limit}" -gt 0 ]; then
   [ -z "${_prior}" ] || _dependency=(--dependency="afterany:${_prior}")
 fi
 
+_resource_args=()
+if [ -n "${AAR_TRAIN_MEM:-}" ]; then
+  [[ "${AAR_TRAIN_MEM}" =~ ^[1-9][0-9]*[KMGTP]$ ]] || {
+    echo "submit_train_job: AAR_TRAIN_MEM must look like 128G" >&2
+    exit 2
+  }
+  _resource_args+=(--mem="${AAR_TRAIN_MEM}")
+fi
+
 _jid="$(sbatch --parsable \
   --account="${AAR_SLURM_ACCOUNT}" \
   --partition="${AAR_SLURM_PARTITION}" \
@@ -71,8 +107,22 @@ _jid="$(sbatch --parsable \
   --gpus="${AAR_TRAIN_GPUS:-1}" \
   --job-name="aar-train-${TEAM_ID:-team}" \
   --output="${TEAM_DIR}/logs/train-%j.out" \
+  "${_resource_args[@]}" \
   "${_dependency[@]}" \
   "${REPO}/scripts/slurm_train_submit.sh" "${IDEA}" "${RUN_ID}")"
+
+_job_id="${_jid%%;*}"
+[[ "${_job_id}" =~ ^[0-9]+$ ]] || {
+  echo "submit_train_job: sbatch returned an invalid job id: ${_jid}" >&2
+  exit 2
+}
+
+if [ -n "${_receipt_path}" ]; then
+  _receipt_tmp="${_receipt_path}.tmp.$$"
+  printf 'run_id=%s\njob_id=%s\n' "${RUN_ID}" "${_job_id}" > "${_receipt_tmp}"
+  mv -f -- "${_receipt_tmp}" "${_receipt_path}"
+  flock -u 8
+fi
 
 if [ "${_limit}" -gt 0 ]; then
   _lanes[_lane]="${_jid%%;*}"
