@@ -134,8 +134,10 @@ submit_session() {
 current="${CHAIN_ROOT}/metadata/incumbent.json"
 current_target="${CHAIN_ROOT}/bindings/iteration-1.json"
 current_policy="${CHAIN_ROOT}/metadata/campaign-policy.json"
+current_contract="${CHAIN_ROOT}/metadata/autodata-training-data-contract.json"
 current_deployment="$(jq -r '.endpoint.deployment_id' "${current_target}")"
 attempts=1
+export AAR_AUTODATA_TRAINING_DATA_CONTRACT="${current_contract}"
 
 wait_job "${FIRST_JOB}"
 pairs="$(pair_count)"
@@ -210,6 +212,11 @@ while [ "${pairs}" -lt "${TARGET_PAIRS}" ]; do
     --campaign-id "run13-${SEED}" --target-manifest "${current_target}" \
     --generator-deployment-id "${AAR_KIMI_SERVE_DEPLOYMENT}" \
     --max-cost-usd 299 --output "${current_policy}"
+  PYTHONPATH="${REPO}" "${PY}" -m aar.infrastructure.autodata_contract \
+    --create --campaign-policy "${current_policy}" --required-rows 1000 \
+    --minimum-successful-task-fraction 0.95 \
+    --judge-rubric-version run9-axis-conditioned-v2 \
+    --output "${current_contract}" >/dev/null
   export AAR_AUTODATA_CAMPAIGN_POLICY="${current_policy}"
 
   before="${pairs}"
