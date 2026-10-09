@@ -94,6 +94,7 @@ def validate(
             errors.append("could not create an import specification")
         else:
             module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
             sys.path.insert(0, str(method_path.parent))
             try:
                 spec.loader.exec_module(module)

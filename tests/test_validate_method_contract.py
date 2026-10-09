@@ -68,6 +68,7 @@ class ValidateMethodContractTest(unittest.TestCase):
             )
         )
         result, proof = self._run(
+            "from __future__ import annotations\n"
             "from contextlib import contextmanager\n"
             "from dataclasses import dataclass\n"
             "@contextmanager\n"
