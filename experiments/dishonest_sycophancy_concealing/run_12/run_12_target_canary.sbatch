@@ -79,6 +79,7 @@ PYTHONPATH="${CANARY_PYTHONPATH}" "${REPO}/.venv/bin/python" \
   --environment oci-runner-firecracker-large \
   --generator-url "${AAR_RUN12_GENERATOR_URL:?}" \
   --generator-host-header "${AAR_RUN12_GENERATOR_HOST_HEADER:?}" \
+  --generator-deployment-id "${AAR_RUN12_GENERATOR_DEPLOYMENT_ID:?}" \
   --generator-max-output-tokens 768 \
   --model-request-max-attempts 1 \
   --timeout-seconds 600 \

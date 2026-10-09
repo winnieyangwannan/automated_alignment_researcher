@@ -15,6 +15,7 @@ from aar.autodata_target_binding import create_binding, write_binding
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "autodata_model_broker_canary.py"
 RECIPE = REPO / "aar" / "autodata_recipes" / "dishonest_sycophancy_concealing"
+RUN12 = REPO / "experiments" / "dishonest_sycophancy_concealing" / "run_12"
 
 
 def _checkpoint_fixture(root: Path) -> tuple[Path, Path, Path]:
@@ -358,6 +359,8 @@ class ModelBrokerCanaryTest(unittest.TestCase):
                     str(RECIPE),
                     "--target-binding",
                     str(binding_path),
+                    "--target-canary-id-prefix",
+                    "run13-adapter-target-canary",
                     "--output",
                     str(root / "report.json"),
                 ]
@@ -365,6 +368,11 @@ class ModelBrokerCanaryTest(unittest.TestCase):
             report = self.module.run(args, runtime=runtime)
 
         environment = _FakeBrokerJobSpec.captured["solve"]["env"]
+        self.assertTrue(
+            _FakeBrokerJobSpec.captured["idempotency_key"].startswith(
+                "run13-adapter-target-canary:"
+            )
+        )
         self.assertEqual(environment["AUTODATA_TARGET_ENABLED"], "1")
         self.assertEqual(
             environment["AUTODATA_TARGET_CHECKPOINT_HASH"], binding.checkpoint_hash
@@ -376,12 +384,22 @@ class ModelBrokerCanaryTest(unittest.TestCase):
     def test_static_routes_delegate_credentials_to_broker_and_recipe(self):
         canary_source = SCRIPT.read_text()
         recipe_source = (RECIPE / "recipe" / "task.py").read_text()
+        run12_submit = (RUN12 / "submit_run_12.sh").read_text()
+        run12_canary = (RUN12 / "run_12_target_canary.sbatch").read_text()
         self.assertIn('"model_backed": True', canary_source)
         self.assertIn("ram-inference-gateway.ingress.fair-cw-use2-1", canary_source)
         self.assertNotIn('"MODEL_API_KEY":', canary_source)
         self.assertIn('headers = {"X-Deployment-Id": deployment}', recipe_source)
         self.assertIn('headers["Host"] = host_header', recipe_source)
         self.assertIn('_required_env("MODEL_API_KEY")', recipe_source)
+        self.assertIn(
+            'export AAR_RUN12_GENERATOR_DEPLOYMENT_ID="${GENERATOR_DEPLOYMENT_ID}"',
+            run12_submit,
+        )
+        self.assertIn(
+            '--generator-deployment-id "${AAR_RUN12_GENERATOR_DEPLOYMENT_ID:?}"',
+            run12_canary,
+        )
 
 
 if __name__ == "__main__":
