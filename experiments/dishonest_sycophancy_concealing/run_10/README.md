@@ -53,6 +53,20 @@ python experiments/dishonest_sycophancy_concealing/run_10/status_run_10.py <atte
 squeue -j <launch-and-child-job-ids> -o '%.18i %.30j %.10T %.10M %R'
 ```
 
+After confirming a chain is terminal or genuinely hung, resume only the affected
+seed in the same preserved attempt:
+
+```bash
+experiments/dishonest_sycophancy_concealing/run_10/resume_run_10.sh \
+  /storage/home/winnieyangwn/aar-runs/run10_kimi/full_attempts/<attempt> beta
+```
+
+The helper refuses duplicate active jobs, replenishes missing evaluators, and
+subtracts already-started sessions from the seed's original 50-session budget.
+Pass multiple space-separated seeds as one quoted argument when needed. Recovery
+job IDs, remaining budgets, timestamps, and the recovery source commit are appended
+to `metadata/recovery_jobs.tsv`; existing results are never reset.
+
 ## Exporting the champion
 
 After all research-chain jobs have reached a terminal state and their final scores have landed, run:

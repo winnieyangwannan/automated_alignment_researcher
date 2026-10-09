@@ -8,7 +8,10 @@ RUN10 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_10"
 
 
 def test_smoke_mode_uses_one_chain_and_no_evaluator() -> None:
-    pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
+    pipeline = (
+        (RUN10 / "configure_run_10_environment.sh").read_text()
+        + (RUN10 / "run_10_pipeline.sbatch").read_text()
+    )
     submitter = (RUN10 / "submit_run_10.sh").read_text()
 
     assert "smoke|canary|full" in submitter
@@ -78,3 +81,24 @@ def test_full_mode_requires_per_method_gpu_preflight() -> None:
     pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
 
     assert 'export AAR_PRETRAIN_SMOKE=1' in pipeline
+
+
+def test_initial_launch_and_targeted_resume_share_runtime_configuration() -> None:
+    pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
+    resume = (RUN10 / "resume_run_10.sh").read_text()
+    shared = "configure_run_10_environment.sh"
+
+    assert shared in pipeline
+    assert shared in resume
+
+
+def test_targeted_resume_is_budgeted_and_duplicate_safe() -> None:
+    resume = (RUN10 / "resume_run_10.sh").read_text()
+
+    assert "seed_has_active_job" in resume
+    assert "refusing duplicate active chain" in resume
+    assert "max_sessions - started" in resume
+    assert 'session_*_${seed}_*.log' in resume
+    assert "recovery_jobs.tsv" in resume
+    assert "expected exactly one Run 10 team" in resume
+    assert "launch_eval_worker.sh" in resume

@@ -768,7 +768,10 @@ class KimiAgent:
         if self.completion_tool != "share_finding":
             return
         run_id = self._approved_run_id()
-        if run_id is None or self._current_training_job_id(run_id) is None:
+        if run_id is None:
+            return
+        job_id = self._current_training_job_id(run_id)
+        if job_id is None:
             return
         score_path = self._score_path_for_run(run_id)
         if score_path is None or score_path.is_file():
@@ -776,6 +779,7 @@ class KimiAgent:
         timeout_seconds = int(os.environ.get("AAR_KIMI_SCORE_WAIT_SECONDS", "10800"))
         deadline = time.monotonic() + timeout_seconds
         next_update = time.monotonic()
+        next_scheduler_check = time.monotonic()
         while time.monotonic() < deadline:
             if score_path.is_file():
                 print(f"[Kimi] score ready for approved run {run_id}")
@@ -786,14 +790,111 @@ class KimiAgent:
                     "Kimi training failed closed: "
                     + json.dumps(failure, sort_keys=True)[:2000]
                 )
+            if time.monotonic() >= next_scheduler_check:
+                failure = self._reconcile_terminal_training_job(run_id, job_id)
+                if failure is not None:
+                    raise RuntimeError(
+                        "Kimi training failed closed: "
+                        + json.dumps(failure, sort_keys=True)[:2000]
+                    )
+                next_scheduler_check = time.monotonic() + 30
             if time.monotonic() >= next_update:
-                job_id = self._current_training_job_id(run_id)
                 print(f"[Kimi] waiting for score from training job {job_id}")
                 next_update = time.monotonic() + 60
             await asyncio.sleep(10)
         raise RuntimeError(
             f"timed out waiting for score or failure marker for approved run {run_id}"
         )
+
+    @staticmethod
+    def _slurm_job_result(job_id: str) -> Optional[tuple[str, int | None]]:
+        """Return Slurm's normalized state and process-style exit code, if known."""
+        try:
+            completed = subprocess.run(
+                [
+                    "sacct",
+                    "-j",
+                    job_id,
+                    "-X",
+                    "-n",
+                    "-P",
+                    "-o",
+                    "State,ExitCode",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if completed.returncode != 0:
+            return None
+        for line in completed.stdout.splitlines():
+            fields = line.strip().split("|")
+            if not fields or not fields[0].strip():
+                continue
+            state = fields[0].split()[0].rstrip("+").upper()
+            exit_code = None
+            if len(fields) > 1:
+                match = re.fullmatch(r"([0-9]+):([0-9]+)", fields[1].strip())
+                if match:
+                    status, signal = (int(value) for value in match.groups())
+                    exit_code = status if status else (128 + signal if signal else 0)
+            return state, exit_code
+        return None
+
+    @classmethod
+    def _reconcile_terminal_training_job(
+        cls, run_id: str, job_id: str
+    ) -> Optional[dict[str, Any]]:
+        """Publish the missing handoff when Slurm kills a job before its EXIT trap."""
+        result = cls._slurm_job_result(job_id)
+        if result is None:
+            return None
+        state, exit_code = result
+        terminal_failures = {
+            "BOOT_FAIL",
+            "CANCELLED",
+            "DEADLINE",
+            "FAILED",
+            "NODE_FAIL",
+            "OUT_OF_MEMORY",
+            "PREEMPTED",
+            "REVOKED",
+            "SPECIAL_EXIT",
+            "TIMEOUT",
+        }
+        if state not in terminal_failures:
+            return None
+        scores_dir = os.environ.get("SCORES_DIR", "").strip()
+        if not scores_dir:
+            return None
+        from aar.eval_pod.failure import publish_failure
+
+        log_path = None
+        team_dir = os.environ.get("TEAM_DIR", "").strip()
+        if team_dir:
+            log_path = Path(team_dir) / "logs" / f"train-{job_id}.out"
+        try:
+            failure_path = publish_failure(
+                scores_dir,
+                run_id,
+                f"Slurm training job {job_id} ended in {state} before model scoring",
+                stage="training",
+                error_code=f"training_slurm_{state.lower()}",
+                retryable=state
+                in {"BOOT_FAIL", "NODE_FAIL", "PREEMPTED", "REVOKED"},
+                exit_code=exit_code,
+                log_path=log_path,
+            )
+        except FileExistsError:
+            return None
+        try:
+            payload = json.loads(failure_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
 
     @classmethod
     def _current_training_failure(cls) -> Optional[dict[str, Any]]:
