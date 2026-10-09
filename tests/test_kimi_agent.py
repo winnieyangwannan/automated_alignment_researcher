@@ -7,10 +7,14 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import types
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
+
+import requests
 
 from aar.research_loop.kimi_agent import KimiAgent, KimiToolUseBlock
 from aar.research_loop.tools.kimi_mcp_server import (
@@ -202,6 +206,69 @@ class KimiAgentTest(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(RuntimeError, "model mismatch"):
                     agent._build_environment(root)
+
+    def test_opt_in_proxy_disables_thinking_and_hides_upstream_key(self) -> None:
+        observed = {}
+
+        class UpstreamHandler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers["Content-Length"])
+                observed["path"] = self.path
+                observed["authorization"] = self.headers["Authorization"]
+                observed["payload"] = json.loads(self.rfile.read(length))
+                response = json.dumps({"ok": True}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+
+            def log_message(self, _format: str, *args: object) -> None:
+                return
+
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
+        thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        thread.start()
+        original_url = f"http://127.0.0.1:{upstream.server_port}/v1"
+        env = {
+            "AAR_KIMI_DISABLE_THINKING": "1",
+            "KIMI_MODEL_BASE_URL": original_url,
+            "KIMI_MODEL_API_KEY": "upstream-secret",
+        }
+        agent = KimiAgent("test-agent", Path.cwd(), cli_path="/bin/true")
+        try:
+            with agent._request_policy_proxy(env):
+                self.assertTrue(
+                    env["KIMI_MODEL_BASE_URL"].startswith("http://127.0.0.1:")
+                )
+                self.assertNotEqual(env["KIMI_MODEL_BASE_URL"], original_url)
+                self.assertEqual(
+                    env["KIMI_MODEL_API_KEY"], "aar-local-request-policy"
+                )
+                response = requests.post(
+                    f"{env['KIMI_MODEL_BASE_URL']}/chat/completions",
+                    headers={"Authorization": "Bearer child-visible-key"},
+                    json={
+                        "model": "Kimi-K2.6",
+                        "chat_template_kwargs": {"other": "preserved"},
+                    },
+                    timeout=5,
+                )
+                response.raise_for_status()
+                self.assertEqual(response.json(), {"ok": True})
+        finally:
+            upstream.shutdown()
+            upstream.server_close()
+            thread.join(timeout=5)
+
+        self.assertEqual(env["KIMI_MODEL_BASE_URL"], original_url)
+        self.assertEqual(env["KIMI_MODEL_API_KEY"], "upstream-secret")
+        self.assertEqual(observed["path"], "/v1/chat/completions")
+        self.assertEqual(observed["authorization"], "Bearer upstream-secret")
+        self.assertEqual(
+            observed["payload"]["chat_template_kwargs"],
+            {"other": "preserved", "enable_thinking": False},
+        )
 
     def test_nonzero_cli_exit_is_a_failed_agent_result(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

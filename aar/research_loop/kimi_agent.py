@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -10,11 +11,16 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterator, Optional
+from urllib.parse import urlsplit
+
+import requests
 
 
 @dataclass
@@ -40,6 +46,97 @@ class KimiAgentResult:
     duration: float
     iteration_count: int
     error: Optional[str] = None
+
+
+def _policy_proxy_handler(
+    *, upstream_origin: str, upstream_api_key: str, allowed_prefix: str
+) -> type[BaseHTTPRequestHandler]:
+    """Build a loopback handler that adds the vLLM Kimi thinking control."""
+
+    class RequestPolicyHandler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.0"
+
+        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            self._forward()
+
+        def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            self._forward()
+
+        def log_message(self, _format: str, *args: Any) -> None:
+            return
+
+        def _forward(self) -> None:
+            request_path = urlsplit(self.path).path
+            if allowed_prefix and not (
+                request_path == allowed_prefix
+                or request_path.startswith(f"{allowed_prefix}/")
+            ):
+                self.send_error(404)
+                return
+
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length) if length else b""
+            if self.command == "POST" and request_path.endswith(
+                "/chat/completions"
+            ):
+                try:
+                    payload = json.loads(body)
+                    if not isinstance(payload, dict):
+                        raise ValueError("request body must be an object")
+                    template_options = payload.setdefault(
+                        "chat_template_kwargs", {}
+                    )
+                    if not isinstance(template_options, dict):
+                        raise ValueError("chat_template_kwargs must be an object")
+                    template_options["enable_thinking"] = False
+                    body = json.dumps(payload).encode()
+                except (json.JSONDecodeError, ValueError) as error:
+                    self.send_error(400, str(error))
+                    return
+
+            headers = {
+                name: value
+                for name, value in self.headers.items()
+                if name.lower()
+                not in {
+                    "accept-encoding",
+                    "authorization",
+                    "connection",
+                    "content-length",
+                    "host",
+                    "transfer-encoding",
+                }
+            }
+            headers["Authorization"] = f"Bearer {upstream_api_key}"
+            try:
+                with requests.request(
+                    self.command,
+                    f"{upstream_origin}{self.path}",
+                    headers=headers,
+                    data=body or None,
+                    stream=True,
+                    timeout=(30, 3600),
+                ) as response:
+                    self.send_response(response.status_code)
+                    for name, value in response.headers.items():
+                        if name.lower() in {
+                            "connection",
+                            "content-encoding",
+                            "content-length",
+                            "transfer-encoding",
+                        }:
+                            continue
+                        self.send_header(name, value)
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    for chunk in response.iter_content(chunk_size=64 * 1024):
+                        if chunk:
+                            self.wfile.write(chunk)
+                            self.wfile.flush()
+            except requests.RequestException:
+                self.send_error(502, "upstream model endpoint request failed")
+
+    return RequestPolicyHandler
 
 
 class KimiAgent:
@@ -101,53 +198,54 @@ class KimiAgent:
 
         with tempfile.TemporaryDirectory(prefix="aar-kimi-") as temp_dir:
             env = self._build_environment(Path(temp_dir))
-            while True:
-                command = [executable]
-                if self.model:
-                    command.extend(["--model", self.model])
-                if continuation_count:
-                    command.append("--continue")
-                    if self.completion_tool == "share_finding":
-                        current_prompt = (
-                            "Continue executing the requested research iteration now. "
-                            "Do not merely announce, summarize, or promise a next action. "
-                            "Use the available tools and do not stop until evaluate_model "
-                            "has returned and share_finding has succeeded."
-                        )
+            with self._request_policy_proxy(env):
+                while True:
+                    command = [executable]
+                    if self.model:
+                        command.extend(["--model", self.model])
+                    if continuation_count:
+                        command.append("--continue")
+                        if self.completion_tool == "share_finding":
+                            current_prompt = (
+                                "Continue executing the requested research iteration now. "
+                                "Do not merely announce, summarize, or promise a next action. "
+                                "Use the available tools and do not stop until evaluate_model "
+                                "has returned and share_finding has succeeded."
+                            )
+                        else:
+                            current_prompt = (
+                                "Continue executing the requested task now. Do not merely "
+                                "announce, summarize, or promise a next action. Use the "
+                                f"available tools and call {self.completion_tool}."
+                            )
                     else:
-                        current_prompt = (
-                            "Continue executing the requested task now. Do not merely "
-                            "announce, summarize, or promise a next action. Use the "
-                            f"available tools and call {self.completion_tool}."
+                        current_prompt = prompt
+                    command.extend(
+                        ["--prompt", current_prompt, "--output-format", "stream-json"]
+                    )
+                    return_code, stderr, new_tool_uses = await self._run_command(
+                        command, env, output
+                    )
+                    iteration_count += new_tool_uses
+                    if return_code != 0:
+                        detail = stderr or self._event_error(output["raw_messages"])
+                        raise RuntimeError(
+                            f"Kimi Code exited with status {return_code}: "
+                            f"{detail or 'no error detail'}"
                         )
-                else:
-                    current_prompt = prompt
-                command.extend(
-                    ["--prompt", current_prompt, "--output-format", "stream-json"]
-                )
-                return_code, stderr, new_tool_uses = await self._run_command(
-                    command, env, output
-                )
-                iteration_count += new_tool_uses
-                if return_code != 0:
-                    detail = stderr or self._event_error(output["raw_messages"])
-                    raise RuntimeError(
-                        f"Kimi Code exited with status {return_code}: "
-                        f"{detail or 'no error detail'}"
+                    if not self.completion_tool or self._completion_tool_used(output):
+                        break
+                    if continuation_count >= self.max_continuations:
+                        raise RuntimeError(
+                            "Kimi stopped before calling the required completion tool "
+                            f"{self.completion_tool} after {self.max_continuations} "
+                            "continuations"
+                        )
+                    continuation_count += 1
+                    print(
+                        f"[Kimi] resuming incomplete session "
+                        f"({continuation_count}/{self.max_continuations})"
                     )
-                if not self.completion_tool or self._completion_tool_used(output):
-                    break
-                if continuation_count >= self.max_continuations:
-                    raise RuntimeError(
-                        "Kimi stopped before calling the required completion tool "
-                        f"{self.completion_tool} after {self.max_continuations} "
-                        "continuations"
-                    )
-                continuation_count += 1
-                print(
-                    f"[Kimi] resuming incomplete session "
-                    f"({continuation_count}/{self.max_continuations})"
-                )
 
         if not output["text_outputs"] and not output["tool_uses"]:
             raise RuntimeError("Kimi Code ended without an assistant response")
@@ -375,6 +473,61 @@ class KimiAgent:
                 ),
             }
         )
+
+    @contextlib.contextmanager
+    def _request_policy_proxy(self, env: dict[str, str]) -> Iterator[None]:
+        """Apply opt-in request fields unsupported by Kimi Code's provider config."""
+        if env.get("AAR_KIMI_DISABLE_THINKING", "").lower() not in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            yield
+            return
+
+        upstream_base_url = env.get("KIMI_MODEL_BASE_URL", "")
+        upstream_api_key = env.get("KIMI_MODEL_API_KEY", "")
+        parsed = urlsplit(upstream_base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise RuntimeError(
+                "AAR_KIMI_DISABLE_THINKING requires a valid KIMI_MODEL_BASE_URL"
+            )
+        if not upstream_api_key:
+            raise RuntimeError(
+                "AAR_KIMI_DISABLE_THINKING requires KIMI_MODEL_API_KEY"
+            )
+        if parsed.query or parsed.fragment:
+            raise RuntimeError("KIMI_MODEL_BASE_URL cannot contain a query or fragment")
+
+        upstream_origin = f"{parsed.scheme}://{parsed.netloc}"
+        allowed_prefix = parsed.path.rstrip("/")
+        handler = _policy_proxy_handler(
+            upstream_origin=upstream_origin,
+            upstream_api_key=upstream_api_key,
+            allowed_prefix=allowed_prefix,
+        )
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        server.daemon_threads = True
+        thread = threading.Thread(
+            target=server.serve_forever,
+            name="aar-kimi-request-policy",
+            daemon=True,
+        )
+        thread.start()
+        local_base_url = (
+            f"http://127.0.0.1:{server.server_port}{allowed_prefix}"
+        )
+        env["KIMI_MODEL_BASE_URL"] = local_base_url
+        env["KIMI_MODEL_API_KEY"] = "aar-local-request-policy"
+        try:
+            yield
+        finally:
+            env["KIMI_MODEL_BASE_URL"] = upstream_base_url
+            env["KIMI_MODEL_API_KEY"] = upstream_api_key
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
     @staticmethod
     def _assistant_message(event: Any) -> Optional[KimiAssistantMessage]:

@@ -15,6 +15,8 @@ Fifty iterations means 50 research sessions started per chain. A session that fa
 
 The Kimi provider reserves up to 65,536 completion tokens. The initial 16,384-token setting was insufficient for the long AAR prompt after its first parallel MCP-tool batch and produced a thinking-only terminal response.
 
+The endpoint's vLLM chat template enables reasoning by default and ignores Kimi Code's native `thinking: {type: "disabled"}` field. Run 10 therefore uses an opt-in loopback request-policy proxy that injects `chat_template_kwargs.enable_thinking=false`. This keeps tool execution within a turn reliable and also prevents the endpoint credential from entering the Kimi child process. Other Kimi configurations and the Claude path do not use this proxy.
+
 Kimi Code may treat a textual statement of future intent as the end of a noninteractive prompt. The Kimi-only adapter therefore resumes the same CLI session until `share_finding` is called, with a bounded maximum of 24 continuation prompts. This does not alter the Claude SDK path.
 
 ## Monitoring and recovery

@@ -10,7 +10,7 @@ Run 10 is the Run 7 five-chain experiment with `Kimi-K2.6` as the research agent
 - Endpoint: `serve_api_v2` deployment `steerability_8-kimi26`, served model `Kimi-K2.6`.
 - Storage: durable attempts at `/storage/home/winnieyangwn/aar-runs/run10_kimi/`; temporary merged checkpoints are node-local and removed after each evaluation.
 
-Each Kimi session dynamically runs `serve.sh generate-opencode-config steerability_8-kimi26`. The current proxy URL and key exist only in the Kimi child environment. `KIMI_AGENT_MODEL` remains unset because Kimi Code registers the environment-provided model under its own default alias.
+Each Kimi session dynamically runs `serve.sh generate-opencode-config steerability_8-kimi26`. A loopback request-policy proxy holds the current endpoint key in the AAR process and gives Kimi Code a non-secret local credential. The proxy adds `chat_template_kwargs.enable_thinking=false`, which is the control this vLLM deployment requires for reliable tool execution; it is enabled only for Run 10. `KIMI_AGENT_MODEL` remains unset because Kimi Code registers the environment-provided model under its own default alias.
 
 ## Launch sequence
 
