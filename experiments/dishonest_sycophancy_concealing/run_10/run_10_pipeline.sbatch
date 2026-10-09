@@ -29,7 +29,7 @@ source "${REPO}/scripts/axis_env.sh"
 [ "${HF_HOME}" = "${ATTEMPT_DIR}/cache/huggingface" ] || { echo "attempt-local HF_HOME overridden" >&2; exit 2; }
 mkdir -p "${HF_HOME}"
 
-export AAR_EXPECTED_BRANCH=multi_kimi AAR_RUNTIME_ROOT="${ATTEMPT_DIR}"
+export AAR_EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-multi_kimi}" AAR_RUNTIME_ROOT="${ATTEMPT_DIR}"
 export AAR_BASELINE_OVERRIDES="${ATTEMPT_DIR}/metadata/gemma4_31b_multidimensional_baseline.json"
 export HOLDOUT_DIR="${ATTEMPT_DIR}/eval/holdout/gemma4_31b"
 export BASELINES_PATH="${ATTEMPT_DIR}/baselines.honesty_sycophancy_concealing_uncertainty.google_gemma-4-31B-it.json"
@@ -50,7 +50,7 @@ export AAR_VLLM_EPHEMERAL_MIN_FREE_BYTES=75161927680
 export AAR_AGENT_BACKEND=kimi AAR_WEB_MODE=native_web
 export KIMI_CLI_PATH="${AAR_RUN10_KIMI_ROOT:-/storage/home/${USER}/tools/kimi-code-2.1.1}/node_modules/.bin/kimi"
 export PATH="${AAR_RUN10_NODE_ROOT:-/storage/home/${USER}/tools/node-v22.22.0-linux-arm64}/bin:${PATH}"
-export AAR_KIMI_SERVE_DEPLOYMENT=steerability_8-kimi26 AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
+export AAR_KIMI_SERVE_DEPLOYMENT="${AAR_KIMI_SERVE_DEPLOYMENT:-steerability_8-kimi26}" AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
 export AAR_KIMI_PROVIDER_TYPE=kimi AAR_KIMI_DISABLE_THINKING=1
 export AAR_SERVE_API_V2_ROOT="/storage/home/${USER}/ram_common/vllm_tools/serve_api_v2"
 export KIMI_MODEL_MAX_CONTEXT_SIZE=262144 KIMI_MODEL_MAX_OUTPUT_SIZE=65536
@@ -63,7 +63,8 @@ export AAR_WRITE_TRAIN_FAILURE_MARKER=1
 export AAR_TRAIN_MEM=128G AAR_REQUIRE_TRAIN_RECEIPT=1
 unset KIMI_AGENT_MODEL
 
-export AAR_TEAM_ID="honesty-sycophancy-concealing-gemma4_31b-kimi26-run10-${MODE}-${SLURM_JOB_ID}"
+team_id_prefix="${AAR_RUN10_TEAM_ID_PREFIX:-honesty-sycophancy-concealing-gemma4_31b-kimi26-run10}"
+export AAR_TEAM_ID="${team_id_prefix}-${MODE}-${SLURM_JOB_ID}"
 export AAR_GPT_JUDGE_SPEND_CAP_USD=500 OVERLOADED_MAX_RETRIES=0
 export AAR_REQUIRE_SUCCESSFUL_ITERATIONS=1 AAR_REQUIRE_PHASE_TIMINGS=1 AAR_VERIFY_TWO_ITERATION_ARTIFACTS=0
 export AAR_FUNCTIONAL_SMOKE=1 AAR_MULTIDIM_SCORING_CONFIRMED=1 AAR_START_EVAL_WORKER=1
@@ -84,7 +85,7 @@ else
   export AAR_EVAL_TIME=7-00:00:00 AAR_EVAL_IDLE_SECONDS=604200
 fi
 
-[ "$(git -C "${REPO}" branch --show-current)" = multi_kimi ] || { echo "wrong branch" >&2; exit 2; }
+[ "$(git -C "${REPO}" branch --show-current)" = "${AAR_EXPECTED_BRANCH}" ] || { echo "wrong branch" >&2; exit 2; }
 [ "$(git -C "${REPO}" rev-parse HEAD)" = "${EXPECTED_COMMIT}" ] || { echo "commit drift" >&2; exit 2; }
 if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; then
   echo "tracked worktree is dirty" >&2

@@ -87,3 +87,15 @@ def test_kimi_preflight_records_the_requested_deployment() -> None:
     assert 'expected_model = os.environ.get("AAR_KIMI_EXPECTED_MODEL"' in verifier
     assert '"deployment": deployment' in verifier
     assert '"model": expected_model' in verifier
+
+
+def test_run10_canary_keeps_historical_defaults_but_allows_trusted_overrides() -> None:
+    pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
+    submitter = (RUN10 / "submit_run_10.sh").read_text()
+
+    assert 'EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-multi_kimi}"' in submitter
+    assert 'KIMI_DEPLOYMENT="${AAR_KIMI_SERVE_DEPLOYMENT:-steerability_8-kimi26}"' in submitter
+    assert 'AAR_RUN10_ATTEMPT_PARENT:-/storage/home/${USER}/aar-runs/run10_kimi/' in submitter
+    assert 'AAR_EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-multi_kimi}"' in pipeline
+    assert 'AAR_KIMI_SERVE_DEPLOYMENT="${AAR_KIMI_SERVE_DEPLOYMENT:-steerability_8-kimi26}"' in pipeline
+    assert 'AAR_RUN10_TEAM_ID_PREFIX:-honesty-sycophancy-concealing-' in pipeline

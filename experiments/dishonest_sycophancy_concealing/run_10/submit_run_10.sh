@@ -14,8 +14,13 @@ RECOVERED_SOURCES="${RECOVERY_BUNDLE}/source_artifacts"
 SECRET_ENV="$(realpath -e -- "${AAR_RUN10_SECRET_ENV:-${REPO}/.env}")"
 KIMI_ROOT="${AAR_RUN10_KIMI_ROOT:-/storage/home/${USER:?}/tools/kimi-code-2.1.1}"
 NODE_ROOT="${AAR_RUN10_NODE_ROOT:-/storage/home/${USER}/tools/node-v22.22.0-linux-arm64}"
+EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-multi_kimi}"
+KIMI_DEPLOYMENT="${AAR_KIMI_SERVE_DEPLOYMENT:-steerability_8-kimi26}"
 
-[ "$(git -C "${REPO}" branch --show-current)" = multi_kimi ] || { echo "Run 10 requires branch multi_kimi" >&2; exit 2; }
+[ "$(git -C "${REPO}" branch --show-current)" = "${EXPECTED_BRANCH}" ] || {
+  echo "Run 10 requires branch ${EXPECTED_BRANCH}" >&2
+  exit 2
+}
 if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; then
   echo "tracked worktree is dirty" >&2
   exit 2
@@ -55,7 +60,7 @@ done
 
 commit="$(git -C "${REPO}" rev-parse HEAD)"
 attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "${REPO}" rev-parse --short=12 HEAD)"
-attempt_parent="/storage/home/${USER}/aar-runs/run10_kimi/${MODE}_attempts"
+attempt_parent="${AAR_RUN10_ATTEMPT_PARENT:-/storage/home/${USER}/aar-runs/run10_kimi/${MODE}_attempts}"
 attempt_dir="${attempt_parent}/${attempt_id}"
 mkdir -p "${attempt_parent}"
 mkdir "${attempt_dir}" "${attempt_dir}/metadata" "${attempt_dir}/logs"
@@ -67,7 +72,8 @@ printf 'export AAR_RUNTIME_ROOT=%q\n' "${attempt_dir}" > "${attempt_dir}/attempt
 export PATH="${NODE_ROOT}/bin:${PATH}"
 export KIMI_CLI_PATH="${KIMI_ROOT}/node_modules/.bin/kimi"
 export AAR_AGENT_BACKEND=kimi AAR_WEB_MODE=native_web
-export AAR_KIMI_SERVE_DEPLOYMENT=steerability_8-kimi26 AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
+export AAR_EXPECTED_BRANCH="${EXPECTED_BRANCH}"
+export AAR_KIMI_SERVE_DEPLOYMENT="${KIMI_DEPLOYMENT}" AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
 export AAR_KIMI_PROVIDER_TYPE=kimi AAR_KIMI_DISABLE_THINKING=1
 export AAR_SERVE_API_V2_ROOT="/storage/home/${USER}/ram_common/vllm_tools/serve_api_v2"
 export KIMI_MODEL_CAPABILITIES=tool_use
@@ -103,6 +109,6 @@ if [ "${MODE}" = full ]; then
 elif [ "${MODE}" = smoke ]; then
   evaluator_jobs=0; evaluator_gpus=0
 fi
-printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nmode=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\ndeployment=steerability_8-kimi26\nresearch_chains=%s\nmax_iterations_per_chain=%s\nevaluator_jobs=%s\nevaluator_gpus_per_job=%s\n' \
-  "${job_id}" "${attempt_dir}" "${commit}" "${MODE}" \
+printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nmode=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\ndeployment=%s\nresearch_chains=%s\nmax_iterations_per_chain=%s\nevaluator_jobs=%s\nevaluator_gpus_per_job=%s\n' \
+  "${job_id}" "${attempt_dir}" "${commit}" "${MODE}" "${KIMI_DEPLOYMENT}" \
   "${research_chains}" "${max_iterations}" "${evaluator_jobs}" "${evaluator_gpus}" | tee "${attempt_dir}/metadata/submission.txt"
