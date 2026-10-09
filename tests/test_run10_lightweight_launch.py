@@ -90,6 +90,9 @@ def test_kimi_preflight_records_the_requested_deployment() -> None:
     assert 'expected_model = os.environ.get("AAR_KIMI_EXPECTED_MODEL"' in verifier
     assert '"deployment": deployment' in verifier
     assert '"model": expected_model' in verifier
+    assert 'AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS' in verifier
+    assert 'asyncio.wait_for(' in verifier
+    assert 'Kimi MCP round trip exceeded' in verifier
 
 
 def test_run10_canary_keeps_historical_defaults_but_allows_trusted_overrides() -> None:

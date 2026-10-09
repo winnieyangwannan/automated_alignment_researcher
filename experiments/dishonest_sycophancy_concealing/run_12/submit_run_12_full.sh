@@ -113,8 +113,10 @@ export AAR_AGENT_BACKEND=kimi AAR_WEB_MODE=native_web
 export AAR_KIMI_SERVE_DEPLOYMENT="${GENERATOR_DEPLOYMENT}" AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
 export AAR_KIMI_PROVIDER_TYPE=kimi AAR_KIMI_DISABLE_THINKING=1
 export AAR_SERVE_API_V2_ROOT="${SV}" KIMI_MODEL_CAPABILITIES=tool_use
+export KIMI_MODEL_MAX_OUTPUT_SIZE=4096 KIMI_MODEL_MAX_COMPLETION_TOKENS=4096
+export AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS=180
 unset KIMI_AGENT_MODEL
-"${REPO}/.venv/bin/python" "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/verify_kimi_endpoint.py" \
+timeout 420 "${REPO}/.venv/bin/python" "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/verify_kimi_endpoint.py" \
   --workspace "${REPO}" --output "${attempt}/metadata/kimi_mcp_preflight.json"
 
 suffix="$(printf '%s' "${attempt_id}" | sha256sum | cut -c1-8)"

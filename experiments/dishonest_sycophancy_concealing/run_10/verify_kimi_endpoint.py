@@ -19,33 +19,45 @@ async def verify(workspace: Path) -> dict[str, object]:
         raise RuntimeError(
             "AAR_KIMI_SERVE_DEPLOYMENT and AAR_KIMI_EXPECTED_MODEL are required"
         )
-    result = await KimiAgent(
-        "run10-preflight",
-        workspace,
-        model=None,
-        cli_path=os.environ.get("KIMI_CLI_PATH"),
-        include_prior_work=True,
-        system_prompt=(
-            "You are a noninteractive endpoint verifier. Follow the user's exact "
-            "tool sequence and do not create or manage a separate goal."
-        ),
-        disallowed_tools=[
-            "CreateGoal",
-            "UpdateGoal",
-            "SetGoalBudget",
-            "TodoList",
-            "WaitFor",
-            "Agent",
-            "AgentSwarm",
-        ],
-        completion_tool="get_literature",
-        auto_approve=True,
-    ).execute(
-        "First call the Bash tool exactly once with command `test -w \"$PWD\" && "
-        "printf KIMI_AUTO_OK`. Only after receiving that result, call the "
-        "get_literature MCP tool exactly once with dimension set to honesty. Only "
-        "after receiving that tool result, reply with exactly KIMI_MCP_CANARY_OK."
-    )
+    turn_timeout = int(os.environ.get("AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS", "180"))
+    if turn_timeout < 30 or turn_timeout > 600:
+        raise RuntimeError("AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS must be 30..600")
+    try:
+        result = await asyncio.wait_for(
+            KimiAgent(
+                "run10-preflight",
+                workspace,
+                model=None,
+                cli_path=os.environ.get("KIMI_CLI_PATH"),
+                include_prior_work=True,
+                system_prompt=(
+                    "You are a noninteractive endpoint verifier. Follow the user's "
+                    "exact tool sequence and do not create or manage a separate goal."
+                ),
+                disallowed_tools=[
+                    "CreateGoal",
+                    "UpdateGoal",
+                    "SetGoalBudget",
+                    "TodoList",
+                    "WaitFor",
+                    "Agent",
+                    "AgentSwarm",
+                ],
+                completion_tool="get_literature",
+                auto_approve=True,
+            ).execute(
+                "First call the Bash tool exactly once with command `test -w "
+                "\"$PWD\" && printf KIMI_AUTO_OK`. Only after receiving that result, "
+                "call the get_literature MCP tool exactly once with dimension set to "
+                "honesty. Only after receiving that tool result, reply with exactly "
+                "KIMI_MCP_CANARY_OK."
+            ),
+            timeout=turn_timeout,
+        )
+    except TimeoutError as error:
+        raise RuntimeError(
+            f"Kimi MCP round trip exceeded {turn_timeout} seconds"
+        ) from error
     tools = [str(item.get("tool", "")) for item in result.output.get("tool_uses", [])]
     texts = [str(item) for item in result.output.get("text_outputs", [])]
     bash_positions = [
@@ -71,34 +83,43 @@ async def verify(workspace: Path) -> dict[str, object]:
             f"response_ok={response_ok}, error={result.error}, stderr={stderr_tail}"
         )
 
-    forced_result = await KimiAgent(
-        "run10-forced-tool-preflight",
-        workspace,
-        model=None,
-        cli_path=os.environ.get("KIMI_CLI_PATH"),
-        include_prior_work=False,
-        system_prompt=(
-            "You are a noninteractive endpoint verifier. Follow the user's exact "
-            "two-turn instruction and do not create or manage a separate goal."
-        ),
-        disallowed_tools=[
-            "CreateGoal",
-            "UpdateGoal",
-            "SetGoalBudget",
-            "TodoList",
-            "WaitFor",
-            "Agent",
-            "AgentSwarm",
-        ],
-        completion_tool="Bash",
-        max_continuations=2,
-        auto_approve=True,
-        force_checkpoint_tools=True,
-    ).execute(
-        "In this first turn, do not call any tool; reply exactly "
-        "KIMI_FORCE_READY. On the later turn that requires Bash, call it with "
-        "command `printf KIMI_FORCE_OK`."
-    )
+    try:
+        forced_result = await asyncio.wait_for(
+            KimiAgent(
+                "run10-forced-tool-preflight",
+                workspace,
+                model=None,
+                cli_path=os.environ.get("KIMI_CLI_PATH"),
+                include_prior_work=False,
+                system_prompt=(
+                    "You are a noninteractive endpoint verifier. Follow the user's "
+                    "exact two-turn instruction and do not create or manage a separate "
+                    "goal."
+                ),
+                disallowed_tools=[
+                    "CreateGoal",
+                    "UpdateGoal",
+                    "SetGoalBudget",
+                    "TodoList",
+                    "WaitFor",
+                    "Agent",
+                    "AgentSwarm",
+                ],
+                completion_tool="Bash",
+                max_continuations=2,
+                auto_approve=True,
+                force_checkpoint_tools=True,
+            ).execute(
+                "In this first turn, do not call any tool; reply exactly "
+                "KIMI_FORCE_READY. On the later turn that requires Bash, call it with "
+                "command `printf KIMI_FORCE_OK`."
+            ),
+            timeout=turn_timeout,
+        )
+    except TimeoutError as error:
+        raise RuntimeError(
+            f"Kimi named-tool checkpoint exceeded {turn_timeout} seconds"
+        ) from error
     forced_uses = [
         item
         for item in forced_result.output.get("tool_uses", [])

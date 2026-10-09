@@ -20,6 +20,16 @@ pairs. The canary will be stopped as soon as it proves that proposal approval
 created and registered the native workspace and reached a native AutoData
 action; it is not intended to spend a full production data-generation budget.
 
+The first canary submission then failed before GPU allocation at the Kimi MCP
+preflight: the healthy shared deployment returned a direct completion quickly,
+but the Kimi CLI round trip remained inside one unconstrained 65,536-token turn
+for more than eleven minutes. The launcher now caps preflight completion at
+4,096 tokens, bounds each scripted tool turn to 180 seconds, and has a 420-second
+outer timeout. Production Kimi turns are capped at 16,384 output tokens while
+retaining the full 262,144-token context window. This turns malformed or
+non-terminating tool behavior into a prompt diagnostic instead of an unbounded
+launcher stall.
+
 ## Five-chain attempt: proposal bootstrap failure isolated
 
 Attempt `20261009T170629Z-08f3d6a9be40` launched five Kimi researchers and five
