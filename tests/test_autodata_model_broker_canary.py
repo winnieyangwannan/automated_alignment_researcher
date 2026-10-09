@@ -10,12 +10,56 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from aar.autodata_target_binding import create_binding, write_binding
-from tests.test_autodata_target_binding import make_checkpoint_fixture
 
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "autodata_model_broker_canary.py"
 RECIPE = REPO / "aar" / "autodata_recipes" / "dishonest_sycophancy_concealing"
+
+
+def _checkpoint_fixture(root: Path) -> tuple[Path, Path, Path]:
+    base = root / "base"
+    adapter = root / "adapter"
+    merged = root / "merged"
+    base.mkdir()
+    adapter.mkdir()
+    merged.mkdir()
+    (base / "config.json").write_text('{"model_type":"gemma4"}\n')
+    (base / "model.safetensors.index.json").write_text('{"weight_map":{}}\n')
+    (adapter / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "base_model_name_or_path": str(base.resolve()),
+                "peft_type": "LORA",
+            }
+        )
+        + "\n"
+    )
+    (adapter / "adapter_model.safetensors").write_bytes(b"adapter-weights")
+    (merged / "config.json").write_bytes((base / "config.json").read_bytes())
+    (merged / "model.safetensors.index.json").write_text('{"weight_map":{}}\n')
+    shard = merged / "model-00001-of-00001.safetensors"
+    shard.write_bytes(b"merged-weights")
+
+    def sha256(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    receipt = {
+        "adapter": str(adapter.resolve()),
+        "adapter_config_sha256": sha256(adapter / "adapter_config.json"),
+        "adapter_model_sha256": sha256(adapter / "adapter_model.safetensors"),
+        "base_checkpoint": str(base.resolve()),
+        "base_config_sha256": sha256(base / "config.json"),
+        "base_index_sha256": sha256(base / "model.safetensors.index.json"),
+        "merged_shards": [shard.name],
+        "merged_weight_bytes": shard.stat().st_size,
+        "output": str(merged.resolve()),
+        "source_commit": "deadbeef",
+    }
+    (merged / ".merge-complete.json").write_text(
+        json.dumps(receipt, sort_keys=True) + "\n"
+    )
+    return base, adapter, merged
 
 
 def _module():
@@ -255,7 +299,7 @@ class ModelBrokerCanaryTest(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            base, adapter, merged = make_checkpoint_fixture(root)
+            base, adapter, merged = _checkpoint_fixture(root)
             binding = create_binding(
                 iteration=2,
                 incumbent_run_id="candidate-1",
