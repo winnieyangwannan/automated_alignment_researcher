@@ -32,10 +32,12 @@ MAX_RESULTS = 1
 MAX_ABSTRACT_CHARS = 4_000
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_HTML_BYTES = 8 * 1024 * 1024
-# Keep one fetch result below Claude Code's inline tool-result threshold. Larger
+# Keep each fetch result below Claude Code's inline tool-result threshold. Larger
 # results are externalized to a file that the secure librarian cannot read
-# without granting unrelated filesystem access.
+# without granting unrelated filesystem access. Agents can page through a paper
+# in stable bounded chunks without increasing the size of any one tool result.
 MAX_TEXT_CHARS = 20_000
+MAX_DOCUMENT_TEXT_CHARS = 1_000_000
 MAX_CACHE_BYTES = 16 * 1024 * 1024
 PAPER_SEARCH_CACHE_SCHEMA_VERSION = 1
 REQUEST_TIMEOUT_SECONDS = 30
@@ -224,8 +226,9 @@ class _VisibleTextParser(HTMLParser):
         "h4", "h5", "h6", "li", "p", "section", "table", "tr",
     }
 
-    def __init__(self) -> None:
+    def __init__(self, max_chars: int = MAX_DOCUMENT_TEXT_CHARS) -> None:
         super().__init__(convert_charrefs=True)
+        self.max_chars = max_chars
         self.hidden_depth = 0
         self.parts: list[str] = []
         self.length = 0
@@ -249,7 +252,7 @@ class _VisibleTextParser(HTMLParser):
             self._append(data)
 
     def _append(self, value: str) -> None:
-        remaining = MAX_TEXT_CHARS - self.length
+        remaining = self.max_chars - self.length
         if remaining <= 0:
             self.truncated = True
             return
@@ -277,6 +280,55 @@ def _fetch_html_text(arxiv_id: str) -> tuple[str, bool]:
     if len(text) < 500:
         raise PaperSearchError("arXiv HTML did not contain enough visible paper text")
     return text, parser.truncated
+
+
+def _validate_fetch_window(offset: int, chars: int) -> None:
+    """Validate one inline-safe page before performing any network request."""
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        raise PaperSearchError("offset must be a non-negative integer")
+    if isinstance(chars, bool) or not isinstance(chars, int):
+        raise PaperSearchError("chars must be an integer")
+    if not 1 <= chars <= MAX_TEXT_CHARS:
+        raise PaperSearchError(
+            f"chars must be between 1 and {MAX_TEXT_CHARS}"
+        )
+    if offset >= MAX_DOCUMENT_TEXT_CHARS:
+        raise PaperSearchError(
+            f"offset must be less than {MAX_DOCUMENT_TEXT_CHARS}"
+        )
+    if offset + chars > MAX_DOCUMENT_TEXT_CHARS:
+        raise PaperSearchError(
+            f"offset + chars must not exceed {MAX_DOCUMENT_TEXT_CHARS}"
+        )
+
+
+def _content_page(
+    content: str,
+    *,
+    offset: int,
+    chars: int,
+    document_truncated: bool,
+) -> dict[str, Any]:
+    """Return one stable page plus continuation metadata."""
+    if offset > len(content) or (offset == len(content) and offset > 0):
+        detail = "retrievable text limit" if document_truncated else "document length"
+        raise PaperSearchError(
+            f"offset {offset} is beyond the {detail} ({len(content)})"
+        )
+    page = content[offset : offset + chars]
+    page_end = offset + len(page)
+    has_more = page_end < len(content)
+    return {
+        "content": page,
+        "content_offset": offset,
+        "content_chars": len(page),
+        "next_offset": page_end if has_more else None,
+        "has_more": has_more,
+        "visible_text_chars": len(content),
+        "document_truncated": document_truncated,
+        # Preserve the original field while making its two causes explicit above.
+        "content_truncated": has_more or document_truncated,
+    }
 
 
 def _plain_html(value: str) -> str:
@@ -564,9 +616,14 @@ def search(query: str, limit: int = MAX_RESULTS) -> dict[str, Any]:
     return {"ok": True, "operation": "search", "query": normalized, "results": results}
 
 
-def fetch(arxiv_id: str) -> dict[str, Any]:
-    """Fetch bounded paper text, explicitly falling back to its abstract."""
+def fetch(
+    arxiv_id: str,
+    offset: int = 0,
+    chars: int = MAX_TEXT_CHARS,
+) -> dict[str, Any]:
+    """Fetch one inline-safe paper-text page, with an abstract fallback."""
     normalized = normalize_arxiv_id(arxiv_id)
+    _validate_fetch_window(offset, chars)
     cache_path = os.getenv("AAR_PAPER_SEARCH_CACHE")
     if cache_path:
         for raw in _load_cache(Path(cache_path)):
@@ -578,13 +635,18 @@ def fetch(arxiv_id: str) -> dict[str, Any]:
             except PaperSearchError:
                 continue
             if cached_arxiv_id == normalized:
+                page = _content_page(
+                    paper["abstract"],
+                    offset=offset,
+                    chars=chars,
+                    document_truncated=False,
+                )
                 return {
                     "ok": True,
                     "operation": "fetch",
                     "paper": paper,
-                    "content": paper["abstract"],
+                    **page,
                     "content_source": "prepared_cache_abstract",
-                    "content_truncated": False,
                     "warning": "prepared cache contains metadata and abstract only",
                 }
     results = _request({"id_list": normalized, "max_results": 1})
@@ -600,13 +662,18 @@ def fetch(arxiv_id: str) -> dict[str, Any]:
         content_source = "arxiv_abstract_fallback"
         truncated = False
         warning = str(error)
+    page = _content_page(
+        content,
+        offset=offset,
+        chars=chars,
+        document_truncated=truncated,
+    )
     return {
         "ok": True,
         "operation": "fetch",
         "paper": paper,
-        "content": content,
+        **page,
         "content_source": content_source,
-        "content_truncated": truncated,
         "warning": warning,
     }
 
@@ -620,9 +687,21 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("--limit", type=int, default=MAX_RESULTS)
 
     fetch_parser = subparsers.add_parser(
-        "fetch", help="fetch bounded arXiv HTML text with abstract fallback"
+        "fetch", help="fetch one bounded arXiv HTML text chunk with abstract fallback"
     )
     fetch_parser.add_argument("arxiv_id")
+    fetch_parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="visible-text character offset (default: 0)",
+    )
+    fetch_parser.add_argument(
+        "--chars",
+        type=int,
+        default=MAX_TEXT_CHARS,
+        help=f"characters to return, 1..{MAX_TEXT_CHARS} (default: {MAX_TEXT_CHARS})",
+    )
     return parser
 
 
@@ -632,7 +711,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = (
             search(args.query, args.limit)
             if args.operation == "search"
-            else fetch(args.arxiv_id)
+            else fetch(args.arxiv_id, offset=args.offset, chars=args.chars)
         )
     except PaperSearchError as error:
         print(json.dumps({"ok": False, "error": str(error)}, sort_keys=True), file=sys.stderr)

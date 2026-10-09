@@ -127,6 +127,8 @@ class PaperSearchTest(unittest.TestCase):
         self.assertEqual(result["content"], "Cached evidence.")
         self.assertEqual(result["content_source"], "prepared_cache_abstract")
         self.assertFalse(result["content_truncated"])
+        self.assertFalse(result["has_more"])
+        self.assertIsNone(result["next_offset"])
 
     def test_fetch_invalid_explicit_cache_fails_before_network(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -222,6 +224,39 @@ class PaperSearchTest(unittest.TestCase):
 
         self.assertLess(len(json.dumps(result)), 25_000)
 
+    def test_fetch_returns_stable_consecutive_html_chunks(self) -> None:
+        paper = {
+            "arxiv_id": "2310.13548v2",
+            "title": "Towards Understanding Sycophancy",
+            "abstract": "A useful abstract.",
+        }
+        content = "0123456789abcdefghijKLMNOPQRST"
+        with (
+            patch.object(paper_search, "_request", return_value=[paper]),
+            patch.object(
+                paper_search, "_fetch_html_text", return_value=(content, False)
+            ),
+        ):
+            first = paper_search.fetch("2310.13548v2", offset=0, chars=10)
+            second = paper_search.fetch(
+                "2310.13548v2", offset=first["next_offset"], chars=10
+            )
+            third = paper_search.fetch(
+                "2310.13548v2", offset=second["next_offset"], chars=10
+            )
+
+        self.assertEqual(first["content"], "0123456789")
+        self.assertEqual(first["next_offset"], 10)
+        self.assertTrue(first["has_more"])
+        self.assertEqual(second["content"], "abcdefghij")
+        self.assertEqual(second["next_offset"], 20)
+        self.assertTrue(second["has_more"])
+        self.assertEqual(third["content"], "KLMNOPQRST")
+        self.assertIsNone(third["next_offset"])
+        self.assertFalse(third["has_more"])
+        self.assertFalse(third["content_truncated"])
+        self.assertEqual(third["visible_text_chars"], len(content))
+
     @patch.object(paper_search, "_require_executable")
     @patch("subprocess.run")
     def test_search_uses_fixed_argv_curl_and_bounded_arxiv_endpoint(
@@ -260,6 +295,8 @@ class PaperSearchTest(unittest.TestCase):
         self.assertIn("Method and results", result["content"])
         self.assertNotIn("hidden", result["content"])
         self.assertFalse(result["content_truncated"])
+        self.assertFalse(result["has_more"])
+        self.assertIsNone(result["next_offset"])
         self.assertEqual(
             urllib.parse.parse_qs(
                 urllib.parse.urlsplit(run.call_args_list[0].args[0][-1]).query
@@ -301,17 +338,36 @@ class PaperSearchTest(unittest.TestCase):
                     paper_search.fetch(value)
         run.assert_not_called()
 
-    def test_html_text_is_truncated_at_session_safe_cap(self) -> None:
+    def test_fetch_rejects_unsafe_windows_before_network(self) -> None:
+        bad_windows = (
+            {"offset": -1, "chars": 100},
+            {"offset": 0, "chars": 0},
+            {"offset": 0, "chars": paper_search.MAX_TEXT_CHARS + 1},
+            {"offset": paper_search.MAX_DOCUMENT_TEXT_CHARS, "chars": 1},
+            {
+                "offset": paper_search.MAX_DOCUMENT_TEXT_CHARS - 10,
+                "chars": 11,
+            },
+        )
+        with patch("subprocess.run") as run:
+            for window in bad_windows:
+                with self.subTest(window=window), self.assertRaises(
+                    paper_search.PaperSearchError
+                ):
+                    paper_search.fetch("2310.13548v2", **window)
+        run.assert_not_called()
+
+    def test_html_text_is_truncated_at_document_cap(self) -> None:
         oversized_html = (
             b"<html><body><article>"
-            + b"x" * (paper_search.MAX_TEXT_CHARS + 1_000)
+            + b"x" * (paper_search.MAX_DOCUMENT_TEXT_CHARS + 1_000)
             + b"</article></body></html>"
         )
         with patch.object(paper_search, "_curl", return_value=oversized_html):
             text, truncated = paper_search._fetch_html_text("2310.13548")
 
         self.assertTrue(truncated)
-        self.assertLessEqual(len(text), paper_search.MAX_TEXT_CHARS)
+        self.assertLessEqual(len(text), paper_search.MAX_DOCUMENT_TEXT_CHARS)
 
     def test_fetch_accepts_modern_and_legacy_ids(self) -> None:
         self.assertEqual(
