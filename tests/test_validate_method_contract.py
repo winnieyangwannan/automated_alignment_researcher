@@ -77,6 +77,24 @@ SFTTrainer(
         self.assertIn("locked TRL 0.21", errors[0])
         self.assertIn("SFTConfig(max_length=", errors[0])
 
+    def test_rejects_trl_021_sftconfig_and_multi_step_smoke(self) -> None:
+        tree = ast.parse(
+            """
+max_steps = 8 if config.smoke_run else -1
+SFTConfig(
+    max_seq_length=2048,
+    warmup_ratio=0.03,
+    max_steps=max_steps,
+)
+"""
+        )
+
+        errors = _unsafe_training_api_errors(tree)
+
+        self.assertEqual(len(errors), 2)
+        self.assertTrue(any("use max_length and warmup_steps" in error for error in errors))
+        self.assertTrue(any("must set max_steps=1, not 8" in error for error in errors))
+
     def _run(self, source: str) -> tuple[subprocess.CompletedProcess[str], dict]:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

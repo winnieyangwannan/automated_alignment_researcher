@@ -507,6 +507,9 @@ without an approval.** Once approved → train + `evaluate_model` **that approve
    The locked training environment uses TRL 0.21: never pass `max_seq_length` or
    `dataset_text_field` directly to `SFTTrainer`. Put `max_length` and
    `dataset_text_field` in `SFTConfig` and pass that configuration as `args`.
+   In `SFTConfig`, use `max_length` rather than `max_seq_length` and
+   `warmup_steps` rather than `warmup_ratio`. When `config.smoke_run` is true,
+   set `max_steps=1` exactly—not the smoke dataset size.
    Then call **`submit_idea_proposal`**. This REGISTERS your method's **self-contained, results-free
    mini method paper** — the exact fields a forecaster will later read and predict from — AND gates
    execution. Provide (all required): `idea_name` + the paper sections `title`, `abstract`

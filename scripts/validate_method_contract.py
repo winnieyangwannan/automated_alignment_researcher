@@ -151,6 +151,19 @@ def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
         )
     }
 
+    def smoke_max_steps(value: ast.AST) -> int | None:
+        if not isinstance(value, ast.IfExp):
+            return None
+        test = value.test
+        if not (
+            isinstance(test, ast.Attribute)
+            and isinstance(test.value, ast.Name)
+            and test.value.id == "config"
+            and test.attr == "smoke_run"
+        ):
+            return None
+        return value.body.value if isinstance(value.body, ast.Constant) else None
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             function = node.func
@@ -182,6 +195,25 @@ def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
                     "0.21; use SFTConfig(max_length=..., dataset_text_field=...) "
                     "and pass it as args="
                 )
+            if name == "SFTConfig" and keywords & {
+                "max_seq_length",
+                "warmup_ratio",
+            }:
+                invalid = ", ".join(
+                    sorted(keywords & {"max_seq_length", "warmup_ratio"})
+                )
+                errors.add(
+                    f"SFTConfig keyword(s) {invalid} are unsupported by locked TRL "
+                    "0.21; use max_length and warmup_steps"
+                )
+            for keyword in node.keywords:
+                if keyword.arg == "max_steps":
+                    value = smoke_max_steps(keyword.value)
+                    if value is not None and value != 1:
+                        errors.add(
+                            "config.smoke_run must set max_steps=1, not "
+                            f"{value}, for the required one-step GPU preflight"
+                        )
             if name == "train" and "max_steps" in keywords:
                 errors.add(
                     "Trainer.train(max_steps=...) is unsupported; set max_steps in "
@@ -218,6 +250,24 @@ def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
                         "a per-item loop; load once and reuse the object"
                     )
                     break
+
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = node.value
+            targets = (
+                node.targets
+                if isinstance(node, ast.Assign)
+                else [node.target]
+            )
+            if any(
+                isinstance(target, ast.Name) and target.id == "max_steps"
+                for target in targets
+            ):
+                smoke_steps = smoke_max_steps(value)
+                if smoke_steps is not None and smoke_steps != 1:
+                    errors.add(
+                        "config.smoke_run must set max_steps=1, not "
+                        f"{smoke_steps}, for the required one-step GPU preflight"
+                    )
     return sorted(errors)
 
 
