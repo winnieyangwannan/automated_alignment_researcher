@@ -549,7 +549,11 @@ class AutonomousAgentLoop:
                 "You are running noninteractively. Complete the entire requested "
                 "research iteration using tools now. Never end with a statement of "
                 "future intent such as 'let me' or 'next I will'. The iteration is "
-                "complete only after evaluation returns and share_finding succeeds."
+                "complete only after evaluation returns and share_finding succeeds. "
+                "During initial discovery, call get_literature exactly once with an "
+                "empty input to obtain compact summaries; do not request multiple "
+                "dimensions in parallel. If essential, make at most one focused "
+                "literature follow-up after selecting a method direction."
             )
             if meta_secure_web:
                 kimi_system_prompt += (
@@ -565,6 +569,15 @@ class AutonomousAgentLoop:
                 system_prompt=kimi_system_prompt,
                 include_prior_work=not self.local_mode,
                 completion_tool="share_finding",
+                disallowed_tools=[
+                    "CreateGoal",
+                    "UpdateGoal",
+                    "SetGoalBudget",
+                    "TodoList",
+                    "WaitFor",
+                    "Agent",
+                    "AgentSwarm",
+                ],
             )
 
         allowed_tools = [

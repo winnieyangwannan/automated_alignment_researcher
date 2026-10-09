@@ -154,6 +154,7 @@ class KimiAgent:
         include_prior_work: bool = True,
         completion_tool: Optional[str] = None,
         max_continuations: int = 24,
+        disallowed_tools: Optional[list[str]] = None,
     ) -> None:
         self.name = name
         self.workspace = Path(workspace)
@@ -164,6 +165,7 @@ class KimiAgent:
         self.include_prior_work = include_prior_work
         self.completion_tool = completion_tool
         self.max_continuations = max_continuations
+        self.disallowed_tools = disallowed_tools or []
 
     async def execute(self, task: str) -> KimiAgentResult:
         start_time = time.time()
@@ -185,7 +187,7 @@ class KimiAgent:
                 "Kimi backend requires an executable KIMI_CLI_PATH or `kimi` on PATH"
             )
 
-        prompt = f"{self.system_prompt}\n\n{task}" if self.system_prompt else task
+        prompt = task
 
         output: dict[str, Any] = {
             "text_outputs": [],
@@ -197,7 +199,9 @@ class KimiAgent:
         continuation_count = 0
 
         with tempfile.TemporaryDirectory(prefix="aar-kimi-") as temp_dir:
-            env = self._build_environment(Path(temp_dir))
+            overlay_home = Path(temp_dir)
+            env = self._build_environment(overlay_home)
+            agent_file = self._write_agent_profile(overlay_home)
             with self._request_policy_proxy(env):
                 while True:
                     command = [executable]
@@ -219,6 +223,8 @@ class KimiAgent:
                                 f"available tools and call {self.completion_tool}."
                             )
                     else:
+                        if agent_file is not None:
+                            command.extend(["--agent-file", str(agent_file)])
                         current_prompt = prompt
                     command.extend(
                         ["--prompt", current_prompt, "--output-format", "stream-json"]
@@ -390,6 +396,32 @@ class KimiAgent:
         env["KIMI_CODE_HOME"] = str(overlay_home)
         self._apply_serve_api_provider(env)
         return env
+
+    def _write_agent_profile(self, overlay_home: Path) -> Optional[Path]:
+        """Materialize Kimi Code system instructions as a real agent profile."""
+        if not self.system_prompt and not self.disallowed_tools:
+            return None
+        profile = overlay_home / "aar-agent.md"
+        frontmatter = [
+            "---",
+            "name: aar-researcher",
+            "description: Noninteractive automated alignment researcher",
+        ]
+        if self.disallowed_tools:
+            frontmatter.append(
+                f"disallowedTools: {json.dumps(self.disallowed_tools)}"
+            )
+        frontmatter.extend(
+            [
+                "---",
+                "",
+                self.system_prompt
+                or "Complete the user's task noninteractively with the available tools.",
+                "",
+            ]
+        )
+        profile.write_text("\n".join(frontmatter))
+        return profile
 
     def _apply_serve_api_provider(self, env: dict[str, str]) -> None:
         """Resolve a live serve_api_v2 proxy without exposing its API key."""

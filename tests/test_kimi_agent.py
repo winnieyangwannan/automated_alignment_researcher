@@ -190,6 +190,53 @@ class KimiAgentTest(unittest.TestCase):
             agent._apply_serve_api_provider(kimi_env)
             self.assertEqual(kimi_env["KIMI_MODEL_PROVIDER_TYPE"], "kimi")
 
+    def test_system_prompt_uses_agent_profile_and_disables_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            kimi_home = root / "kimi-home"
+            kimi_home.mkdir()
+            capture = root / "capture.json"
+            cli = root / "kimi"
+            cli.write_text(
+                f"#!{sys.executable}\n"
+                "import json, os, sys\n"
+                "from pathlib import Path\n"
+                "index = sys.argv.index('--agent-file')\n"
+                "profile = Path(sys.argv[index + 1])\n"
+                "Path(os.environ['KIMI_TEST_CAPTURE']).write_text(json.dumps({\n"
+                "  'argv': sys.argv[1:], 'profile': profile.read_text(),\n"
+                "}))\n"
+                "print(json.dumps({'role': 'assistant', 'content': 'done'}))\n"
+            )
+            cli.chmod(0o755)
+            with patch.dict(
+                os.environ,
+                {
+                    "KIMI_CODE_HOME": str(kimi_home),
+                    "KIMI_TEST_CAPTURE": str(capture),
+                },
+                clear=False,
+            ):
+                result = asyncio.run(
+                    KimiAgent(
+                        "test-agent",
+                        root,
+                        cli_path=str(cli),
+                        system_prompt="System-level AAR instructions.",
+                        disallowed_tools=["CreateGoal", "AgentSwarm"],
+                    ).execute("research task")
+                )
+
+            self.assertTrue(result.success, result.error)
+            observed = json.loads(capture.read_text())
+            self.assertIn("--agent-file", observed["argv"])
+            self.assertNotIn("System-level AAR instructions.", observed["argv"])
+            self.assertIn(
+                'disallowedTools: ["CreateGoal", "AgentSwarm"]',
+                observed["profile"],
+            )
+            self.assertIn("System-level AAR instructions.", observed["profile"])
+
     def test_serve_api_provider_rejects_unexpected_model(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
