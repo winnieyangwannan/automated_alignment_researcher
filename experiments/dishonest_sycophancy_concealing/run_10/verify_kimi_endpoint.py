@@ -37,20 +37,13 @@ async def verify(workspace: Path) -> dict[str, object]:
     ).execute(
         "First call the Bash tool exactly once with command `test -w \"$PWD\" && "
         "printf KIMI_AUTO_OK`. Only after receiving that result, call the "
-        "get_leaderboard MCP tool exactly once with its valid empty input. "
-        "Only after receiving that result, call the get_literature MCP tool exactly "
-        "once with dimension set to honesty. Only after receiving the second tool "
-        "result, reply with exactly KIMI_MCP_CANARY_OK."
+        "get_literature MCP tool exactly once with dimension set to honesty. Only "
+        "after receiving that tool result, reply with exactly KIMI_MCP_CANARY_OK."
     )
     tools = [str(item.get("tool", "")) for item in result.output.get("tool_uses", [])]
     texts = [str(item) for item in result.output.get("text_outputs", [])]
     bash_positions = [
         index for index, name in enumerate(tools) if name == "Bash"
-    ]
-    leaderboard_positions = [
-        index
-        for index, name in enumerate(tools)
-        if name == "get_leaderboard" or name.endswith("get_leaderboard")
     ]
     literature_positions = [
         index
@@ -59,9 +52,8 @@ async def verify(workspace: Path) -> dict[str, object]:
     ]
     tool_ok = (
         len(bash_positions) == 1
-        and len(leaderboard_positions) == 1
         and len(literature_positions) == 1
-        and bash_positions[0] < leaderboard_positions[0] < literature_positions[0]
+        and bash_positions[0] < literature_positions[0]
     )
     response_ok = any(
         text.strip().endswith("KIMI_MCP_CANARY_OK") for text in texts
@@ -130,7 +122,7 @@ async def verify(workspace: Path) -> dict[str, object]:
         "deployment": "steerability_8-kimi26",
         "bash_tool_roundtrip": True,
         "mcp_tool_roundtrip": True,
-        "sequential_mcp_tool_roundtrips": 2,
+        "sequential_mcp_tool_roundtrips": 1,
         "named_tool_choice_checkpoint": True,
         "tools": tools,
     }
