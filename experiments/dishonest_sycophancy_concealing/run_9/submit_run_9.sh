@@ -4,6 +4,7 @@ umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
+source "${SCRIPT_DIR}/autodata_version.env"
 AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pipelines}"
 SECRET_ENV="${AAR_RUN9_SECRET_ENV:-/storage/home/${USER}/aar-worktrees/autodata/.env}"
 FIRECRACKER_TOKEN="${AAR_RUN9_FIRECRACKER_TOKEN:-/storage/home/${USER}/aar-worktrees/autodata/.sandoq-firecracker-token}"
@@ -12,12 +13,10 @@ AAR_AUTODATA_BROKER_RUNNER="${AAR_AUTODATA_BROKER_RUNNER:-local-bwrap}"
 AAR_AUTODATA_ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-large}"
 AAR_AUTODATA_CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-16}"
 VLLM_WORKER_SHA256="913c3286e237ed2231c64de200a4bcfc65729292a05c6aa3a88100f8c0248361"
-REQUIRED_AUTODATA_SHA="34f0a22c89a2a40e605afd43f3a7b11c25003ab7"
 REUSED_BASELINE="${1:-/checkpoint/ram/aar/${USER}/honesty-sycophancy-concealing-gemma4-31b-v0/baseline_attempts/20261005T083040Z-ab488b75137b-reuse/metadata/gemma4_31b_multidimensional_baseline.json}"
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "run 9 requires branch autodata" >&2; exit 2; }
 git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || { echo "tracked worktree is dirty" >&2; exit 2; }
-[ "$(git -C "${AUTODATA_CHECKOUT}" branch --show-current)" = main ] || { echo "AutoData checkout must be on main" >&2; exit 2; }
 [ -x "${BROKER_PYTHON}" ] || { echo "missing broker Python" >&2; exit 2; }
 case "${AAR_AUTODATA_BROKER_RUNNER}" in
   local-bwrap|sandoq-firecracker) ;;
@@ -66,10 +65,13 @@ if [ "${target_enabled}" = 1 ]; then
     echo "AUTODATA_TARGET_CHECKPOINT_HASH must be a SHA-256 digest" >&2
     exit 2
   }
+  AUTODATA_TARGET_CHECKPOINT_HASH="sha256:${target_digest,,}"
+  export AUTODATA_TARGET_CHECKPOINT_HASH
 elif [ "${target_setting_count}" != 0 ]; then
   echo "AUTODATA_TARGET_* settings must be absent when AUTODATA_TARGET_ENABLED=0" >&2
   exit 2
 fi
+
 for required in "${SECRET_ENV}" "${REUSED_BASELINE}" "${SCRIPT_DIR}/snapshot_vllm_runtime.sh"; do
   [ -f "${required}" ] || { echo "missing required input: ${required}" >&2; exit 2; }
 done
@@ -92,8 +94,8 @@ done
 
 commit="$(git -C "${REPO}" rev-parse HEAD)"
 autodata_sha="$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)"
-[ "${autodata_sha}" = "${REQUIRED_AUTODATA_SHA}" ] || {
-  echo "Run 9 requires AutoData ${REQUIRED_AUTODATA_SHA}; found ${autodata_sha}" >&2
+[ "${autodata_sha}" = "${RUN9_REQUIRED_AUTODATA_SHA}" ] || {
+  echo "Run 9 requires AutoData ${RUN9_REQUIRED_AUTODATA_SHA}; found ${autodata_sha}" >&2
   exit 2
 }
 attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "${REPO}" rev-parse --short=12 HEAD)"
@@ -179,6 +181,46 @@ temporary.replace(path)
 PY
 fi
 
+training_data_contract="${attempt_dir}/metadata/autodata-training-data-contract.json"
+"${REPO}/.venv/bin/python" - "${policy}" "${training_data_contract}" <<'PY'
+import json
+import pathlib
+import sys
+
+policy_path = pathlib.Path(sys.argv[1])
+destination = pathlib.Path(sys.argv[2])
+environment = json.loads(policy_path.read_text(encoding="utf-8"))["required_solve_env"]
+target_required = environment["AUTODATA_TARGET_ENABLED"] == "1"
+target = {"required": target_required}
+if target_required:
+    target.update(
+        model=environment["AUTODATA_TARGET_MODEL"],
+        deployment_id=environment["AUTODATA_TARGET_DEPLOYMENT_ID"],
+        checkpoint_hash=environment["AUTODATA_TARGET_CHECKPOINT_HASH"],
+    )
+contract = {
+    "schema": "aar.autodata.training-data-contract/v1",
+    "training_objective": "sft",
+    "required_item_fields": ["prompt", "response"],
+    "required_rows": 1000,
+    "minimum_successful_task_fraction": 0.95,
+    "judge_rubric_version": "run9-axis-conditioned-v2",
+    "generator": {
+        "model": environment["AUTODATA_GENERATOR_MODEL"],
+        "deployment_id": environment["AUTODATA_GENERATOR_DEPLOYMENT_ID"],
+    },
+    "judge": {"model": environment["AUTODATA_JUDGE_MODEL"]},
+    "target": target,
+}
+destination.write_text(
+    json.dumps(contract, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+)
+destination.chmod(0o600)
+PY
+"${REPO}/.venv/bin/python" -m aar.infrastructure.autodata_contract \
+  --contract "${training_data_contract}" \
+  --campaign-policy "${policy}" >/dev/null
+
 export LLM_UNCERTAINTY_SRC="${REPO}/data/LLM-Uncertainty-Bench/data"
 export LLM_UNCERTAINTY_SOURCE_MANIFEST="${REPO}/data/LLM-Uncertainty-Bench/.aar-source.json"
 export AAR_RUNTIME_ROOT="${attempt_dir}"
@@ -192,6 +234,7 @@ export AAR_AUTODATA_BROKER_PYTHON="${BROKER_PYTHON}"
 export AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE="${FIRECRACKER_TOKEN}"
 export AAR_AUTODATA_MODEL_ENV_FILE="${model_env}"
 export AAR_AUTODATA_CAMPAIGN_POLICY="${policy}"
+export AAR_AUTODATA_TRAINING_DATA_CONTRACT="${training_data_contract}"
 export AAR_AUTODATA_CAPABILITY="${capability}"
 export AAR_AUTODATA_APPROVAL_PRIVATE_KEY="${approval_private}"
 export AAR_AUTODATA_APPROVAL_PUBLIC_KEY="${approval_public}"

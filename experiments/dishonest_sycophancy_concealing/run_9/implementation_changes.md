@@ -770,7 +770,8 @@ run, but it is operationally necessary for repeatability at this scale.
 
 The next-launch order is:
 
-1. Pin bundled AutoData commit `34f0a22`.
+1. Pin bundled AutoData commit `823c594` (which includes the earlier
+   `34f0a22` SQLite fix).
 2. Use one lifecycle driver containing the singleton supervisor.
 3. Align native budgets, phase hard ceilings, shutdown grace, and the progress
    watchdog.
@@ -905,3 +906,89 @@ This changes runtime compatibility, not the scientific training objective.
 Nevertheless, any already approved generated method must receive a refreshed
 approval binding before a full training submission because its executable code
 digest changed.
+
+## Production finalization, contracts, and reusable datasets
+
+Five safeguards were added for future launches after the active attempt exposed
+avoidable production work. The running attempt is not hot-swapped; these changes
+apply to launches pinned to the reviewed AutoData commit
+`823c5948854df14664f3168bc5e6c49a2cecb975`.
+
+### One exact AutoData revision in every launcher
+
+All Run 9 launch entry points source `autodata_version.env` and refuse to run
+unless the AutoData checkout is exactly the pinned SHA. The pin includes SQLite
+write serialization, selective finalization/recovery, the offline plugin bundle,
+and the new completion policy. Branch names are no longer treated as sufficient:
+a branch can move, while a full SHA identifies immutable contents.
+
+### Stop production when rows and coverage are sufficient
+
+AutoData production executions may now declare:
+
+```json
+"finalization": {
+  "minimum_generated_items": 1000,
+  "minimum_successful_task_fraction": 0.95
+}
+```
+
+After a complete source-corpus pass, AutoData counts retained generated items,
+covered source tasks, and successful source tasks. If both thresholds hold, it
+finalizes immediately, even if a small number of source tasks failed. If they do
+not hold, only failed or empty tasks are retried. The default remains strict
+all-task success when no policy is declared, so existing users do not silently
+receive weaker completion semantics.
+
+For the observed 1,250-task production, 1,227 task successes and 1,119 accepted
+rows would satisfy the Run 9 policy after the first pass. The old build instead
+scheduled a second attempt for hundreds of already resolved tasks.
+
+### Validate the data contract before generation
+
+Each launch now creates an operator-owned
+`aar.autodata.training-data-contract/v1`. It fixes:
+
+- the objective and row schema: SFT uses `prompt/response`; DPO uses
+  `prompt/chosen/rejected`;
+- required accepted rows and successful-task coverage;
+- the judge rubric version;
+- generator and judge model identities; and
+- whether target probing is required, including the exact target model,
+  deployment, and checkpoint digest.
+
+The pipeline must contain an identical protected contract. The lifecycle
+supervisor compares it with the campaign policy and production completion policy
+before calling native `execution create`. Exported rows are checked again at the
+training boundary, so a recipe that declares one contract but emits another is
+still rejected.
+
+### Reissue matching consumption receipts safely
+
+Single-dataset and campaign loaders now share an atomic, lock-protected receipt
+writer. An existing receipt is reusable only when its complete stable binding
+matches: schema, execution IDs, dataset digests, row counts, objective, rubric,
+models, threshold, and target requirement. A matching receipt is atomically
+reissued with the current training PID and timestamp; any content mismatch,
+unknown field, symlink, or malformed JSON fails closed. This makes a safe training
+retry idempotent without allowing a stale receipt to authorize changed data.
+
+### Digest-verified cross-run reuse
+
+`autodata_lifecycle create-reuse-handoff` creates a v2 handoff that references a
+previous native production export instead of copying or regenerating it. Reuse
+requires all of the following:
+
+- the original meta-to-production lineage still passes native-state verification;
+- the source state, production manifest, contract, and dataset match recorded
+  SHA-256 digests;
+- the source state is explicitly operator-trusted through
+  `AAR_AUTODATA_REUSE_STATE`;
+- every row satisfies the current objective/schema, rubric, row-count, and model
+  provenance contract; and
+- training writes a new run-local consumption receipt.
+
+Consequently, a compatible 1,250-row dataset can be reused without another Kimi,
+Gemma, and Luna production pass. A legacy dataset with the wrong rubric, missing
+target provenance, or an SFT/DPO schema mismatch is rejected rather than silently
+relabelled.

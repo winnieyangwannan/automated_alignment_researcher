@@ -76,6 +76,10 @@ Job IDs are attempt-specific operational metadata, not reusable configuration.
 - Required retained judge-accepted rows: **1,000**.
 - Production source-task ceiling: **2,000** when additional headroom is needed.
 - Per-execution task concurrency: **16**.
+- Production completion: **1,000 accepted rows** and at least **95% successful
+  source-task coverage** after a complete corpus pass.
+- Required AutoData revision for new launches:
+  `823c5948854df14664f3168bc5e6c49a2cecb975`.
 
 The intended target-aware row flow is:
 

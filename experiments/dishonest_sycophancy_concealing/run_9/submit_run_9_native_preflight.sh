@@ -4,6 +4,7 @@ umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
+source "${SCRIPT_DIR}/autodata_version.env"
 AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pipelines}"
 SECRET_ENV="${AAR_RUN9_SECRET_ENV:-/storage/home/${USER}/aar-worktrees/autodata/.env}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
@@ -13,8 +14,8 @@ CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-16}"
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "preflight requires branch autodata" >&2; exit 2; }
 git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || { echo "tracked AAR worktree is dirty" >&2; exit 2; }
-[ "$(git -C "${AUTODATA_CHECKOUT}" branch --show-current)" = main ] || { echo "AutoData checkout must be on main" >&2; exit 2; }
 git -C "${AUTODATA_CHECKOUT}" diff --quiet && git -C "${AUTODATA_CHECKOUT}" diff --cached --quiet || { echo "tracked AutoData worktree is dirty" >&2; exit 2; }
+[ "$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)" = "${RUN9_REQUIRED_AUTODATA_SHA}" ] || { echo "native preflight requires AutoData ${RUN9_REQUIRED_AUTODATA_SHA}" >&2; exit 2; }
 [ "${RUNNER}" = local-bwrap ] || { echo "native preflight requires local-bwrap" >&2; exit 2; }
 [ "${CONCURRENCY}" = 16 ] || { echo "native preflight requires production concurrency 16" >&2; exit 2; }
 [ -x "${BROKER_PYTHON}" ] || { echo "missing broker Python" >&2; exit 2; }

@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 RUN9 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_9"
 
@@ -174,7 +173,6 @@ def test_run9_keeps_the_hot_broker_database_on_node_local_storage() -> None:
 def test_run9_uses_one_supervised_node_local_autodata_lifecycle() -> None:
     chain = (ROOT / "scripts" / "slurm_aar_chain.sh").read_text()
     submit_train = (ROOT / "scripts" / "submit_train_job.sh").read_text()
-    submitter = (RUN9 / "submit_run_9.sh").read_text()
     pipeline = (RUN9 / "run_9_pipeline.sbatch").read_text()
     prompt = (ROOT / "aar" / "research_loop" / "prompt_safety.jinja2").read_text()
 
@@ -195,4 +193,13 @@ def test_run9_uses_one_supervised_node_local_autodata_lifecycle() -> None:
     assert "Never add `v2`, `prod2`" in prompt
     assert "Never register the workspace's automatically created" in prompt
     assert "AAR_AUTODATA_RETAINED_STATE" in prompt
-    assert "34f0a22c89a2a40e605afd43f3a7b11c25003ab7" in submitter
+    version = (RUN9 / "autodata_version.env").read_text()
+    assert "823c5948854df14664f3168bc5e6c49a2cecb975" in version
+    for launcher in (
+        "submit_run_9.sh",
+        "submit_run_9_native_preflight.sh",
+        "submit_run_9_capacity_canary.sh",
+    ):
+        text = (RUN9 / launcher).read_text()
+        assert "autodata_version.env" in text
+        assert "RUN9_REQUIRED_AUTODATA_SHA" in text
