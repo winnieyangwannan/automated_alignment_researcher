@@ -96,12 +96,24 @@ class AutoDataCampaignPolicyTest(unittest.TestCase):
                 "aar_8-kimi26",
             )
             self.assertEqual(
+                policy["required_solve_env"]["AUTODATA_GENERATOR_MAX_INPUT"],
+                "196608",
+            )
+            self.assertEqual(
                 policy["required_solve_env"]["AUTODATA_GENERATOR_MAX_OUTPUT"],
                 "65536",
             )
             self.assertEqual(
+                policy["required_solve_env"]["AUTODATA_JUDGE_MAX_INPUT"],
+                "1000000",
+            )
+            self.assertEqual(
                 policy["required_solve_env"]["AUTODATA_JUDGE_MAX_OUTPUT"],
                 "65536",
+            )
+            self.assertEqual(
+                policy["required_solve_env"]["AUTODATA_TARGET_MAX_INPUT"],
+                "196608",
             )
             self.assertEqual(
                 policy["required_solve_env"]["AUTODATA_TARGET_MAX_OUTPUT"],

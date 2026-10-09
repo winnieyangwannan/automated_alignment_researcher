@@ -194,7 +194,11 @@ The retained submission and full-launch manifests must record
 it is not the AAR researcher.
 
 Run 13 pins the generator, target, and judge output ceilings to 65,536 tokens,
-the largest ceiling supported end-to-end by the recipe. This prevents the
-small historical 768/512-token request budgets from truncating structured
-generator or judge JSON. Existing signed campaign policies remain immutable;
-the larger ceilings take effect only in a fresh attempt.
+the largest ceiling supported end-to-end by the recipe. Generator and target
+input ceilings are 196,608 tokens, leaving the full 65,536-token output budget
+inside their verified 262,144-token context windows. The Luna judge input
+ceiling is the recipe maximum of 1,000,000 tokens because Model API does not
+publish a lower limit for that route. This prevents the small historical
+4,096/8,192-token input and 768/512-token output budgets from rejecting or
+truncating structured calls. Existing signed campaign policies remain
+immutable; the larger ceilings take effect only in a fresh attempt.
