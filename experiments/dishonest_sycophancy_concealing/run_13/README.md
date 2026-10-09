@@ -169,5 +169,21 @@ or stale-checkpoint routing fails closed.
 
 Run 13 uses the temporary one-day deployment
 `winnieyangwn-run13-gemma4-cshc` only to prove this attachment mechanism. A
-full-chain implementation should maintain the stable logical lane for the
-chain's complete run and rotate its verified backend after each promotion.
+full run uses `submit_run_13_full.sh` to launch five isolated Claude Opus 4.8
+research chains (`alpha` through `epsilon`). Each chain targets five durable
+score/result pairs and owns its evaluator, AutoData state, binding history,
+merged-checkpoint directory, and logical Gemma target lane. The trusted
+`run_13_chain_controller.sbatch` promotes only eligible adapters, launches a
+new immutable target deployment, validates the new binding, and retires the
+prior deployment only after the replacement is serving.
+
+Launch the full run from the clean synchronized HPC `autodata` worktree:
+
+```bash
+bash experiments/dishonest_sycophancy_concealing/run_13/submit_run_13_full.sh
+```
+
+The retained submission and full-launch manifests must record
+`research_backend=claude`, `research_model=claude-opus-4-8`, `chains=5`, and
+`target_pairs_per_chain=5`. Kimi-K2.6 remains the AutoData example generator;
+it is not the AAR researcher.

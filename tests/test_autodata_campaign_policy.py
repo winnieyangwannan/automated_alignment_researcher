@@ -31,6 +31,30 @@ class AutoDataCampaignPolicyTest(unittest.TestCase):
         self.assertIn("AAR_IDEA_UID_OVERRIDE:-", chain)
         self.assertIn("AAR_IDEA_UID_OVERRIDE AAR_RESUME_APPROVED_PROPOSAL", runtime)
 
+    def test_run13_full_run_uses_claude_and_five_isolated_chains(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        run13 = root / "experiments/dishonest_sycophancy_concealing/run_13"
+        submitter = (run13 / "submit_run_13_full.sh").read_text()
+        pipeline = (run13 / "run_13_full_pipeline.sbatch").read_text()
+        controller = (run13 / "run_13_chain_controller.sbatch").read_text()
+
+        self.assertIn("AAR_AGENT_BACKEND=claude", submitter)
+        self.assertIn("AAR_AGENT_MODEL=claude-opus-4-8", submitter)
+        self.assertIn(
+            "AAR_AGENT_BACKEND=claude AAR_AGENT_MODEL=claude-opus-4-8",
+            pipeline,
+        )
+        self.assertIn("for seed in alpha beta gamma delta epsilon", pipeline)
+        self.assertIn('AAR_IDEA_UID_OVERRIDE="run13-${seed}-iteration-1"', pipeline)
+        self.assertIn("AAR_RESUME_APPROVED_PROPOSAL=0", pipeline)
+        self.assertIn(
+            'AAR_IDEA_UID_OVERRIDE="run13-${SEED}-iteration-${next_iteration}"',
+            controller,
+        )
+        self.assertIn("AAR_RESUME_APPROVED_PROPOSAL=1", controller)
+        self.assertIn("AAR_RUN13_CHECKPOINT_ROOT", pipeline)
+        self.assertIn("AAR_RUN13_CHECKPOINT_ROOT", controller)
+
     def test_base_target_round_trip_and_policy(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
