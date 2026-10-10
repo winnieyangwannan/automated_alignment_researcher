@@ -237,6 +237,8 @@ def test_run9_chain_can_route_kimi_through_the_authenticated_loopback_bridge() -
     assert 'environment["AUTODATA_GENERATOR_HOST_HEADER"] = ""' in chain
     assert 'environment.setdefault("AUTODATA_TARGET_ENABLED", "0")' in chain
     assert 'export AAR_AUTODATA_CAMPAIGN_POLICY="${_autodata_repaired_policy}"' in chain
+    assert "aar.infrastructure.autodata_resume_ports" in chain
+    assert "reusing retained AutoData loopback ports" in chain
     assert 'kill "${_autodata_bridge_pid}"' in chain
     assert "AAR_KIMI_PROXY_INFO" in runtime
     assert 'export AAR_KIMI_PROXY_INFO="${KIMI_PROXY_INFO}"' in submitter

@@ -211,14 +211,30 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   _autodata_capability_file="${_autodata_root}/capability"
   printf '%s\n' "${AAR_AUTODATA_CAPABILITY}" > "${_autodata_capability_file}"
   chmod 600 "${_autodata_capability_file}"
-  _autodata_port=$(( 10000 + (${SLURM_JOB_ID:-8791} % 40000) ))
+  _autodata_resume_ports="$(PYTHONPATH="${REPO}${PYTHONPATH:+:${PYTHONPATH}}" \
+    "${PY}" -m aar.infrastructure.autodata_resume_ports \
+      --state "${AAR_AUTODATA_STATE}")"
+  _autodata_retained_port="$(jq -r '.broker_port // empty' \
+    <<<"${_autodata_resume_ports}")"
+  _autodata_retained_bridge_port="$(jq -r '.generator_bridge_port // empty' \
+    <<<"${_autodata_resume_ports}")"
+  if [ -n "${_autodata_retained_port}" ]; then
+    _autodata_port="${_autodata_retained_port}"
+    echo "[aar] reusing retained AutoData loopback ports for session recovery"
+  else
+    _autodata_port=$(( 10000 + (${SLURM_JOB_ID:-8791} % 40000) ))
+  fi
   export AAR_AUTODATA_BROKER_URL="http://127.0.0.1:${_autodata_port}"
   if [ -n "${AAR_KIMI_PROXY_INFO:-}" ]; then
     [ -f "${AAR_KIMI_PROXY_INFO}" ] || {
       echo "[aar] ERROR: missing Kimi proxy contract: ${AAR_KIMI_PROXY_INFO}" >&2
       exit 2
     }
-    _autodata_bridge_port=$(( 50000 + (${SLURM_JOB_ID:-8791} % 15000) ))
+    if [ -n "${_autodata_retained_bridge_port}" ]; then
+      _autodata_bridge_port="${_autodata_retained_bridge_port}"
+    else
+      _autodata_bridge_port=$(( 50000 + (${SLURM_JOB_ID:-8791} % 15000) ))
+    fi
     _autodata_runtime="${TEAM_DIR}/autodata/runtime/${SLURM_JOB_ID:-$$}"
     mkdir -p "${_autodata_runtime}"
     chmod 700 "${TEAM_DIR}/autodata/runtime" "${_autodata_runtime}"
@@ -320,6 +336,8 @@ PY
   fi
   unset _autodata_broker_args _autodata_broker_database_root \
     _autodata_capability_file _autodata_probe _autodata_port \
+    _autodata_resume_ports _autodata_retained_port \
+    _autodata_retained_bridge_port \
     _autodata_native_database_root
 fi
 
