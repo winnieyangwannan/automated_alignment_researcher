@@ -70,6 +70,41 @@ class KimiAgentTest(unittest.TestCase):
             self.assertFalse(Path(f"/proc/{parent_pid}").exists())
             self.assertFalse(Path(f"/proc/{child_pid}").exists())
 
+    def test_required_completion_resumes_after_bounded_turn_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cli = root / "kimi"
+            cli.write_text(
+                f"#!{sys.executable}\n"
+                "import json, os, sys, time\n"
+                "from pathlib import Path\n"
+                "counter = Path(os.environ['KIMI_CODE_HOME']) / 'timeout-calls'\n"
+                "call = int(counter.read_text()) + 1 if counter.exists() else 1\n"
+                "counter.write_text(str(call))\n"
+                "if call == 1:\n"
+                "  time.sleep(30)\n"
+                "else:\n"
+                "  assert '--continue' in sys.argv\n"
+                "  print(json.dumps({'role': 'assistant', 'content': 'recovered', "
+                "'tool_calls': [{'function': {'name': "
+                "'mcp__server-api-tools__share_finding', 'arguments': '{}'}}]}))\n"
+            )
+            cli.chmod(0o755)
+            result = asyncio.run(
+                KimiAgent(
+                    "test-agent",
+                    root,
+                    cli_path=str(cli),
+                    completion_tool="share_finding",
+                    max_continuations=2,
+                    turn_timeout_seconds=0.2,
+                ).execute("complete the task")
+            )
+
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(result.output["continuations"], 1)
+        self.assertEqual(result.output["result_message"], "recovered")
+
     def test_only_current_session_proposal_owns_persistent_training_state(self) -> None:
         agent = KimiAgent("test-agent", Path.cwd(), cli_path="/bin/true")
         self.assertFalse(agent._submitted_proposal_in_output({"tool_uses": []}))
@@ -1251,6 +1286,11 @@ class KimiAgentTest(unittest.TestCase):
                 self.assertIn("autodata.py", bootstrapped_prompt)
                 self.assertIn(f"status {workspace_id}", bootstrapped_prompt)
                 self.assertIn("remain in this same turn", bootstrapped_prompt)
+                self.assertIn("action begin ACTION_ID", bootstrapped_prompt)
+                self.assertIn("native Write tool", bootstrapped_prompt)
+                self.assertIn(
+                    "Never embed action-result JSON in Bash", bootstrapped_prompt
+                )
                 self.assertEqual(agent._continuation_tool(output), "Bash")
 
                 with patch.dict(

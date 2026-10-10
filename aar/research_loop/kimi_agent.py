@@ -351,9 +351,25 @@ class KimiAgent:
                     command.extend(
                         ["--prompt", current_prompt, "--output-format", "stream-json"]
                     )
-                    return_code, stderr, new_tool_uses = await self._run_command(
-                        command, env, output
-                    )
+                    try:
+                        return_code, stderr, new_tool_uses = await self._run_command(
+                            command, env, output
+                        )
+                    except RuntimeError as error:
+                        resumable_timeout = (
+                            self.completion_tool is not None
+                            and str(error).startswith("Kimi Code turn exceeded ")
+                        )
+                        if not resumable_timeout or (
+                            continuation_count >= self.max_continuations
+                        ):
+                            raise
+                        continuation_count += 1
+                        print(
+                            "[Kimi] timed-out turn terminated; resuming persisted "
+                            f"session ({continuation_count}/{self.max_continuations})"
+                        )
+                        continue
                     iteration_count += new_tool_uses
                     if return_code != 0:
                         detail = stderr or self._event_error(output["raw_messages"])
@@ -704,6 +720,13 @@ class KimiAgent:
                     "workflow; do not stop after describing the next tool call. For "
                     "approve_grounding, approve_baseline, or approve_resources, call "
                     "review_autodata_action with the exact action ID instead. The "
+                    "ordinary native protocol is exactly `action begin ACTION_ID`, "
+                    "perform only the returned instructions and allowed edits, use "
+                    "the native Write tool to create a valid JSON result file at "
+                    "`/tmp/aar-autodata-ACTION_ID-result.json`, then call `action "
+                    "complete ACTION_ID --lease-token TOKEN --result RESULT_FILE`. "
+                    "Never embed action-result JSON in Bash, a heredoc, printf, echo, "
+                    "or inline Python. "
                     "lifecycle supervisor alone calls workspace/execution step. "
                     "Continue meta-optimization and production until the verified "
                     "training-handoff exists; emit real tool calls, not planning prose."

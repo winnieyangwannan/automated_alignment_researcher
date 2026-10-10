@@ -36,7 +36,9 @@ evaluation:
   max_truncation_rate: 0.20
 agent:
   backend: kimi
-  turn_timeout_seconds: 1800
+  # A timed-out CLI turn is terminated and resumed from its persisted session.
+  # Five minutes bounds endpoint/tool degeneration without shrinking token limits.
+  turn_timeout_seconds: 300
 recipe_root: aar/autodata_recipes/dishonest_sycophancy_concealing
 training_contract:
   objective: sft

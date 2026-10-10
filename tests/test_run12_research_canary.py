@@ -93,7 +93,7 @@ def test_run12_operational_defaults_flow_from_autodata_yaml() -> None:
     }
     assert run_config["agent"] == {
         "backend": "kimi",
-        "turn_timeout_seconds": 1800,
+        "turn_timeout_seconds": 300,
     }
     for name in (
         "AAR_RUN_STORAGE_ROOT",

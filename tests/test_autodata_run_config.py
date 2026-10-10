@@ -96,7 +96,7 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
     assert "export EVAL_MAX_TRUNCATION_RATE=0.2\n" in runtime
     assert "export AAR_EXPECTED_MAX_TRUNCATION_RATE=0.2\n" in runtime
     assert "export AAR_AGENT_BACKEND=kimi\n" in runtime
-    assert "export AAR_KIMI_TURN_TIMEOUT_SECONDS=1800\n" in runtime
+    assert "export AAR_KIMI_TURN_TIMEOUT_SECONDS=300\n" in runtime
     validated = validate_compiled_config(
         output / "resolved-config.yaml",
         output / "campaign-policy.json",
@@ -193,5 +193,5 @@ def test_inspect_reports_static_yaml_values() -> None:
         "evaluation_memory": "0",
         "max_truncation_rate": 0.2,
         "agent_backend": "kimi",
-        "turn_timeout_seconds": 1800,
+        "turn_timeout_seconds": 300,
     }
