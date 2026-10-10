@@ -13,6 +13,7 @@ RUNNER="${AAR_AUTODATA_BROKER_RUNNER:-local-bwrap}"
 ENVIRONMENT="${1:-oci-runner-firecracker-medium}"
 CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-24}"
 KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-/checkpoint/ram/shared/vllm_deployments_v2/winnieyangwn-kimi26/proxy_info.json}"
+SLURM_DEPENDENCY="${AAR_SLURM_DEPENDENCY:-}"
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "canary requires branch autodata" >&2; exit 2; }
 git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || { echo "tracked AAR worktree is dirty" >&2; exit 2; }
@@ -30,6 +31,10 @@ case "${CONCURRENCY}" in
   ''|*[!0-9]*|0) echo "capacity-canary concurrency must be in [1,64]" >&2; exit 2 ;;
 esac
 [ "${CONCURRENCY}" -le 64 ] || { echo "capacity-canary concurrency must be in [1,64]" >&2; exit 2; }
+if [ -n "${SLURM_DEPENDENCY}" ] && [[ ! "${SLURM_DEPENDENCY}" =~ ^after(any|ok):[0-9]+$ ]]; then
+  echo "capacity-canary dependency must be afterany:<job-id> or afterok:<job-id>" >&2
+  exit 2
+fi
 if [ "${RUNNER}" = local-bwrap ]; then
   GENERATOR_URL="http://fair-cw-use2-1-ingress-slurm-ingress/v1"
   GENERATOR_HOST_HEADER="ram-inference-gateway.ingress."
@@ -111,7 +116,11 @@ export AAR_AUTODATA_MODEL_ENV_FILE="${model_env}"
 export AAR_AUTODATA_CAMPAIGN_POLICY="${policy}"
 export AAR_KIMI_PROXY_INFO="${kimi_proxy_info}"
 
-job_id="$(sbatch --parsable --output="${root}/slurm-%j.out" --export=ALL "${SCRIPT_DIR}/run_9_capacity_canary.sbatch")"
+sbatch_args=(--parsable --output="${root}/slurm-%j.out" --export=ALL)
+if [ -n "${SLURM_DEPENDENCY}" ]; then
+  sbatch_args+=(--dependency="${SLURM_DEPENDENCY}")
+fi
+job_id="$(sbatch "${sbatch_args[@]}" "${SCRIPT_DIR}/run_9_capacity_canary.sbatch")"
 printf 'job_id=%s\nroot=%s\nbroker_runner=%s\nenvironment=%s\nconcurrency=%s\naar_git_commit=%s\nautodata_git_commit=%s\n' \
   "${job_id}" "${root}" "${RUNNER}" "${ENVIRONMENT}" "${CONCURRENCY}" "$(git -C "${REPO}" rev-parse HEAD)" "$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)" \
   | tee "${root}/submission.txt"

@@ -79,6 +79,7 @@ def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
     assert 'export AAR_AUTODATA_CONCURRENCY="${CONCURRENCY}"' in submitter
     assert 'KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-' in submitter
     assert 'install -m 600 "${KIMI_PROXY_INFO}" "${kimi_proxy_info}"' in submitter
+    assert 'sbatch_args+=(--dependency="${SLURM_DEPENDENCY}")' in submitter
     assert "loopback_model_auth_bridge.py" in canary
     assert "--allow-judge-rejection" in canary
     assert '"accepted_rows_per_minute"' in canary
