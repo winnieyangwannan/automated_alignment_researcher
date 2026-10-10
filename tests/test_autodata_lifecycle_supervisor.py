@@ -64,6 +64,39 @@ def test_snapshot_is_integrity_bound_and_restorable(tmp_path: Path) -> None:
         assert connection.execute("SELECT value FROM marker").fetchone() == ("durable",)
 
 
+def test_snapshot_removes_stale_retained_sidecars(tmp_path: Path) -> None:
+    live = tmp_path / "live.db"
+    retained = tmp_path / "retained.db"
+    _state(live)
+    _state(retained)
+    wal = Path(f"{retained}-wal")
+    shm = Path(f"{retained}-shm")
+    wal.write_bytes(b"stale wal")
+    shm.write_bytes(b"stale shm")
+
+    assert snapshot_database(live, retained, reason="replace-stale") is True
+
+    assert not wal.exists()
+    assert not shm.exists()
+    with sqlite3.connect(f"file:{retained}?mode=ro", uri=True) as connection:
+        assert connection.execute("PRAGMA quick_check").fetchall() == [("ok",)]
+
+
+def test_restore_ignores_untrusted_retained_sidecars(tmp_path: Path) -> None:
+    live = tmp_path / "live.db"
+    retained = tmp_path / "retained.db"
+    restored = tmp_path / "restored.db"
+    _state(live)
+    snapshot_database(live, retained, reason="valid-main")
+    Path(f"{retained}-wal").write_bytes(b"not a sqlite wal")
+    Path(f"{retained}-shm").write_bytes(b"not sqlite shared memory")
+
+    assert restore_database(retained, restored, require_manifest=True) is True
+
+    with sqlite3.connect(restored) as connection:
+        assert connection.execute("SELECT value FROM marker").fetchone() == ("durable",)
+
+
 def test_restore_rejects_snapshot_digest_mismatch(tmp_path: Path) -> None:
     live = tmp_path / "live.db"
     retained = tmp_path / "retained.db"

@@ -23,10 +23,11 @@ execution `exe_570e1daeb28c4a7795a2be9fac37fdf9`. A speed-up counts only durable
 | ------- | ------------- | ------ | ------------ | -------- |
 | 0 | Recovery job `1795274`; AutoData `223af462`; hot native SQLite on network storage; local-bwrap concurrency 16 | Cancelled at user request after 19m07s. Durable completions stayed at 62, the new broker ledger received zero jobs, and Kimi reported zero load while `taskAttemptsUsed` rose. The CLI held many simultaneous handles to the network-mounted SQLite database. | 0 new rows / 19m07s = 0 rows/min | Confirmed orchestration/SQLite as the pre-inference bottleneck. Do not raise concurrency on this configuration. |
 | 1 | Job `1795630`; node-local native SQLite; AutoData `823c594`; local-bwrap concurrency 16; five-minute observation requested | Failed closed after 35s before model work. Restore, broker health, execution registration, and metrics succeeded, but the supervisor rejected the existing execution's 24-hour native wall budget because its default production ceiling was eight hours. The failure-status snapshot originally obscured the error by rewriting status to `running`. | 0 new rows; 0 broker jobs; no inference cost | Add an explicit 25-hour production-controller ceiling for this retained execution and preserve `failed` supervisor status after its final snapshot. Retry without changing the frozen pipeline. |
+| 2 | Job `1795675`; node-local native SQLite; AutoData `823c594`; local-bwrap concurrency 16; corrected controller ceiling | Infrastructure processed 596 new tasks in 304s with 15–16 continuously in flight and no broker failures. Outcome validation then showed that all 596 were `model_or_parse_failure` with empty provider usage: the cluster inference gateway returned HTTP 503, so no request reached healthy Kimi. The main retained snapshot is valid and contains all events, but stale network-era WAL/SHM sidecars made an ordinary reader incorrectly report corruption. | 117.6 tasks/min infrastructure throughput, but 0 accepted rows/min | Preserve and remove stale retained sidecars; make restore ignore untrusted sidecars; do not increase concurrency. Repair or safely bypass the failed Kimi gateway, then run a one-row provider canary before resuming production. |
 
 ## Next attempt
 
-Attempt 2 will use:
+The next production attempt will use:
 
 - a node-local live native SQLite database restored from an immutable retained
   snapshot;
@@ -39,6 +40,12 @@ Attempt 2 will use:
   24-hour wall budget plus its ten-minute shutdown grace;
 - a short genuine-throughput observation window before any 24/32 concurrency
   test.
+
+It will start only after one end-to-end task produces non-empty provider usage
+and a non-`model_or_parse_failure` result. At the end of Attempt 2 the shared
+gateway ingress returned HTTP 503, while deployment `winnieyangwn-kimi26`
+remained healthy with one ready endpoint and zero load. Raising AutoData
+concurrency cannot help that condition.
 
 Concurrency will increase only after completed-row throughput—not attempt
 reservations—shows that SQLite is no longer the bottleneck. The current Kimi

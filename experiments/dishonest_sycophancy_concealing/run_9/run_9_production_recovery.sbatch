@@ -19,6 +19,7 @@ MAX_SECONDS="${AAR_SPEEDUP_MAX_SECONDS:-0}"
 ATTEMPT_LABEL="${AAR_SPEEDUP_ATTEMPT_LABEL:?missing speed-up attempt label}"
 EXPECTED_AAR_SHA="${AAR_EXPECTED_AAR_SHA:?missing expected AAR revision}"
 EXPECTED_AUTODATA_SHA="${AAR_EXPECTED_AUTODATA_SHA:?missing expected AutoData revision}"
+KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:?missing Kimi proxy contract}"
 export PYTHONPATH="${REPO}${PYTHONPATH:+:${PYTHONPATH}}"
 
 TEAM_ID=run9-gemma4-31b-opus48-autodata-five-success-v1
@@ -34,19 +35,20 @@ BROKER_ROOT="${TEAM_DIR}/autodata/broker"
 BROKER_RETAINED="${BROKER_ROOT}/broker.db"
 CAPABILITY_FILE="${BROKER_ROOT}/capability"
 MODEL_ENV="${ATTEMPT_DIR}/secrets/model-api.env"
-CAMPAIGN_POLICY="${ATTEMPT_DIR}/metadata/autodata-campaign-policy.json"
+CAMPAIGN_POLICY_SOURCE="${ATTEMPT_DIR}/metadata/autodata-campaign-policy.json"
 METRICS_DIR="${TEAM_DIR}/logs/production-speedup"
 METRICS_FILE="${METRICS_DIR}/${ATTEMPT_LABEL}.jsonl"
 SUPERVISOR_LOG="${METRICS_DIR}/${ATTEMPT_LABEL}-supervisor.log"
 BROKER_LOG="${METRICS_DIR}/${ATTEMPT_LABEL}-broker.log"
 SUPERVISOR="${REPO}/scripts/autodata_lifecycle_supervisor.py"
+AUTH_BRIDGE="${REPO}/scripts/loopback_model_auth_bridge.py"
 
 case "${CONCURRENCY}" in 16|24|32) ;; *) echo "unsupported concurrency" >&2; exit 2;; esac
 case "${MAX_SECONDS}" in ''|*[!0-9]*) echo "invalid observation duration" >&2; exit 2;; esac
 [ "$(git -C "${REPO}" rev-parse HEAD)" = "${EXPECTED_AAR_SHA}" ] || { echo "AAR revision changed" >&2; exit 2; }
 [ "$(git -C "${AUTODATA}" rev-parse HEAD)" = "${EXPECTED_AUTODATA_SHA}" ] || { echo "AutoData revision changed" >&2; exit 2; }
 [ "$(git -C "${AUTODATA}" branch --show-current)" = main ] || { echo "AutoData recovery checkout must use branch main" >&2; exit 2; }
-for required in "${RETAINED_STATE}" "${CAPABILITY_FILE}" "${MODEL_ENV}" "${CAMPAIGN_POLICY}" "${SUPERVISOR}" "${BROKER_PYTHON}"; do
+for required in "${RETAINED_STATE}" "${CAPABILITY_FILE}" "${MODEL_ENV}" "${CAMPAIGN_POLICY_SOURCE}" "${SUPERVISOR}" "${AUTH_BRIDGE}" "${KIMI_PROXY_INFO}" "${BROKER_PYTHON}"; do
   [ -e "${required}" ] || { echo "missing recovery input: ${required}" >&2; exit 2; }
 done
 
@@ -55,6 +57,7 @@ chmod 700 "${METRICS_DIR}" "${ARTIFACTS}" "${WORKSPACES}"
 LOCAL_ROOT="${SLURM_TMPDIR:-/tmp}/run9-production-${SLURM_JOB_ID}"
 LOCAL_STATE="${LOCAL_ROOT}/native/state.db"
 LOCAL_BROKER="${LOCAL_ROOT}/broker/broker.db"
+CAMPAIGN_POLICY="${LOCAL_ROOT}/campaign-policy.json"
 mkdir -p "$(dirname -- "${LOCAL_STATE}")" "$(dirname -- "${LOCAL_BROKER}")"
 chmod 700 "${LOCAL_ROOT}" "$(dirname -- "${LOCAL_STATE}")" "$(dirname -- "${LOCAL_BROKER}")"
 
@@ -75,7 +78,75 @@ fi
 if [ ! -f "${RETAINED_STATE}.snapshot.json" ]; then
   "${REPO}/.venv/bin/python" "${SUPERVISOR}" snapshot --state "${RETAINED_STATE}" --retained-state "${RETAINED_STATE}" --reason speedup-bootstrap >/dev/null
 fi
+sidecar_archive="${NATIVE_DIR}/stale-sidecars/${ATTEMPT_LABEL}"
+for suffix in -wal -shm; do
+  if [ -f "${RETAINED_STATE}${suffix}" ]; then
+    mkdir -p "${sidecar_archive}"
+    chmod 700 "${NATIVE_DIR}/stale-sidecars" "${sidecar_archive}"
+    cp --preserve=mode,timestamps "${RETAINED_STATE}${suffix}" "${sidecar_archive}/state.db${suffix}"
+  fi
+done
 "${REPO}/.venv/bin/python" "${SUPERVISOR}" restore --state "${LOCAL_STATE}" --retained-state "${RETAINED_STATE}" --require-manifest >/dev/null
+"${REPO}/.venv/bin/python" - \
+  "${LOCAL_STATE}" "${CAMPAIGN_POLICY_SOURCE}" "${CAMPAIGN_POLICY}" \
+  "${EXECUTION_ID}" "${METRICS_DIR}/${ATTEMPT_LABEL}-routing.json" <<'PY'
+import datetime
+import hashlib
+import json
+import pathlib
+import sqlite3
+import sys
+
+state, source_policy, target_policy, execution_id, receipt = map(pathlib.Path, sys.argv[1:])
+execution_id_text = str(execution_id)
+bridge_url = "http://127.0.0.1:30611/v1"
+with sqlite3.connect(state) as database:
+    row = database.execute(
+        "SELECT executionJson FROM executions WHERE id=?", (execution_id_text,)
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("production execution vanished during routing repair")
+    original = json.loads(row[0])
+    repaired = json.loads(row[0])
+    environment = repaired["executor"]["non_secret_env"]
+    previous_url = environment.get("AUTODATA_GENERATOR_URL")
+    if previous_url not in {
+        "http://fair-cw-use2-1-ingress-slurm-ingress/v1",
+        bridge_url,
+    }:
+        raise RuntimeError("unexpected generator URL; refusing routing repair")
+    environment["AUTODATA_GENERATOR_URL"] = bridge_url
+    environment["AUTODATA_GENERATOR_HOST_HEADER"] = ""
+    database.execute(
+        "UPDATE executions SET executionJson=?,updatedAt=CURRENT_TIMESTAMP WHERE id=?",
+        (json.dumps(repaired, sort_keys=True, separators=(",", ":")), execution_id_text),
+    )
+
+policy = json.loads(source_policy.read_text(encoding="utf-8"))
+policy_environment = policy["required_solve_env"]
+policy_environment["AUTODATA_GENERATOR_URL"] = bridge_url
+policy_environment["AUTODATA_GENERATOR_HOST_HEADER"] = ""
+target_policy.write_text(json.dumps(policy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+target_policy.chmod(0o600)
+
+canonical = lambda value: json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+record = {
+    "schema": "aar.autodata.infrastructure-routing-repair/v1",
+    "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "execution_id": execution_id_text,
+    "field": "executor.non_secret_env.AUTODATA_GENERATOR_URL",
+    "reason": "cluster gateway returned HTTP 503; use authenticated loopback bridge to the unchanged Kimi deployment",
+    "old_execution_sha256": hashlib.sha256(canonical(original)).hexdigest(),
+    "new_execution_sha256": hashlib.sha256(canonical(repaired)).hexdigest(),
+    "old_url": previous_url,
+    "new_url": bridge_url,
+    "generator_model": environment["AUTODATA_GENERATOR_MODEL"],
+    "generator_deployment_id": environment["AUTODATA_GENERATOR_DEPLOYMENT_ID"],
+}
+receipt_path = pathlib.Path(receipt)
+receipt_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+receipt_path.chmod(0o600)
+PY
 if [ -f "${BROKER_RETAINED}" ]; then
   cp -- "${BROKER_RETAINED}" "${LOCAL_BROKER}"
   chmod 600 "${LOCAL_BROKER}"
@@ -93,6 +164,7 @@ export AAR_AUTODATA_BROKER_URL=http://127.0.0.1:30610
 
 broker_pid=''
 supervisor_pid=''
+bridge_pid=''
 snapshot_broker() {
   [ -f "${LOCAL_BROKER}" ] || return 0
   "${BROKER_PYTHON}" -c 'import os,pathlib,sqlite3,sys; source=pathlib.Path(sys.argv[1]); retained=pathlib.Path(sys.argv[2]); temporary=retained.with_name(retained.name+".tmp."+str(os.getpid())); source_db=sqlite3.connect("file:"+str(source)+"?mode=ro",uri=True); destination_db=sqlite3.connect(temporary); source_db.backup(destination_db); destination_db.close(); source_db.close(); check=sqlite3.connect("file:"+str(temporary)+"?mode=ro",uri=True); assert check.execute("PRAGMA quick_check").fetchall()==[("ok",)]; check.close(); temporary.chmod(0o600); os.replace(temporary,retained)' "${LOCAL_BROKER}" "${BROKER_RETAINED}"
@@ -110,9 +182,24 @@ cleanup() {
     wait "${broker_pid}" 2>/dev/null || true
   fi
   snapshot_broker || true
+  if [ -n "${bridge_pid}" ] && kill -0 "${bridge_pid}" 2>/dev/null; then
+    kill "${bridge_pid}" 2>/dev/null || true
+    wait "${bridge_pid}" 2>/dev/null || true
+  fi
   exit "${status}"
 }
 trap cleanup EXIT INT TERM
+
+"${REPO}/.venv/bin/python" "${AUTH_BRIDGE}" \
+  --proxy-info "${KIMI_PROXY_INFO}" --port 30611 \
+  >"${METRICS_DIR}/${ATTEMPT_LABEL}-auth-bridge.log" 2>&1 &
+bridge_pid=$!
+for _ in $(seq 1 30); do
+  if "${REPO}/.venv/bin/python" -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:30611/healthz",timeout=2).read()' 2>/dev/null; then break; fi
+  kill -0 "${bridge_pid}" 2>/dev/null || { echo "Kimi auth bridge exited during startup" >&2; exit 2; }
+  sleep 1
+done
+kill -0 "${bridge_pid}" 2>/dev/null || { echo "Kimi auth bridge is not running" >&2; exit 2; }
 
 PYTHONPATH="${AUTODATA}/src" "${BROKER_PYTHON}" -m autodata.broker.cli \
   --runner local-bwrap --root "${BROKER_ROOT}" --database "${LOCAL_BROKER}" \

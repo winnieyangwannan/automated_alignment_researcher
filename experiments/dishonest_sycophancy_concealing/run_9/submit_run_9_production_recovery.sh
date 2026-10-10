@@ -12,6 +12,7 @@ CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-16}"
 MAX_SECONDS="${AAR_SPEEDUP_MAX_SECONDS:-300}"
 ATTEMPT_LABEL="${AAR_SPEEDUP_ATTEMPT_LABEL:-attempt-1-node-local-c16}"
 EXPECTED_AUTODATA_SHA=823c5948854df14664f3168bc5e6c49a2cecb975
+KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-/checkpoint/ram/shared/vllm_deployments_v2/winnieyangwn-kimi26/proxy_info.json}"
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || {
   echo "Run 9 production recovery requires AAR branch autodata" >&2
@@ -29,6 +30,7 @@ git -C "${REPO}" diff --cached --quiet
 }
 git -C "${AUTODATA}" diff --quiet
 git -C "${AUTODATA}" diff --cached --quiet
+[ -f "${KIMI_PROXY_INFO}" ] || { echo "Kimi proxy contract is missing" >&2; exit 2; }
 case "${CONCURRENCY}" in 16|24|32) ;; *) echo "concurrency must be 16, 24, or 32" >&2; exit 2;; esac
 case "${MAX_SECONDS}" in ''|*[!0-9]*) echo "max seconds must be a non-negative integer" >&2; exit 2;; esac
 
@@ -38,7 +40,7 @@ mkdir -p "${logs}"
 chmod 700 "${logs}"
 job_id="$(sbatch --parsable \
   --output="${logs}/${ATTEMPT_LABEL}-%j.out" \
-  --export="AAR_REPO=${REPO},AAR_RUN_ATTEMPT_DIR=${ATTEMPT_DIR},AAR_AUTODATA_CHECKOUT=${AUTODATA},AAR_AUTODATA_BROKER_PYTHON=${BROKER_PYTHON},AAR_PRODUCTION_EXECUTION_ID=${EXECUTION_ID},AAR_AUTODATA_CONCURRENCY=${CONCURRENCY},AAR_SPEEDUP_MAX_SECONDS=${MAX_SECONDS},AAR_SPEEDUP_ATTEMPT_LABEL=${ATTEMPT_LABEL},AAR_EXPECTED_AAR_SHA=${aar_sha},AAR_EXPECTED_AUTODATA_SHA=${EXPECTED_AUTODATA_SHA}" \
+  --export="AAR_REPO=${REPO},AAR_RUN_ATTEMPT_DIR=${ATTEMPT_DIR},AAR_AUTODATA_CHECKOUT=${AUTODATA},AAR_AUTODATA_BROKER_PYTHON=${BROKER_PYTHON},AAR_PRODUCTION_EXECUTION_ID=${EXECUTION_ID},AAR_AUTODATA_CONCURRENCY=${CONCURRENCY},AAR_SPEEDUP_MAX_SECONDS=${MAX_SECONDS},AAR_SPEEDUP_ATTEMPT_LABEL=${ATTEMPT_LABEL},AAR_EXPECTED_AAR_SHA=${aar_sha},AAR_EXPECTED_AUTODATA_SHA=${EXPECTED_AUTODATA_SHA},AAR_KIMI_PROXY_INFO=${KIMI_PROXY_INFO}" \
   "${SCRIPT_DIR}/run_9_production_recovery.sbatch")"
 record="${logs}/${ATTEMPT_LABEL}-submission.txt"
 printf 'job_id=%s\nattempt_label=%s\naar_commit=%s\nautodata_commit=%s\nconcurrency=%s\nmax_seconds=%s\nexecution_id=%s\n' \

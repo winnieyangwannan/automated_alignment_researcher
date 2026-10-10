@@ -127,7 +127,9 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
 
 
 def _verify_database(path: Path) -> None:
-    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as connection:
+    with sqlite3.connect(
+        f"file:{path}?mode=ro&immutable=1", uri=True
+    ) as connection:
         quick = connection.execute("PRAGMA quick_check").fetchall()
         integrity = connection.execute("PRAGMA integrity_check").fetchall()
         foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
@@ -172,6 +174,13 @@ def snapshot_database(source: Path, retained: Path, *, reason: str) -> bool:
         metadata_path = retained.with_name(f"{retained.name}.snapshot.json")
         _atomic_json(metadata_path, transition)
         os.replace(temporary, retained)
+        # A retained snapshot is a self-contained main database, not a live WAL
+        # database. Stale sidecars from an earlier network-hosted controller can
+        # otherwise be replayed against the newly published file and make a
+        # valid snapshot appear corrupt. The source is node-local in supervised
+        # mode, so these retained-path sidecars never belong to the live writer.
+        for suffix in ("-wal", "-shm"):
+            Path(f"{retained}{suffix}").unlink(missing_ok=True)
         directory_fd = os.open(retained.parent, os.O_RDONLY)
         try:
             os.fsync(directory_fd)
@@ -205,7 +214,9 @@ def restore_database(
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f"{destination.name}.tmp.{os.getpid()}")
     try:
-        with sqlite3.connect(f"file:{retained}?mode=ro", uri=True) as source_db:
+        with sqlite3.connect(
+            f"file:{retained}?mode=ro&immutable=1", uri=True
+        ) as source_db:
             with sqlite3.connect(temporary) as destination_db:
                 source_db.backup(destination_db)
         _verify_database(temporary)
