@@ -78,6 +78,7 @@ def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
     assert '"runner": "${RUNNER}"' in submitter
     assert 'export AAR_AUTODATA_CONCURRENCY="${CONCURRENCY}"' in submitter
     assert 'export AAR_AUTODATA_CANARY_TASK_COUNT="${TASK_COUNT}"' in submitter
+    assert 'export AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS="${MODEL_REQUEST_MAX_ATTEMPTS}"' in submitter
     assert 'export AAR_AUTODATA_TARGET_BINDING="${target_binding}"' in submitter
     assert "binding.solve_environment()" in submitter
     assert 'for index in $(seq 1 "${TASK_COUNT}")' in canary

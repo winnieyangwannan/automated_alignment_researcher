@@ -13,6 +13,7 @@ RUNNER="${AAR_AUTODATA_BROKER_RUNNER:-local-bwrap}"
 ENVIRONMENT="${1:-oci-runner-firecracker-medium}"
 CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-64}"
 TASK_COUNT="${AAR_AUTODATA_CANARY_TASK_COUNT:-${CONCURRENCY}}"
+MODEL_REQUEST_MAX_ATTEMPTS="${AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS:-1}"
 KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-/checkpoint/ram/shared/vllm_deployments_v2/winnieyangwn-kimi26/proxy_info.json}"
 TARGET_BINDING_SOURCE="${AAR_AUTODATA_TARGET_BINDING:-}"
 SLURM_DEPENDENCY="${AAR_SLURM_DEPENDENCY:-}"
@@ -40,6 +41,10 @@ esac
   echo "capacity-canary task count must be in [concurrency,512]" >&2
   exit 2
 }
+case "${MODEL_REQUEST_MAX_ATTEMPTS}" in
+  1|2|3|4|5) ;;
+  *) echo "model request max attempts must be in [1,5]" >&2; exit 2 ;;
+esac
 if [ -n "${SLURM_DEPENDENCY}" ] && [[ ! "${SLURM_DEPENDENCY}" =~ ^after(any|ok):[0-9]+$ ]]; then
   echo "capacity-canary dependency must be afterany:<job-id> or afterok:<job-id>" >&2
   exit 2
@@ -116,7 +121,7 @@ cat > "${policy}" <<EOF
     "AUTODATA_JUDGE_TIMEOUT": "90",
     "AUTODATA_JUDGE_INPUT_USD_PER_MILLION": "1",
     "AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": "4",
-    "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "1"
+    "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "${MODEL_REQUEST_MAX_ATTEMPTS}"
   }
 }
 EOF
@@ -155,6 +160,7 @@ export AAR_AUTODATA_GENERATOR_HOST_HEADER="${GENERATOR_HOST_HEADER}"
 export AAR_AUTODATA_ENVIRONMENT="${ENVIRONMENT}"
 export AAR_AUTODATA_CONCURRENCY="${CONCURRENCY}"
 export AAR_AUTODATA_CANARY_TASK_COUNT="${TASK_COUNT}"
+export AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS="${MODEL_REQUEST_MAX_ATTEMPTS}"
 export AAR_AUTODATA_BROKER_PYTHON="${BROKER_PYTHON}"
 export AAR_AUTODATA_CAPABILITY_FILE="${capability_file}"
 export AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE="${FIRECRACKER_TOKEN}"
@@ -168,7 +174,7 @@ if [ -n "${SLURM_DEPENDENCY}" ]; then
   sbatch_args+=(--dependency="${SLURM_DEPENDENCY}")
 fi
 job_id="$(sbatch "${sbatch_args[@]}" "${SCRIPT_DIR}/run_9_capacity_canary.sbatch")"
-printf 'job_id=%s\nroot=%s\nbroker_runner=%s\nenvironment=%s\nconcurrency=%s\ntask_count=%s\ntarget_aware=%s\naar_git_commit=%s\nautodata_git_commit=%s\n' \
-  "${job_id}" "${root}" "${RUNNER}" "${ENVIRONMENT}" "${CONCURRENCY}" "${TASK_COUNT}" "$([ -n "${target_binding}" ] && printf true || printf false)" "$(git -C "${REPO}" rev-parse HEAD)" "$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)" \
+printf 'job_id=%s\nroot=%s\nbroker_runner=%s\nenvironment=%s\nconcurrency=%s\ntask_count=%s\nmodel_request_max_attempts=%s\ntarget_aware=%s\naar_git_commit=%s\nautodata_git_commit=%s\n' \
+  "${job_id}" "${root}" "${RUNNER}" "${ENVIRONMENT}" "${CONCURRENCY}" "${TASK_COUNT}" "${MODEL_REQUEST_MAX_ATTEMPTS}" "$([ -n "${target_binding}" ] && printf true || printf false)" "$(git -C "${REPO}" rev-parse HEAD)" "$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)" \
   | tee "${root}/submission.txt"
 unset MODEL_API_KEY

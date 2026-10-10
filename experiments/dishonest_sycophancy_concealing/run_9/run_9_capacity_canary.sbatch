@@ -15,6 +15,7 @@ ROOT="${AAR_RUN9_CANARY_ROOT:?missing retained canary root}"
 ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:?missing Firecracker environment}"
 CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:?missing canary concurrency}"
 TASK_COUNT="${AAR_AUTODATA_CANARY_TASK_COUNT:?missing canary task count}"
+MODEL_REQUEST_MAX_ATTEMPTS="${AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS:?missing model request max attempts}"
 RUNNER="${AAR_AUTODATA_BROKER_RUNNER:?missing broker runner}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:?missing broker Python}"
 CAPABILITY_FILE="${AAR_AUTODATA_CAPABILITY_FILE:?missing capability file}"
@@ -149,7 +150,7 @@ for index in $(seq 1 "${TASK_COUNT}"); do
     --generator-url "${generator_url}" \
     --generator-host-header "" \
     --generator-max-output-tokens 768 \
-    --model-request-max-attempts 1 \
+    --model-request-max-attempts "${MODEL_REQUEST_MAX_ATTEMPTS}" \
     --allow-judge-rejection \
     "${target_args[@]}" \
     --timeout-seconds 1800 \
@@ -176,6 +177,7 @@ PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" - \
   "${ROOT}" "${RUNNER}" "${ENVIRONMENT}" "${CONCURRENCY}" "${TASK_COUNT}" "${failed}" \
   "${broker_database}" "${load_started_ns}" "${load_finished_ns}" <<'PY'
 import json
+import os
 import pathlib
 import sqlite3
 import sys
@@ -236,6 +238,9 @@ summary = {
     "environment": environment,
     "concurrency": concurrency,
     "task_count": task_count,
+    "model_request_max_attempts": int(
+        os.environ["AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS"]
+    ),
     "target_aware": target_aware,
     "broker_job_ids": [job["broker_job_id"] for job in jobs],
     "runner_session_ids": [job["runner_session_id"] for job in jobs],
