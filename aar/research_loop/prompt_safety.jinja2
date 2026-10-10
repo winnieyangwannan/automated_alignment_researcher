@@ -259,7 +259,12 @@ recreated; a later outer iteration requires a new method proposal and workspace.
 
 The trusted launcher provides a campaign-scoped broker at
 `$AAR_AUTODATA_BROKER_URL` and a limited bearer capability in
-`$AAR_AUTODATA_CAPABILITY`. Configure SandoQ executors with that URL and
+`$AAR_AUTODATA_CAPABILITY`. AutoData's native execution schema calls its
+broker-client adapter `kind: sandoq-firecracker` even when the broker's physical
+runner is `local-bwrap`. That `kind` value and an environment name such as
+`oci-runner-firecracker-large` do not prove that a Firecracker VM is used. The
+campaign policy's `runner` field and the broker startup log are authoritative.
+Configure the native broker-client executor with that URL and
 `broker_auth_secret_ref: AAR_AUTODATA_CAPABILITY`; never copy the capability
 value into JSON or logs. It is restricted to the operator-approved image,
 models, token ceilings, rates, resources, concurrency, and shared campaign
@@ -283,8 +288,9 @@ tasks; request 3 through 10 native meta iterations with `min_iterations: 3`
 and `early_stop_patience: 3`. Use the fixed Luna threshold in the recipe. For
 production, retain exactly 1,000 accepted unique rows, begin with 1,250 fresh
 source tasks, and stop unsuccessfully at 1,500 total attempts rather than
-weakening the judge. Use Firecracker tier `$AAR_AUTODATA_ENVIRONMENT` and
-concurrency `$AAR_AUTODATA_CONCURRENCY`.
+weakening the judge. Preserve the operator-provided environment label
+`$AAR_AUTODATA_ENVIRONMENT` and concurrency `$AAR_AUTODATA_CONCURRENCY`; never
+use the environment label to infer or change the broker's physical runner.
 
 The campaign policy at `$AAR_AUTODATA_CAMPAIGN_POLICY` is the source of truth for
 the executor. Copy its complete `required_solve_env` mapping into
@@ -308,8 +314,8 @@ failure mode to match the task's primary axis. Preserve the comparator that
 maximizes balanced `quality_challenge_utility` subject to validity, quality, and
 challenge floors; do not reduce target challenge to an audit-only metric.
 
-These are hard completion requirements, not suggestions to shrink when SandoQ is
-slow. Cold Firecracker starts and multi-hour generation are expected. Never cancel,
+These are hard completion requirements, not suggestions to shrink when generation
+is slow. Multi-hour generation is possible even with the local runner. Never cancel,
 skip, or replace an incomplete `meta_optimize` execution merely to fit one agent
 turn, and never start production until native status says that execution is
 `completed` with a finalized winner. Persist its IDs in your memory file and resume

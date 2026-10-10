@@ -32,12 +32,16 @@ def test_run9_uses_safe_ephemeral_merged_checkpoints() -> None:
     assert 'rm -rf --one-file-system -- "${cleanup_target}" "${cleanup_staging}"' in worker
 
 
-def test_run9_pins_a_configurable_broker_runner_and_safe_concurrency() -> None:
+def test_run9_pins_local_bwrap_and_safe_concurrency() -> None:
     submitter = (RUN9 / "submit_run_9.sh").read_text()
     pipeline = (RUN9 / "run_9_pipeline.sbatch").read_text()
     runtime = (ROOT / "scripts" / "aar_runtime_env.sh").read_text()
 
     assert "AAR_AUTODATA_BROKER_RUNNER:-local-bwrap" in submitter
+    assert 'AAR_AUTODATA_BROKER_RUNNER}" = local-bwrap' in submitter
+    assert "use the capacity-canary launcher for intentional Firecracker tests" in submitter
+    assert "ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud" not in submitter
+    assert "AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE" not in submitter
     assert "AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-large" in submitter
     assert "AAR_AUTODATA_CONCURRENCY:-16" in submitter
     assert '"runner": "${AAR_AUTODATA_BROKER_RUNNER}"' in submitter
@@ -46,6 +50,15 @@ def test_run9_pins_a_configurable_broker_runner_and_safe_concurrency() -> None:
     assert 'export AAR_AUTODATA_ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:?}"' in pipeline
     assert "AAR_AUTODATA_BROKER_RUNNER" in runtime
     assert "AAR_AUTODATA_ENVIRONMENT" in runtime
+
+
+def test_agent_prompt_distinguishes_native_adapter_from_physical_runner() -> None:
+    prompt = (ROOT / "aar" / "research_loop" / "prompt_safety.jinja2").read_text()
+
+    assert "broker-client adapter `kind: sandoq-firecracker`" in prompt
+    assert "do not prove that a Firecracker VM is used" in prompt
+    assert "campaign policy's `runner` field and the broker startup log are authoritative" in prompt
+    assert "Cold Firecracker starts and multi-hour generation are expected" not in prompt
 
 
 def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:

@@ -56,6 +56,10 @@ evaluator is a separate Slurm allocation and is not a second research chain.
 - AutoData broker concurrency inside the active chain: **16 tasks**.
 - AutoData broker: one campaign-scoped `local-bwrap` broker on the allocated CPU
   Slurm node.
+- AutoData's native execution JSON still names the broker-client adapter
+  `sandoq-firecracker` and retains an `oci-runner-firecracker-large` environment
+  label. Neither field identifies the physical runner; verify
+  `metadata/autodata-campaign-policy.json` or the broker startup log instead.
 - Training and protected evaluation are downstream stages; they do not create
   additional research chains.
 

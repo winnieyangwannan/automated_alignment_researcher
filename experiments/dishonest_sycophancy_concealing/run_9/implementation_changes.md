@@ -129,6 +129,29 @@ campaign cost reservations, idempotency ledger, result allowlist, and output
 secret scan. AutoData still owns corpus fan-out, budgets, retries, candidate
 history, meta-optimization, and comparison policy.
 
+### Native adapter name versus physical runner
+
+AutoData's native execution schema retains the historical executor value
+`kind: sandoq-firecracker`. In Run 9 that value identifies the client adapter
+which submits jobs to the authenticated loopback broker; it does not identify
+the broker's physical sandbox. The same execution also retains an
+`oci-runner-firecracker-large` environment label for resource-policy
+compatibility. The authoritative physical-runner evidence is instead:
+
+- `runner` in `metadata/autodata-campaign-policy.json`;
+- `broker_runner` in `metadata/submission.txt`; and
+- `runner=...` in the broker startup log.
+
+The retained Run 9 attempt reports `local-bwrap` in all three places. A recovery
+agent nevertheless described a Firecracker cold start after reading the adapter
+name and misleading prompt wording. No backend regression had occurred.
+
+Future full Run 9 launches now fail unless the broker runner is exactly
+`local-bwrap`; intentional Firecracker experiments remain available through the
+separate capacity-canary launcher. The research prompt also explains the naming
+split and forbids inferring the physical runner from the adapter kind or
+environment label.
+
 Bubblewrap removes the external VM-lease pool and the per-task VM/image
 preparation path. The switch therefore removes these failure and latency
 sources:

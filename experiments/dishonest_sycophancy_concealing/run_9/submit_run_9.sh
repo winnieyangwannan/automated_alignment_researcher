@@ -7,7 +7,6 @@ REPO="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
 source "${SCRIPT_DIR}/autodata_version.env"
 AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pipelines}"
 SECRET_ENV="${AAR_RUN9_SECRET_ENV:-/storage/home/${USER}/aar-worktrees/autodata/.env}"
-FIRECRACKER_TOKEN="${AAR_RUN9_FIRECRACKER_TOKEN:-/storage/home/${USER}/aar-worktrees/autodata/.sandoq-firecracker-token}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
 AAR_AUTODATA_BROKER_RUNNER="${AAR_AUTODATA_BROKER_RUNNER:-local-bwrap}"
 AAR_AUTODATA_ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-large}"
@@ -18,10 +17,10 @@ REUSED_BASELINE="${1:-/checkpoint/ram/aar/${USER}/honesty-sycophancy-concealing-
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "run 9 requires branch autodata" >&2; exit 2; }
 git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || { echo "tracked worktree is dirty" >&2; exit 2; }
 [ -x "${BROKER_PYTHON}" ] || { echo "missing broker Python" >&2; exit 2; }
-case "${AAR_AUTODATA_BROKER_RUNNER}" in
-  local-bwrap|sandoq-firecracker) ;;
-  *) echo "unsupported AutoData broker runner: ${AAR_AUTODATA_BROKER_RUNNER}" >&2; exit 2 ;;
-esac
+[ "${AAR_AUTODATA_BROKER_RUNNER}" = local-bwrap ] || {
+  echo "Run 9 full launches require AAR_AUTODATA_BROKER_RUNNER=local-bwrap; use the capacity-canary launcher for intentional Firecracker tests" >&2
+  exit 2
+}
 case "${AAR_AUTODATA_ENVIRONMENT}" in
   oci-runner-firecracker-small|oci-runner-firecracker-medium|oci-runner-firecracker-large|oci-runner-firecracker-xlarge) ;;
   *) echo "unsupported AutoData Firecracker environment: ${AAR_AUTODATA_ENVIRONMENT}" >&2; exit 2 ;;
@@ -29,13 +28,8 @@ esac
 case "${AAR_AUTODATA_CONCURRENCY}" in
   ''|*[!0-9]*|0) echo "AutoData concurrency must be a positive integer" >&2; exit 2 ;;
 esac
-if [ "${AAR_AUTODATA_BROKER_RUNNER}" = local-bwrap ]; then
-  AUTODATA_GENERATOR_URL="http://fair-cw-use2-1-ingress-slurm-ingress/v1"
-  AUTODATA_GENERATOR_HOST_HEADER="ram-inference-gateway.ingress."
-else
-  AUTODATA_GENERATOR_URL="https://ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud/v1"
-  AUTODATA_GENERATOR_HOST_HEADER="ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud"
-fi
+AUTODATA_GENERATOR_URL="http://fair-cw-use2-1-ingress-slurm-ingress/v1"
+AUTODATA_GENERATOR_HOST_HEADER="ram-inference-gateway.ingress."
 target_setting_names=(
   AUTODATA_TARGET_URL
   AUTODATA_TARGET_MODEL
@@ -76,11 +70,6 @@ for required in "${SECRET_ENV}" "${REUSED_BASELINE}" "${SCRIPT_DIR}/snapshot_vll
   [ -f "${required}" ] || { echo "missing required input: ${required}" >&2; exit 2; }
 done
 [ "$(stat -c %a "${SECRET_ENV}")" = 600 ] || { echo "secret env must be mode 600" >&2; exit 2; }
-if [ "${AAR_AUTODATA_BROKER_RUNNER}" = sandoq-firecracker ]; then
-  [ -f "${FIRECRACKER_TOKEN}" ] || { echo "missing Firecracker token" >&2; exit 2; }
-  [ "$(stat -c %a "${FIRECRACKER_TOKEN}")" = 600 ] || { echo "Firecracker token must be mode 600" >&2; exit 2; }
-fi
-
 export AAR_REPO="${REPO}" HARNESS_ENV="${SECRET_ENV}"
 source "${REPO}/scripts/aar_runtime_env.sh"
 for name in HF_TOKEN MODEL_API_KEY ANTHROPIC_API_KEY; do
@@ -231,7 +220,6 @@ export AAR_AUTODATA_CHECKOUT="${AUTODATA_CHECKOUT}"
 export AAR_AUTODATA_PLUGIN_ROOT="${AUTODATA_CHECKOUT}/plugin/autodata"
 export AAR_AUTODATA_SHA="${autodata_sha}"
 export AAR_AUTODATA_BROKER_PYTHON="${BROKER_PYTHON}"
-export AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE="${FIRECRACKER_TOKEN}"
 export AAR_AUTODATA_MODEL_ENV_FILE="${model_env}"
 export AAR_AUTODATA_CAMPAIGN_POLICY="${policy}"
 export AAR_AUTODATA_TRAINING_DATA_CONTRACT="${training_data_contract}"
