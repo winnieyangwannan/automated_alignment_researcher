@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN12 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_12"
@@ -20,9 +22,9 @@ def test_run12_research_canary_is_one_scored_kimi_iteration() -> None:
 def test_run12_research_canary_can_continue_with_safe_memory() -> None:
     launcher = (RUN12 / "submit_research_canary.sh").read_text()
 
-    assert 'AAR_RUN12_RESEARCH_MAX_ITERATIONS:-1' in launcher
+    assert "AAR_RUN12_RESEARCH_MAX_ITERATIONS:-1" in launcher
     assert "AAR_RUN12_RECOVERED_AGENT_LOG_DIR" in launcher
-    assert 'AAR_RUN10_RECOVERED_AGENT_LOG_DIR' in launcher
+    assert "AAR_RUN10_RECOVERED_AGENT_LOG_DIR" in launcher
 
 
 def test_run12_target_binding_accepts_a_newly_promoted_incumbent() -> None:
@@ -39,16 +41,18 @@ def test_run12_full_chain_rotates_the_training_contract_with_its_target() -> Non
     launcher = (RUN12 / "submit_run_12_full.sh").read_text()
     pipeline = (RUN12 / "run_12_full_pipeline.sbatch").read_text()
     controller = (RUN12 / "run_12_chain_controller.sbatch").read_text()
+    compiler = (ROOT / "aar" / "autodata_run_config.py").read_text()
 
     contract = "autodata-training-data-contract.json"
-    assert contract in launcher
-    assert "aar.infrastructure.autodata_contract" in launcher
+    assert "aar.autodata_run_config compile" in launcher
+    assert contract in compiler
+    assert "training_data_contract_from_campaign_policy" in compiler
     assert "AAR_AUTODATA_TRAINING_DATA_CONTRACT" in pipeline
     assert contract in controller
-    assert "aar.infrastructure.autodata_contract" in controller
-    assert controller.index("create-policy") < controller.index(
-        "aar.infrastructure.autodata_contract"
-    ) < controller.index('job="$(submit_session)"')
+    assert "aar.autodata_run_config compile" in controller
+    assert controller.index("aar.autodata_run_config compile") < controller.index(
+        'job="$(submit_session)"'
+    )
 
 
 def test_only_bootstrap_canary_may_reuse_a_verified_base_deployment() -> None:
@@ -91,22 +95,29 @@ def test_run12_uses_separate_kimi_deployments_and_maximum_token_allowances() -> 
     pipeline = (RUN12 / "run_12_full_pipeline.sbatch").read_text()
     canary_submitter = (RUN12 / "submit_run_12.sh").read_text()
     canary_job = (RUN12 / "run_12_target_canary.sbatch").read_text()
+    run_config = yaml.safe_load((RUN12 / "autodata_run.yaml").read_text())
+    profile = yaml.safe_load(
+        (ROOT / "configs/autodata/target_aware_local_v1.yaml").read_text()
+    )
 
-    assert "RESEARCHER_DEPLOYMENT=aar_8-kimi26" in launcher
-    assert "GENERATOR_DEPLOYMENT=autodata_8-kimi26" in launcher
+    assert run_config["deployments"]["researcher_kimi"] == "aar_8-kimi26"
+    assert run_config["deployments"]["generator_kimi"] == "autodata_8-kimi26"
+    assert "researcher_kimi_deployment" in launcher
+    assert "generator_kimi_deployment" in launcher
     assert 'AAR_KIMI_SERVE_DEPLOYMENT="${RESEARCHER_DEPLOYMENT}"' in launcher
     assert "--coord-qos normal --proxy-qos normal" in launcher
-    assert "--coord-qos normal --proxy-qos normal" in (
-        RUN12 / "run_12_chain_controller.sbatch"
-    ).read_text()
+    assert (
+        "--coord-qos normal --proxy-qos normal"
+        in (RUN12 / "run_12_chain_controller.sbatch").read_text()
+    )
     assert "KIMI_MODEL_MAX_OUTPUT_SIZE=65536" in launcher
     assert "KIMI_MODEL_MAX_COMPLETION_TOKENS=65536" in launcher
     assert "KIMI_MODEL_MAX_CONTEXT_SIZE=262144" in pipeline
     assert "KIMI_MODEL_MAX_OUTPUT_SIZE=65536" in pipeline
     assert "KIMI_MODEL_MAX_COMPLETION_TOKENS=65536" in pipeline
-    assert '"AUTODATA_GENERATOR_MAX_INPUT": "196608"' in canary_submitter
-    assert '"AUTODATA_GENERATOR_MAX_OUTPUT": "65536"' in canary_submitter
-    assert '"AUTODATA_JUDGE_MAX_INPUT": "1000000"' in canary_submitter
-    assert '"AUTODATA_JUDGE_MAX_OUTPUT": "65536"' in canary_submitter
-    assert "--generator-max-output-tokens 65536" in canary_job
-    assert "--judge-max-output-tokens 65536" in canary_job
+    assert profile["providers"]["generator"]["max_input_tokens"] == 196608
+    assert profile["providers"]["generator"]["max_output_tokens"] == 65536
+    assert profile["providers"]["judge"]["max_input_tokens"] == 1000000
+    assert profile["providers"]["judge"]["max_output_tokens"] == 65536
+    assert "aar.autodata_run_config compile" in canary_submitter
+    assert "--campaign-policy" in canary_job
