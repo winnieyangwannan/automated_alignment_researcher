@@ -47,7 +47,7 @@ Kimi MCP text responses are bounded to 16,000 characters. Oversized literature r
 ## Monitoring and recovery
 
 New durable attempts live under `/checkpoint/ram/aar/$USER/run10_kimi/`, as
-declared in `run.yaml`; an explicit attempt path still allows recovery of
+declared in `config/run.yaml`; an explicit attempt path still allows recovery of
 the preserved original Run 10 attempt under `/storage/home`. The same YAML
 declares the 20% truncation ceiling, maximum-node evaluator memory, Kimi backend
 and turn timeout, and quota-safe checkpoint policy. Monitoring checks Slurm

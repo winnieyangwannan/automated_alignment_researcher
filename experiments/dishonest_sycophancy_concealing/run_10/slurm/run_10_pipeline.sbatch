@@ -9,7 +9,7 @@
 set -euo pipefail
 umask 077
 
-REPO="${AAR_REPO:?submit through submit_run_10.sh}"
+REPO="${AAR_REPO:?submit through run_10/launch/submit_run_10.sh}"
 ATTEMPT_DIR="${AAR_RUN_ATTEMPT_DIR:?missing attempt}"
 EXPECTED_COMMIT="${AAR_BASELINE_GIT_COMMIT:?missing commit}"
 REUSED_BASELINE="${AAR_REUSED_BASELINE:?missing baseline}"
@@ -28,7 +28,7 @@ esac
 }
 export HF_HOME="${ATTEMPT_DIR}/cache/huggingface"
 # shellcheck disable=SC1091
-source "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/configure_run_10_environment.sh"
+source "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/config/configure_run_10_environment.sh"
 team_id_prefix="${AAR_RUN10_TEAM_ID_PREFIX:-honesty-sycophancy-concealing-gemma4_31b-kimi26-run10}"
 export AAR_TEAM_ID="${team_id_prefix}-${MODE}-${SLURM_JOB_ID}"
 if [ "${MODE}" = smoke ]; then
@@ -116,7 +116,7 @@ fi
 if [ "${MODE}" = smoke ]; then
   if [ "${RESUME_SMOKE}" = 0 ]; then
     echo "[run10] waiting for the generated method's real-GPU one-step smoke"
-    "${HARNESS_PY}" "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/monitor_method_smoke.py" \
+    "${HARNESS_PY}" "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/canary/monitor_method_smoke.py" \
       "${ATTEMPT_DIR}" --timeout-seconds 6900 --poll-seconds 10
   fi
   smoke_proof="${ATTEMPT_DIR}/metadata/method_smoke_passed.json"

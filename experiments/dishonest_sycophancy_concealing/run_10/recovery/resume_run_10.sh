@@ -6,7 +6,8 @@ umask 077
 ATTEMPT_DIR="$(realpath -e -- "${1:?usage: $0 <full-attempt-dir> [seeds]}")"
 REQUESTED_SEEDS="${2:-alpha beta gamma delta epsilon}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
+RUN10_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+REPO="$(cd -- "${RUN10_DIR}/../../.." && pwd)"
 export MODE=full
 SECRET_ENV="$(realpath -e -- "${AAR_RUN10_SECRET_ENV:-${REPO}/.env}")"
 export AAR_REPO="${REPO}" HARNESS_ENV="${SECRET_ENV}"
@@ -15,7 +16,7 @@ if [ -f "${ATTEMPT_DIR}/metadata/run.yaml" ]; then
 fi
 
 # shellcheck disable=SC1091
-source "${SCRIPT_DIR}/configure_run_10_environment.sh"
+source "${RUN10_DIR}/config/configure_run_10_environment.sh"
 export AAR_PRETRAIN_SMOKE=1
 export AAR_EVAL_WORKERS=5 AAR_EVAL_GPUS=4 AAR_EVAL_GPU_CAP=4
 export AAR_EVAL_TIME=7-00:00:00 AAR_EVAL_IDLE_SECONDS=604200

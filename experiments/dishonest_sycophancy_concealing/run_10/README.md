@@ -10,6 +10,29 @@ Run 10 is the Run 7 five-chain experiment with `Kimi-K2.6` as the research agent
 - Endpoint: `serve_api_v2` deployment `steerability_8-kimi26`, served model `Kimi-K2.6`.
 - Storage: new durable attempts default to `/checkpoint/ram/aar/$USER/run10_kimi/`; temporary merged checkpoints are node-local and removed after each evaluation. The existing Run 10 attempt remains at its original `/storage/home` path and is never moved implicitly.
 
+## Directory layout
+
+Run 10 follows the same responsibility-based layout as Run 12:
+
+```text
+run_10/
+├── config/       # Validated operational YAML and shared environment
+├── launch/       # Login-node submission entrypoint
+├── slurm/        # Scheduled pipeline payload
+├── canary/       # Endpoint, method-smoke, and lifecycle proof checks
+├── recovery/     # Selective preserved-state resume entrypoint
+├── runtime/      # Pinned Kimi installer and evaluator snapshotter
+├── analysis/     # Status utility and retained frontier outputs
+├── README.md
+├── PLAN.md
+└── PROGRESS.md
+```
+
+Shell files under `launch/`, `recovery/`, and `runtime/` are operator
+entrypoints. The `slurm/` payload runs only after allocation. Configuration,
+canary verification, and retained analysis outputs remain separate so the run
+root contains only its three durable documents.
+
 Each Kimi session dynamically runs `serve.sh generate-opencode-config steerability_8-kimi26`. Run 10 selects Kimi Code's dedicated `kimi` provider trait so multi-turn Kimi tool history uses its native encoding. A loopback request-policy proxy holds the current endpoint key in the AAR process and gives Kimi Code a non-secret local credential. The proxy adds `chat_template_kwargs.enable_thinking=false`, which is the control this vLLM deployment requires for reliable tool execution; it is enabled only for Run 10. `KIMI_AGENT_MODEL` remains unset because Kimi Code registers the environment-provided model under its own default alias.
 
 The research prompt is installed as a Kimi agent profile, so its constraints are system-level rather than user-message text. That profile disables Kimi Code's separate goal/subagent tools and asks for one compact initial literature call; AAR remains the sole owner of iteration continuation and completion.
@@ -43,7 +66,7 @@ atomic run-ID-to-Slurm-ID receipt. Repeating the same submission returns the
 existing job ID instead of creating a duplicate, and Kimi advances to polling
 only after that receipt exists.
 
-Operational policy is declared in `run.yaml`, separately from the
+Operational policy is declared in `config/run.yaml`, separately from the
 evaluator-private benchmark suite YAML. It controls the durable storage root,
 checkpoint retention policy, evaluator memory, truncation ceiling, research
 backend, and Kimi turn timeout. The shared loader validates every supported key
@@ -58,8 +81,8 @@ The Kimi MCP bridge bounds text responses at 16,000 characters. Large literature
 From the isolated HPC `multi_kimi` checkout:
 
 ```bash
-experiments/dishonest_sycophancy_concealing/run_10/install_kimi_runtime.sh
-experiments/dishonest_sycophancy_concealing/run_10/submit_run_10.sh smoke
+experiments/dishonest_sycophancy_concealing/run_10/runtime/install_kimi_runtime.sh
+experiments/dishonest_sycophancy_concealing/run_10/launch/submit_run_10.sh smoke
 ```
 
 The smoke mode first runs the CPU replay and live Kimi protocol gates. It then starts one CPU-only Kimi chain with no evaluator. Once Kimi produces an approved method, a time-bounded one-GPU job loads the real Gemma model, runs the method's real CUDA/PEFT path for one optimizer step, saves and reload-validates the adapter, and exits. Only after that proof passes does the launcher publish the holdout, stage that exact adapter, and start one four-GPU evaluator on demand. The original Kimi chain remains alive to consume the score and publish the finding.
@@ -67,8 +90,8 @@ The smoke mode first runs the CPU replay and live Kimi protocol gates. It then s
 After the on-demand evaluator produces a score/result pair:
 
 ```bash
-python experiments/dishonest_sycophancy_concealing/run_10/verify_run_10_canary.py <smoke-attempt>
-experiments/dishonest_sycophancy_concealing/run_10/submit_run_10.sh full <smoke-attempt>/metadata/canary_passed.json
+python experiments/dishonest_sycophancy_concealing/run_10/canary/verify_run_10_canary.py <smoke-attempt>
+experiments/dishonest_sycophancy_concealing/run_10/launch/submit_run_10.sh full <smoke-attempt>/metadata/canary_passed.json
 ```
 
 The full run is active only after `metadata/children.env` records five distinct evaluator IDs and five distinct research-chain IDs.
@@ -76,7 +99,7 @@ The full run is active only after `metadata/children.env` records five distinct 
 ## Monitoring
 
 ```bash
-python experiments/dishonest_sycophancy_concealing/run_10/status_run_10.py <attempt>
+python experiments/dishonest_sycophancy_concealing/run_10/analysis/status_run_10.py <attempt>
 squeue -j <launch-and-child-job-ids> -o '%.18i %.30j %.10T %.10M %R'
 ```
 
@@ -94,14 +117,14 @@ score creation timestamps to chronological per-chain session logs across
 restarts, treats a point as frontier-valid only when both the capability and
 regression gates pass, and writes PNG, SVG, and a JSON provenance snapshot.
 The committed 2026-10-10 snapshot is
-[`aar_5x50_frontier_style.svg`](aar_5x50_frontier_style.svg), with the matching
+[`aar_5x50_frontier_style.svg`](analysis/aar_5x50_frontier_style.svg), with the matching
 PNG and provenance JSON beside it.
 
 After confirming a chain is terminal or genuinely hung, resume only the affected
 seed in the same preserved attempt:
 
 ```bash
-experiments/dishonest_sycophancy_concealing/run_10/resume_run_10.sh \
+experiments/dishonest_sycophancy_concealing/run_10/recovery/resume_run_10.sh \
   /storage/home/winnieyangwn/aar-runs/run10_kimi/full_attempts/<attempt> beta
 ```
 

@@ -15,7 +15,7 @@ RUN10 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_10"
 
 
 def test_run10_config_has_quota_safe_production_defaults() -> None:
-    config = yaml.safe_load((RUN10 / "run.yaml").read_text())
+    config = yaml.safe_load((RUN10 / "config" / "run.yaml").read_text())
 
     assert config["storage"] == {
         "root": "/checkpoint/ram/aar/{user}/run10_kimi",
@@ -34,7 +34,7 @@ def test_run10_config_emits_validated_environment() -> None:
         [
             sys.executable,
             str(ROOT / "scripts" / "load_aar_run_config.py"),
-            str(RUN10 / "run.yaml"),
+            str(RUN10 / "config" / "run.yaml"),
         ],
         env={**os.environ, "USER": "test-user"},
         check=True,

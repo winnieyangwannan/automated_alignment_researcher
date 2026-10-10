@@ -6,7 +6,8 @@ umask 077
 MODE="${1:-canary}"
 case "${MODE}" in smoke|canary|full) ;; *) echo "usage: $0 smoke|canary|full [canary-proof]" >&2; exit 2;; esac
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
+RUN10_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+REPO="$(cd -- "${RUN10_DIR}/../../.." && pwd)"
 RECOVERY_BUNDLE="${AAR_RUN10_RECOVERY_BUNDLE:-/storage/home/winnieyangwn/aar-recovery/run7_20261007T004406Z-1b3303d02821/baseline_salvage}"
 RECOVERY_BUNDLE="$(realpath -e -- "${RECOVERY_BUNDLE}")"
 REUSED_BASELINE="${RECOVERY_BUNDLE}/gemma4_31b_multidimensional_baseline.json"
@@ -18,7 +19,7 @@ EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-multi_kimi}"
 KIMI_DEPLOYMENT="${AAR_KIMI_SERVE_DEPLOYMENT:-steerability_8-kimi26}"
 CANARY_ITERATIONS="${AAR_RUN10_CANARY_ITERATIONS:-1}"
 RECOVERED_AGENT_LOG_DIR="${AAR_RUN10_RECOVERED_AGENT_LOG_DIR:-}"
-export AAR_RUN_CONFIG="${AAR_RUN_CONFIG:-${SCRIPT_DIR}/run.yaml}"
+export AAR_RUN_CONFIG="${AAR_RUN_CONFIG:-${RUN10_DIR}/config/run.yaml}"
 
 [ "$(git -C "${REPO}" branch --show-current)" = "${EXPECTED_BRANCH}" ] || {
   echo "Run 10 requires branch ${EXPECTED_BRANCH}" >&2
@@ -28,7 +29,7 @@ if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; 
   echo "tracked worktree is dirty" >&2
   exit 2
 fi
-[ -z "$(git -C "${REPO}" status --porcelain --untracked-files=all -- aar benchmark_docs scripts replication pyproject.toml uv.lock "${SCRIPT_DIR}")" ] || {
+[ -z "$(git -C "${REPO}" status --porcelain --untracked-files=all -- aar benchmark_docs scripts replication pyproject.toml uv.lock "${RUN10_DIR}")" ] || {
   echo "launch-critical files are dirty" >&2; exit 2;
 }
 [ -x "${REPO}/.venv/bin/python" ] || { echo "missing worktree-local ARM64 .venv" >&2; exit 2; }
@@ -95,7 +96,7 @@ if [ -n "${RECOVERED_AGENT_LOG_DIR}" ]; then
 fi
 cp -- "${AAR_RUN_CONFIG}" "${attempt_dir}/metadata/run.yaml"
 [ -z "${CANARY_PROOF}" ] || cp -- "${CANARY_PROOF}" "${attempt_dir}/metadata/canary_passed.json"
-"${SCRIPT_DIR}/snapshot_vllm_runtime.sh" "${attempt_dir}" > "${attempt_dir}/metadata/vllm_runtime_path.txt"
+"${RUN10_DIR}/runtime/snapshot_vllm_runtime.sh" "${attempt_dir}" > "${attempt_dir}/metadata/vllm_runtime_path.txt"
 printf 'export AAR_RUNTIME_ROOT=%q\n' "${attempt_dir}" > "${attempt_dir}/attempt.env"
 
 export PATH="${NODE_ROOT}/bin:${PATH}"
@@ -122,7 +123,7 @@ if [ "${MODE}" = smoke ]; then
     "${REPO}/scripts/validate_method_contract.py" \
     >> "${attempt_dir}/metadata/cpu_replay_gate.txt"
 fi
-"${REPO}/.venv/bin/python" "${SCRIPT_DIR}/verify_kimi_endpoint.py" \
+"${REPO}/.venv/bin/python" "${RUN10_DIR}/canary/verify_kimi_endpoint.py" \
   --workspace "${REPO}" --output "${attempt_dir}/metadata/kimi_mcp_preflight.json"
 
 export AAR_RUNTIME_ROOT="${attempt_dir}" AAR_RUN_ATTEMPT_DIR="${attempt_dir}"
@@ -135,7 +136,7 @@ fi
 job_id="$(sbatch --parsable --account=ram --partition=g3 --qos=g3_ram_high \
   --cpus-per-task=16 --mem=128G --time=02:00:00 \
   --job-name="aar-run10-kimi-${MODE}-launch" --output="${attempt_dir}/logs/pipeline-%j.out" \
-  --export=ALL "${SCRIPT_DIR}/run_10_pipeline.sbatch")"
+  --export=ALL "${RUN10_DIR}/slurm/run_10_pipeline.sbatch")"
 research_chains=1; max_iterations=1; evaluator_jobs=1; evaluator_gpus=4
 if [ "${MODE}" = full ]; then
   research_chains=5; max_iterations=50; evaluator_jobs=5

@@ -7,14 +7,33 @@ ROOT = Path(__file__).resolve().parents[1]
 RUN10 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_10"
 
 
+def test_run10_uses_responsibility_based_directory_layout() -> None:
+    expected = {
+        "analysis",
+        "canary",
+        "config",
+        "launch",
+        "recovery",
+        "runtime",
+        "slurm",
+    }
+    assert expected <= {path.name for path in RUN10.iterdir() if path.is_dir()}
+    assert (RUN10 / "launch" / "submit_run_10.sh").is_file()
+    assert (RUN10 / "slurm" / "run_10_pipeline.sbatch").is_file()
+    assert (RUN10 / "config" / "run.yaml").is_file()
+
+
 def test_smoke_mode_uses_one_chain_and_no_evaluator() -> None:
     pipeline = (
-        (RUN10 / "configure_run_10_environment.sh").read_text()
-        + (RUN10 / "run_10_pipeline.sbatch").read_text()
+        (RUN10 / "config" / "configure_run_10_environment.sh").read_text()
+        + (RUN10 / "slurm" / "run_10_pipeline.sbatch").read_text()
     )
-    submitter = (RUN10 / "submit_run_10.sh").read_text()
+    submitter = (RUN10 / "launch" / "submit_run_10.sh").read_text()
 
     assert "smoke|canary|full" in submitter
+    assert 'RUN10_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"' in submitter
+    assert '${RUN10_DIR}/config/run.yaml' in submitter
+    assert '${RUN10_DIR}/slurm/run_10_pipeline.sbatch' in submitter
     assert 'AAR_START_EVAL_WORKER=0' in pipeline
     assert 'AAR_EVAL_WORKERS=0' in pipeline
     assert 'AAR_METHOD_SMOKE=1' in pipeline
@@ -47,8 +66,8 @@ def test_training_failure_handoff_contains_safe_actionable_context() -> None:
 
 
 def test_evaluator_is_launched_only_after_method_smoke_passes() -> None:
-    pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
-    verifier = (RUN10 / "verify_run_10_canary.py").read_text()
+    pipeline = (RUN10 / "slurm" / "run_10_pipeline.sbatch").read_text()
+    verifier = (RUN10 / "canary" / "verify_run_10_canary.py").read_text()
 
     smoke_wait = pipeline.index("monitor_method_smoke.py")
     evaluator_launch = pipeline.index("launch_eval_worker.sh", smoke_wait)
@@ -63,7 +82,7 @@ def test_evaluator_is_launched_only_after_method_smoke_passes() -> None:
 
 
 def test_passed_smoke_can_resume_without_research_or_training_relaunch() -> None:
-    pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
+    pipeline = (RUN10 / "slurm" / "run_10_pipeline.sbatch").read_text()
 
     assert 'RESUME_SMOKE="${AAR_RUN10_RESUME_SMOKE:-0}"' in pipeline
     assert "no research or training relaunch" in pipeline
@@ -78,7 +97,7 @@ def test_passed_smoke_can_resume_without_research_or_training_relaunch() -> None
 
 
 def test_full_mode_requires_per_method_gpu_preflight() -> None:
-    pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
+    pipeline = (RUN10 / "slurm" / "run_10_pipeline.sbatch").read_text()
 
     assert 'export AAR_PRETRAIN_SMOKE=1' in pipeline
 
@@ -128,10 +147,12 @@ def test_run10_canary_supports_bounded_recovered_continuation() -> None:
 
 
 def test_initial_launch_and_targeted_resume_share_runtime_configuration() -> None:
-    pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
-    resume = (RUN10 / "resume_run_10.sh").read_text()
-    configuration = (RUN10 / "configure_run_10_environment.sh").read_text()
-    run_config = (RUN10 / "run.yaml").read_text()
+    pipeline = (RUN10 / "slurm" / "run_10_pipeline.sbatch").read_text()
+    resume = (RUN10 / "recovery" / "resume_run_10.sh").read_text()
+    configuration = (
+        RUN10 / "config" / "configure_run_10_environment.sh"
+    ).read_text()
+    run_config = (RUN10 / "config" / "run.yaml").read_text()
     shared = "configure_run_10_environment.sh"
 
     assert shared in pipeline
@@ -143,7 +164,7 @@ def test_initial_launch_and_targeted_resume_share_runtime_configuration() -> Non
 
 
 def test_targeted_resume_is_budgeted_and_duplicate_safe() -> None:
-    resume = (RUN10 / "resume_run_10.sh").read_text()
+    resume = (RUN10 / "recovery" / "resume_run_10.sh").read_text()
     shared = (ROOT / "scripts" / "resume_aar_team.sh").read_text()
 
     assert 'exec "${REPO}/scripts/resume_aar_team.sh"' in resume
