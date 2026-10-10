@@ -11,7 +11,14 @@ SECRET_ENV="$(realpath -e -- "${AAR_RUN12_SECRET_ENV:-${REPO}/.env}")"
 RECOVERY_BUNDLE="$(realpath -e -- "${AAR_RUN12_RECOVERY_BUNDLE:-/storage/home/${USER}/aar-recovery/run7_20261007T004406Z-1b3303d02821/baseline_salvage}")"
 REUSED_BASELINE="${RECOVERY_BUNDLE}/gemma4_31b_multidimensional_baseline.json"
 RECOVERED_SOURCES="${RECOVERY_BUNDLE}/source_artifacts"
-CANARY_ROOT="$(realpath -e -- "${AAR_RUN12_CANARY_ROOT:-/storage/home/${USER}/aar-runs/run12-adapter-target/20261009T150557Z-68f6178b2ac4}")"
+RUN12_STORAGE_ROOT="${AAR_RUN12_STORAGE_ROOT:-/checkpoint/ram/${USER:?}}"
+mkdir -p "${RUN12_STORAGE_ROOT}/aar-runs" "${RUN12_STORAGE_ROOT}/aar-checkpoints"
+RUN12_STORAGE_ROOT="$(realpath -e -- "${RUN12_STORAGE_ROOT}")"
+case "${RUN12_STORAGE_ROOT}" in
+  /checkpoint/ram/"${USER}") ;;
+  *) echo "Run 12 storage root must be /checkpoint/ram/${USER}" >&2; exit 2 ;;
+esac
+CANARY_ROOT="$(realpath -e -- "${AAR_RUN12_CANARY_ROOT:-${RUN12_STORAGE_ROOT}/aar-runs/run12-adapter-target/20261009T150557Z-68f6178b2ac4}")"
 SV="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
 REQUIRED_AUTODATA_SHA=34f0a22c89a2a40e605afd43f3a7b11c25003ab7
@@ -97,8 +104,8 @@ commit="$(git -C "${REPO}" rev-parse HEAD)"
 attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "${REPO}" rev-parse --short=12 HEAD)"
 run_namespace="run12-full"
 [ "${RUN_MODE}" = full ] || run_namespace="run12-bootstrap-canary"
-attempt="/storage/home/${USER}/aar-runs/${run_namespace}/${attempt_id}"
-checkpoint_root="/checkpoint/ram/aar/${USER}/${run_namespace}/${attempt_id}"
+attempt="${RUN12_STORAGE_ROOT}/aar-runs/${run_namespace}/${attempt_id}"
+checkpoint_root="${RUN12_STORAGE_ROOT}/aar-checkpoints/${run_namespace}/${attempt_id}"
 mkdir -p "${attempt}/"{metadata,logs,secrets,chains,runtime}
 mkdir -p "${checkpoint_root}/chains"
 chmod 700 "${attempt}" "${attempt}/"{metadata,logs,secrets,chains}

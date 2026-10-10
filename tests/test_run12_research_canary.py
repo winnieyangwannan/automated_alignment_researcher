@@ -12,6 +12,7 @@ def test_run12_research_canary_is_one_scored_kimi_iteration() -> None:
     assert "AAR_KIMI_SERVE_DEPLOYMENT=aar_8-kimi26" in launcher
     assert "AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6" in launcher
     assert "AAR_KEEP_CHECKPOINTS=1" in launcher
+    assert "/checkpoint/ram/${USER:?}/aar-runs/" in launcher
     assert "run12-adapter-target/research_canary_attempts" in launcher
     assert 'submit_run_10.sh" canary' in launcher
 
@@ -56,3 +57,15 @@ def test_only_bootstrap_canary_may_reuse_a_verified_base_deployment() -> None:
     assert "AAR_RUN12_REUSE_BASE_DEPLOYMENT" in launcher
     assert "full mode forbids reusing a canary base deployment" in launcher
     assert "base_deployment_reused=%s" in launcher
+
+
+def test_run12_artifacts_default_to_checkpoint_storage() -> None:
+    full = (RUN12 / "submit_run_12_full.sh").read_text()
+    target = (RUN12 / "submit_run_12.sh").read_text()
+
+    for launcher in (full, target):
+        assert "AAR_RUN12_STORAGE_ROOT" in launcher
+        assert "/checkpoint/ram/${USER" in launcher
+        assert "Run 12 storage root must be" in launcher
+    assert 'attempt="${RUN12_STORAGE_ROOT}/aar-runs/' in full
+    assert 'checkpoint_root="${RUN12_STORAGE_ROOT}/aar-checkpoints/' in full

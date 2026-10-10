@@ -105,8 +105,34 @@ fast-forwarded to `/storage/home/winnieyangwn/aar-worktrees/autodata`.
 
 The launcher defaults to iteration 2 and deployment
 `winnieyangwn-run12-gemma4-cshc`. It creates private attempt artifacts under
-`/storage/home/$USER/aar-runs/run12-adapter-target/`; generated prompt and
+`/checkpoint/ram/$USER/aar-runs/run12-adapter-target/`; generated prompt and
 response text are never copied into the retained report.
+
+## Artifact storage
+
+Run 12 writes substantial and long-lived artifacts to the checkpoint
+filesystem rather than the home filesystem:
+
+```text
+/checkpoint/ram/$USER/
+├── aar-runs/
+│   ├── run12-adapter-target/
+│   ├── run12-bootstrap-canary/
+│   └── run12-full/
+└── aar-checkpoints/
+    ├── run12-bootstrap-canary/
+    └── run12-full/
+```
+
+Attempt metadata, logs, private broker state, and retained evidence live under
+`aar-runs/`. Large merged candidates and training checkpoints live under
+`aar-checkpoints/`. Both roots are mode 700. The launcher fails closed unless
+`AAR_RUN12_STORAGE_ROOT` resolves exactly to `/checkpoint/ram/$USER`.
+
+On 2026-10-10, the existing Run 12 output trees were moved from
+`/storage/home/$USER/aar-runs/` to this checkpoint layout, freeing about 5.3 GB
+from home storage. Compatibility symlinks remain at the old Run 12 paths so
+retained manifests and earlier operator commands continue to resolve.
 
 ## What this proves—and what it does not
 
