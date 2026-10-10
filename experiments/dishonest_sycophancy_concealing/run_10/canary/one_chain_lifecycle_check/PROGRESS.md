@@ -13,6 +13,9 @@ traces, or partial held-out scores here.
 - 2026-10-10 21:14 UTC — Added the previous Run 10 failure context, mapped each
   failure class to its corrective code or configuration change, and established
   this append-only record. Status: planned; no jobs launched.
+- 2026-10-10 21:16 UTC — Condensed the canary context and linked each failure
+  class to a stable anchor on its full event in the parent Run 10 progress log.
+  Status: planned; no jobs launched.
 
 ## Entry template
 

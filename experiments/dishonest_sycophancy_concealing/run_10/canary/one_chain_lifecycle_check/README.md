@@ -2,7 +2,7 @@
 
 - Status: planned; not launched
 - Created: 2026-10-10 21:11 UTC
-- Last updated: 2026-10-10 21:14 UTC
+- Last updated: 2026-10-10 21:16 UTC
 - Time standard: UTC
 
 ## Goal
@@ -32,85 +32,45 @@ frontier.
 
 ## Context
 
-Recorded: 2026-10-10 21:14 UTC
+Recorded: 2026-10-10 21:16 UTC
 
-The previous Run 10 execution exposed failures at several lifecycle boundaries.
-Most of the elapsed time was spent before a candidate reached successful
-evaluation, so immediately resuming five long chains would risk repeating
-expensive failures in parallel. The event-level source chronology remains in
-the parent Run 10 [`PROGRESS.md`](../../PROGRESS.md).
+The previous Run 10 execution spent substantial time failing before successful
+evaluation. This canary checks the combined repairs before five long chains are
+resumed. Full incident details remain in the linked, append-only Run 10
+[`PROGRESS.md`](../../PROGRESS.md).
 
-### Failures observed
+### What failed and what changed
 
-- Recorded: 2026-10-10 21:14 UTC
-- Source-event window: 2026-10-09 00:36 UTC through 2026-10-10 20:53 UTC
+Recorded: 2026-10-10 21:16 UTC
 
-- Generated methods passed proposal review but failed during training because
-  they used incompatible Transformers/TRL APIs, invalid PEFT targets or data
-  conversion, missing imports, and other code that was syntactically valid but
-  incompatible with the locked runtime.
-- A persistent approved-proposal marker made later sessions replay an already
-  failed candidate instead of revising it. Some chains consequently consumed
-  many research sessions without producing a new score.
-- Training failures initially produced only generic process-exit information.
-  Kimi could not see the concrete safe error, and a Slurm `TIMEOUT` could kill a
-  job before its shell exit trap wrote any failure marker, leaving the chain
-  waiting indefinitely.
-- Recovery initially omitted the `AAR_NO_LOCAL_GPU=true` invariant. Approved
-  proposals therefore failed to mint run IDs or training receipts, and five
-  resumed chains exhausted continuation turns without reaching training.
-- Evaluators inherited insufficient 64-GiB memory and stale truncation policy,
-  while write-heavy state and redundant checkpoint copies accumulated under
-  `/storage/home`.
-- Kimi sometimes narrated future tool use instead of issuing a structured call,
-  expanded discovery context excessively, or launched an unbounded filesystem
-  scan. These behaviors delayed proposal completion and could hold a chain for
-  a long time.
-- Most recently, one Kimi `Write` call replaced the shared
-  `scripts/submit_train_job.sh` with the six-byte text `SCRIPT`. Fourteen
-  approved proposals then failed before training with `SCRIPT: command not
-  found`. Because the wrapper failure was treated as an ordinary research
-  failure, the shared corruption could consume additional sessions across
-  chains rather than pausing the run.
+- [Kimi tool-selection stalls](../../PROGRESS.md#run10-event-kimi-tool-selection):
+  Kimi sometimes narrated an action instead of issuing it. The adapter now uses
+  bounded context, milestone-specific continuations, and required named tools at
+  exact checkpoints, with a 30-minute whole-process-group turn timeout.
+- [Generated-method and proposal replay failures](../../PROGRESS.md#run10-event-full-training-failures):
+  incompatible Transformers/TRL, PEFT, data, and import code failed after
+  approval, while stale proposal ownership replayed failed candidates. The CPU
+  contract gate, source-bound approval, session-scoped ownership, Ruff checks,
+  and one-step GPU adapter preflight now reject these defects earlier.
+- [Incomplete failure feedback](../../PROGRESS.md#run10-event-failure-feedback),
+  [missing terminal markers](../../PROGRESS.md#run10-event-slurm-timeout), and a
+  [recovery environment mismatch](../../PROGRESS.md#run10-event-resume-invariant)
+  caused retries or indefinite waits. Submission now uses atomic receipts;
+  failures are structured and fed back safely; `sacct` reconciles terminated
+  jobs; and initial launch and recovery share one validated environment.
+- [Evaluator, storage, truncation, and turn limits](../../PROGRESS.md#run10-event-runtime-policy)
+  were inconsistent. `config/run.yaml` now defaults durable state to
+  `/checkpoint`, maximum evaluator-node memory, a 20% truncation ceiling,
+  nonredundant checkpoint retention, and bounded Kimi turns.
+- [Shared submission-wrapper corruption](../../PROGRESS.md#run10-event-wrapper-corruption)
+  occurred when Kimi replaced `submit_train_job.sh` with `SCRIPT`, causing 14
+  approved proposals to fail before training. Kimi `Write`/`Edit` is now confined
+  to its ideas tree and memory file; protected files are checked against Git and
+  `bash -n`; and wrapper failures publish a team-wide orchestration incident that
+  stops further iteration consumption.
 
-### Changes made
-
-Recorded: 2026-10-10 21:14 UTC
-
-- The method-contract gate now imports and dry-runs candidates, checks the
-  installed Transformers/TRL constructor contracts, rejects known incompatible
-  trainer and PEFT patterns, runs target-environment Ruff undefined-name checks,
-  and binds approval to the candidate source hash.
-- Every full-run method must pass a time-bounded, one-step GPU preflight that
-  saves and reload-validates its PEFT adapter before full training or evaluation.
-- Proposal ownership is scoped to the session that submitted it. Deterministic
-  adapter-controlled submission writes an atomic run-ID-to-Slurm-ID receipt and
-  makes retries idempotent instead of relying on model-authored shell output.
-- Training and evaluator failures are structured, secret-redacted, and
-  held-out-safe. The next Kimi session receives the latest unscored method
-  failure, while receipt reconciliation against `sacct` publishes a terminal
-  marker when Slurm kills a job before the shell trap runs.
-- Initial launch and selective recovery now source the same Run 10 environment.
-  The reusable recovery helper refuses duplicate active chains, preserves state,
-  subtracts already-started sessions, and replenishes only missing evaluators.
-- `config/run.yaml` moves new durable state to `/checkpoint`, requests all
-  evaluator-node memory, sets the explicit 20% truncation ceiling, removes
-  redundant checkpoint retention, and bounds Kimi turns to 30 minutes with
-  whole-process-group termination.
-- Kimi uses bounded MCP responses, a system profile without competing goal or
-  subagent tools, milestone-specific continuation prompts, and required named
-  tool selection at exact checkpoints.
-- A fail-closed Kimi hook now permits direct `Write`/`Edit` only inside
-  `AAR_IDEAS_DIR` or the exact chain memory file. Immediately before submission,
-  the adapter compares protected files with their committed Git blobs and runs
-  `bash -n` on protected shell scripts.
-- A protected-file mismatch, wrapper timeout or failure, or missing verified
-  receipt now publishes `.orchestration_incident.json`. The detecting chain
-  stops without retry backoff, and peer chains stop before another session or
-  training submission instead of spending more research iterations.
-
-This canary is intended to verify that these changes work together as one
-complete lifecycle, rather than proving each fix only in isolation.
+The lifecycle check verifies these defenses together, not merely as isolated
+unit tests.
 
 ## Plan
 
