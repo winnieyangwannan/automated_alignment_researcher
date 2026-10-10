@@ -232,6 +232,20 @@ load_autodata_campaign_datasets(
         server_api_tools._autodata_method_contract_error(missing_objective) or ""
     )
 
+    empty_execution_ids = """
+load_autodata_campaign_datasets(
+    [dataset_path],
+    receipt_path=receipt_path,
+    required_rows=1000,
+    expected_execution_ids=[],
+    judge_rubric=training_data_contract["judge_rubric"],
+    training_objective="sft",
+)
+"""
+    assert "exactly one production execution ID" in (
+        server_api_tools._autodata_method_contract_error(empty_execution_ids) or ""
+    )
+
     valid = """
 load_autodata_campaign_datasets(
     [dataset_path],

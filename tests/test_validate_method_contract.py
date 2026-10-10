@@ -39,6 +39,22 @@ items = load_autodata_campaign_datasets(
         )
         self.assertEqual(valid, [])
 
+        empty_execution_ids = _autodata_loader_errors(
+            ast.parse(
+                """
+items = load_autodata_campaign_datasets(
+    [production_dataset_path],
+    receipt_path=training_consumption_path,
+    required_rows=1000,
+    expected_execution_ids=[],
+    judge_rubric=training_data_contract["judge_rubric"],
+    training_objective="sft",
+)
+"""
+            )
+        )
+        self.assertIn("exactly one production execution ID", empty_execution_ids[0])
+
     def test_rejects_observed_target_runtime_failures_before_gpu(self) -> None:
         tree = ast.parse(
             """
@@ -62,6 +78,21 @@ chosen = torch.tensor(batch['chosen_input_ids'])
         self.assertTrue(any("Trainer.train(max_steps" in error for error in errors))
         self.assertTrue(any("torch.tensor(batch" in error for error in errors))
         self.assertTrue(any("per-item loop" in error for error in errors))
+
+    def test_rejects_removed_tokenizer_keyword_on_sfttrainer_subclass(self) -> None:
+        tree = ast.parse(
+            """
+class CustomTrainer(SFTTrainer):
+    pass
+
+trainer = CustomTrainer(model=model, tokenizer=tokenizer)
+"""
+        )
+
+        errors = _unsafe_training_api_errors(tree)
+
+        self.assertEqual(len(errors), 1)
+        self.assertIn("processing_class=tokenizer", errors[0])
 
     def test_undefined_name_gate_reports_ruff_diagnostic(self) -> None:
         completed = subprocess.CompletedProcess(

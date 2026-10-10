@@ -1404,6 +1404,12 @@ def _autodata_method_contract_error(code: str) -> str | None:
         expected = "expected_execution_ids"
         if expected not in keywords:
             return f"AutoData loader must bind {expected}"
+        expected_ids = keywords[expected]
+        if (
+            not isinstance(expected_ids, (ast.List, ast.Tuple))
+            or len(expected_ids.elts) != 1
+        ):
+            return "AutoData loader must bind exactly one production execution ID"
         if "judge_rubric" not in keywords:
             return "AutoData loader must bind the content-addressed judge rubric"
         objective = keywords.get("training_objective")

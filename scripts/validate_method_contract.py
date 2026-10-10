@@ -139,6 +139,16 @@ def _unsupported_training_arguments(tree: ast.AST) -> list[str]:
 def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
     """Reject target-environment API and batching failures before GPU launch."""
     errors: set[str] = set()
+    sft_trainer_classes = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef)
+        and any(
+            (isinstance(base, ast.Name) and base.id == "SFTTrainer")
+            or (isinstance(base, ast.Attribute) and base.attr == "SFTTrainer")
+            for base in node.bases
+        )
+    }
     loader_functions = {
         node.name
         for node in ast.walk(tree)
@@ -199,7 +209,7 @@ def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
                     "DPOTrainer/DPOConfig is unavailable in the locked target "
                     "TRL/Transformers stack; use a compatible manual loss or SFTTrainer"
                 )
-            if name == "SFTTrainer" and "tokenizer" in keywords:
+            if name in {"SFTTrainer", *sft_trainer_classes} and "tokenizer" in keywords:
                 errors.add(
                     "SFTTrainer(tokenizer=...) is unsupported by the target TRL "
                     "contract; use processing_class=tokenizer"
@@ -350,6 +360,11 @@ def _autodata_loader_errors(tree: ast.AST) -> list[str]:
             return ["AutoData loader must write a training consumption receipt"]
         if "expected_execution_ids" not in keywords:
             return ["AutoData loader must bind expected_execution_ids"]
+        expected = keywords["expected_execution_ids"]
+        if not isinstance(expected, (ast.List, ast.Tuple)) or len(expected.elts) != 1:
+            return [
+                "AutoData loader must bind exactly one production execution ID"
+            ]
         if "judge_rubric" not in keywords:
             return ["AutoData loader must bind the content-addressed judge rubric"]
         objective = keywords.get("training_objective")
