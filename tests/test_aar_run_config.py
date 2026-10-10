@@ -12,6 +12,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN10 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_10"
+LIFECYCLE = RUN10 / "canary" / "one_chain_lifecycle_check"
 
 
 def test_run10_config_has_quota_safe_production_defaults() -> None:
@@ -51,6 +52,52 @@ def test_run10_config_emits_validated_environment() -> None:
     assert "export EVAL_MAX_TRUNCATION_RATE=0.2" in result.stdout
     assert "export AAR_EXPECTED_MAX_TRUNCATION_RATE=0.2" in result.stdout
     assert "export AAR_KIMI_TURN_TIMEOUT_SECONDS=1800" in result.stdout
+
+
+def test_lifecycle_config_is_bounded_and_emits_runtime_contract() -> None:
+    config = yaml.safe_load((LIFECYCLE / "run.yaml").read_text())
+
+    assert config["research"] == {
+        "seeds": ["lifecycle"],
+        "max_sessions_per_chain": 1,
+        "walltime_hours": 2,
+    }
+    assert config["training"] == {
+        "mode": "one_step_gpu_preflight",
+        "time_limit": "00:15:00",
+    }
+    assert config["evaluation"]["benchmarks"] == ["verbalized_ece"]
+    assert config["evaluation"]["items_per_benchmark"] == 2
+    assert config["evaluation"]["workers"] == 1
+    assert config["evaluation"]["gpus_per_worker"] == 1
+    assert config["evaluation"]["on_demand"] is True
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "load_aar_run_config.py"),
+            str(LIFECYCLE / "run.yaml"),
+        ],
+        env={**os.environ, "USER": "test-user"},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    expected = {
+        "export AAR_RESEARCH_SEEDS=lifecycle",
+        "export AAR_MAX_ITERATIONS_PER_CHAIN=1",
+        "export AAR_CHAIN_HOURS=2",
+        "export AAR_METHOD_SMOKE=1",
+        "export AAR_TRAIN_TIME=00:15:00",
+        "export AAR_SUITE_BENCHMARKS=verbalized_ece",
+        "export AAR_PUBLISH_FORCE_N=2",
+        "export AAR_EVAL_WORKERS=1",
+        "export AAR_EVAL_GPUS=1",
+        "export AAR_EVAL_TIME=01:00:00",
+        "export AAR_EVAL_IDLE_SECONDS=120",
+        "export AAR_EVAL_ON_DEMAND=1",
+    }
+    assert expected <= set(result.stdout.splitlines())
 
 
 def test_evaluator_defaults_to_all_allocated_node_memory() -> None:

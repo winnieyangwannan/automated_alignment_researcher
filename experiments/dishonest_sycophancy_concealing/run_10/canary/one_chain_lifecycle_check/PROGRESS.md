@@ -16,6 +16,18 @@ traces, or partial held-out scores here.
 - 2026-10-10 21:16 UTC — Condensed the canary context and linked each failure
   class to a stable anchor on its full event in the parent Run 10 progress log.
   Status: planned; no jobs launched.
+- 2026-10-10 21:46 UTC — Added the canary-local validated `run.yaml`, thin
+  `launch.sh`, and fail-closed evaluation contract. The suite proof requires one
+  configured benchmark, `subset_size: 2`, and exactly two valid JSONL records;
+  the final proof additionally requires the score to report `n: 2`. Status:
+  implemented; validation pending; no jobs launched.
+- 2026-10-10 21:48 UTC — CPU validation passed: Bash syntax, ShellCheck, Python
+  compilation, 17 focused tests, and the complete `tests/` suite (281 tests plus
+  40 subtests). The negative contract tests confirmed that a one-record suite or
+  a score with `n: 1` fails closed. Bare repository-wide test discovery also
+  collects a GPU utility and cannot run in the CPU-only dev environment because
+  PyTorch is absent; the canonical `tests/` suite is green. Status: ready for
+  source synchronization and HPC prelaunch checks; no jobs launched.
 
 ## Entry template
 

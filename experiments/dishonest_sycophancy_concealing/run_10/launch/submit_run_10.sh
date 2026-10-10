@@ -57,7 +57,7 @@ CANARY_PROOF=""
 if [ "${MODE}" = full ]; then
   CANARY_PROOF="$(realpath -e -- "${2:?full launch requires canary_passed.json}")"
   [ "$(jq -r '.status' "${CANARY_PROOF}")" = passed ] || { echo "canary proof is not passed" >&2; exit 2; }
-  for field in score_result_pair fail_closed_markers merge_manifest_retained ephemeral_merge_removed kimi_mcp_tool_roundtrip method_gpu_smoke adapter_reload_validation on_demand_evaluator; do
+  for field in score_result_pair fail_closed_markers merge_manifest_retained ephemeral_merge_removed kimi_mcp_tool_roundtrip method_gpu_smoke adapter_reload_validation on_demand_evaluator evaluation_item_contract; do
     [ "$(jq -r --arg field "${field}" '.[$field]' "${CANARY_PROOF}")" = true ] || { echo "canary did not prove ${field}" >&2; exit 2; }
   done
   git -C "${REPO}" merge-base --is-ancestor "$(jq -r '.canary_git_commit' "${CANARY_PROOF}")" HEAD || {
@@ -138,14 +138,20 @@ job_id="$(sbatch --parsable --account=ram --partition=g3 --qos=g3_ram_high \
   --job-name="aar-run10-kimi-${MODE}-launch" --output="${attempt_dir}/logs/pipeline-%j.out" \
   --export=ALL "${RUN10_DIR}/slurm/run_10_pipeline.sbatch")"
 research_chains=1; max_iterations=1; evaluator_jobs=1; evaluator_gpus=4
+on_demand_evaluator_jobs=0; on_demand_evaluator_gpus=0
 if [ "${MODE}" = full ]; then
   research_chains=5; max_iterations=50; evaluator_jobs=5
 elif [ "${MODE}" = canary ]; then
   max_iterations="${CANARY_ITERATIONS}"
 elif [ "${MODE}" = smoke ]; then
+  research_chains="$(wc -w <<< "${AAR_RESEARCH_SEEDS:-smoke}" | tr -d ' ')"
+  max_iterations="${AAR_MAX_ITERATIONS_PER_CHAIN:-1}"
   evaluator_jobs=0; evaluator_gpus=0
+  on_demand_evaluator_jobs="${AAR_EVAL_WORKERS:-1}"
+  on_demand_evaluator_gpus="${AAR_EVAL_GPUS:-4}"
 fi
-printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nmode=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\ndeployment=%s\nresearch_chains=%s\nmax_iterations_per_chain=%s\nevaluator_jobs=%s\nevaluator_gpus_per_job=%s\nrecovered_agent_log_dir=%s\n' \
+printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nmode=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\ndeployment=%s\nresearch_chains=%s\nmax_iterations_per_chain=%s\nevaluator_jobs=%s\nevaluator_gpus_per_job=%s\non_demand_evaluator_jobs=%s\non_demand_evaluator_gpus_per_job=%s\nrecovered_agent_log_dir=%s\n' \
   "${job_id}" "${attempt_dir}" "${commit}" "${MODE}" "${KIMI_DEPLOYMENT}" \
   "${research_chains}" "${max_iterations}" "${evaluator_jobs}" "${evaluator_gpus}" \
+  "${on_demand_evaluator_jobs}" "${on_demand_evaluator_gpus}" \
   "${recovered_agent_log_for_launch:-none}" | tee "${attempt_dir}/metadata/submission.txt"

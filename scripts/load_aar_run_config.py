@@ -38,19 +38,65 @@ def _boolean(value: Any, name: str) -> str:
     return "1" if value else "0"
 
 
+def _integer(
+    value: Any, name: str, *, minimum: int = 1, maximum: int | None = None
+) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer")
+    if value < minimum or (maximum is not None and value > maximum):
+        suffix = f" and {maximum}" if maximum is not None else ""
+        raise ValueError(f"{name} must be between {minimum}{suffix}")
+    return value
+
+
+def _time_limit(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"(?:[1-9][0-9]*-)?(?:[0-9]|[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]",
+        value,
+    ):
+        raise ValueError(f"{name} must be a Slurm time value such as 01:00:00")
+    return value
+
+
 def load_run_config(path: Path) -> dict[str, str]:
     payload = yaml.safe_load(path.read_text())
     if not isinstance(payload, dict):
         raise ValueError("run config must be a mapping")
-    _reject_unknown(payload, {"version", "storage", "evaluation", "agent"}, "top-level")
+    _reject_unknown(
+        payload,
+        {"version", "storage", "research", "training", "evaluation", "agent"},
+        "top-level",
+    )
     if payload.get("version") != 1:
         raise ValueError("run config version must be 1")
 
     storage = _mapping(payload.get("storage"), "storage")
+    research = _mapping(payload.get("research"), "research")
+    training = _mapping(payload.get("training"), "training")
     evaluation = _mapping(payload.get("evaluation"), "evaluation")
     agent = _mapping(payload.get("agent"), "agent")
     _reject_unknown(storage, {"root", "keep_checkpoints"}, "storage")
-    _reject_unknown(evaluation, {"memory", "max_truncation_rate"}, "evaluation")
+    _reject_unknown(
+        research,
+        {"seeds", "max_sessions_per_chain", "walltime_hours"},
+        "research",
+    )
+    _reject_unknown(training, {"mode", "time_limit"}, "training")
+    _reject_unknown(
+        evaluation,
+        {
+            "memory",
+            "max_truncation_rate",
+            "benchmarks",
+            "items_per_benchmark",
+            "workers",
+            "gpus_per_worker",
+            "time_limit",
+            "idle_seconds",
+            "on_demand",
+        },
+        "evaluation",
+    )
     _reject_unknown(agent, {"backend", "turn_timeout_seconds"}, "agent")
 
     environment: dict[str, str] = {}
@@ -70,6 +116,47 @@ def load_run_config(path: Path) -> dict[str, str]:
     if "keep_checkpoints" in storage:
         environment["AAR_KEEP_CHECKPOINTS"] = _boolean(
             storage["keep_checkpoints"], "storage.keep_checkpoints"
+        )
+
+    if "seeds" in research:
+        seeds = research["seeds"]
+        if not isinstance(seeds, list) or not seeds:
+            raise ValueError("research.seeds must be a non-empty list")
+        if any(
+            not isinstance(seed, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", seed)
+            for seed in seeds
+        ):
+            raise ValueError("research.seeds entries must be safe non-empty names")
+        if len(set(seeds)) != len(seeds):
+            raise ValueError("research.seeds entries must be unique")
+        environment["AAR_RESEARCH_SEEDS"] = " ".join(seeds)
+    if "max_sessions_per_chain" in research:
+        environment["AAR_MAX_ITERATIONS_PER_CHAIN"] = str(
+            _integer(
+                research["max_sessions_per_chain"],
+                "research.max_sessions_per_chain",
+                maximum=10000,
+            )
+        )
+    if "walltime_hours" in research:
+        environment["AAR_CHAIN_HOURS"] = str(
+            _integer(
+                research["walltime_hours"],
+                "research.walltime_hours",
+                maximum=1000,
+            )
+        )
+
+    if "mode" in training:
+        mode = training["mode"]
+        if mode != "one_step_gpu_preflight":
+            raise ValueError("training.mode must be one_step_gpu_preflight")
+        environment["AAR_METHOD_SMOKE"] = "1"
+        environment["AAR_REQUIRE_METHOD_SMOKE"] = "1"
+    if "time_limit" in training:
+        environment["AAR_TRAIN_TIME"] = _time_limit(
+            training["time_limit"], "training.time_limit"
         )
 
     if "memory" in evaluation:
@@ -93,6 +180,57 @@ def load_run_config(path: Path) -> dict[str, str]:
         rendered_rate = format(rate, ".12g")
         environment["EVAL_MAX_TRUNCATION_RATE"] = rendered_rate
         environment["AAR_EXPECTED_MAX_TRUNCATION_RATE"] = rendered_rate
+    if "benchmarks" in evaluation:
+        benchmarks = evaluation["benchmarks"]
+        if not isinstance(benchmarks, list) or not benchmarks:
+            raise ValueError("evaluation.benchmarks must be a non-empty list")
+        if any(
+            not isinstance(benchmark, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", benchmark)
+            for benchmark in benchmarks
+        ):
+            raise ValueError(
+                "evaluation.benchmarks entries must be safe non-empty names"
+            )
+        if len(set(benchmarks)) != len(benchmarks):
+            raise ValueError("evaluation.benchmarks entries must be unique")
+        environment["AAR_SUITE_BENCHMARKS"] = ",".join(benchmarks)
+    if "items_per_benchmark" in evaluation:
+        environment["AAR_PUBLISH_FORCE_N"] = str(
+            _integer(
+                evaluation["items_per_benchmark"],
+                "evaluation.items_per_benchmark",
+                maximum=100000,
+            )
+        )
+    if "workers" in evaluation:
+        environment["AAR_EVAL_WORKERS"] = str(
+            _integer(evaluation["workers"], "evaluation.workers", maximum=32)
+        )
+    if "gpus_per_worker" in evaluation:
+        environment["AAR_EVAL_GPUS"] = str(
+            _integer(
+                evaluation["gpus_per_worker"],
+                "evaluation.gpus_per_worker",
+                maximum=64,
+            )
+        )
+    if "time_limit" in evaluation:
+        environment["AAR_EVAL_TIME"] = _time_limit(
+            evaluation["time_limit"], "evaluation.time_limit"
+        )
+    if "idle_seconds" in evaluation:
+        environment["AAR_EVAL_IDLE_SECONDS"] = str(
+            _integer(
+                evaluation["idle_seconds"],
+                "evaluation.idle_seconds",
+                maximum=604800,
+            )
+        )
+    if "on_demand" in evaluation:
+        environment["AAR_EVAL_ON_DEMAND"] = _boolean(
+            evaluation["on_demand"], "evaluation.on_demand"
+        )
 
     if "backend" in agent:
         backend = agent["backend"]

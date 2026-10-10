@@ -9,7 +9,11 @@ Run 10 changes only the research-agent backend from Claude to Kimi-K2.6. The Gem
 3. Synchronize a clean, committed `multi_kimi` checkout and build its own ARM64 `.venv` on a GPU compute node.
 4. Prove a complete Kimi → AAR MCP tool → Kimi round trip without printing or persisting the endpoint key.
 5. Run the focused CPU replay suite and live Kimi tool-protocol gate. Start one CPU-only Kimi chain with zero evaluators. Require its approved generated method to pass a time-bounded real-GPU smoke: real Gemma load, real PEFT/trainer path, at most eight examples, one optimizer step, adapter save, structural submission validation, and PEFT adapter reload.
-6. Only after the method smoke passes, stage that exact adapter and launch one four-GPU evaluator on demand. Require a score/finding pair, vLLM 0.25.1 language-model-only markers, merged-checkpoint provenance, retained merge manifest, and deletion of the ephemeral merged checkpoint.
+6. Only after the method smoke passes, verify the configured two-record suite,
+   stage that exact adapter, and launch one one-GPU evaluator on demand. Require
+   the score to report exactly two items, plus a score/finding pair, vLLM 0.25.1
+   language-model-only markers, merged-checkpoint provenance, retained merge
+   manifest, and deletion of the ephemeral merged checkpoint.
 7. Only after the combined proof passes, launch five fresh chains (`alpha` through `epsilon`) for 50 sessions each and five distinct four-GPU evaluators.
 
 Fifty iterations means 50 research sessions started per chain. A session that fails before scoring still consumes an iteration, so completion is reported with both started-session and successful score/result counts.

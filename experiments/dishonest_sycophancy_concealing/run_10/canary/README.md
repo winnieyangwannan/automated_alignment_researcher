@@ -19,6 +19,9 @@ Before the stopped five-chain attempt is resumed, use the bounded lifecycle plan
 in [`one_chain_lifecycle_check/README.md`](one_chain_lifecycle_check/README.md). It requires one
 research session, one-step GPU training, the two-item evaluator, and one joined
 score/finding result. The document defines explicit pass and stop criteria; it
-does not launch work by itself. Its operational history is retained separately
-in the append-only
+does not launch work by itself. The check has its own validated
+[`run.yaml`](one_chain_lifecycle_check/run.yaml) and thin
+[`launch.sh`](one_chain_lifecycle_check/launch.sh); the final proof independently
+checks the published and scored item counts. Its operational history is retained
+separately in the append-only
 [`one_chain_lifecycle_check/PROGRESS.md`](one_chain_lifecycle_check/PROGRESS.md).

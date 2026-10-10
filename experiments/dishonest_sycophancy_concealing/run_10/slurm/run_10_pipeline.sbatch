@@ -32,10 +32,17 @@ source "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/config/config
 team_id_prefix="${AAR_RUN10_TEAM_ID_PREFIX:-honesty-sycophancy-concealing-gemma4_31b-kimi26-run10}"
 export AAR_TEAM_ID="${team_id_prefix}-${MODE}-${SLURM_JOB_ID}"
 if [ "${MODE}" = smoke ]; then
-  seeds=smoke; iterations=1; hours=2
+  seeds="${AAR_RESEARCH_SEEDS:-smoke}"
+  iterations="${AAR_MAX_ITERATIONS_PER_CHAIN:-1}"
+  hours="${AAR_CHAIN_HOURS:-2}"
+  lifecycle_eval_workers="${AAR_EVAL_WORKERS:-1}"
+  lifecycle_eval_gpus="${AAR_EVAL_GPUS:-4}"
+  lifecycle_eval_time="${AAR_EVAL_TIME:-01:00:00}"
+  lifecycle_eval_idle_seconds="${AAR_EVAL_IDLE_SECONDS:-120}"
+  lifecycle_eval_on_demand="${AAR_EVAL_ON_DEMAND:-1}"
   export AAR_START_EVAL_WORKER=0 AAR_EVAL_WORKERS=0
-  export AAR_MAX_CONCURRENT_TRAIN_JOBS=1 AAR_METHOD_SMOKE=1
-  export AAR_TRAIN_TIME=00:15:00
+  export AAR_MAX_CONCURRENT_TRAIN_JOBS=1 AAR_METHOD_SMOKE="${AAR_METHOD_SMOKE:-1}"
+  export AAR_TRAIN_TIME="${AAR_TRAIN_TIME:-00:15:00}"
   # The lifecycle canary retains its training copy for adapter-reload proof.
   export AAR_KEEP_CHECKPOINTS=1
 elif [ "${MODE}" = canary ]; then
@@ -125,11 +132,23 @@ if [ "${MODE}" = smoke ]; then
   export TEAM_DIR="${ATTEMPT_DIR}/aar_teams/${AAR_TEAM_ID}"
   export SUBMISSIONS_DIR="${TEAM_DIR}/submissions" SCORES_DIR="${TEAM_DIR}/scores"
 
-  echo "[run10] method smoke passed; publishing two-item lifecycle evaluation and staging the same adapter"
-  export AAR_SUITE_BENCHMARKS=verbalized_ece AAR_PUBLISH_FORCE_N=2
+  [ "${lifecycle_eval_on_demand}" = 1 ] || {
+    echo "[run10] lifecycle evaluation must be configured on demand" >&2
+    exit 2
+  }
+  export AAR_SUITE_BENCHMARKS="${AAR_SUITE_BENCHMARKS:-verbalized_ece}"
+  export AAR_PUBLISH_FORCE_N="${AAR_PUBLISH_FORCE_N:-2}"
+  echo "[run10] method smoke passed; publishing ${AAR_PUBLISH_FORCE_N}-item lifecycle evaluation and staging the same adapter"
   export HOLDOUT_DIR="${ATTEMPT_DIR}/eval/lifecycle_holdout_v3/gemma4_31b"
   export BASELINES_PATH="${ATTEMPT_DIR}/eval/prompt_baselines_v3.honesty_sycophancy_concealing_uncertainty.google_gemma-4-31B-it.json"
   bash "${REPO}/scripts/publish_holdout.sh"
+  lifecycle_suite="${HOLDOUT_DIR}/${SUITE_NAME}/${SUITE_NAME}.yaml"
+  "${HARNESS_PY}" \
+    "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/canary/one_chain_lifecycle_check/verify_evaluation_contract.py" \
+    --suite "${lifecycle_suite}" \
+    --benchmarks "${AAR_SUITE_BENCHMARKS}" \
+    --items "${AAR_PUBLISH_FORCE_N}" \
+    --output "${ATTEMPT_DIR}/metadata/lifecycle_evaluation_contract.json"
   if [ -f "${SUBMISSIONS_DIR}/${run_id}/.submitted" ] && \
      [ -f "${SUBMISSIONS_DIR}/${run_id}/model/adapter_config.json" ]; then
     echo "[run10] reusing staged immutable adapter for ${run_id}"
@@ -139,20 +158,21 @@ if [ "${MODE}" = smoke ]; then
       "${adapter_path}" "${run_id}"
   fi
 
-  export AAR_EVAL_WORKERS=1 AAR_EVAL_GPUS=4 AAR_EVAL_GPU_CAP=4
+  export AAR_EVAL_WORKERS="${lifecycle_eval_workers}"
+  export AAR_EVAL_GPUS="${lifecycle_eval_gpus}" AAR_EVAL_GPU_CAP="${lifecycle_eval_gpus}"
   export AAR_EVAL_RETRY_FAILED=1
-  export AAR_EVAL_TIME=01:00:00 AAR_EVAL_IDLE_SECONDS=120
+  export AAR_EVAL_TIME="${lifecycle_eval_time}" AAR_EVAL_IDLE_SECONDS="${lifecycle_eval_idle_seconds}"
   export EVAL_VLLM_MAX_NUM_SEQS=8 EVAL_VLLM_MAX_NUM_BATCHED_TOKENS=8192
   eval_launch_log="${ATTEMPT_DIR}/metadata/launch_on_demand_evaluator.txt"
-  "${REPO}/scripts/launch_eval_worker.sh" "${SUITE_NAME}" "${AAR_EVAL_IDLE_SECONDS}" 1 | tee "${eval_launch_log}"
+  "${REPO}/scripts/launch_eval_worker.sh" "${SUITE_NAME}" "${AAR_EVAL_IDLE_SECONDS}" "${AAR_EVAL_WORKERS}" | tee "${eval_launch_log}"
   mapfile -t evaluator_ids < <(awk '/^\[launch\] evaluator 1\/1 -> job [0-9]+$/{print $NF}' "${eval_launch_log}")
-  [ "${#evaluator_ids[@]}" -eq 1 ] || { echo "on-demand evaluator ID missing" >&2; exit 1; }
+  [ "${#evaluator_ids[@]}" -eq "${AAR_EVAL_WORKERS}" ] || { echo "on-demand evaluator ID missing" >&2; exit 1; }
   {
     printf 'evaluator_jobs=%s\n' "${evaluator_ids[0]}"
     printf 'research_chain_jobs=%s\n' "${chain_ids[*]}"
     printf 'research_seeds=%s\n' "${seeds}"
     printf 'max_iterations_per_chain=%s\n' "${iterations}"
-    printf 'evaluator_gpus_per_job=4\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nephemeral_merged_checkpoints=1\n'
+    printf 'evaluator_gpus_per_job=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nephemeral_merged_checkpoints=1\n' "${AAR_EVAL_GPUS}"
     printf 'method_smoke_passed=1\non_demand_evaluator=1\n'
   } > "${ATTEMPT_DIR}/metadata/children.env"
   echo "[run10] on-demand evaluator ${evaluator_ids[0]} launched for smoked run ${run_id}"

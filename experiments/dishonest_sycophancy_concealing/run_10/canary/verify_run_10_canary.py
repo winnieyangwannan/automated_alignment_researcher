@@ -26,6 +26,9 @@ def main() -> None:
     )
     preflight = load_json(attempt / "metadata/kimi_mcp_preflight.json")
     method_smoke = load_json(attempt / "metadata/method_smoke_passed.json")
+    evaluation_contract = load_json(
+        attempt / "metadata/lifecycle_evaluation_contract.json"
+    )
     children = dict(
         line.split("=", 1)
         for line in (attempt / "metadata/children.env").read_text().splitlines()
@@ -33,13 +36,38 @@ def main() -> None:
     )
     scores = list(attempt.glob("aar_teams/*/scores/*.json"))
     findings = list(attempt.glob("aar_teams/*/forum/*.json"))
-    score_run_ids = {
-        path.name.removesuffix(".json")
-        for path in scores
-        if not path.name.endswith(".failed.json")
-    }
-    finding_run_ids = {load_json(path).get("run_id") for path in findings}
-    score_result_pair = bool((score_run_ids & finding_run_ids) - {None})
+    run_id = method_smoke.get("run_id")
+    score_path = next(
+        (
+            path
+            for path in scores
+            if path.name == f"{run_id}.json"
+            and not path.name.endswith(".failed.json")
+        ),
+        None,
+    )
+    score = load_json(score_path) if score_path is not None else {}
+    matching_findings = [
+        path for path in findings if load_json(path).get("run_id") == run_id
+    ]
+    score_result_pair = score_path is not None and len(matching_findings) == 1
+
+    expected_benchmarks = evaluation_contract.get("expected_benchmarks")
+    expected_items = evaluation_contract.get("expected_items_per_benchmark")
+    per_benchmark = score.get("per_benchmark")
+    evaluation_item_contract = (
+        evaluation_contract.get("status") == "passed"
+        and isinstance(expected_benchmarks, list)
+        and len(expected_benchmarks) == 1
+        and isinstance(expected_items, int)
+        and isinstance(per_benchmark, dict)
+        and set(per_benchmark) == set(expected_benchmarks)
+        and all(
+            isinstance(per_benchmark.get(name), dict)
+            and per_benchmark[name].get("n") == expected_items
+            for name in expected_benchmarks
+        )
+    )
 
     eval_logs = list(attempt.glob("aar_teams/*/_eval_private/eval_worker_*.out"))
     log_text = "\n".join(path.read_text(errors="replace") for path in eval_logs)
@@ -68,6 +96,15 @@ def main() -> None:
         "adapter_reload_validation": method_smoke.get("adapter_reload_validation")
         is True,
         "on_demand_evaluator": children.get("on_demand_evaluator") == "1",
+        "evaluation_item_contract": evaluation_item_contract,
+        "evaluation_benchmarks": expected_benchmarks,
+        "expected_items_per_benchmark": expected_items,
+        "evaluated_items_per_benchmark": {
+            name: per_benchmark.get(name, {}).get("n")
+            for name in expected_benchmarks or []
+        }
+        if isinstance(per_benchmark, dict)
+        else {},
         "score_files": len(scores),
         "finding_files": len(findings),
     }
@@ -81,6 +118,7 @@ def main() -> None:
         "method_gpu_smoke",
         "adapter_reload_validation",
         "on_demand_evaluator",
+        "evaluation_item_contract",
     )
     failed = [field for field in required if not proof.get(field)]
     if failed:

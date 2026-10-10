@@ -82,10 +82,18 @@ From the isolated HPC `multi_kimi` checkout:
 
 ```bash
 experiments/dishonest_sycophancy_concealing/run_10/runtime/install_kimi_runtime.sh
-experiments/dishonest_sycophancy_concealing/run_10/launch/submit_run_10.sh smoke
+experiments/dishonest_sycophancy_concealing/run_10/canary/one_chain_lifecycle_check/launch.sh
 ```
 
-The smoke mode first runs the CPU replay and live Kimi protocol gates. It then starts one CPU-only Kimi chain with no evaluator. Once Kimi produces an approved method, a time-bounded one-GPU job loads the real Gemma model, runs the method's real CUDA/PEFT path for one optimizer step, saves and reload-validates the adapter, and exits. Only after that proof passes does the launcher publish the holdout, stage that exact adapter, and start one four-GPU evaluator on demand. The original Kimi chain remains alive to consume the score and publish the finding.
+The canary-local `run.yaml` pins one chain, one session, one-step GPU training,
+one benchmark, exactly two evaluation items, and one on-demand evaluator. The
+thin launcher passes that YAML to the shared Run 10 engine. Once Kimi produces
+an approved method, a time-bounded one-GPU job loads the real Gemma model, runs
+one optimizer step, saves and reload-validates the adapter, and exits. The
+pipeline then verifies the published suite YAML and two-record JSONL before
+starting the one-GPU evaluator. The final proof also requires the successful
+score to report exactly two scored items. The original Kimi chain remains alive
+to consume the score and publish the finding.
 
 After the on-demand evaluator produces a score/result pair:
 

@@ -1,8 +1,8 @@
 # Run 10 one-chain lifecycle check
 
-- Status: planned; not launched
+- Status: implemented and CPU-validated; not launched
 - Created: 2026-10-10 21:11 UTC
-- Last updated: 2026-10-10 21:16 UTC
+- Last updated: 2026-10-10 21:48 UTC
 - Time standard: UTC
 
 ## Goal
@@ -72,6 +72,25 @@ Recorded: 2026-10-10 21:16 UTC
 The lifecycle check verifies these defenses together, not merely as isolated
 unit tests.
 
+## Configuration and launch
+
+Recorded: 2026-10-10 21:46 UTC
+
+[`run.yaml`](run.yaml) is the canary's validated source of truth. It pins one
+Kimi chain, one research session, the one-step GPU preflight, one on-demand
+evaluator, the `verbalized_ece` benchmark, and exactly two evaluation items.
+The launcher snapshots the resolved YAML into the durable attempt metadata.
+
+From the HPC `multi_kimi` worktree, launch only through the canary-local thin
+wrapper:
+
+```bash
+experiments/dishonest_sycophancy_concealing/run_10/canary/one_chain_lifecycle_check/launch.sh
+```
+
+The wrapper supplies this canary's YAML to the shared Run 10 launcher; it does
+not duplicate Slurm submission logic. No job has been launched yet.
+
 ## Plan
 
 Recorded: 2026-10-10 21:11 UTC
@@ -88,9 +107,10 @@ Recorded: 2026-10-10 21:11 UTC
 4. Run the generated method through the existing time-bounded, one-step GPU
    preflight. Require a reloadable PEFT adapter and retain the training receipt,
    method-contract proof, source hash, job ID, and terminal state.
-5. Only after training succeeds, start one on-demand evaluator for the existing
-   two-item lifecycle suite. Require one successful score file and no evaluator
-   runtime failure.
+5. Only after training succeeds, publish and verify the configured lifecycle
+   suite, then start one on-demand evaluator. Require the suite YAML to declare
+   one benchmark with `subset_size: 2`, its JSONL to contain exactly two valid
+   records, and the successful score to report `n: 2` for that benchmark.
 6. Let the original Kimi session consume that score and call `share_finding`
    exactly once. Retain the finding joined to the same run ID.
 7. Verify the complete evidence chain and issue a single go/no-go decision for
@@ -109,7 +129,9 @@ The canary passes only when all of the following are true:
   receipt are present;
 - protected submission files pass their Git hash and shell-syntax checks;
 - the GPU preflight produces a structurally valid, reloadable adapter;
-- the on-demand evaluator produces one successful score for that adapter;
+- the published suite and data contain exactly the configured two items;
+- the on-demand evaluator produces one successful score for that adapter and
+  reports exactly two scored items;
 - one `share_finding` result references the same run ID;
 - no `.orchestration_incident.json` is active for the deployed revision; and
 - no canary job remains running after evidence collection.
