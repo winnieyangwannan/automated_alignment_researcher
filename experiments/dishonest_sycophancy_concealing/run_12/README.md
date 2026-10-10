@@ -129,6 +129,15 @@ Attempt metadata, logs, private broker state, and retained evidence live under
 `aar-checkpoints/`. Both roots are mode 700. The launcher fails closed unless
 `AAR_RUN12_STORAGE_ROOT` resolves exactly to `/checkpoint/ram/$USER`.
 
+When the shared inference gateway is unavailable, submit
+`run_12_gateway_deferred_launch.sbatch` instead of starting the five chains
+directly. The gate pins the source commit, rechecks the checkpoint-only storage
+root, and waits until the elected gateway leader is healthy, `aar_8-kimi26` is
+registered, and a real Kimi completion succeeds. Only then does it invoke the
+canonical full launcher. This prevents an outage from consuming the chains'
+bounded research attempts while keeping all deferred-launch and run logs on
+the checkpoint filesystem.
+
 On 2026-10-10, the existing Run 12 output trees were moved from
 `/storage/home/$USER/aar-runs/` to this checkpoint layout, freeing about 5.3 GB
 from home storage. Compatibility symlinks remain at the old Run 12 paths so

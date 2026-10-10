@@ -69,3 +69,17 @@ def test_run12_artifacts_default_to_checkpoint_storage() -> None:
         assert "Run 12 storage root must be" in launcher
     assert 'attempt="${RUN12_STORAGE_ROOT}/aar-runs/' in full
     assert 'checkpoint_root="${RUN12_STORAGE_ROOT}/aar-checkpoints/' in full
+
+
+def test_run12_deferred_launch_waits_for_a_working_gateway_route() -> None:
+    gate = (RUN12 / "run_12_gateway_deferred_launch.sbatch").read_text()
+
+    assert 'STORAGE_ROOT="${AAR_RUN12_STORAGE_ROOT:-/checkpoint/ram/${USER:?}}"' in gate
+    assert '"${STORAGE_ROOT}" = "/checkpoint/ram/${USER}"' in gate
+    assert 'GENERATOR_DEPLOYMENT="aar_8-kimi26"' in gate
+    assert 'GENERATOR_MODEL="Kimi-K2.6"' in gate
+    assert '"${INGRESS}/health"' in gate
+    assert '"${INGRESS}/status"' in gate
+    assert '"${INGRESS}/v1/models"' in gate
+    assert '"${INGRESS}/v1/chat/completions"' in gate
+    assert "submit_run_12_full.sh" in gate

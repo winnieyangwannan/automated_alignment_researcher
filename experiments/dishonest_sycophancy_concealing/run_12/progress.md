@@ -2,6 +2,19 @@
 
 Last updated: 2026-10-09 16:10 PDT
 
+## Checkpoint-backed production resume
+
+The production entrypoints now default to `/checkpoint/ram/$USER` and fail
+closed if an operator supplies any other storage root. Existing Run 12 output
+was moved out of `/storage/home`, with compatibility symlinks left behind.
+
+The production resume then found the shared `fair-cw-use2-1` inference gateway
+returning HTTP 503 while its sole recovery job waited for a CPU allocation.
+The two obsolete Run 12 canary deployments were stopped. A committed deferred
+launcher now waits for gateway leader health, the exact `aar_8-kimi26` registry
+entry, and a real Kimi completion before invoking the five-chain launcher. This
+avoids spending bounded AAR attempts during a cluster-wide routing outage.
+
 ## Fixed-bootstrap relaunch gate
 
 Commit `6017b58ce4f6fa979ec835de2a7986430848ac1d` was fast-forwarded to the
