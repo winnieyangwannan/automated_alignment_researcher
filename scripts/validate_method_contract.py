@@ -175,6 +175,19 @@ def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
         return value.body.value if isinstance(value.body, ast.Constant) else None
 
     for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module == "trl"
+            and any(
+                alias.name == "DataCollatorForCompletionOnlyLM"
+                for alias in node.names
+            )
+        ):
+            errors.add(
+                "DataCollatorForCompletionOnlyLM is unavailable in locked TRL 0.21; "
+                "use SFTConfig(completion_only_loss=True) with a prompt/completion "
+                "dataset or implement a compatible collator"
+            )
         if isinstance(node, ast.Call):
             function = node.func
             name = (

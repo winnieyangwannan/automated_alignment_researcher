@@ -93,6 +93,8 @@ items = load_autodata_campaign_datasets(
     def test_rejects_observed_target_runtime_failures_before_gpu(self) -> None:
         tree = ast.parse(
             """
+from trl import DataCollatorForCompletionOnlyLM
+
 def load_teacher():
     return Model.from_pretrained('teacher')
 
@@ -107,7 +109,10 @@ chosen = torch.tensor(batch['chosen_input_ids'])
         )
         errors = _unsafe_training_api_errors(tree)
 
-        self.assertEqual(len(errors), 5)
+        self.assertEqual(len(errors), 6)
+        self.assertTrue(
+            any("DataCollatorForCompletionOnlyLM" in error for error in errors)
+        )
         self.assertTrue(any("DPOTrainer" in error for error in errors))
         self.assertTrue(any("SFTTrainer(tokenizer" in error for error in errors))
         self.assertTrue(any("Trainer.train(max_steps" in error for error in errors))
