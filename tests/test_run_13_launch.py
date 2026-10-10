@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 
@@ -56,3 +57,24 @@ def test_research_canary_explicitly_launches_one_claude_opus_chain() -> None:
     assert "### METHOD VALIDATION FOR THIS CONTINUATION" in submitter
     assert "Keep AAR_REQUIRE_METHOD_CONTRACT=1" in submitter
     assert 'metadata/recovered-agent-log' in submitter
+
+
+def test_full_run_checkpoint_recovery_is_duplicate_safe_and_resumes_state() -> None:
+    recovery_path = RUN / "resume_run_13_full.sh"
+    recovery = recovery_path.read_text()
+    readme = (RUN / "README.md").read_text()
+
+    subprocess.run(["bash", "-n", str(recovery_path)], check=True)
+    assert "/checkpoint/ram/${USER}/aar-runs/run13-full" in recovery
+    assert "AAR_RUNTIME_ARTIFACT_ROOT" in recovery
+    assert "refusing duplicate active jobs" in recovery
+    assert "resolve_team" in recovery
+    assert "metadata/children.tsv" in recovery
+    assert "run_13_chain_controller.sbatch" in recovery
+    assert "launch_eval_worker.sh" in recovery
+    assert "checkpoint-resume-jobs.tsv" in recovery
+    assert "--gateway-register --lifetime 7d --no-watch" in recovery
+    assert (
+        "/checkpoint/ram/winnieyangwn/aar-runs/run13-full/"
+        "20261009T230106Z-4c7a5b059cf0"
+    ) in readme

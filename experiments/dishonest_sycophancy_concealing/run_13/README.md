@@ -218,3 +218,19 @@ and evaluator outputs. The transferred output was removed from its original
 `/storage/home/winnieyangwn/aar-runs/run13-full/` location after verification
 to reclaim home-storage quota. Attempt-local secrets and transient runtime
 state are not copied into the retained artifact directory.
+
+Resume the stopped attempt with the committed recovery launcher:
+
+```bash
+bash experiments/dishonest_sycophancy_concealing/run_13/resume_run_13_full.sh \
+  /storage/home/winnieyangwn/aar-runs/run13-full/20261009T230106Z-4c7a5b059cf0 \
+  /checkpoint/ram/winnieyangwn/aar-runs/run13-full/20261009T230106Z-4c7a5b059cf0
+```
+
+The small `/storage/home` control directory retains only credentials, the
+pinned serving runtime, and compatibility symlinks needed by absolute paths in
+the existing AutoData state database. Research, evaluator, training, and log
+writes resolve into the checkpoint artifact directory. The recovery launcher
+rejects duplicate live jobs, reuses the existing five team identities and
+AutoData state, restores each chain's current target deployment, and records
+new evaluator/controller job IDs in `metadata/checkpoint-resume-jobs.tsv`.

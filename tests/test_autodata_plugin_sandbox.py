@@ -43,6 +43,17 @@ def test_sandbox_exposes_attempt_local_method_validation_tools() -> None:
     assert 'AAR_METHOD_VALIDATOR_PY:-${HARNESS_PY:-python}' in submitter
 
 
+def test_sandbox_can_bind_relocated_run_artifacts_read_write() -> None:
+    source = BWRAP.read_text()
+    runtime = RUNTIME_ENV.read_text()
+
+    assert 'artifact_root="${AAR_RUNTIME_ARTIFACT_ROOT:-}"' in source
+    assert 'bind_visible_dir "${artifact_root}" rw' in source
+    assert '"${artifact_root:+${artifact_root}/eval/holdout}"' in source
+    assert 'artifact_team_eval_private="${resolved_team_dir}/_eval_private"' in source
+    assert "AAR_RUNTIME_ARTIFACT_ROOT" in runtime
+
+
 def test_runtime_exports_plugin_inputs_not_adapter_configuration() -> None:
     runtime = RUNTIME_ENV.read_text()
     chain = CHAIN.read_text()

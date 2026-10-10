@@ -19,6 +19,7 @@ command -v bwrap >/dev/null || fail "bwrap is required"
 real_cli="${AAR_CLAUDE_REAL_CLI_PATH:?missing real Claude CLI path}"
 repo="${AAR_REPO:?missing repository path}"
 runtime_root="${AAR_RUNTIME_ROOT:?missing run root}"
+artifact_root="${AAR_RUNTIME_ARTIFACT_ROOT:-}"
 sandbox_home="${HOME:?missing HOME}"
 storage_home="${AAR_RESEARCH_STORAGE_HOME:-/storage/home/${USER:?missing USER}}"
 autodata_plugin_root="${AAR_AUTODATA_PLUGIN_ROOT:-}"
@@ -32,6 +33,10 @@ research_tool_dir="${AAR_RESEARCH_TOOL_DIR:-}"
 real_cli="$(realpath -e -- "${real_cli}")"
 repo="$(realpath -e -- "${repo}")"
 runtime_root="$(realpath -e -- "${runtime_root}")"
+if [ -n "${artifact_root}" ]; then
+  [ -d "${artifact_root}" ] || fail "run artifact root does not exist"
+  artifact_root="$(realpath -e -- "${artifact_root}")"
+fi
 sandbox_home="$(realpath -e -- "${sandbox_home}")"
 if [ -n "${research_tool_dir}" ]; then
   [ -d "${research_tool_dir}" ] || fail "research tool directory does not exist"
@@ -136,6 +141,12 @@ case "${runtime_root}" in
   "${repo}"/*) fail "runtime root must not be nested in the read-only source checkout" ;;
   *) bind_visible_dir "${runtime_root}" rw ;;
 esac
+if [ -n "${artifact_root}" ] && [ "${artifact_root}" != "${runtime_root}" ]; then
+  case "${artifact_root}" in
+    "${repo}"|"${repo}"/*) fail "run artifact root must not overlap the source checkout" ;;
+    *) bind_visible_dir "${artifact_root}" rw ;;
+  esac
+fi
 
 # The orchestration-owned supervisor keeps the hot native state on the Slurm
 # node.  Expose only that one directory at a run-scoped alias; /tmp itself stays
@@ -224,13 +235,25 @@ for masked_file in \
   [ -e "${masked_file}" ] || continue
   bwrap_args+=(--ro-bind /dev/null "${masked_file}")
 done
-if [ -d "${runtime_root}/secrets" ]; then
-  bwrap_args+=(--tmpfs "${runtime_root}/secrets")
-fi
+for secret_root in "${runtime_root}/secrets" "${artifact_root:+${artifact_root}/secrets}"; do
+  [ -n "${secret_root}" ] || continue
+  if [ -d "${secret_root}" ]; then
+    bwrap_args+=(--tmpfs "${secret_root}")
+  fi
+done
 # Same-UID functional evaluation state is additionally hidden from the research
 # namespace. The evaluator remains outside this mount namespace.
+artifact_team_eval_private=""
+if [ -n "${artifact_root}" ] && [ -n "${TEAM_DIR:-}" ] && [ -d "${TEAM_DIR}" ]; then
+  resolved_team_dir="$(realpath -e -- "${TEAM_DIR}")"
+  case "${resolved_team_dir}" in
+    "${artifact_root}"/*) artifact_team_eval_private="${resolved_team_dir}/_eval_private" ;;
+  esac
+fi
 for eval_private in \
   "${runtime_root}/eval/holdout" \
+  "${artifact_root:+${artifact_root}/eval/holdout}" \
+  "${artifact_team_eval_private}" \
   "${TEAM_DIR:-${runtime_root}/aar_teams/unknown}/_eval_private"; do
   if [ -d "${eval_private}" ]; then
     bwrap_args+=(--tmpfs "${eval_private}")
@@ -249,6 +272,7 @@ unset AAR_CLAUDE_REAL_CLI_PATH AAR_RESEARCH_STORAGE_HOME
 unset META_CLAUDE_CODE_RELEASE CLAUDE_CODE_VERSION_OVERRIDE
 unset git_common cli_dir masked_file hidden_root storage_home autodata_plugin_root eval_private
 unset autodata_state autodata_state_root autodata_state_visible
+unset artifact_root artifact_team_eval_private resolved_team_dir secret_root
 unset claude_native_cache dotslash_cache
 unset research_tool_dir
 while IFS= read -r env_name; do
