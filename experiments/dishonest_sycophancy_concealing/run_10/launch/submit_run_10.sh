@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 
 MODE="${1:-canary}"
-case "${MODE}" in smoke|canary|full) ;; *) echo "usage: $0 smoke|canary|full [canary-proof]" >&2; exit 2;; esac
+case "${MODE}" in smoke|canary|full) ;; *) echo "usage: $0 smoke|canary|full [lifecycle-proofs]" >&2; exit 2;; esac
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUN10_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 REPO="$(cd -- "${RUN10_DIR}/../../.." && pwd)"
@@ -53,15 +53,34 @@ if [ -n "${RECOVERED_AGENT_LOG_DIR}" ]; then
   }
 fi
 
-CANARY_PROOF=""
-if [ "${MODE}" = full ]; then
-  CANARY_PROOF="$(realpath -e -- "${2:?full launch requires canary_passed.json}")"
-  [ "$(jq -r '.status' "${CANARY_PROOF}")" = passed ] || { echo "canary proof is not passed" >&2; exit 2; }
+validate_lifecycle_proof() {
+  local proof="$1" expected_chains="$2"
+  [ "$(jq -r '.status' "${proof}")" = passed ] || { echo "lifecycle proof is not passed: ${proof}" >&2; exit 2; }
+  [ "$(jq -r '.lifecycle_chain_count' "${proof}")" = "${expected_chains}" ] || {
+    echo "lifecycle proof expected ${expected_chains} chain(s): ${proof}" >&2
+    exit 2
+  }
   for field in score_result_pair fail_closed_markers merge_manifest_retained ephemeral_merge_removed kimi_mcp_tool_roundtrip method_gpu_smoke adapter_reload_validation on_demand_evaluator evaluation_item_contract; do
-    [ "$(jq -r --arg field "${field}" '.[$field]' "${CANARY_PROOF}")" = true ] || { echo "canary did not prove ${field}" >&2; exit 2; }
+    [ "$(jq -r --arg field "${field}" '.[$field]' "${proof}")" = true ] || { echo "lifecycle proof did not prove ${field}" >&2; exit 2; }
   done
-  git -C "${REPO}" merge-base --is-ancestor "$(jq -r '.canary_git_commit' "${CANARY_PROOF}")" HEAD || {
-    echo "current commit does not descend from canary commit" >&2; exit 2;
+  git -C "${REPO}" merge-base --is-ancestor "$(jq -r '.canary_git_commit' "${proof}")" HEAD || {
+    echo "current commit does not descend from lifecycle commit" >&2; exit 2;
+  }
+}
+
+PREREQUISITE_PROOF="" ONE_CHAIN_PROOF="" FIVE_CHAIN_PROOF=""
+if [ "${MODE}" = smoke ] && [ "${AAR_LIFECYCLE_PREREQUISITE_CHAIN_COUNT:-0}" -gt 0 ]; then
+  PREREQUISITE_PROOF="$(realpath -e -- "${2:?lifecycle launch requires its prerequisite proof}")"
+  validate_lifecycle_proof "${PREREQUISITE_PROOF}" "${AAR_LIFECYCLE_PREREQUISITE_CHAIN_COUNT}"
+elif [ "${MODE}" = full ]; then
+  ONE_CHAIN_PROOF="$(realpath -e -- "${2:?full launch requires the one-chain lifecycle proof}")"
+  FIVE_CHAIN_PROOF="$(realpath -e -- "${3:?full launch requires the five-chain lifecycle proof}")"
+  validate_lifecycle_proof "${ONE_CHAIN_PROOF}" 1
+  validate_lifecycle_proof "${FIVE_CHAIN_PROOF}" 5
+  one_hash="$(sha256sum "${ONE_CHAIN_PROOF}" | awk '{print $1}')"
+  [ "$(jq -r '.prerequisite_proof_sha256' "${FIVE_CHAIN_PROOF}")" = "${one_hash}" ] || {
+    echo "five-chain proof is not bound to the supplied one-chain proof" >&2
+    exit 2
   }
 fi
 
@@ -80,7 +99,9 @@ done
 
 commit="$(git -C "${REPO}" rev-parse HEAD)"
 attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "${REPO}" rev-parse --short=12 HEAD)"
-attempt_parent="${AAR_RUN10_ATTEMPT_PARENT:-${AAR_RUN_STORAGE_ROOT:?run config did not set storage.root}/${MODE}_attempts}"
+attempt_kind="${MODE}"
+[ "${MODE}" != smoke ] || attempt_kind="${AAR_LIFECYCLE_NAME:-smoke}"
+attempt_parent="${AAR_RUN10_ATTEMPT_PARENT:-${AAR_RUN_STORAGE_ROOT:?run config did not set storage.root}/${attempt_kind}_attempts}"
 attempt_dir="${attempt_parent}/${attempt_id}"
 mkdir -p "${attempt_parent}"
 mkdir "${attempt_dir}" "${attempt_dir}/metadata" "${attempt_dir}/logs"
@@ -95,7 +116,9 @@ if [ -n "${RECOVERED_AGENT_LOG_DIR}" ]; then
   chmod 600 "${recovered_agent_log_for_launch}/AGENT_LOG_gemma4_31b_explore_canary.md"
 fi
 cp -- "${AAR_RUN_CONFIG}" "${attempt_dir}/metadata/run.yaml"
-[ -z "${CANARY_PROOF}" ] || cp -- "${CANARY_PROOF}" "${attempt_dir}/metadata/canary_passed.json"
+[ -z "${PREREQUISITE_PROOF}" ] || cp -- "${PREREQUISITE_PROOF}" "${attempt_dir}/metadata/prerequisite_lifecycle_passed.json"
+[ -z "${ONE_CHAIN_PROOF}" ] || cp -- "${ONE_CHAIN_PROOF}" "${attempt_dir}/metadata/one_chain_lifecycle_passed.json"
+[ -z "${FIVE_CHAIN_PROOF}" ] || cp -- "${FIVE_CHAIN_PROOF}" "${attempt_dir}/metadata/five_chain_lifecycle_passed.json"
 "${RUN10_DIR}/runtime/snapshot_vllm_runtime.sh" "${attempt_dir}" > "${attempt_dir}/metadata/vllm_runtime_path.txt"
 printf 'export AAR_RUNTIME_ROOT=%q\n' "${attempt_dir}" > "${attempt_dir}/attempt.env"
 
@@ -138,8 +161,10 @@ export AAR_RUN10_CANARY_ITERATIONS="${CANARY_ITERATIONS}"
 if [ -n "${recovered_agent_log_for_launch}" ]; then
   export AAR_RECOVERED_AGENT_LOG_DIR="${recovered_agent_log_for_launch}"
 fi
+pipeline_time=02:00:00
+[ "${MODE}" != smoke ] || pipeline_time=04:00:00
 job_id="$(sbatch --parsable --account=ram --partition=g3 --qos=g3_ram_high \
-  --cpus-per-task=16 --mem=128G --time=02:00:00 \
+  --cpus-per-task=16 --mem=128G --time="${pipeline_time}" \
   --job-name="aar-run10-kimi-${MODE}-launch" --output="${attempt_dir}/logs/pipeline-%j.out" \
   --export=ALL "${RUN10_DIR}/slurm/run_10_pipeline.sbatch")"
 research_chains=1; max_iterations=1; evaluator_jobs=1; evaluator_gpus=4
@@ -155,8 +180,9 @@ elif [ "${MODE}" = smoke ]; then
   on_demand_evaluator_jobs="${AAR_EVAL_WORKERS:-1}"
   on_demand_evaluator_gpus="${AAR_EVAL_GPUS:-4}"
 fi
-printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nmode=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\ndeployment=%s\nresearch_chains=%s\nmax_iterations_per_chain=%s\nevaluator_jobs=%s\nevaluator_gpus_per_job=%s\non_demand_evaluator_jobs=%s\non_demand_evaluator_gpus_per_job=%s\nrecovered_agent_log_dir=%s\n' \
-  "${job_id}" "${attempt_dir}" "${commit}" "${MODE}" "${KIMI_DEPLOYMENT}" \
+printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nmode=%s\nlifecycle_name=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\ndeployment=%s\nresearch_chains=%s\nmax_iterations_per_chain=%s\nevaluator_jobs=%s\nevaluator_gpus_per_job=%s\non_demand_evaluator_jobs=%s\non_demand_evaluator_gpus_per_job=%s\nrecovered_agent_log_dir=%s\n' \
+  "${job_id}" "${attempt_dir}" "${commit}" "${MODE}" "${AAR_LIFECYCLE_NAME:-none}" \
+  "${KIMI_DEPLOYMENT}" \
   "${research_chains}" "${max_iterations}" "${evaluator_jobs}" "${evaluator_gpus}" \
   "${on_demand_evaluator_jobs}" "${on_demand_evaluator_gpus}" \
   "${recovered_agent_log_for_launch:-none}" | tee "${attempt_dir}/metadata/submission.txt"

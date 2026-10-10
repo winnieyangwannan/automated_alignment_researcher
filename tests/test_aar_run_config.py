@@ -55,7 +55,13 @@ def test_run10_config_emits_validated_environment() -> None:
 
 
 def test_lifecycle_config_is_bounded_and_emits_runtime_contract() -> None:
-    config = yaml.safe_load((LIFECYCLE / "run.yaml").read_text())
+    config_path = LIFECYCLE / "config" / "run.yaml"
+    config = yaml.safe_load(config_path.read_text())
+
+    assert config["lifecycle"] == {
+        "name": "one_chain_lifecycle_check",
+        "prerequisite_chain_count": 0,
+    }
 
     assert config["research"] == {
         "seeds": ["lifecycle"],
@@ -65,6 +71,7 @@ def test_lifecycle_config_is_bounded_and_emits_runtime_contract() -> None:
     assert config["training"] == {
         "mode": "one_step_gpu_preflight",
         "time_limit": "00:15:00",
+        "max_concurrent_jobs": 1,
     }
     assert config["evaluation"]["benchmarks"] == ["verbalized_ece"]
     assert config["evaluation"]["items_per_benchmark"] == 2
@@ -82,7 +89,7 @@ def test_lifecycle_config_is_bounded_and_emits_runtime_contract() -> None:
         [
             sys.executable,
             str(ROOT / "scripts" / "load_aar_run_config.py"),
-            str(LIFECYCLE / "run.yaml"),
+            str(config_path),
         ],
         env={**os.environ, "USER": "test-user"},
         check=True,
@@ -95,6 +102,9 @@ def test_lifecycle_config_is_bounded_and_emits_runtime_contract() -> None:
         "export AAR_CHAIN_HOURS=2",
         "export AAR_METHOD_SMOKE=1",
         "export AAR_TRAIN_TIME=00:15:00",
+        "export AAR_MAX_CONCURRENT_TRAIN_JOBS=1",
+        "export AAR_LIFECYCLE_NAME=one_chain_lifecycle_check",
+        "export AAR_LIFECYCLE_PREREQUISITE_CHAIN_COUNT=0",
         "export AAR_SUITE_BENCHMARKS=verbalized_ece",
         "export AAR_PUBLISH_FORCE_N=2",
         "export AAR_EVAL_WORKERS=1",
@@ -106,6 +116,44 @@ def test_lifecycle_config_is_bounded_and_emits_runtime_contract() -> None:
         "export AAR_KIMI_PREFLIGHT_CACHE_TTL_SECONDS=21600",
     }
     assert expected <= set(result.stdout.splitlines())
+
+
+def test_five_chain_lifecycle_config_is_bounded_and_concurrent() -> None:
+    config_path = (
+        RUN10 / "canary" / "five_chain_lifecycle_check" / "config" / "run.yaml"
+    )
+    config = yaml.safe_load(config_path.read_text())
+    assert config["lifecycle"] == {
+        "name": "five_chain_lifecycle_check",
+        "prerequisite_chain_count": 1,
+    }
+    assert config["research"]["seeds"] == [
+        "alpha",
+        "beta",
+        "gamma",
+        "delta",
+        "epsilon",
+    ]
+    assert config["research"]["max_sessions_per_chain"] == 1
+    assert config["training"]["max_concurrent_jobs"] == 5
+    assert config["evaluation"]["workers"] == 5
+    assert config["evaluation"]["gpus_per_worker"] == 1
+    assert config["evaluation"]["items_per_benchmark"] == 2
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/load_aar_run_config.py"),
+            str(config_path),
+        ],
+        env={**os.environ, "USER": "test-user"},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "export AAR_MAX_CONCURRENT_TRAIN_JOBS=5" in result.stdout
+    assert "export AAR_EVAL_WORKERS=5" in result.stdout
+    assert "export AAR_LIFECYCLE_PREREQUISITE_CHAIN_COUNT=1" in result.stdout
 
 
 def test_evaluator_defaults_to_all_allocated_node_memory() -> None:

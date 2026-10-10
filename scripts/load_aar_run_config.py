@@ -64,24 +64,38 @@ def load_run_config(path: Path) -> dict[str, str]:
         raise ValueError("run config must be a mapping")
     _reject_unknown(
         payload,
-        {"version", "storage", "research", "training", "evaluation", "agent"},
+        {
+            "version",
+            "lifecycle",
+            "storage",
+            "research",
+            "training",
+            "evaluation",
+            "agent",
+        },
         "top-level",
     )
     if payload.get("version") != 1:
         raise ValueError("run config version must be 1")
 
+    lifecycle = _mapping(payload.get("lifecycle"), "lifecycle")
     storage = _mapping(payload.get("storage"), "storage")
     research = _mapping(payload.get("research"), "research")
     training = _mapping(payload.get("training"), "training")
     evaluation = _mapping(payload.get("evaluation"), "evaluation")
     agent = _mapping(payload.get("agent"), "agent")
+    _reject_unknown(
+        lifecycle, {"name", "prerequisite_chain_count"}, "lifecycle"
+    )
     _reject_unknown(storage, {"root", "keep_checkpoints"}, "storage")
     _reject_unknown(
         research,
         {"seeds", "max_sessions_per_chain", "walltime_hours"},
         "research",
     )
-    _reject_unknown(training, {"mode", "time_limit"}, "training")
+    _reject_unknown(
+        training, {"mode", "time_limit", "max_concurrent_jobs"}, "training"
+    )
     _reject_unknown(
         evaluation,
         {
@@ -109,6 +123,22 @@ def load_run_config(path: Path) -> dict[str, str]:
     )
 
     environment: dict[str, str] = {}
+    if "name" in lifecycle:
+        name = lifecycle["name"]
+        if not isinstance(name, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._-]*", name
+        ):
+            raise ValueError("lifecycle.name must be a safe non-empty name")
+        environment["AAR_LIFECYCLE_NAME"] = name
+    if "prerequisite_chain_count" in lifecycle:
+        prerequisite = lifecycle["prerequisite_chain_count"]
+        if isinstance(prerequisite, bool) or not isinstance(prerequisite, int):
+            raise ValueError("lifecycle.prerequisite_chain_count must be an integer")
+        if prerequisite not in {0, 1}:
+            raise ValueError(
+                "lifecycle.prerequisite_chain_count must be zero or one"
+            )
+        environment["AAR_LIFECYCLE_PREREQUISITE_CHAIN_COUNT"] = str(prerequisite)
     if "root" in storage:
         root = storage["root"]
         if not isinstance(root, str):
@@ -166,6 +196,14 @@ def load_run_config(path: Path) -> dict[str, str]:
     if "time_limit" in training:
         environment["AAR_TRAIN_TIME"] = _time_limit(
             training["time_limit"], "training.time_limit"
+        )
+    if "max_concurrent_jobs" in training:
+        environment["AAR_MAX_CONCURRENT_TRAIN_JOBS"] = str(
+            _integer(
+                training["max_concurrent_jobs"],
+                "training.max_concurrent_jobs",
+                maximum=32,
+            )
         )
 
     if "memory" in evaluation:

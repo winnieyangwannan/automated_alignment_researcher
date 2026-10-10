@@ -14,7 +14,12 @@ Run 10 changes only the research-agent backend from Claude to Kimi-K2.6. The Gem
    the score to report exactly two items, plus a score/finding pair, vLLM 0.25.1
    language-model-only markers, merged-checkpoint provenance, retained merge
    manifest, and deletion of the ephemeral merged checkpoint.
-7. Only after the combined proof passes, launch five fresh chains (`alpha` through `epsilon`) for 50 sessions each and five distinct four-GPU evaluators.
+7. Only after the one-chain proof passes, run a five-chain lifecycle check with
+   one Kimi session per chain, five concurrent one-step GPU preflights, five
+   one-GPU evaluators, and two evaluation items per adapter. Require five exact
+   score/finding pairs and bind its proof to the one-chain proof.
+8. Only after both lifecycle proofs pass, launch five fresh chains (`alpha`
+   through `epsilon`) for 50 sessions each and five distinct four-GPU evaluators.
 
 Fifty iterations means 50 research sessions started per chain. A session that fails before scoring still consumes an iteration, so completion is reported with both started-session and successful score/result counts.
 

@@ -1,8 +1,8 @@
 # Run 10 one-chain lifecycle check
 
-- Status: active; launch wrapper queued
+- Status: active; wrapper and one Kimi chain running
 - Created: 2026-10-10 21:11 UTC
-- Last updated: 2026-10-10 22:11 UTC
+- Last updated: 2026-10-10 22:23 UTC
 - Time standard: UTC
 
 ## Goal
@@ -76,7 +76,7 @@ unit tests.
 
 Recorded: 2026-10-10 21:46 UTC
 
-[`run.yaml`](run.yaml) is the canary's validated source of truth. It pins one
+[`config/run.yaml`](config/run.yaml) is the canary's validated source of truth. It pins one
 Kimi chain, one research session, the one-step GPU preflight, one on-demand
 evaluator, the `verbalized_ece` benchmark, and exactly two evaluation items.
 The launcher snapshots the resolved YAML into the durable attempt metadata.
@@ -85,7 +85,7 @@ From the HPC `multi_kimi` worktree, launch only through the canary-local thin
 wrapper:
 
 ```bash
-experiments/dishonest_sycophancy_concealing/run_10/canary/one_chain_lifecycle_check/launch.sh
+experiments/dishonest_sycophancy_concealing/run_10/canary/one_chain_lifecycle_check/launch/launch.sh
 ```
 
 The wrapper supplies this canary's YAML to the shared Run 10 launcher; it does
@@ -124,8 +124,8 @@ Recorded: 2026-10-10 21:11 UTC
    records, and the successful score to report `n: 2` for that benchmark.
 6. Let the original Kimi session consume that score and call `share_finding`
    exactly once. Retain the finding joined to the same run ID.
-7. Verify the complete evidence chain and issue a single go/no-go decision for
-   selective Run 10 recovery.
+7. Verify the complete evidence chain and issue a go/no-go decision for the
+   five-chain lifecycle check. Do not authorize the full run directly.
 
 ## Pass criteria
 
@@ -162,10 +162,10 @@ research iteration.
 
 Recorded: 2026-10-10 21:11 UTC
 
-Use `../../recovery/resume_run_10.sh` to resume only incomplete seeds in the
-preserved attempt. The recovery helper must retain existing methods, scores,
-findings, chain memories, and consumed-session counts. Monitoring should report
-successful scores, failed attempts, receipts, and per-seed sessions separately.
+Launch [`../five_chain_lifecycle_check`](../five_chain_lifecycle_check/README.md)
+with this check's exact `metadata/canary_passed.json`. Only a subsequent passed
+five-chain proof may authorize the full 5×50 run. A one-chain pass alone is no
+longer sufficient.
 
 No canary or recovery job is launched merely by adding this specification.
 

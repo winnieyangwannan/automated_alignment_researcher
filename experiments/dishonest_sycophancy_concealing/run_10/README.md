@@ -82,10 +82,10 @@ From the isolated HPC `multi_kimi` checkout:
 
 ```bash
 experiments/dishonest_sycophancy_concealing/run_10/runtime/install_kimi_runtime.sh
-experiments/dishonest_sycophancy_concealing/run_10/canary/one_chain_lifecycle_check/launch.sh
+experiments/dishonest_sycophancy_concealing/run_10/canary/one_chain_lifecycle_check/launch/launch.sh
 ```
 
-The canary-local `run.yaml` pins one chain, one session, one-step GPU training,
+The canary-local `config/run.yaml` pins one chain, one session, one-step GPU training,
 one benchmark, exactly two evaluation items, and one on-demand evaluator. The
 thin launcher passes that YAML to the shared Run 10 engine. Once Kimi produces
 an approved method, a time-bounded one-GPU job loads the real Gemma model, runs
@@ -95,11 +95,23 @@ starting the one-GPU evaluator. The final proof also requires the successful
 score to report exactly two scored items. The original Kimi chain remains alive
 to consume the score and publish the finding.
 
-After the on-demand evaluator produces a score/result pair:
+After the one-chain evaluator produces a score/result pair, verify it and use
+that exact proof to launch the bounded five-chain topology check:
 
 ```bash
 python experiments/dishonest_sycophancy_concealing/run_10/canary/verify_run_10_canary.py <smoke-attempt>
-experiments/dishonest_sycophancy_concealing/run_10/launch/submit_run_10.sh full <smoke-attempt>/metadata/canary_passed.json
+experiments/dishonest_sycophancy_concealing/run_10/canary/five_chain_lifecycle_check/launch/launch.sh \
+  <one-chain-attempt>/metadata/canary_passed.json
+```
+
+After all five bounded lifecycles pass, verify that attempt and supply both
+ordered proofs to the full launcher:
+
+```bash
+python experiments/dishonest_sycophancy_concealing/run_10/canary/verify_run_10_canary.py <five-chain-attempt>
+experiments/dishonest_sycophancy_concealing/run_10/launch/submit_run_10.sh full \
+  <one-chain-attempt>/metadata/canary_passed.json \
+  <five-chain-attempt>/metadata/canary_passed.json
 ```
 
 The full run is active only after `metadata/children.env` records five distinct evaluator IDs and five distinct research-chain IDs.
@@ -169,7 +181,12 @@ ephemeral, so the champion package contains the evaluated adapter and records th
 Use `scripts/merge_peft_adapter.py` afterward only if the receiving system requires a full merged
 checkpoint.
 
-The scored smoke/canary is fail-closed on the research backend and evaluator protocol. Its `metadata/canary_passed.json` must prove the Kimi MCP round trip, real-GPU generated-method smoke, adapter reload, on-demand evaluator launch, one score/finding pair, vLLM 0.25.1 language-model-only execution, merged-checkpoint strategy, retained merge manifest, and ephemeral checkpoint cleanup.
+Both lifecycle checks are fail-closed on the research backend and evaluator
+protocol. Each `metadata/canary_passed.json` must prove the Kimi MCP round trip,
+all configured real-GPU method smokes, adapter reload, on-demand evaluator
+launch, exact score/finding pairs, vLLM 0.25.1 language-model-only execution,
+merged-checkpoint provenance, retained merge manifests, and ephemeral checkpoint
+cleanup. The five-chain proof is cryptographically bound to the one-chain proof.
 
 ## Isolation and provenance
 

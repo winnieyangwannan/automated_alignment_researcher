@@ -27,9 +27,7 @@ def verify_suite(
         raise RuntimeError("suite YAML has no benchmark list")
     names = [entry.get("name") for entry in entries if isinstance(entry, dict)]
     if names != expected_benchmarks or len(entries) != len(expected_benchmarks):
-        raise RuntimeError(
-            f"expected benchmarks {expected_benchmarks}, found {names}"
-        )
+        raise RuntimeError(f"expected benchmarks {expected_benchmarks}, found {names}")
 
     data: dict[str, dict[str, object]] = {}
     for entry, name in zip(entries, expected_benchmarks, strict=True):

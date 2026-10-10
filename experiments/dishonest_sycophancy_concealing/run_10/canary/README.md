@@ -1,7 +1,7 @@
 # Run 10 canary checks
 
-This directory contains the lightweight gates used before the full five-chain
-experiment:
+This directory contains the ordered lightweight gates used before the full
+five-chain experiment:
 
 - `verify_kimi_endpoint.py` proves a complete Kimi → native tool → AAR MCP tool
   round trip before Slurm submission.
@@ -11,17 +11,21 @@ experiment:
   evaluator, score, and finding evidence into the fail-closed proof required by
   the full launcher.
 
-The canonical operator commands remain in the parent [`README.md`](../README.md).
+Shared suite verification lives under `verification/`. The canonical operator
+commands remain in the parent [`README.md`](../README.md).
 
-## Planned one-chain lifecycle check
+## Gate sequence
 
-Before the stopped five-chain attempt is resumed, use the bounded lifecycle plan
-in [`one_chain_lifecycle_check/README.md`](one_chain_lifecycle_check/README.md). It requires one
-research session, one-step GPU training, the two-item evaluator, and one joined
-score/finding result. The document defines explicit pass and stop criteria; it
-does not launch work by itself. The check has its own validated
-[`run.yaml`](one_chain_lifecycle_check/run.yaml) and thin
-[`launch.sh`](one_chain_lifecycle_check/launch.sh); the final proof independently
-checks the published and scored item counts. Its operational history is retained
-separately in the append-only
-[`one_chain_lifecycle_check/PROGRESS.md`](one_chain_lifecycle_check/PROGRESS.md).
+1. [`one_chain_lifecycle_check`](one_chain_lifecycle_check/README.md) proves one
+   complete lifecycle. Its source of truth is
+   [`config/run.yaml`](one_chain_lifecycle_check/config/run.yaml), and its only
+   entrypoint is [`launch/launch.sh`](one_chain_lifecycle_check/launch/launch.sh).
+2. [`five_chain_lifecycle_check`](five_chain_lifecycle_check/README.md) then
+   proves the concurrent five-chain topology with one session per chain. It has
+   its own [`config/run.yaml`](five_chain_lifecycle_check/config/run.yaml) and
+   [`launch/launch.sh`](five_chain_lifecycle_check/launch/launch.sh).
+3. The full 5×50 launcher requires both exact passed proofs. Neither lightweight
+   score is a scientific result or part of the frontier.
+
+Each check keeps an append-only `PROGRESS.md`; durable machine evidence stays in
+its `/checkpoint` attempt.

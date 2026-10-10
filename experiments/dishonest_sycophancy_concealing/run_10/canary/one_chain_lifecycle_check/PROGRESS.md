@@ -41,6 +41,19 @@ traces, or partial held-out scores here.
   change is intentionally not synchronized while job `1808243` depends on the
   deployed commit. Decision: validate and commit locally, then synchronize only
   after the active canary no longer depends on the older checkout.
+- 2026-10-10 22:23 UTC — Revised the release gate to one-chain lifecycle,
+  five-chain lifecycle, then full 5×50. Reorganized this check into `config/`
+  and `launch/` responsibilities and began implementing the bounded five-chain
+  topology gate. Active attempt remains on its original committed source;
+  wrapper `1808243` and chain `1808253` are running with no proposal, receipt,
+  or failure yet. Decision: continue monitoring; do not relaunch.
+- 2026-10-10 22:27 UTC — The reorganized lifecycle implementation passed Bash
+  syntax, ShellCheck, Python compilation, 22 focused tests, and the full test
+  suite (286 tests plus 40 subtests with the repository on `PYTHONPATH`). The
+  first full-suite invocation used another worktree's environment without this
+  checkout on `PYTHONPATH`; its sole import failure disappeared under the
+  correct environment. Decision: implementation is CPU-validated but remains
+  devserver-only until the active canary is terminal.
 
 ## Entry template
 

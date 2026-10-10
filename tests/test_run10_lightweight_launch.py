@@ -1,5 +1,6 @@
 """Contracts for Run 10's bounded one-chain lifecycle check."""
 
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -15,6 +16,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 RUN10 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_10"
 LIFECYCLE = RUN10 / "canary" / "one_chain_lifecycle_check"
+FIVE_LIFECYCLE = RUN10 / "canary" / "five_chain_lifecycle_check"
 
 
 def _load_endpoint_verifier():
@@ -62,11 +64,21 @@ def test_smoke_mode_uses_one_chain_and_no_evaluator() -> None:
 
 
 def test_lifecycle_canary_has_a_thin_launcher_and_own_config() -> None:
-    launcher = (LIFECYCLE / "launch.sh").read_text()
+    launcher = (LIFECYCLE / "launch" / "launch.sh").read_text()
 
-    assert 'AAR_RUN_CONFIG="${SCRIPT_DIR}/run.yaml"' in launcher
+    assert 'AAR_RUN_CONFIG="${CHECK_DIR}/config/run.yaml"' in launcher
     assert 'exec "${RUN10_DIR}/launch/submit_run_10.sh" smoke' in launcher
     assert "sbatch" not in launcher
+
+    five_launcher = (FIVE_LIFECYCLE / "launch" / "launch.sh").read_text()
+    assert 'AAR_RUN_CONFIG="${CHECK_DIR}/config/run.yaml"' in five_launcher
+    assert 'submit_run_10.sh" smoke "$1"' in five_launcher
+    assert "sbatch" not in five_launcher
+
+    submitter = (RUN10 / "launch" / "submit_run_10.sh").read_text()
+    assert "prerequisite_lifecycle_passed.json" in submitter
+    assert "five_chain_lifecycle_passed.json" in submitter
+    assert "five-chain proof is not bound" in submitter
 
 
 def test_kimi_preflight_is_bounded_and_reuses_only_matching_fresh_proof(
@@ -307,7 +319,7 @@ def test_published_lifecycle_suite_must_contain_exactly_two_items(tmp_path: Path
     output = tmp_path / "proof.json"
     command = [
         sys.executable,
-        str(LIFECYCLE / "verify_evaluation_contract.py"),
+        str(RUN10 / "canary" / "verification" / "verify_evaluation_contract.py"),
         "--suite",
         str(suite_path),
         "--benchmarks",
@@ -359,7 +371,9 @@ def _write_lifecycle_attempt(root: Path, *, scored_items: int) -> Path:
             }
         )
     )
-    (metadata / "children.env").write_text("on_demand_evaluator=1\n")
+    (metadata / "children.env").write_text(
+        "on_demand_evaluator=1\nevaluator_jobs=123\n"
+    )
     (scores / "run-1.json").write_text(
         json.dumps(
             {
@@ -403,6 +417,71 @@ def test_final_canary_proof_requires_two_scored_items(tmp_path: Path) -> None:
         (failed_attempt / "metadata" / "canary_passed.json").read_text()
     )
     assert failed_proof["evaluation_item_contract"] is False
+
+
+def test_five_chain_proof_requires_all_lifecycles_and_binds_prerequisite(
+    tmp_path: Path,
+) -> None:
+    attempt = tmp_path / "five"
+    metadata = attempt / "metadata"
+    team = attempt / "aar_teams" / "team"
+    eval_private = team / "_eval_private"
+    manifests = eval_private / "merge_manifests"
+    for path in (metadata, team / "scores", team / "forum", manifests):
+        path.mkdir(parents=True, exist_ok=True)
+    (metadata / "submission.txt").write_text(
+        "git_commit=abc123\nlifecycle_name=five_chain_lifecycle_check\n"
+    )
+    (metadata / "kimi_mcp_preflight.json").write_text(
+        json.dumps({"mcp_tool_roundtrip": True})
+    )
+    runs = [
+        {
+            "run_id": f"run-{index}",
+            "real_gpu_smoke": True,
+            "adapter_reload_validation": True,
+        }
+        for index in range(5)
+    ]
+    (metadata / "method_smoke_passed.json").write_text(json.dumps({"runs": runs}))
+    (metadata / "lifecycle_evaluation_contract.json").write_text(
+        json.dumps(
+            {
+                "status": "passed",
+                "expected_benchmarks": ["verbalized_ece"],
+                "expected_items_per_benchmark": 2,
+            }
+        )
+    )
+    (metadata / "children.env").write_text(
+        "on_demand_evaluator=1\nevaluator_jobs=1 2 3 4 5\n"
+    )
+    prerequisite = metadata / "prerequisite_lifecycle_passed.json"
+    prerequisite.write_text('{"status":"passed","lifecycle_chain_count":1}\n')
+    for index in range(5):
+        run_id = f"run-{index}"
+        (team / "scores" / f"{run_id}.json").write_text(
+            json.dumps({"per_benchmark": {"verbalized_ece": {"n": 2}}})
+        )
+        (team / "forum" / f"{run_id}.json").write_text(
+            json.dumps({"run_id": run_id})
+        )
+        (manifests / f"{run_id}.json").write_text("{}\n")
+        (eval_private / f"eval_worker_{index}.out").write_text(
+            "backend=vllm image=docker.io/vllm/vllm-openai:v0.25.1 "
+            "lora_strategy=merged_checkpoint\n"
+            "runtime backend=vllm version=0.25.1 language_model_only=True\n"
+            "removed ephemeral merged checkpoint\n"
+        )
+
+    verifier = RUN10 / "canary" / "verify_run_10_canary.py"
+    subprocess.run([sys.executable, str(verifier), str(attempt)], check=True)
+    proof = json.loads((metadata / "canary_passed.json").read_text())
+    assert proof["lifecycle_chain_count"] == 5
+    assert proof["successful_lifecycle_runs"] == 5
+    assert proof["prerequisite_proof_sha256"] == hashlib.sha256(
+        prerequisite.read_bytes()
+    ).hexdigest()
 
 
 def test_full_mode_requires_per_method_gpu_preflight() -> None:

@@ -41,7 +41,8 @@ if [ "${MODE}" = smoke ]; then
   lifecycle_eval_idle_seconds="${AAR_EVAL_IDLE_SECONDS:-120}"
   lifecycle_eval_on_demand="${AAR_EVAL_ON_DEMAND:-1}"
   export AAR_START_EVAL_WORKER=0 AAR_EVAL_WORKERS=0
-  export AAR_MAX_CONCURRENT_TRAIN_JOBS=1 AAR_METHOD_SMOKE="${AAR_METHOD_SMOKE:-1}"
+  export AAR_MAX_CONCURRENT_TRAIN_JOBS="${AAR_MAX_CONCURRENT_TRAIN_JOBS:-1}"
+  export AAR_METHOD_SMOKE="${AAR_METHOD_SMOKE:-1}"
   export AAR_TRAIN_TIME="${AAR_TRAIN_TIME:-00:15:00}"
   # The lifecycle canary retains its training copy for adapter-reload proof.
   export AAR_KEEP_CHECKPOINTS=1
@@ -84,15 +85,23 @@ if [ "${MODE}" != smoke ]; then
   bash "${REPO}/scripts/publish_holdout.sh"
 fi
 
+expected=1
+if [ "${MODE}" = smoke ]; then
+  expected="$(wc -w <<< "${seeds}" | tr -d ' ')"
+elif [ "${MODE}" = full ]; then
+  expected=5
+fi
+
 if [ "${RESUME_SMOKE}" = 1 ]; then
   smoke_proof="${ATTEMPT_DIR}/metadata/method_smoke_passed.json"
   [ "$(jq -r '.status' "${smoke_proof}")" = passed ] || { echo "passed smoke proof missing" >&2; exit 2; }
-  adapter_path="$(jq -r '.adapter_path' "${smoke_proof}")"
+  adapter_path="$(jq -r '.runs[0].adapter_path // .adapter_path' "${smoke_proof}")"
   original_team_dir="$(dirname -- "$(dirname -- "${adapter_path}")")"
   [ -d "${original_team_dir}" ] || { echo "original smoke team is missing" >&2; exit 2; }
   AAR_TEAM_ID="$(basename -- "${original_team_dir}")"
   export AAR_TEAM_ID
-  chain_ids=("$(jq -r '.research_chain_job' "${smoke_proof}")")
+  mapfile -t chain_ids < <(jq -r '.research_chain_jobs[]? // empty' "${smoke_proof}")
+  [ "${#chain_ids[@]}" -gt 0 ] || chain_ids=("$(jq -r '.research_chain_job' "${smoke_proof}")")
   evaluator_ids=()
   echo "[run10] resuming passed smoke for team ${AAR_TEAM_ID}; no research or training relaunch"
 else
@@ -100,7 +109,6 @@ else
   bash "${REPO}/scripts/launch_team.sh" "${seeds}" "${iterations}" "${hours}" | tee "${launch_log}"
   mapfile -t evaluator_ids < <(awk '/^\[launch\] evaluator [0-9]+\/[0-9]+ -> job [0-9]+$/{print $NF}' "${launch_log}")
   mapfile -t chain_ids < <(awk '/^\[team\] chain [a-z]+ -> job [0-9]+$/{print $NF}' "${launch_log}")
-  expected=1; [ "${MODE}" = full ] && expected=5
   expected_evaluators="${expected}"; [ "${MODE}" = smoke ] && expected_evaluators=0
   if [ "${#evaluator_ids[@]}" -ne "${expected_evaluators}" ] || [ "${#chain_ids[@]}" -ne "${expected}" ]; then
     echo "missing child job IDs" >&2
@@ -124,11 +132,19 @@ if [ "${MODE}" = smoke ]; then
   if [ "${RESUME_SMOKE}" = 0 ]; then
     echo "[run10] waiting for the generated method's real-GPU one-step smoke"
     "${HARNESS_PY}" "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/canary/monitor_method_smoke.py" \
-      "${ATTEMPT_DIR}" --timeout-seconds 6900 --poll-seconds 10
+      "${ATTEMPT_DIR}" --expected-chains "${expected}" --timeout-seconds 6900 --poll-seconds 10
   fi
   smoke_proof="${ATTEMPT_DIR}/metadata/method_smoke_passed.json"
-  run_id="$(jq -r '.run_id' "${smoke_proof}")"
-  adapter_path="$(jq -r '.adapter_path' "${smoke_proof}")"
+  mapfile -t run_ids < <(jq -r '.runs[]?.run_id // empty' "${smoke_proof}")
+  mapfile -t adapter_paths < <(jq -r '.runs[]?.adapter_path // empty' "${smoke_proof}")
+  if [ "${#run_ids[@]}" -eq 0 ]; then
+    run_ids=("$(jq -r '.run_id' "${smoke_proof}")")
+    adapter_paths=("$(jq -r '.adapter_path' "${smoke_proof}")")
+  fi
+  if [ "${#run_ids[@]}" -ne "${expected}" ] || [ "${#adapter_paths[@]}" -ne "${expected}" ]; then
+    echo "method smoke proof does not contain ${expected} runs" >&2
+    exit 1
+  fi
   export TEAM_DIR="${ATTEMPT_DIR}/aar_teams/${AAR_TEAM_ID}"
   export SUBMISSIONS_DIR="${TEAM_DIR}/submissions" SCORES_DIR="${TEAM_DIR}/scores"
 
@@ -144,19 +160,23 @@ if [ "${MODE}" = smoke ]; then
   bash "${REPO}/scripts/publish_holdout.sh"
   lifecycle_suite="${HOLDOUT_DIR}/${SUITE_NAME}/${SUITE_NAME}.yaml"
   "${HARNESS_PY}" \
-    "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/canary/one_chain_lifecycle_check/verify_evaluation_contract.py" \
+    "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/canary/verification/verify_evaluation_contract.py" \
     --suite "${lifecycle_suite}" \
     --benchmarks "${AAR_SUITE_BENCHMARKS}" \
     --items "${AAR_PUBLISH_FORCE_N}" \
     --output "${ATTEMPT_DIR}/metadata/lifecycle_evaluation_contract.json"
-  if [ -f "${SUBMISSIONS_DIR}/${run_id}/.submitted" ] && \
-     [ -f "${SUBMISSIONS_DIR}/${run_id}/model/adapter_config.json" ]; then
-    echo "[run10] reusing staged immutable adapter for ${run_id}"
-  else
-    "${HARNESS_PY}" -c \
-      'import sys; from aar.transport import put_model; print(put_model(sys.argv[1], sys.argv[2]))' \
-      "${adapter_path}" "${run_id}"
-  fi
+  for index in "${!run_ids[@]}"; do
+    run_id="${run_ids[${index}]}"
+    adapter_path="${adapter_paths[${index}]}"
+    if [ -f "${SUBMISSIONS_DIR}/${run_id}/.submitted" ] && \
+       [ -f "${SUBMISSIONS_DIR}/${run_id}/model/adapter_config.json" ]; then
+      echo "[run10] reusing staged immutable adapter for ${run_id}"
+    else
+      "${HARNESS_PY}" -c \
+        'import sys; from aar.transport import put_model; print(put_model(sys.argv[1], sys.argv[2]))' \
+        "${adapter_path}" "${run_id}"
+    fi
+  done
 
   export AAR_EVAL_WORKERS="${lifecycle_eval_workers}"
   export AAR_EVAL_GPUS="${lifecycle_eval_gpus}" AAR_EVAL_GPU_CAP="${lifecycle_eval_gpus}"
@@ -165,15 +185,16 @@ if [ "${MODE}" = smoke ]; then
   export EVAL_VLLM_MAX_NUM_SEQS=8 EVAL_VLLM_MAX_NUM_BATCHED_TOKENS=8192
   eval_launch_log="${ATTEMPT_DIR}/metadata/launch_on_demand_evaluator.txt"
   "${REPO}/scripts/launch_eval_worker.sh" "${SUITE_NAME}" "${AAR_EVAL_IDLE_SECONDS}" "${AAR_EVAL_WORKERS}" | tee "${eval_launch_log}"
-  mapfile -t evaluator_ids < <(awk '/^\[launch\] evaluator 1\/1 -> job [0-9]+$/{print $NF}' "${eval_launch_log}")
-  [ "${#evaluator_ids[@]}" -eq "${AAR_EVAL_WORKERS}" ] || { echo "on-demand evaluator ID missing" >&2; exit 1; }
+  mapfile -t evaluator_ids < <(awk '/^\[launch\] evaluator [0-9]+\/[0-9]+ -> job [0-9]+$/{print $NF}' "${eval_launch_log}")
+  [ "${#evaluator_ids[@]}" -eq "${AAR_EVAL_WORKERS}" ] || { echo "on-demand evaluator IDs missing" >&2; exit 1; }
+  [ "$(printf '%s\n' "${evaluator_ids[@]}" | sort -u | wc -l)" -eq "${AAR_EVAL_WORKERS}" ] || { echo "duplicate on-demand evaluator IDs" >&2; exit 1; }
   {
-    printf 'evaluator_jobs=%s\n' "${evaluator_ids[0]}"
+    printf 'evaluator_jobs=%s\n' "${evaluator_ids[*]}"
     printf 'research_chain_jobs=%s\n' "${chain_ids[*]}"
     printf 'research_seeds=%s\n' "${seeds}"
     printf 'max_iterations_per_chain=%s\n' "${iterations}"
     printf 'evaluator_gpus_per_job=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nephemeral_merged_checkpoints=1\n' "${AAR_EVAL_GPUS}"
     printf 'method_smoke_passed=1\non_demand_evaluator=1\n'
   } > "${ATTEMPT_DIR}/metadata/children.env"
-  echo "[run10] on-demand evaluator ${evaluator_ids[0]} launched for smoked run ${run_id}"
+  echo "[run10] ${#evaluator_ids[@]} on-demand evaluator(s) launched for ${#run_ids[@]} smoked run(s)"
 fi
