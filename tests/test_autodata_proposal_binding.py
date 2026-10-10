@@ -175,6 +175,12 @@ def test_run9_prompt_and_launcher_require_proposal_binding() -> None:
 
     assert "Required AutoData ordering" in prompt
     assert "Only after it returns `approved: true` and a `run_id`" in prompt
+    assert "every item has `id`, `prompt`, and `response`" in prompt
+    assert (
+        "Do not\nassume or access `instruction`, `answer`, or `thinking` fields"
+        in prompt
+    )
+    assert "`prompt`,\n`chosen`, and `rejected`" in prompt
     assert "aar.autodata.proposal-bindings/v1" in submitter
     assert 'chmod 600 "${proposal_bindings}"' in submitter
 

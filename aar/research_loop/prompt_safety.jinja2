@@ -490,6 +490,14 @@ items = load_autodata_campaign_datasets(
 )
 ```
 
+The loader's returned item schema is part of the fixed training contract. For
+`training_objective="sft"`, every item has `id`, `prompt`, and `response`; train
+on `prompt` as the user input and `response` as the assistant target. Do not
+assume or access `instruction`, `answer`, or `thinking` fields. For
+`training_objective="dpo"`, the objective-specific content fields are `prompt`,
+`chosen`, and `rejected`. Validate the selected objective's required fields
+before submitting training so a schema mismatch fails before any GPU job.
+
 Before calling `scripts/submit_train_job.sh`, write
 `$TEAM_DIR/autodata/<run_id>/training-handoff.json` with the durable native state
 snapshot at `$AAR_AUTODATA_RETAINED_STATE` (not the live node-local

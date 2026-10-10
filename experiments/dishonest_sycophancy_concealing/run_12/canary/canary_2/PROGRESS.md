@@ -199,3 +199,19 @@ This compact view shows the exact boundary reached by attempt
 The cross marks the failed stage—not a failed model-generation task. No
 meta-optimization, production-generation, or training work began in this
 attempt.
+
+<a id="run12-canary2-training-schema-preflight"></a>
+
+### 🛠️ 16:52 PT — FIX: explicit AutoData training-item schema
+
+- Review of the preserved Kimi-authored method found that it expected
+  nonexistent `instruction`, `answer`, and `thinking` fields from the native
+  SFT loader.
+- The verified loader returns `id`, `prompt`, and `response` for SFT; a method
+  using the preserved assumptions would generate all production data and then
+  fail before the required optimizer step.
+- The researcher contract now states the exact SFT and DPO item fields and
+  requires schema validation before submitting a GPU training job.
+- A focused regression assertion protects this instruction.
+- This is a pre-relaunch fail-fast correction; no external endpoint or cluster
+  resource is blocking the next attempt.
