@@ -277,6 +277,13 @@ class ModelBrokerCanaryTest(unittest.TestCase):
         rejected["reason_code"] = "judge_rejected"
         with self.assertRaisesRegex(RuntimeError, "not accepted"):
             self.module._validate_task_result(rejected, contract.schema, rates=rates)
+        usage = self.module._validate_task_result(
+            rejected,
+            contract.schema,
+            rates=rates,
+            require_accepted=False,
+        )
+        self.assertEqual([call["role"] for call in usage], ["generator", "judge"])
 
         invalid = json.loads(json.dumps(_FakeBrokerClient.result))
         invalid["metrics"]["valid"] = 0.0

@@ -147,6 +147,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--target-max-output-tokens", type=_positive_integer, default=512)
     parser.add_argument("--model-request-max-attempts", type=_positive_integer, default=3)
     parser.add_argument("--timeout-seconds", type=_positive_integer, default=900)
+    parser.add_argument(
+        "--allow-judge-rejection",
+        action="store_true",
+        help="measure provider capacity without requiring every sample to be accepted",
+    )
     return parser
 
 
@@ -361,6 +366,7 @@ def _validate_task_result(
     *,
     rates: dict[str, tuple[Decimal, Decimal]],
     target_binding: TargetBinding | None = None,
+    require_accepted: bool = True,
 ) -> list[dict[str, Any]]:
     # This focused validator covers every keyword in the checked-in task-result
     # schema without requiring an extra package in the broker service venv.  It
@@ -379,20 +385,30 @@ def _validate_task_result(
     if value.get("outcome") != "succeeded":
         raise RuntimeError("model-backed canary task did not succeed")
     items = value.get("generated_items")
-    expected_item_counts = {0, 1} if target_binding is not None else {1}
+    expected_item_counts = (
+        {0, 1} if target_binding is not None or not require_accepted else {1}
+    )
     if not isinstance(items, list) or len(items) not in expected_item_counts:
         raise RuntimeError("model-backed canary returned the wrong item count")
     metadata = items[0].get("metadata") if items else None
-    if target_binding is None and (
+    if target_binding is None and require_accepted and (
         not isinstance(metadata, dict) or metadata.get("judge_accepted") is not True
     ):
         raise RuntimeError("model-backed canary sample was not accepted by the judge")
     metrics = value.get("metrics")
     if not isinstance(metrics, dict):
         raise RuntimeError("model-backed canary metrics are missing")
-    if target_binding is None and metrics.get("valid") != 1.0:
+    if (
+        target_binding is None
+        and require_accepted
+        and metrics.get("valid") != 1.0
+    ):
         raise RuntimeError("model-backed canary sample is not valid")
-    if target_binding is None and value.get("reason_code") is not None:
+    if (
+        target_binding is None
+        and require_accepted
+        and value.get("reason_code") is not None
+    ):
         raise RuntimeError("model-backed canary returned a rejection reason")
     usage = value.get("provider_usage")
     expected = [("generator", GENERATOR_MODEL)]
@@ -672,6 +688,7 @@ def run(args: argparse.Namespace, *, runtime: _Runtime | None = None) -> dict[st
             contract.schema,
             rates=rates,
             target_binding=target_binding,
+            require_accepted=not args.allow_judge_rejection,
         )
         report = {
             "schema": "aar.autodata.model-broker-canary/v1",
@@ -690,6 +707,9 @@ def run(args: argparse.Namespace, *, runtime: _Runtime | None = None) -> dict[st
             "provider_call_count": len(usage),
             "generator_deployment_id": args.generator_deployment_id,
             "provider_usage": usage,
+            "accepted_row_count": len(result["generated_items"]),
+            "metrics": result["metrics"],
+            "reason_code": result.get("reason_code"),
         }
         if target_binding is not None:
             report.update(

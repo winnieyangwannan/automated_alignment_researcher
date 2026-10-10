@@ -43,7 +43,7 @@ def test_run9_pins_local_bwrap_and_safe_concurrency() -> None:
     assert "ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud" not in submitter
     assert "AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE" not in submitter
     assert "AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-large" in submitter
-    assert "AAR_AUTODATA_CONCURRENCY:-16" in submitter
+    assert "AAR_AUTODATA_CONCURRENCY:-24" in submitter
     assert '"runner": "${AAR_AUTODATA_BROKER_RUNNER}"' in submitter
     assert '"environment": "${AAR_AUTODATA_ENVIRONMENT}"' in submitter
     assert 'export AAR_AUTODATA_BROKER_RUNNER="${AAR_AUTODATA_BROKER_RUNNER:?}"' in pipeline
@@ -77,6 +77,10 @@ def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
     assert '"environment": "${ENVIRONMENT}"' in submitter
     assert '"runner": "${RUNNER}"' in submitter
     assert 'export AAR_AUTODATA_CONCURRENCY="${CONCURRENCY}"' in submitter
+    assert 'KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-' in submitter
+    assert "loopback_model_auth_bridge.py" in canary
+    assert "--allow-judge-rejection" in canary
+    assert '"accepted_rows_per_minute"' in canary
     assert "--export=ALL" in submitter
 
 

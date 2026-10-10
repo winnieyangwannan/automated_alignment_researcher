@@ -11,7 +11,8 @@ FIRECRACKER_TOKEN="${AAR_RUN9_FIRECRACKER_TOKEN:-/storage/home/${USER}/aar-workt
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
 RUNNER="${AAR_AUTODATA_BROKER_RUNNER:-local-bwrap}"
 ENVIRONMENT="${1:-oci-runner-firecracker-medium}"
-CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-16}"
+CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-24}"
+KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-/checkpoint/ram/shared/vllm_deployments_v2/winnieyangwn-kimi26/proxy_info.json}"
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "canary requires branch autodata" >&2; exit 2; }
 git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || { echo "tracked AAR worktree is dirty" >&2; exit 2; }
@@ -36,7 +37,7 @@ else
   GENERATOR_URL="https://ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud/v1"
   GENERATOR_HOST_HEADER="ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud"
 fi
-for required in "${SECRET_ENV}"; do
+for required in "${SECRET_ENV}" "${KIMI_PROXY_INFO}"; do
   [ -f "${required}" ] || { echo "missing required input: ${required}" >&2; exit 2; }
   [ "$(stat -c %a "${required}")" = 600 ] || { echo "secret input must be mode 600: ${required}" >&2; exit 2; }
 done
@@ -106,6 +107,7 @@ export AAR_AUTODATA_CAPABILITY_FILE="${capability_file}"
 export AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE="${FIRECRACKER_TOKEN}"
 export AAR_AUTODATA_MODEL_ENV_FILE="${model_env}"
 export AAR_AUTODATA_CAMPAIGN_POLICY="${policy}"
+export AAR_KIMI_PROXY_INFO="${KIMI_PROXY_INFO}"
 
 job_id="$(sbatch --parsable --output="${root}/slurm-%j.out" --export=ALL "${SCRIPT_DIR}/run_9_capacity_canary.sbatch")"
 printf 'job_id=%s\nroot=%s\nbroker_runner=%s\nenvironment=%s\nconcurrency=%s\naar_git_commit=%s\nautodata_git_commit=%s\n' \
