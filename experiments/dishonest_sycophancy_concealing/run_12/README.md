@@ -132,11 +132,13 @@ Attempt metadata, logs, private broker state, and retained evidence live under
 When the shared inference gateway is unavailable, submit
 `run_12_gateway_deferred_launch.sbatch` instead of starting the five chains
 directly. The gate pins the source commit, rechecks the checkpoint-only storage
-root, and waits until the elected gateway leader is healthy, `aar_8-kimi26` is
-registered, and a real Kimi completion succeeds. Only then does it invoke the
-canonical full launcher. This prevents an outage from consuming the chains'
-bounded research attempts while keeping all deferred-launch and run logs on
-the checkpoint filesystem.
+root, and waits until the elected gateway leader is healthy,
+`autodata_8-kimi26` is registered, and a real Kimi completion through that exact
+deployment succeeds. Only then does it invoke the canonical full launcher.
+This prevents an outage from consuming the chains' bounded research attempts
+while keeping all deferred-launch and run logs on the checkpoint filesystem.
+The AAR researcher has a separate direct-proxy preflight for
+`aar_8-kimi26`; it is not the reason for the gateway gate.
 
 On 2026-10-10, the existing Run 12 output trees were moved from
 `/storage/home/$USER/aar-runs/` to this checkpoint layout, freeing about 5.3 GB
@@ -214,9 +216,69 @@ iteration-versioned deployment, tested, bound, and placed into a newly written
 campaign policy before the next AAR job is submitted. A rejected or inferior
 candidate leaves the previous verified target unchanged.
 
-The full launch uses `aar_8-kimi26` for both the Kimi AAR researcher and the
-AutoData generator, local Bubblewrap brokers, five four-GPU evaluator lanes,
-and five one-GPU persistent Gemma research lanes. It starts at AutoData
+## Final endpoint decision
+
+Run 12 uses the following endpoint architecture:
+
+```text
+Five isolated AAR researcher sessions
+  → direct Serve API route for aar_8-kimi26
+
+Five AutoData generation chains
+  → ram-inference-gateway
+  → exact autodata_8-kimi26 deployment
+
+Each chain's AutoData Gemma target
+  → ram-inference-gateway
+  → exact chain/iteration deployment
+
+Each chain's Gemma evaluator
+  → merged candidate loaded locally by vLLM in its four-GPU Slurm job
+
+Luna judgment and approval review
+  → Model API
+```
+
+The researcher and AutoData Kimi roles do not share serving capacity.
+`aar_8-kimi26` remains the researcher deployment. The separately requested
+`autodata_8-kimi26` is shared only by the five AutoData chains and is expected
+to provide two independent four-GPU replicas, preferably one per node. Chain
+sessions, brokers, policies, budgets, and retained state remain isolated even
+though generation inference is shared.
+
+The production launcher must not infer readiness from the deployment request.
+Before admitting any bounded researcher attempt, it must verify:
+
+- two serving replicas and exact Kimi-K2.6 identity for
+  `autodata_8-kimi26`;
+- an exact `autodata_8-kimi26` entry in the gateway registry;
+- a real completion through the gateway with that deployment ID; and
+- a separate direct-proxy completion for researcher deployment
+  `aar_8-kimi26`.
+
+AutoData Gemma uses the gateway because its stable ingress and exact
+`X-Deployment-Id` selection simplify iteration-versioned target changes. A
+chain does not restart Gemma arbitrarily every iteration. If no better adapter
+is promoted, it retains the current endpoint. If the incumbent changes, the
+controller launches and validates a new immutable `fixed base + selected
+adapter` deployment, switches the next iteration's binding, and only then
+retires the previous deployment.
+
+Gemma evaluation does not use the gateway. Its evaluator Slurm job already
+owns the GPUs and is the only consumer of the temporary candidate, so it loads
+the merged checkpoint directly with local vLLM. Creating gateway endpoints for
+these candidates would add registration, routing, cleanup, and shared-gateway
+failure without adding compute capacity.
+
+This gateway-backed AutoData architecture is the final decision for the
+immediate Run 12 launch because it reuses the implemented campaign-policy
+path. The gateway adds routing stability, not inference capacity. The
+gateway-independent Kimi-and-Gemma bridge design remains documented in
+`direct_route/README.md` as a future hardening path and must not be mixed into
+this launch without its own canary.
+
+The run uses local Bubblewrap brokers, five four-GPU evaluator lanes, and five
+one-GPU persistent logical Gemma research lanes. It starts at AutoData
 concurrency eight per chain, bounding fleet-wide generation concurrency at
 forty while retaining substantial parallelism.
 
