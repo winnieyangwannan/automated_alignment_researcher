@@ -176,3 +176,26 @@ Run the endpoint and source preflight against this exact revision, then start a
 fresh Canary 2 attempt. Record all new job IDs, stage-transition times, task
 throughput, acceptance counts, model-call latency/rate limits, the verified
 1,000-row handoff, and the one-step training result here.
+
+<a id="run12-canary2-lifecycle-snapshot-1"></a>
+
+### 🔎 16:48 PT — LIFECYCLE SNAPSHOT: stopped attempt
+
+This compact view shows the exact boundary reached by attempt
+`20261010T231058Z-b2068e1ebd8e`:
+
+```text
+✓ Endpoint and MCP preflight
+✓ Infrastructure bootstrap
+✓ Method authoring and contract check
+✓ Proposal review and approval
+✓ AutoData workspace registration
+✗ First workspace-authoring action
+○ Meta-optimization
+○ Production
+○ Training smoke
+```
+
+The cross marks the failed stage—not a failed model-generation task. No
+meta-optimization, production-generation, or training work began in this
+attempt.
