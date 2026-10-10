@@ -239,7 +239,7 @@ class KimiAgent:
         system_prompt: Optional[str] = None,
         include_prior_work: bool = True,
         completion_tool: Optional[str] = None,
-        max_continuations: int = 24,
+        max_continuations: Optional[int] = None,
         disallowed_tools: Optional[list[str]] = None,
         auto_approve: bool = False,
         force_checkpoint_tools: bool = False,
@@ -253,6 +253,25 @@ class KimiAgent:
         self.system_prompt = system_prompt
         self.include_prior_work = include_prior_work
         self.completion_tool = completion_tool
+        if max_continuations is None:
+            autodata_enabled = os.getenv("AAR_AUTODATA", "0").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+            raw_continuations = os.getenv(
+                "AAR_KIMI_MAX_CONTINUATIONS",
+                "96" if autodata_enabled else "24",
+            )
+            try:
+                max_continuations = int(raw_continuations)
+            except ValueError as error:
+                raise ValueError(
+                    "AAR_KIMI_MAX_CONTINUATIONS must be an integer"
+                ) from error
+        if max_continuations < 1:
+            raise ValueError("Kimi max_continuations must be at least one")
         self.max_continuations = max_continuations
         self.disallowed_tools = disallowed_tools or []
         self.auto_approve = auto_approve

@@ -29,6 +29,11 @@ import run as launcher
 
 
 class KimiAgentTest(unittest.TestCase):
+    def test_autodata_sessions_receive_larger_bounded_continuation_budget(self) -> None:
+        with patch.dict(os.environ, {"AAR_AUTODATA": "1"}, clear=True):
+            agent = KimiAgent("test-agent", Path.cwd(), cli_path="/bin/true")
+        self.assertEqual(agent.max_continuations, 96)
+
     def test_turn_timeout_terminates_cli_process_group(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
