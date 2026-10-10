@@ -11,7 +11,7 @@
   ],
   "authoring_executor": { "kind": "local-bwrap" },
   "authoring_budget": {
-    "max_iterations": 20,
+    "max_iterations": 32,
     "max_task_attempts": 32,
     "max_wall_seconds": 6300
   },

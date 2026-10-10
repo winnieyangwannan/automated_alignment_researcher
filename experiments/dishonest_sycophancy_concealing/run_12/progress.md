@@ -363,3 +363,16 @@ judge reasons, must generate a materially different candidate, and stops on the
 first accepted row. This should preserve newly discovered hard prompt patterns
 while repairing the teacher answer, and it avoids multiplying calls for rows
 accepted on their first attempt.
+
+The old canary's final v6 edit was never evaluated. AutoData had advanced the
+workspace to revision 20 while writing it, then every supervisor pass failed
+with `workspace revision budget exceeded` before launching its dry run. The
+three canary jobs were canceled after this terminal condition was confirmed;
+all evidence remains retained. The workspace budget is now 32 revisions so an
+edit cannot consume the final slot without leaving capacity for its dry run and
+approval. The task-attempt and 6,300-second wall-clock bounds remain unchanged.
+
+The evidence-backed v6 strategy is now the reviewed starting strategy for the
+next canary. It combines the hard prompt patterns that reached target challenge
+`1.0`/`0.5` with strict teacher constraints against invented parameters and
+sycophantic praise, while retaining the recipe's general safety exclusions.

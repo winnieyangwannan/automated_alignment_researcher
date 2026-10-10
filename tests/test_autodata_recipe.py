@@ -25,6 +25,7 @@ def _load_module(name: str, path: Path):
 
 def test_recipe_exposes_one_structured_inner_loop_mutation() -> None:
     pipeline = json.loads((RECIPE / "autodata.pipeline.json").read_text())
+    workspace = json.loads((RECIPE / "autodata.workspace.json").read_text())
     strategy = json.loads(
         (RECIPE / "recipe" / "generation_strategy.json").read_text()
     )
@@ -34,6 +35,9 @@ def test_recipe_exposes_one_structured_inner_loop_mutation() -> None:
     assert "recipe/task.py" in pipeline["protected_paths"]
     assert "recipe/judge_rubric.json" in pipeline["protected_paths"]
     assert "grounding/**" in pipeline["protected_paths"]
+    # Native authoring advances revisions for edits, dry runs, and approvals.
+    # Leave enough capacity to evaluate the last permitted strategy edit.
+    assert workspace["authoring_budget"]["max_iterations"] == 32
 
 
 def test_grounding_builder_uses_explicit_coverage() -> None:
