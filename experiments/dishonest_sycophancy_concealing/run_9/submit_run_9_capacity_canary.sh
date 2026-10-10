@@ -12,6 +12,7 @@ BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata
 RUNNER="${AAR_AUTODATA_BROKER_RUNNER:-local-bwrap}"
 ENVIRONMENT="${1:-oci-runner-firecracker-medium}"
 CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-24}"
+TASK_COUNT="${AAR_AUTODATA_CANARY_TASK_COUNT:-${CONCURRENCY}}"
 KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-/checkpoint/ram/shared/vllm_deployments_v2/winnieyangwn-kimi26/proxy_info.json}"
 SLURM_DEPENDENCY="${AAR_SLURM_DEPENDENCY:-}"
 
@@ -31,6 +32,13 @@ case "${CONCURRENCY}" in
   ''|*[!0-9]*|0) echo "capacity-canary concurrency must be in [1,64]" >&2; exit 2 ;;
 esac
 [ "${CONCURRENCY}" -le 64 ] || { echo "capacity-canary concurrency must be in [1,64]" >&2; exit 2; }
+case "${TASK_COUNT}" in
+  ''|*[!0-9]*|0) echo "capacity-canary task count must be in [concurrency,512]" >&2; exit 2 ;;
+esac
+[ "${TASK_COUNT}" -ge "${CONCURRENCY}" ] && [ "${TASK_COUNT}" -le 512 ] || {
+  echo "capacity-canary task count must be in [concurrency,512]" >&2
+  exit 2
+}
 if [ -n "${SLURM_DEPENDENCY}" ] && [[ ! "${SLURM_DEPENDENCY}" =~ ^after(any|ok):[0-9]+$ ]]; then
   echo "capacity-canary dependency must be afterany:<job-id> or afterok:<job-id>" >&2
   exit 2
@@ -109,6 +117,7 @@ export AAR_AUTODATA_GENERATOR_URL="${GENERATOR_URL}"
 export AAR_AUTODATA_GENERATOR_HOST_HEADER="${GENERATOR_HOST_HEADER}"
 export AAR_AUTODATA_ENVIRONMENT="${ENVIRONMENT}"
 export AAR_AUTODATA_CONCURRENCY="${CONCURRENCY}"
+export AAR_AUTODATA_CANARY_TASK_COUNT="${TASK_COUNT}"
 export AAR_AUTODATA_BROKER_PYTHON="${BROKER_PYTHON}"
 export AAR_AUTODATA_CAPABILITY_FILE="${capability_file}"
 export AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE="${FIRECRACKER_TOKEN}"
@@ -121,7 +130,7 @@ if [ -n "${SLURM_DEPENDENCY}" ]; then
   sbatch_args+=(--dependency="${SLURM_DEPENDENCY}")
 fi
 job_id="$(sbatch "${sbatch_args[@]}" "${SCRIPT_DIR}/run_9_capacity_canary.sbatch")"
-printf 'job_id=%s\nroot=%s\nbroker_runner=%s\nenvironment=%s\nconcurrency=%s\naar_git_commit=%s\nautodata_git_commit=%s\n' \
-  "${job_id}" "${root}" "${RUNNER}" "${ENVIRONMENT}" "${CONCURRENCY}" "$(git -C "${REPO}" rev-parse HEAD)" "$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)" \
+printf 'job_id=%s\nroot=%s\nbroker_runner=%s\nenvironment=%s\nconcurrency=%s\ntask_count=%s\naar_git_commit=%s\nautodata_git_commit=%s\n' \
+  "${job_id}" "${root}" "${RUNNER}" "${ENVIRONMENT}" "${CONCURRENCY}" "${TASK_COUNT}" "$(git -C "${REPO}" rev-parse HEAD)" "$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)" \
   | tee "${root}/submission.txt"
 unset MODEL_API_KEY

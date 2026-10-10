@@ -3,8 +3,8 @@
 #SBATCH --account=ram
 #SBATCH --partition=g3
 #SBATCH --qos=g3_ram_high
-#SBATCH --cpus-per-task=64
-#SBATCH --mem=128G
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
 #SBATCH --time=01:00:00
 set -euo pipefail
 umask 077
@@ -14,6 +14,7 @@ AUTODATA="${AAR_AUTODATA_CHECKOUT:?missing AutoData checkout}"
 ROOT="${AAR_RUN9_CANARY_ROOT:?missing retained canary root}"
 ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:?missing Firecracker environment}"
 CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:?missing canary concurrency}"
+TASK_COUNT="${AAR_AUTODATA_CANARY_TASK_COUNT:?missing canary task count}"
 RUNNER="${AAR_AUTODATA_BROKER_RUNNER:?missing broker runner}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:?missing broker Python}"
 CAPABILITY_FILE="${AAR_AUTODATA_CAPABILITY_FILE:?missing capability file}"
@@ -128,7 +129,7 @@ kill -0 "${broker_pid}" 2>/dev/null || { echo "broker is not running" >&2; exit 
 
 pids=()
 load_started_ns="$(date +%s%N)"
-for index in $(seq 1 "${CONCURRENCY}"); do
+for index in $(seq 1 "${TASK_COUNT}"); do
   PYTHONPATH="${AUTODATA}/src:${REPO}" "${REPO}/.venv/bin/python" \
     "${REPO}/scripts/autodata_model_broker_canary.py" \
     --broker-url "${broker_url}" \
@@ -155,7 +156,7 @@ done
 load_finished_ns="$(date +%s%N)"
 
 PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" - \
-  "${ROOT}" "${RUNNER}" "${ENVIRONMENT}" "${CONCURRENCY}" "${failed}" \
+  "${ROOT}" "${RUNNER}" "${ENVIRONMENT}" "${CONCURRENCY}" "${TASK_COUNT}" "${failed}" \
   "${broker_database}" "${load_started_ns}" "${load_finished_ns}" <<'PY'
 import json
 import pathlib
@@ -166,9 +167,10 @@ root = pathlib.Path(sys.argv[1])
 runner = sys.argv[2]
 environment = sys.argv[3]
 concurrency = int(sys.argv[4])
-client_failure_count = int(sys.argv[5])
-broker_database = pathlib.Path(sys.argv[6])
-elapsed_seconds = (int(sys.argv[8]) - int(sys.argv[7])) / 1_000_000_000
+task_count = int(sys.argv[5])
+client_failure_count = int(sys.argv[6])
+broker_database = pathlib.Path(sys.argv[7])
+elapsed_seconds = (int(sys.argv[9]) - int(sys.argv[8])) / 1_000_000_000
 reports = [json.loads(path.read_text()) for path in sorted((root / "reports").glob("canary-*.json"))]
 if any(report.get("environment") != environment for report in reports):
     raise SystemExit("capacity canary used the wrong Firecracker environment")
@@ -179,7 +181,7 @@ try:
     ).fetchall()
 finally:
     connection.close()
-if len(rows) != concurrency:
+if len(rows) != task_count:
     raise SystemExit("capacity canary did not create the requested broker jobs")
 jobs = []
 for job_id, status, session_id, solve_exit_code, spec_json in rows:
@@ -203,16 +205,17 @@ if any(
     raise SystemExit("capacity canary did not complete all broker jobs")
 summary = {
     "schema": "aar.autodata.broker-capacity-canary/v2",
-    "success": client_failure_count == 0 and len(reports) == concurrency,
+    "success": client_failure_count == 0 and len(reports) == task_count,
     "runner": runner,
     "environment": environment,
     "concurrency": concurrency,
+    "task_count": task_count,
     "broker_job_ids": [job["broker_job_id"] for job in jobs],
     "runner_session_ids": [job["runner_session_id"] for job in jobs],
     "audited_sample_count": len(reports),
     "client_failure_count": client_failure_count,
     "elapsed_seconds": elapsed_seconds,
-    "completed_tasks_per_minute": concurrency * 60 / elapsed_seconds,
+    "completed_tasks_per_minute": task_count * 60 / elapsed_seconds,
     "accepted_row_count": sum(report.get("accepted_row_count", 0) for report in reports),
     "task_result_succeeded_count": sum(
         report.get("task_result_outcome") == "succeeded" for report in reports

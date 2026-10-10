@@ -66,7 +66,6 @@ def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
     canary = (RUN9 / "run_9_capacity_canary.sbatch").read_text()
 
     assert '--max-concurrent "${CONCURRENCY}"' in canary
-    assert 'for index in $(seq 1 "${CONCURRENCY}")' in canary
     assert "autodata_model_broker_canary.py" in canary
     assert '--runner "${RUNNER}"' in canary
     assert '--environment "${ENVIRONMENT}"' in canary
@@ -77,6 +76,8 @@ def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
     assert '"environment": "${ENVIRONMENT}"' in submitter
     assert '"runner": "${RUNNER}"' in submitter
     assert 'export AAR_AUTODATA_CONCURRENCY="${CONCURRENCY}"' in submitter
+    assert 'export AAR_AUTODATA_CANARY_TASK_COUNT="${TASK_COUNT}"' in submitter
+    assert 'for index in $(seq 1 "${TASK_COUNT}")' in canary
     assert 'KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-' in submitter
     assert 'install -m 600 "${KIMI_PROXY_INFO}" "${kimi_proxy_info}"' in submitter
     assert 'sbatch_args+=(--dependency="${SLURM_DEPENDENCY}")' in submitter
