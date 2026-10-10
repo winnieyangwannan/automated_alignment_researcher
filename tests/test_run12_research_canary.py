@@ -95,6 +95,10 @@ def test_run12_uses_separate_kimi_deployments_and_maximum_token_allowances() -> 
     assert "RESEARCHER_DEPLOYMENT=aar_8-kimi26" in launcher
     assert "GENERATOR_DEPLOYMENT=autodata_8-kimi26" in launcher
     assert 'AAR_KIMI_SERVE_DEPLOYMENT="${RESEARCHER_DEPLOYMENT}"' in launcher
+    assert "--coord-qos normal --proxy-qos normal" in launcher
+    assert "--coord-qos normal --proxy-qos normal" in (
+        RUN12 / "run_12_chain_controller.sbatch"
+    ).read_text()
     assert "KIMI_MODEL_MAX_OUTPUT_SIZE=65536" in launcher
     assert "KIMI_MODEL_MAX_COMPLETION_TOKENS=65536" in launcher
     assert "KIMI_MODEL_MAX_CONTEXT_SIZE=262144" in pipeline

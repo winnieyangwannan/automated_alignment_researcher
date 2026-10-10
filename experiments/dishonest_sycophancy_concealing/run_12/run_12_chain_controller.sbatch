@@ -106,6 +106,7 @@ deploy_checkpoint() {
       --model gemma-4-31B-it --checkpoint "${checkpoint}" --endpoints 1 \
       --image docker.io/vllm/vllm-openai:v0.25.1 \
       --cluster fair-cw-use2-1 --partition g3 --account ram --qos g3_ram_high \
+      --coord-qos normal --proxy-qos normal \
       --gateway-register --lifetime 7d --no-watch
   wait_deployment "${deployment}"
 }
