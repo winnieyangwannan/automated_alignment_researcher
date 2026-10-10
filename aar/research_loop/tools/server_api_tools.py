@@ -1468,8 +1468,10 @@ def _autodata_method_contract_error(code: str) -> str | None:
                     )
         return None
     return (
-        "method must call aar.infrastructure.autodata_dataset."
-        "load_autodata_campaign_datasets"
+        "this AutoData-enabled run requires the method to consume the verified "
+        "production export; call aar.infrastructure.autodata_dataset."
+        "load_autodata_campaign_datasets (programmatic-only or fallback data does "
+        "not satisfy this run contract)"
     )
 
 

@@ -230,6 +230,12 @@ generation failures propagate rather than silently substituting fallback rows.
 **AutoData is enabled** through the original `autodata` Claude plugin at pinned
 AutoData revision `{{ autodata_sha }}`. Before doing any AutoData work, load the
 `autodata:autodata` skill and follow its authoring, execution, and export instructions.
+For this AutoData-enabled run, consuming the verified native AutoData production
+export is mandatory, not optional. The general allowance above for programmatic,
+rule-based, open-source, or model-generated data does not permit replacing or
+bypassing the required AutoData campaign. Additional allowed data may be used only
+when it is faithfully disclosed and the method still consumes all 1,000 verified
+production rows through the required loader and receipt contract.
 Use Bash to call the plugin's own wrapper:
 
 ```bash
@@ -431,8 +437,8 @@ Never revise grounding from hidden selection or evaluator data, and never edit a
 workspace in place.
 
 Your proposal must still disclose every external model, its role, the generation
-procedure, and the filtering or judging procedure. If your method trains on an
-AutoData export, its code must load the native `autodata.dataset/v1` export and use its
+procedure, and the filtering or judging procedure. In this AutoData-enabled run,
+your method must train on the native `autodata.dataset/v1` export and use its
 `items` as training data through
 `aar.infrastructure.autodata_dataset.load_autodata_campaign_datasets`, passing the
 verified production dataset/execution as one-element lists, with

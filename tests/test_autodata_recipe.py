@@ -603,3 +603,5 @@ def test_aar_prompt_defines_outer_loop_freedom_and_approval_roles() -> None:
     assert "Do not accept an automatically created default" in prompt
     assert "training-handoff.json" in prompt
     assert "load_autodata_campaign_datasets" in prompt
+    assert "consuming the verified native AutoData production\nexport is mandatory" in prompt
+    assert "does not permit replacing or\nbypassing the required AutoData campaign" in prompt

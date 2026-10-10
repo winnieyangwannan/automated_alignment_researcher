@@ -426,8 +426,10 @@ def _autodata_loader_errors(tree: ast.AST) -> list[str]:
                     ]
         return []
     return [
-        "method must call aar.infrastructure.autodata_dataset."
-        "load_autodata_campaign_datasets"
+        "this AutoData-enabled run requires the method to consume the verified "
+        "production export; call aar.infrastructure.autodata_dataset."
+        "load_autodata_campaign_datasets (programmatic-only or fallback data does "
+        "not satisfy this run contract)"
     ]
 
 
