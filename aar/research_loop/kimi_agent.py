@@ -564,7 +564,7 @@ class KimiAgent:
         uses = output["tool_uses"]
         names = [self._tool_name(item) for item in uses]
         inputs = [item.get("input") or {} for item in uses]
-        if "get_literature" not in names:
+        if not uses:
             return (
                 "Call the native structured MCP tool get_literature exactly once "
                 "now with an empty input. Do not emit prose or call another tool."
