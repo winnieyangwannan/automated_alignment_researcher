@@ -22,15 +22,27 @@ CANARY_ROOT="$(realpath -e -- "${AAR_RUN12_CANARY_ROOT:-${RUN12_STORAGE_ROOT}/aa
 SV="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
 REQUIRED_AUTODATA_SHA=823c5948854df14664f3168bc5e6c49a2cecb975
-RESEARCHER_DEPLOYMENT=aar_8-kimi26
-GENERATOR_DEPLOYMENT=autodata_8-kimi26
+PROFILE_CONFIG="${AAR_RUN12_AUTODATA_PROFILE_CONFIG:-${REPO}/configs/autodata/target_aware_local_v1.yaml}"
+RUN_CONFIG="${AAR_RUN12_AUTODATA_RUN_CONFIG:-${SCRIPT_DIR}/autodata_run.yaml}"
+[ -x "${REPO}/.venv/bin/python" ] || { echo "missing AAR runtime" >&2; exit 2; }
+config_json="$(PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_run_config inspect \
+  --profile "${PROFILE_CONFIG}" --run "${RUN_CONFIG}")"
+[ "$(jq -r '.target_enabled' <<<"${config_json}")" = true ] || {
+  echo "Run 12 requires target-aware AutoData YAML" >&2; exit 2;
+}
+RESEARCHER_DEPLOYMENT="$(jq -r '.researcher_kimi_deployment' <<<"${config_json}")"
+GENERATOR_DEPLOYMENT="$(jq -r '.generator_kimi_deployment' <<<"${config_json}")"
 export AAR_AUTODATA=1
-export AAR_AUTODATA_PROFILE=target-aware-local-v1
+export AAR_AUTODATA_PROFILE="$(jq -r '.profile_name' <<<"${config_json}")"
+export AAR_AUTODATA_PROFILE_CONFIG="$(realpath -e -- "${PROFILE_CONFIG}")"
+export AAR_AUTODATA_RUN_CONFIG="$(realpath -e -- "${RUN_CONFIG}")"
 export AAR_AUTODATA_GENERATOR_DEPLOYMENT="${GENERATOR_DEPLOYMENT}"
 export AAR_KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-/checkpoint/ram/shared/vllm_deployments_v2/${GENERATOR_DEPLOYMENT}/proxy_info.json}"
 RUN_MODE="${AAR_RUN12_MODE:-full}"
-SEEDS_RAW="${AAR_RUN12_SEEDS:-alpha beta gamma delta epsilon}"
-TARGET_PAIRS="${AAR_RUN12_TARGET_PAIRS:-5}"
+configured_seeds="$(jq -r '.chains | join(" ")' <<<"${config_json}")"
+configured_pairs="$(jq -r '.target_pairs_per_chain' <<<"${config_json}")"
+SEEDS_RAW="${AAR_RUN12_SEEDS:-${configured_seeds}}"
+TARGET_PAIRS="${AAR_RUN12_TARGET_PAIRS:-${configured_pairs}}"
 REUSE_BASE_DEPLOYMENT="${AAR_RUN12_REUSE_BASE_DEPLOYMENT:-}"
 
 case "${RUN_MODE}" in
@@ -50,8 +62,8 @@ if [ "${RUN_MODE}" = full ]; then
   [ -z "${REUSE_BASE_DEPLOYMENT}" ] || {
     echo "full mode forbids reusing a canary base deployment" >&2; exit 2;
   }
-  [ "${SEEDS_RAW}" = "alpha beta gamma delta epsilon" ] && [ "${TARGET_PAIRS}" = 5 ] || {
-    echo "full mode requires the canonical five seeds and five target pairs" >&2; exit 2;
+  [ "${SEEDS_RAW}" = "${configured_seeds}" ] && [ "${TARGET_PAIRS}" = "${configured_pairs}" ] || {
+    echo "full mode must match the checked-in Run 12 YAML" >&2; exit 2;
   }
 else
   [ "${#seeds[@]}" -eq 1 ] && [ "${TARGET_PAIRS}" = 1 ] || {
@@ -68,7 +80,7 @@ if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; 
   echo "tracked worktree is dirty" >&2
   exit 2
 fi
-if [ ! -x "${REPO}/.venv/bin/python" ] || [ ! -x "${BROKER_PYTHON}" ]; then
+if [ ! -x "${BROKER_PYTHON}" ]; then
   echo "missing runtime" >&2
   exit 2
 fi
@@ -91,9 +103,6 @@ jq -e '
 export AAR_REPO="${REPO}" HARNESS_ENV="${SECRET_ENV}"
 # shellcheck disable=SC1091
 source "${REPO}/scripts/aar_runtime_env.sh"
-# shellcheck disable=SC1091
-source "${REPO}/scripts/autodata_runtime_profile.sh"
-aar_set_autodata_runtime_profile
 # shellcheck disable=SC1091
 source "${REPO}/replication/env_multidimensional.sh"
 for name in HF_TOKEN MODEL_API_KEY; do [ -n "${!name:-}" ] || { echo "missing ${name}" >&2; exit 2; }; done
@@ -163,22 +172,22 @@ for seed in "${seeds[@]}"; do
         --gateway-register --lifetime 7d --no-watch
   fi
   "${REPO}/.venv/bin/python" -m aar.autodata_campaign_policy create-base-target \
-    --base-checkpoint "${BASE_CHECKPOINT}" \
+    --chain-id "${seed}" --base-checkpoint "${BASE_CHECKPOINT}" \
     --target-url http://fair-cw-use2-1-ingress-slurm-ingress/v1 \
     --target-host-header ram-inference-gateway.ingress. --target-model gemma-4-31B-it \
     --target-deployment-id "${deployment}" --output "${chain_root}/bindings/iteration-1.json"
   cp -- "${chain_root}/bindings/iteration-1.json" "${chain_root}/metadata/incumbent.json"
-  "${REPO}/.venv/bin/python" -m aar.autodata_campaign_policy create-policy \
-    --campaign-id "run12-${seed}" --target-manifest "${chain_root}/bindings/iteration-1.json" \
-    --generator-deployment-id "${GENERATOR_DEPLOYMENT}" --max-cost-usd 299 \
-    --runtime-profile "${AAR_AUTODATA_PROFILE}" \
-    --output "${chain_root}/metadata/campaign-policy.json"
-  "${REPO}/.venv/bin/python" -m aar.infrastructure.autodata_contract \
-    --create --campaign-policy "${chain_root}/metadata/campaign-policy.json" \
-    --required-rows 1000 --minimum-successful-task-fraction 0.95 \
-    --judge-rubric-version run9-axis-conditioned-v2 \
-    --output "${chain_root}/metadata/autodata-training-data-contract.json" >/dev/null
+  PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_run_config compile \
+    --profile "${AAR_AUTODATA_PROFILE_CONFIG}" --run "${AAR_AUTODATA_RUN_CONFIG}" \
+    --target-binding "${chain_root}/bindings/iteration-1.json" --chain "${seed}" \
+    --repo "${REPO}" --output-dir "${chain_root}/metadata" >/dev/null
 done
+
+# All chains share the same static YAML settings. Source one compiled copy for
+# submission metadata; each chain receives and validates its own compiled copy.
+export AAR_AUTODATA_RUNTIME_ENV="${attempt}/chains/${seeds[0]}/metadata/autodata-runtime.env"
+# shellcheck disable=SC1090
+source "${AAR_AUTODATA_RUNTIME_ENV}"
 
 for deployment in "${deployments[@]}"; do
   ready=0

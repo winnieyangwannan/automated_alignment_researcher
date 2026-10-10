@@ -30,7 +30,8 @@ class AutoDataCampaignPolicyTest(unittest.TestCase):
         self.assertIn("AAR_RESUME_APPROVED_PROPOSAL=1", controller)
         self.assertIn("AAR_IDEA_UID_OVERRIDE:-", chain)
         self.assertIn("AAR_IDEA_UID_OVERRIDE AAR_RESUME_APPROVED_PROPOSAL", runtime)
-        self.assertIn("AAR_AUTODATA_PROFILE=target-aware-local-v1", pipeline)
+        self.assertIn("AAR_AUTODATA_RUNTIME_ENV", pipeline)
+        self.assertIn("aar.autodata_run_config compile", controller)
         self.assertNotIn("AAR_RUN12_AUTODATA_CONCURRENCY:-8", pipeline)
         self.assertIn(
             '--generator-deployment-id "${AAR_AUTODATA_GENERATOR_DEPLOYMENT}"',
@@ -83,11 +84,10 @@ class AutoDataCampaignPolicyTest(unittest.TestCase):
             base = root / "base"
             base.mkdir()
             (base / "config.json").write_text("{}\n")
-            (base / "model.safetensors.index.json").write_text(
-                '{"weight_map":{}}\n'
-            )
+            (base / "model.safetensors.index.json").write_text('{"weight_map":{}}\n')
             manifest = create_base_target_manifest(
                 iteration=1,
+                chain_id="alpha",
                 base_checkpoint=base,
                 endpoint={
                     "url": "http://gateway/v1",
@@ -107,14 +107,14 @@ class AutoDataCampaignPolicyTest(unittest.TestCase):
             )
 
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(manifest["schema"], "aar.autodata.base-target/v2")
+            self.assertEqual(manifest["chain_id"], "alpha")
             self.assertEqual(
                 policy["required_solve_env"]["AUTODATA_TARGET_DEPLOYMENT_ID"],
                 "chain-alpha-iteration-1",
             )
             self.assertEqual(
-                policy["required_solve_env"][
-                    "AUTODATA_GENERATOR_DEPLOYMENT_ID"
-                ],
+                policy["required_solve_env"]["AUTODATA_GENERATOR_DEPLOYMENT_ID"],
                 "aar_8-kimi26",
             )
             self.assertEqual(
@@ -142,9 +142,7 @@ class AutoDataCampaignPolicyTest(unittest.TestCase):
                 "65536",
             )
             self.assertEqual(
-                policy["required_solve_env"][
-                    "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS"
-                ],
+                policy["required_solve_env"]["AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS"],
                 "3",
             )
 
@@ -154,9 +152,7 @@ class AutoDataCampaignPolicyTest(unittest.TestCase):
             base = root / "base"
             base.mkdir()
             (base / "config.json").write_text("{}\n")
-            (base / "model.safetensors.index.json").write_text(
-                '{"weight_map":{}}\n'
-            )
+            (base / "model.safetensors.index.json").write_text('{"weight_map":{}}\n')
             path = root / "target.json"
             atomic_write_json(
                 path,

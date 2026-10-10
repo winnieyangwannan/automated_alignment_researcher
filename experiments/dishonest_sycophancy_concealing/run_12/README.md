@@ -1,10 +1,25 @@
 # Run 12: iteration-scoped Gemma adapter target canary
 
-New full launches use the shared `target-aware-local-v1` AutoData profile
-documented in [the repository guide](../../../docs/autodata-runtime-profile.md):
-local Bubblewrap, concurrency 32, three model-request attempts, node-local
-state, supervised lifecycle, authenticated routing to `autodata_8-kimi26`,
-selective finalization, and digest-verified reuse support.
+New full launches compile two strict YAML sources:
+
+- [`configs/autodata/target_aware_local_v1.yaml`](../../../configs/autodata/target_aware_local_v1.yaml)
+  defines the reusable target-aware runtime, broker, concurrency, retry, and
+  provider/token settings;
+- [`autodata_run.yaml`](autodata_run.yaml) defines Run 12's chains,
+  meta-optimization sizes, production budget, and training-data contract.
+
+`aar.autodata_run_config` validates both files and atomically generates each
+chain's campaign policy, training-data contract, shell runtime environment, and
+resolved configuration snapshot. Unknown YAML keys, target-disabled settings,
+cross-chain bindings, or changes to compiled artifacts fail before generation.
+The one-row infrastructure canary uses the smaller
+[`autodata_canary.yaml`](autodata_canary.yaml) run configuration with the same
+reusable profile.
+
+The resulting `target-aware-local-v1` runtime uses local Bubblewrap,
+concurrency 32 per chain, three model-request attempts, node-local state,
+supervised lifecycle, authenticated routing to `autodata_8-kimi26`, selective
+finalization, and digest-verified reuse support.
 
 ## Goal
 
@@ -43,9 +58,9 @@ it is not a stack of all earlier adapters.
 ## Trust boundary
 
 The AAR researcher does not select or rewrite its target. Trusted orchestration
-creates `aar.autodata.target-binding/v1`, which binds:
+creates `aar.autodata.target-binding/v2`, which binds:
 
-- AAR iteration and incumbent run ID;
+- chain, AAR iteration, and incumbent run ID;
 - fixed base, adapter, and merged checkpoint paths;
 - hashes from the merge receipt, rechecked against the adapter and base;
 - merged shard list, byte count, and merged index hash;

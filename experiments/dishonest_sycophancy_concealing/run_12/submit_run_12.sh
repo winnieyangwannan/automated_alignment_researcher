@@ -29,11 +29,23 @@ RUN7_ROOT="/checkpoint/ram/aar/${USER}/honesty-sycophancy-concealing-gemma4-31b-
 ADAPTER_CHECKPOINT="${AAR_RUN12_ADAPTER_CHECKPOINT:-${RUN7_ROOT}/aar_teams/honesty-sycophancy-concealing-gemma4_31b-opus48-fiveagent-vllm-run7-v0/submissions/${INCUMBENT_RUN_ID}/model}"
 MERGED_CHECKPOINT="${AAR_RUN12_MERGED_CHECKPOINT:-${RUN7_ROOT}/merged_candidates/${INCUMBENT_RUN_ID}}"
 TARGET_ITERATION="${AAR_RUN12_TARGET_ITERATION:-2}"
+PROFILE_CONFIG="${AAR_RUN12_AUTODATA_PROFILE_CONFIG:-${REPO}/configs/autodata/target_aware_local_v1.yaml}"
+RUN_CONFIG="${AAR_RUN12_AUTODATA_CANARY_CONFIG:-${SCRIPT_DIR}/autodata_canary.yaml}"
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "Run 12 requires branch autodata" >&2; exit 2; }
 git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || { echo "tracked AAR worktree is dirty" >&2; exit 2; }
 [ -x "${REPO}/.venv/bin/python" ] || { echo "missing HPC AAR environment" >&2; exit 2; }
 [ -x "${BROKER_PYTHON}" ] || { echo "missing broker Python" >&2; exit 2; }
+config_json="$(PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_run_config inspect \
+  --profile "${PROFILE_CONFIG}" --run "${RUN_CONFIG}")"
+[ "$(jq -r '.target_enabled' <<<"${config_json}")" = true ] || {
+  echo "Run 12 canary requires target-aware AutoData YAML" >&2; exit 2;
+}
+TARGET_MODEL="$(jq -r '.target_model' <<<"${config_json}")"
+GENERATOR_URL="$(jq -r '.generator_url' <<<"${config_json}")"
+GENERATOR_HOST_HEADER="$(jq -r '.generator_host_header' <<<"${config_json}")"
+GENERATOR_MODEL="$(jq -r '.generator_model' <<<"${config_json}")"
+GENERATOR_DEPLOYMENT_ID="$(jq -r '.generator_kimi_deployment' <<<"${config_json}")"
 
 if [ "${ACTION}" = preflight ]; then
   attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "${REPO}" rev-parse --short=12 HEAD)"
@@ -43,6 +55,7 @@ if [ "${ACTION}" = preflight ]; then
   binding="${root}/target-binding.json"
   PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_target_binding create \
     --iteration "${TARGET_ITERATION}" \
+    --chain-id canary \
     --incumbent-run-id "${INCUMBENT_RUN_ID}" \
     --base-checkpoint "${BASE_CHECKPOINT}" \
     --adapter-checkpoint "${ADAPTER_CHECKPOINT}" \
@@ -82,69 +95,13 @@ capability_file="${root}/secrets/capability"
 "${BROKER_PYTHON}" -c 'import secrets; print(secrets.token_hex(32))' > "${capability_file}"
 chmod 600 "${model_env}" "${capability_file}"
 policy="${root}/campaign-policy.json"
-PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" - \
-  "${binding}" "${policy}" "${GENERATOR_URL}" "${GENERATOR_HOST_HEADER}" \
-  "${GENERATOR_MODEL}" "${GENERATOR_DEPLOYMENT_ID}" <<'PY'
-import json
-import os
-import pathlib
-import sys
-import tempfile
-
-from aar.autodata_target_binding import load_binding
-
-binding = load_binding(pathlib.Path(sys.argv[1]))
-required = {
-    "AUTODATA_GENERATOR_URL": sys.argv[3],
-    "AUTODATA_GENERATOR_HOST_HEADER": sys.argv[4],
-    "AUTODATA_GENERATOR_MODEL": sys.argv[5],
-    "AUTODATA_GENERATOR_DEPLOYMENT_ID": sys.argv[6],
-    "AUTODATA_GENERATOR_MAX_INPUT": "196608",
-    "AUTODATA_GENERATOR_MAX_OUTPUT": "65536",
-    "AUTODATA_GENERATOR_TIMEOUT": "90",
-    "AUTODATA_GENERATOR_INPUT_USD_PER_MILLION": "1",
-    "AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION": "4",
-    "AUTODATA_JUDGE_URL": "https://api.meta.ai/v1/responses",
-    "AUTODATA_JUDGE_MODEL": "gpt-5-6-luna",
-    "AUTODATA_JUDGE_MAX_INPUT": "1000000",
-    "AUTODATA_JUDGE_MAX_OUTPUT": "65536",
-    "AUTODATA_JUDGE_TIMEOUT": "90",
-    "AUTODATA_JUDGE_INPUT_USD_PER_MILLION": "1",
-    "AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": "4",
-    "AUTODATA_TARGET_MAX_INPUT": "196608",
-    "AUTODATA_TARGET_MAX_OUTPUT": "65536",
-    "AUTODATA_TARGET_TIMEOUT": "90",
-    "AUTODATA_TARGET_INPUT_USD_PER_MILLION": "0",
-    "AUTODATA_TARGET_OUTPUT_USD_PER_MILLION": "0",
-    "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "1",
-    **binding.solve_environment(),
-}
-policy = {
-    "schema": "autodata.broker-campaign-policy/v1",
-    "campaign_id": "run12-adapter-target-canary",
-    "max_cost_usd": "1",
-    "runner": "local-bwrap",
-    "environment": "oci-runner-firecracker-large",
-    "image": "docker.io/library/python@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f",
-    "expected_image_id": "df18428df8a0f9189c84e7424d214b4c50092af1f9dca5842a00c41c39bda316",
-    "max_cpus": 2,
-    "max_memory_mb": 2048,
-    "required_solve_env": required,
-}
-output = pathlib.Path(sys.argv[2])
-descriptor, name = tempfile.mkstemp(prefix=".policy.", suffix=".tmp", dir=output.parent)
-temporary = pathlib.Path(name)
-try:
-    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-        json.dump(policy, stream, indent=2, sort_keys=True)
-        stream.write("\n")
-        stream.flush()
-        os.fsync(stream.fileno())
-    os.chmod(temporary, 0o600)
-    os.replace(temporary, output)
-finally:
-    temporary.unlink(missing_ok=True)
-PY
+PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_run_config compile \
+  --profile "${PROFILE_CONFIG}" --run "${RUN_CONFIG}" \
+  --target-binding "${binding}" --chain canary --repo "${REPO}" \
+  --output-dir "${root}" >/dev/null
+export AAR_AUTODATA_RUNTIME_ENV="${root}/autodata-runtime.env"
+# shellcheck disable=SC1090
+source "${AAR_AUTODATA_RUNTIME_ENV}"
 
 export AAR_RUN12_ROOT="${root}"
 export AAR_RUN12_TARGET_BINDING="${binding}"

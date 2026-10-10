@@ -345,18 +345,14 @@ class ModelBrokerCanaryTest(unittest.TestCase):
             generator = _usage(
                 "kimi-request", "generator", "Kimi-K2.6", 10, 5, "0.00003"
             )
-            target = _usage(
-                "gemma-request", "target", "gemma-4-31B-it", 30, 8, "0"
-            )
+            target = _usage("gemma-request", "target", "gemma-4-31B-it", 30, 8, "0")
             target.update(
                 {
                     "deployment_id": "run12-target",
                     "checkpoint_hash": binding.checkpoint_hash,
                 }
             )
-            judge = _usage(
-                "luna-request", "judge", "gpt-5-6-luna", 20, 7, "0.000048"
-            )
+            judge = _usage("luna-request", "judge", "gpt-5-6-luna", 20, 7, "0.000048")
             _FakeBrokerClient.result = {
                 "schema": "autodata.task-result/v1",
                 "task_id": "run12-adapter-target-canary",
@@ -431,12 +427,9 @@ class ModelBrokerCanaryTest(unittest.TestCase):
         self.assertIn('headers = {"X-Deployment-Id": deployment}', recipe_source)
         self.assertIn('headers["Host"] = host_header', recipe_source)
         self.assertIn('_required_env("MODEL_API_KEY")', recipe_source)
+        self.assertIn("aar.autodata_run_config compile", run12_submit)
         self.assertIn(
-            'export AAR_RUN12_GENERATOR_DEPLOYMENT_ID="${GENERATOR_DEPLOYMENT_ID}"',
-            run12_submit,
-        )
-        self.assertIn(
-            '--generator-deployment-id "${AAR_RUN12_GENERATOR_DEPLOYMENT_ID:?}"',
+            '--campaign-policy "${AAR_AUTODATA_CAMPAIGN_POLICY:?}"',
             run12_canary,
         )
 

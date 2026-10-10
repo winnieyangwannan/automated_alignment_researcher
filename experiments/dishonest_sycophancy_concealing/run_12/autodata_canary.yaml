@@ -1,0 +1,26 @@
+schema: aar.autodata.run-config/v1
+run_id: run12-canary
+chains:
+  - canary
+target_pairs_per_chain: 1
+deployments:
+  researcher_kimi: aar_8-kimi26
+  generator_kimi: autodata_8-kimi26
+budget:
+  max_cost_usd: "1"
+meta_optimization:
+  maximum_iterations: 1
+  minimum_iterations: 1
+  early_stop_patience: 1
+  tuning_tasks: 1
+  validation_tasks: 1
+  test_tasks: 1
+production:
+  required_rows: 1
+  initial_tasks: 1
+  maximum_tasks: 1
+  minimum_successful_task_fraction: 1.0
+recipe_root: aar/autodata_recipes/dishonest_sycophancy_concealing
+training_contract:
+  objective: sft
+  judge_rubric_version: run9-axis-conditioned-v2

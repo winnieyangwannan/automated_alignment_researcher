@@ -21,9 +21,7 @@ IMAGE = (
     "docker.io/library/python@sha256:"
     "05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f"
 )
-EXPECTED_IMAGE_ID = (
-    "df18428df8a0f9189c84e7424d214b4c50092af1f9dca5842a00c41c39bda316"
-)
+EXPECTED_IMAGE_ID = "df18428df8a0f9189c84e7424d214b4c50092af1f9dca5842a00c41c39bda316"
 
 
 def _sha256(path: Path) -> str:
@@ -39,6 +37,7 @@ def create_base_target_manifest(
     iteration: int,
     base_checkpoint: Path,
     endpoint: dict[str, str],
+    chain_id: str | None = None,
 ) -> dict[str, Any]:
     if isinstance(iteration, bool) or iteration < 1:
         raise RuntimeError("base target iteration must be positive")
@@ -47,13 +46,25 @@ def create_base_target_manifest(
         "base_config_sha256": _sha256(base / "config.json"),
         "base_index_sha256": _sha256(base / "model.safetensors.index.json"),
     }
+    if chain_id is not None and (
+        not isinstance(chain_id, str)
+        or not chain_id
+        or any(character.isspace() for character in chain_id)
+    ):
+        raise RuntimeError("base target chain ID is invalid")
     identity = {
-        "schema": "aar.autodata.base-target/v1",
+        "schema": (
+            "aar.autodata.base-target/v2"
+            if chain_id is not None
+            else "aar.autodata.base-target/v1"
+        ),
         "iteration": iteration,
         "base_checkpoint": str(base),
         "endpoint": endpoint,
         "verified": verified,
     }
+    if chain_id is not None:
+        identity["chain_id"] = chain_id
     encoded = json.dumps(
         identity, allow_nan=False, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")
@@ -65,7 +76,10 @@ def create_base_target_manifest(
 
 def target_environment_from_manifest(path: Path) -> dict[str, str]:
     value = json.loads(path.read_text(encoding="utf-8"))
-    if value.get("schema") == "aar.autodata.base-target/v1":
+    if value.get("schema") in {
+        "aar.autodata.base-target/v1",
+        "aar.autodata.base-target/v2",
+    }:
         endpoint = value.get("endpoint")
         checkpoint_hash = value.get("checkpoint_hash")
         if not isinstance(endpoint, dict) or not isinstance(checkpoint_hash, str):
@@ -74,6 +88,7 @@ def target_environment_from_manifest(path: Path) -> dict[str, str]:
             iteration=value.get("iteration"),
             base_checkpoint=Path(value.get("base_checkpoint", "")),
             endpoint=endpoint,
+            chain_id=value.get("chain_id"),
         )
         if value != recreated:
             raise RuntimeError("base target manifest no longer matches its checkpoint")
@@ -103,9 +118,7 @@ def build_policy(
     if target_enabled != profile.target_enabled:
         raise ValueError("target manifest does not match the AutoData runtime profile")
     required = {
-        "AUTODATA_GENERATOR_URL": (
-            "http://fair-cw-use2-1-ingress-slurm-ingress/v1"
-        ),
+        "AUTODATA_GENERATOR_URL": ("http://fair-cw-use2-1-ingress-slurm-ingress/v1"),
         "AUTODATA_GENERATOR_HOST_HEADER": "ram-inference-gateway.ingress.",
         "AUTODATA_GENERATOR_MODEL": "Kimi-K2.6",
         "AUTODATA_GENERATOR_DEPLOYMENT_ID": generator_deployment_id,
@@ -126,9 +139,7 @@ def build_policy(
         "AUTODATA_TARGET_TIMEOUT": "90",
         "AUTODATA_TARGET_INPUT_USD_PER_MILLION": "0",
         "AUTODATA_TARGET_OUTPUT_USD_PER_MILLION": "0",
-        "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": str(
-            profile.model_request_max_attempts
-        ),
+        "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": str(profile.model_request_max_attempts),
         **target_environment,
     }
     return {
@@ -168,6 +179,7 @@ def main() -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     base = subparsers.add_parser("create-base-target")
     base.add_argument("--iteration", type=int, default=1)
+    base.add_argument("--chain-id")
     base.add_argument("--base-checkpoint", required=True, type=Path)
     base.add_argument("--target-url", required=True)
     base.add_argument("--target-host-header", default="")
@@ -179,15 +191,14 @@ def main() -> int:
     policy_parser.add_argument("--target-manifest", required=True, type=Path)
     policy_parser.add_argument("--generator-deployment-id", required=True)
     policy_parser.add_argument("--max-cost-usd", default="299")
-    policy_parser.add_argument(
-        "--runtime-profile", default=TARGET_AWARE_LOCAL_PROFILE
-    )
+    policy_parser.add_argument("--runtime-profile", default=TARGET_AWARE_LOCAL_PROFILE)
     policy_parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     if args.command == "create-base-target":
         manifest = create_base_target_manifest(
             iteration=args.iteration,
             base_checkpoint=args.base_checkpoint,
+            chain_id=args.chain_id,
             endpoint={
                 "url": args.target_url.rstrip("/"),
                 "host_header": args.target_host_header,

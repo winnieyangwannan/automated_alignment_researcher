@@ -1,0 +1,720 @@
+"""Compile strict AutoData profile/run YAML into immutable runtime artifacts."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shlex
+import tempfile
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from typing import Any, Mapping
+
+import yaml
+
+from aar.autodata_campaign_policy import target_environment_from_manifest
+from aar.infrastructure.autodata_contract import (
+    training_data_contract_from_campaign_policy,
+    validate_training_data_contract,
+)
+
+
+PROFILE_SCHEMA = "aar.autodata.runtime-profile/v2"
+RUN_SCHEMA = "aar.autodata.run-config/v1"
+RESOLVED_SCHEMA = "aar.autodata.resolved-run-config/v1"
+_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
+
+
+def _mapping(value: Any, label: str, expected: set[str]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a mapping")
+    missing = expected - set(value)
+    unexpected = set(value) - expected
+    if missing or unexpected:
+        raise ValueError(
+            f"{label} keys differ; missing={sorted(missing)}, "
+            f"unexpected={sorted(unexpected)}"
+        )
+    return dict(value)
+
+
+def _text(value: Any, label: str, *, allow_empty: bool = False) -> str:
+    if not isinstance(value, str) or "\n" in value or "\r" in value:
+        raise ValueError(f"{label} must be single-line text")
+    if not allow_empty and not value:
+        raise ValueError(f"{label} must be nonempty")
+    return value
+
+
+def _identifier(value: Any, label: str) -> str:
+    text = _text(value, label)
+    if not _IDENTIFIER.fullmatch(text):
+        raise ValueError(f"{label} is invalid")
+    return text
+
+
+def _positive_integer(value: Any, label: str, *, maximum: int | None = None) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{label} must be a positive integer")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{label} must be at most {maximum}")
+    return value
+
+
+def _boolean(value: Any, label: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{label} must be boolean")
+    return value
+
+
+def _decimal(value: Any, label: str) -> str:
+    text = _text(value, label)
+    try:
+        parsed = Decimal(text)
+    except InvalidOperation as error:
+        raise ValueError(f"{label} must be a decimal string") from error
+    if not parsed.is_finite() or parsed < 0:
+        raise ValueError(f"{label} must be finite and non-negative")
+    return text
+
+
+def _fraction(value: Any, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be numeric")
+    result = float(value)
+    if not 0 < result <= 1:
+        raise ValueError(f"{label} must be greater than zero and at most one")
+    return result
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+    return "sha256:" + digest.hexdigest()
+
+
+def _load_yaml(path: Path, label: str) -> dict[str, Any]:
+    if path.expanduser().is_symlink():
+        raise ValueError(f"{label} must not be a symlink")
+    resolved = path.expanduser().resolve(strict=True)
+    if not resolved.is_file():
+        raise ValueError(f"{label} must be a real file")
+    try:
+        value = yaml.safe_load(resolved.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
+        raise ValueError(f"{label} is unreadable") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must contain one mapping")
+    return value
+
+
+def _provider(
+    value: Any, label: str, *, route: bool, host_header: bool = False
+) -> dict[str, Any]:
+    expected = {
+        "model",
+        "max_input_tokens",
+        "max_output_tokens",
+        "timeout_seconds",
+        "input_usd_per_million",
+        "output_usd_per_million",
+    }
+    if route:
+        expected.add("url")
+    if host_header:
+        expected.add("host_header")
+    data = _mapping(value, label, expected)
+    result: dict[str, Any] = {
+        "model": _text(data["model"], f"{label}.model"),
+        "max_input_tokens": _positive_integer(
+            data["max_input_tokens"], f"{label}.max_input_tokens", maximum=1_000_000
+        ),
+        "max_output_tokens": _positive_integer(
+            data["max_output_tokens"], f"{label}.max_output_tokens", maximum=65_536
+        ),
+        "timeout_seconds": _positive_integer(
+            data["timeout_seconds"], f"{label}.timeout_seconds", maximum=3_600
+        ),
+        "input_usd_per_million": _decimal(
+            data["input_usd_per_million"], f"{label}.input_usd_per_million"
+        ),
+        "output_usd_per_million": _decimal(
+            data["output_usd_per_million"], f"{label}.output_usd_per_million"
+        ),
+    }
+    if route:
+        url = _text(data["url"], f"{label}.url").rstrip("/")
+        if not url.startswith(("http://", "https://")):
+            raise ValueError(f"{label}.url must be absolute HTTP(S)")
+        result["url"] = url
+    if host_header:
+        result["host_header"] = _text(
+            data["host_header"], f"{label}.host_header", allow_empty=True
+        )
+    return result
+
+
+def load_runtime_profile(path: Path) -> dict[str, Any]:
+    root = _mapping(
+        _load_yaml(path, "AutoData runtime profile"),
+        "AutoData runtime profile",
+        {"schema", "name", "target", "broker", "execution", "providers"},
+    )
+    if root["schema"] != PROFILE_SCHEMA:
+        raise ValueError(f"unsupported runtime profile schema: {root['schema']!r}")
+    target = _mapping(
+        root["target"],
+        "target",
+        {
+            "enabled",
+            "binding_policy",
+            "update_after_promotion",
+            "require_checkpoint_hash",
+            "require_completion_probe",
+            "require_challenge_provenance",
+        },
+    )
+    for key in (
+        "enabled",
+        "update_after_promotion",
+        "require_checkpoint_hash",
+        "require_completion_probe",
+        "require_challenge_provenance",
+    ):
+        target[key] = _boolean(target[key], f"target.{key}")
+    target["binding_policy"] = _text(target["binding_policy"], "target.binding_policy")
+    if target != {
+        "enabled": True,
+        "binding_policy": "previous-promoted-incumbent",
+        "update_after_promotion": True,
+        "require_checkpoint_hash": True,
+        "require_completion_probe": True,
+        "require_challenge_provenance": True,
+    }:
+        raise ValueError(
+            "target-aware profile must enable every fail-closed target gate"
+        )
+    broker = _mapping(
+        root["broker"],
+        "broker",
+        {
+            "runner",
+            "environment",
+            "image",
+            "expected_image_id",
+            "max_cpus",
+            "max_memory_mb",
+        },
+    )
+    broker = {
+        "runner": _text(broker["runner"], "broker.runner"),
+        "environment": _text(broker["environment"], "broker.environment"),
+        "image": _text(broker["image"], "broker.image"),
+        "expected_image_id": _text(
+            broker["expected_image_id"], "broker.expected_image_id"
+        ),
+        "max_cpus": _positive_integer(broker["max_cpus"], "broker.max_cpus"),
+        "max_memory_mb": _positive_integer(
+            broker["max_memory_mb"], "broker.max_memory_mb"
+        ),
+    }
+    if broker["runner"] != "local-bwrap":
+        raise ValueError("target-aware local profile requires local-bwrap")
+    execution = _mapping(
+        root["execution"],
+        "execution",
+        {
+            "concurrency_per_chain",
+            "model_request_max_attempts",
+            "lifecycle_supervised",
+            "reuse_policy",
+        },
+    )
+    execution = {
+        "concurrency_per_chain": _positive_integer(
+            execution["concurrency_per_chain"],
+            "execution.concurrency_per_chain",
+            maximum=64,
+        ),
+        "model_request_max_attempts": _positive_integer(
+            execution["model_request_max_attempts"],
+            "execution.model_request_max_attempts",
+            maximum=5,
+        ),
+        "lifecycle_supervised": _boolean(
+            execution["lifecycle_supervised"], "execution.lifecycle_supervised"
+        ),
+        "reuse_policy": _text(execution["reuse_policy"], "execution.reuse_policy"),
+    }
+    providers = _mapping(
+        root["providers"], "providers", {"generator", "judge", "target"}
+    )
+    return {
+        "schema": PROFILE_SCHEMA,
+        "name": _identifier(root["name"], "profile name"),
+        "target": target,
+        "broker": broker,
+        "execution": execution,
+        "providers": {
+            "generator": _provider(
+                providers["generator"],
+                "providers.generator",
+                route=True,
+                host_header=True,
+            ),
+            "judge": _provider(providers["judge"], "providers.judge", route=True),
+            "target": _provider(providers["target"], "providers.target", route=False),
+        },
+    }
+
+
+def load_run_config(path: Path) -> dict[str, Any]:
+    root = _mapping(
+        _load_yaml(path, "AutoData run config"),
+        "AutoData run config",
+        {
+            "schema",
+            "run_id",
+            "chains",
+            "target_pairs_per_chain",
+            "deployments",
+            "budget",
+            "meta_optimization",
+            "production",
+            "recipe_root",
+            "training_contract",
+        },
+    )
+    if root["schema"] != RUN_SCHEMA:
+        raise ValueError(f"unsupported run config schema: {root['schema']!r}")
+    if not isinstance(root["chains"], list) or not root["chains"]:
+        raise ValueError("chains must be a nonempty list")
+    chains = [_identifier(value, "chain") for value in root["chains"]]
+    if len(chains) != len(set(chains)):
+        raise ValueError("chains must be unique")
+    deployments = _mapping(
+        root["deployments"], "deployments", {"researcher_kimi", "generator_kimi"}
+    )
+    budget = _mapping(root["budget"], "budget", {"max_cost_usd"})
+    meta = _mapping(
+        root["meta_optimization"],
+        "meta_optimization",
+        {
+            "maximum_iterations",
+            "minimum_iterations",
+            "early_stop_patience",
+            "tuning_tasks",
+            "validation_tasks",
+            "test_tasks",
+        },
+    )
+    meta = {
+        key: _positive_integer(value, f"meta_optimization.{key}")
+        for key, value in meta.items()
+    }
+    if meta["minimum_iterations"] > meta["maximum_iterations"]:
+        raise ValueError("minimum meta-optimization iterations exceed maximum")
+    production = _mapping(
+        root["production"],
+        "production",
+        {
+            "required_rows",
+            "initial_tasks",
+            "maximum_tasks",
+            "minimum_successful_task_fraction",
+        },
+    )
+    production = {
+        "required_rows": _positive_integer(
+            production["required_rows"], "production.required_rows"
+        ),
+        "initial_tasks": _positive_integer(
+            production["initial_tasks"], "production.initial_tasks"
+        ),
+        "maximum_tasks": _positive_integer(
+            production["maximum_tasks"], "production.maximum_tasks"
+        ),
+        "minimum_successful_task_fraction": _fraction(
+            production["minimum_successful_task_fraction"],
+            "production.minimum_successful_task_fraction",
+        ),
+    }
+    if not (
+        production["required_rows"]
+        <= production["initial_tasks"]
+        <= production["maximum_tasks"]
+    ):
+        raise ValueError(
+            "production task counts must cover required rows monotonically"
+        )
+    training = _mapping(
+        root["training_contract"],
+        "training_contract",
+        {"objective", "judge_rubric_version"},
+    )
+    if training["objective"] != "sft":
+        raise ValueError("Run 12 AutoData supports only the sft objective")
+    recipe_root = _text(root["recipe_root"], "recipe_root")
+    recipe_path = Path(recipe_root)
+    if recipe_path.is_absolute() or ".." in recipe_path.parts:
+        raise ValueError("recipe_root must be a repository-relative path")
+    return {
+        "schema": RUN_SCHEMA,
+        "run_id": _identifier(root["run_id"], "run_id"),
+        "chains": chains,
+        "target_pairs_per_chain": _positive_integer(
+            root["target_pairs_per_chain"], "target_pairs_per_chain"
+        ),
+        "deployments": {
+            "researcher_kimi": _identifier(
+                deployments["researcher_kimi"], "deployments.researcher_kimi"
+            ),
+            "generator_kimi": _identifier(
+                deployments["generator_kimi"], "deployments.generator_kimi"
+            ),
+        },
+        "budget": {
+            "max_cost_usd": _decimal(budget["max_cost_usd"], "budget.max_cost_usd")
+        },
+        "meta_optimization": meta,
+        "production": production,
+        "recipe_root": recipe_root,
+        "training_contract": {
+            "objective": "sft",
+            "judge_rubric_version": _text(
+                training["judge_rubric_version"],
+                "training_contract.judge_rubric_version",
+            ),
+        },
+    }
+
+
+def _target_manifest_chain(value: Mapping[str, Any]) -> str | None:
+    chain = value.get("chain_id")
+    return chain if isinstance(chain, str) else None
+
+
+def _atomic_text(path: Path, content: str, *, mode: int = 0o600) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
+    _atomic_text(path, json.dumps(dict(value), indent=2, sort_keys=True) + "\n")
+
+
+def _atomic_yaml(path: Path, value: Mapping[str, Any]) -> None:
+    _atomic_text(path, yaml.safe_dump(dict(value), sort_keys=False))
+
+
+def _solve_environment(
+    profile: Mapping[str, Any], run: Mapping[str, Any], target: Mapping[str, str]
+) -> dict[str, str]:
+    providers = profile["providers"]
+    generator = providers["generator"]
+    judge = providers["judge"]
+    target_limits = providers["target"]
+    if target.get("AUTODATA_TARGET_ENABLED") != "1":
+        raise ValueError(
+            "target-aware configuration requires an enabled target binding"
+        )
+    if target.get("AUTODATA_TARGET_MODEL") != target_limits["model"]:
+        raise ValueError("target binding model does not match the runtime profile")
+    environment = {
+        "AUTODATA_GENERATOR_URL": generator["url"],
+        "AUTODATA_GENERATOR_HOST_HEADER": generator["host_header"],
+        "AUTODATA_GENERATOR_MODEL": generator["model"],
+        "AUTODATA_GENERATOR_DEPLOYMENT_ID": run["deployments"]["generator_kimi"],
+        "AUTODATA_GENERATOR_MAX_INPUT": str(generator["max_input_tokens"]),
+        "AUTODATA_GENERATOR_MAX_OUTPUT": str(generator["max_output_tokens"]),
+        "AUTODATA_GENERATOR_TIMEOUT": str(generator["timeout_seconds"]),
+        "AUTODATA_GENERATOR_INPUT_USD_PER_MILLION": generator["input_usd_per_million"],
+        "AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION": generator[
+            "output_usd_per_million"
+        ],
+        "AUTODATA_JUDGE_URL": judge["url"],
+        "AUTODATA_JUDGE_MODEL": judge["model"],
+        "AUTODATA_JUDGE_MAX_INPUT": str(judge["max_input_tokens"]),
+        "AUTODATA_JUDGE_MAX_OUTPUT": str(judge["max_output_tokens"]),
+        "AUTODATA_JUDGE_TIMEOUT": str(judge["timeout_seconds"]),
+        "AUTODATA_JUDGE_INPUT_USD_PER_MILLION": judge["input_usd_per_million"],
+        "AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": judge["output_usd_per_million"],
+        "AUTODATA_TARGET_MAX_INPUT": str(target_limits["max_input_tokens"]),
+        "AUTODATA_TARGET_MAX_OUTPUT": str(target_limits["max_output_tokens"]),
+        "AUTODATA_TARGET_TIMEOUT": str(target_limits["timeout_seconds"]),
+        "AUTODATA_TARGET_INPUT_USD_PER_MILLION": target_limits["input_usd_per_million"],
+        "AUTODATA_TARGET_OUTPUT_USD_PER_MILLION": target_limits[
+            "output_usd_per_million"
+        ],
+        "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": str(
+            profile["execution"]["model_request_max_attempts"]
+        ),
+        **target,
+    }
+    return environment
+
+
+def _runtime_environment(
+    *,
+    profile: Mapping[str, Any],
+    run: Mapping[str, Any],
+    repo: Path,
+    profile_path: Path,
+    run_path: Path,
+    output_dir: Path,
+) -> dict[str, str]:
+    meta = run["meta_optimization"]
+    production = run["production"]
+    recipe_root = (repo / run["recipe_root"]).resolve(strict=True)
+    if not recipe_root.is_dir() or repo not in recipe_root.parents:
+        raise ValueError("recipe_root must resolve to a repository directory")
+    return {
+        "AAR_AUTODATA_PROFILE": profile["name"],
+        "AAR_AUTODATA_PROFILE_CONFIG": str(profile_path),
+        "AAR_AUTODATA_RUN_CONFIG": str(run_path),
+        "AAR_AUTODATA_RUNTIME_ENV": str(output_dir / "autodata-runtime.env"),
+        "AAR_AUTODATA_RESOLVED_CONFIG": str(output_dir / "resolved-config.yaml"),
+        "AAR_AUTODATA_CAMPAIGN_POLICY": str(output_dir / "campaign-policy.json"),
+        "AAR_AUTODATA_TRAINING_DATA_CONTRACT": str(
+            output_dir / "autodata-training-data-contract.json"
+        ),
+        "AAR_AUTODATA_GENERATOR_DEPLOYMENT": run["deployments"]["generator_kimi"],
+        "AAR_AUTODATA_BROKER_RUNNER": profile["broker"]["runner"],
+        "AAR_AUTODATA_ENVIRONMENT": profile["broker"]["environment"],
+        "AAR_AUTODATA_CONCURRENCY": str(profile["execution"]["concurrency_per_chain"]),
+        "AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": str(
+            profile["execution"]["model_request_max_attempts"]
+        ),
+        "AAR_AUTODATA_LIFECYCLE_SUPERVISED": (
+            "1" if profile["execution"]["lifecycle_supervised"] else "0"
+        ),
+        "AAR_AUTODATA_REUSE_POLICY": profile["execution"]["reuse_policy"],
+        "AAR_AUTODATA_TARGET_REQUIRED": "1",
+        "AAR_AUTODATA_META_MAX_ITERATIONS": str(meta["maximum_iterations"]),
+        "AAR_AUTODATA_META_MIN_ITERATIONS": str(meta["minimum_iterations"]),
+        "AAR_AUTODATA_META_EARLY_STOP_PATIENCE": str(meta["early_stop_patience"]),
+        "AAR_AUTODATA_TUNING_TASKS": str(meta["tuning_tasks"]),
+        "AAR_AUTODATA_VALIDATION_TASKS": str(meta["validation_tasks"]),
+        "AAR_AUTODATA_TEST_TASKS": str(meta["test_tasks"]),
+        "AAR_AUTODATA_PRODUCTION_ROWS": str(production["required_rows"]),
+        "AAR_AUTODATA_PRODUCTION_INITIAL_TASKS": str(production["initial_tasks"]),
+        "AAR_AUTODATA_PRODUCTION_MAX_TASKS": str(production["maximum_tasks"]),
+        "AAR_AUTODATA_RECIPE_ROOT": str(recipe_root),
+    }
+
+
+def compile_run_config(
+    *,
+    profile_path: Path,
+    run_path: Path,
+    target_binding_path: Path,
+    chain: str,
+    repo: Path,
+    output_dir: Path,
+) -> dict[str, Any]:
+    profile_path = profile_path.resolve(strict=True)
+    run_path = run_path.resolve(strict=True)
+    target_binding_path = target_binding_path.resolve(strict=True)
+    repo = repo.resolve(strict=True)
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    profile = load_runtime_profile(profile_path)
+    run = load_run_config(run_path)
+    if chain not in run["chains"] and chain != "canary":
+        raise ValueError(f"chain {chain!r} is not declared by the run config")
+    manifest = json.loads(target_binding_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise ValueError("target binding must contain one JSON object")
+    manifest_chain = _target_manifest_chain(manifest)
+    if manifest_chain != chain:
+        raise ValueError("target binding chain does not match the compiled chain")
+    target_environment = target_environment_from_manifest(target_binding_path)
+    solve_environment = _solve_environment(profile, run, target_environment)
+    policy = {
+        "schema": "autodata.broker-campaign-policy/v1",
+        "campaign_id": f"{run['run_id']}-{chain}",
+        "max_cost_usd": run["budget"]["max_cost_usd"],
+        "runner": profile["broker"]["runner"],
+        "environment": profile["broker"]["environment"],
+        "image": profile["broker"]["image"],
+        "expected_image_id": profile["broker"]["expected_image_id"],
+        "max_cpus": profile["broker"]["max_cpus"],
+        "max_memory_mb": profile["broker"]["max_memory_mb"],
+        "required_solve_env": solve_environment,
+    }
+    contract = training_data_contract_from_campaign_policy(
+        policy,
+        required_rows=run["production"]["required_rows"],
+        minimum_successful_task_fraction=run["production"][
+            "minimum_successful_task_fraction"
+        ],
+        judge_rubric_version=run["training_contract"]["judge_rubric_version"],
+    )
+    if contract["target"].get("required") is not True:
+        raise ValueError("compiled training contract is not target-aware")
+    policy_path = output_dir / "campaign-policy.json"
+    contract_path = output_dir / "autodata-training-data-contract.json"
+    runtime_path = output_dir / "autodata-runtime.env"
+    resolved_path = output_dir / "resolved-config.yaml"
+    _atomic_json(policy_path, policy)
+    _atomic_json(contract_path, contract)
+    runtime = _runtime_environment(
+        profile=profile,
+        run=run,
+        repo=repo,
+        profile_path=profile_path,
+        run_path=run_path,
+        output_dir=output_dir,
+    )
+    _atomic_text(
+        runtime_path,
+        "".join(
+            f"export {name}={shlex.quote(value)}\n"
+            for name, value in sorted(runtime.items())
+        ),
+    )
+    resolved = {
+        "schema": RESOLVED_SCHEMA,
+        "chain": chain,
+        "profile_source": str(profile_path),
+        "profile_source_sha256": _sha256(profile_path),
+        "run_source": str(run_path),
+        "run_source_sha256": _sha256(run_path),
+        "target_binding": str(target_binding_path),
+        "target_binding_sha256": _sha256(target_binding_path),
+        "target": {
+            "iteration": manifest.get("iteration"),
+            "deployment_id": solve_environment["AUTODATA_TARGET_DEPLOYMENT_ID"],
+            "checkpoint_hash": solve_environment["AUTODATA_TARGET_CHECKPOINT_HASH"],
+            "challenge_provenance_required": True,
+            "provider_order": ["generator", "target", "judge"],
+        },
+        "profile": profile,
+        "run": run,
+        "artifacts": {
+            "campaign_policy": str(policy_path),
+            "campaign_policy_sha256": _sha256(policy_path),
+            "training_data_contract": str(contract_path),
+            "training_data_contract_sha256": _sha256(contract_path),
+            "runtime_environment": str(runtime_path),
+            "runtime_environment_sha256": _sha256(runtime_path),
+        },
+    }
+    _atomic_yaml(resolved_path, resolved)
+    return resolved
+
+
+def validate_compiled_config(
+    resolved_path: Path, campaign_policy_path: Path, contract_path: Path
+) -> dict[str, Any]:
+    resolved = _load_yaml(resolved_path, "resolved AutoData config")
+    if resolved.get("schema") != RESOLVED_SCHEMA:
+        raise ValueError("resolved AutoData config schema is invalid")
+    checks = {
+        Path(resolved["profile_source"]): resolved["profile_source_sha256"],
+        Path(resolved["run_source"]): resolved["run_source_sha256"],
+        Path(resolved["target_binding"]): resolved["target_binding_sha256"],
+        campaign_policy_path: resolved["artifacts"]["campaign_policy_sha256"],
+        contract_path: resolved["artifacts"]["training_data_contract_sha256"],
+        Path(resolved["artifacts"]["runtime_environment"]): resolved["artifacts"][
+            "runtime_environment_sha256"
+        ],
+    }
+    for path, expected in checks.items():
+        if _sha256(path.resolve(strict=True)) != expected:
+            raise ValueError(f"compiled AutoData artifact changed: {path}")
+    profile = load_runtime_profile(Path(resolved["profile_source"]))
+    run = load_run_config(Path(resolved["run_source"]))
+    policy = json.loads(campaign_policy_path.read_text(encoding="utf-8"))
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    validate_training_data_contract(contract, campaign_policy=policy)
+    environment = policy.get("required_solve_env", {})
+    if environment.get("AUTODATA_TARGET_ENABLED") != "1":
+        raise ValueError("compiled campaign is no longer target-aware")
+    if (
+        environment.get("AUTODATA_GENERATOR_DEPLOYMENT_ID")
+        != run["deployments"]["generator_kimi"]
+    ):
+        raise ValueError("compiled generator deployment changed")
+    if policy.get("runner") != profile["broker"]["runner"]:
+        raise ValueError("compiled broker runner changed")
+    return resolved
+
+
+def inspect_configs(profile_path: Path, run_path: Path) -> dict[str, Any]:
+    profile = load_runtime_profile(profile_path)
+    run = load_run_config(run_path)
+    return {
+        "profile_name": profile["name"],
+        "concurrency_per_chain": profile["execution"]["concurrency_per_chain"],
+        "model_request_max_attempts": profile["execution"][
+            "model_request_max_attempts"
+        ],
+        "researcher_kimi_deployment": run["deployments"]["researcher_kimi"],
+        "generator_kimi_deployment": run["deployments"]["generator_kimi"],
+        "chains": run["chains"],
+        "target_pairs_per_chain": run["target_pairs_per_chain"],
+        "target_enabled": profile["target"]["enabled"],
+        "generator_url": profile["providers"]["generator"]["url"],
+        "generator_host_header": profile["providers"]["generator"]["host_header"],
+        "generator_model": profile["providers"]["generator"]["model"],
+        "target_model": profile["providers"]["target"]["model"],
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    inspect = subparsers.add_parser("inspect")
+    inspect.add_argument("--profile", required=True, type=Path)
+    inspect.add_argument("--run", required=True, type=Path)
+    compile_parser = subparsers.add_parser("compile")
+    compile_parser.add_argument("--profile", required=True, type=Path)
+    compile_parser.add_argument("--run", required=True, type=Path)
+    compile_parser.add_argument("--target-binding", required=True, type=Path)
+    compile_parser.add_argument("--chain", required=True)
+    compile_parser.add_argument("--repo", required=True, type=Path)
+    compile_parser.add_argument("--output-dir", required=True, type=Path)
+    validate = subparsers.add_parser("validate")
+    validate.add_argument("--resolved", required=True, type=Path)
+    validate.add_argument("--campaign-policy", required=True, type=Path)
+    validate.add_argument("--training-data-contract", required=True, type=Path)
+    args = parser.parse_args()
+    if args.command == "inspect":
+        result = inspect_configs(args.profile, args.run)
+    elif args.command == "compile":
+        result = compile_run_config(
+            profile_path=args.profile,
+            run_path=args.run,
+            target_binding_path=args.target_binding,
+            chain=args.chain,
+            repo=args.repo,
+            output_dir=args.output_dir,
+        )
+    else:
+        result = validate_compiled_config(
+            args.resolved, args.campaign_policy, args.training_data_contract
+        )
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

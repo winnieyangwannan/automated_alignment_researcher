@@ -21,7 +21,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 
-SCHEMA = "aar.autodata.target-binding/v1"
+SCHEMA_V1 = "aar.autodata.target-binding/v1"
+SCHEMA = "aar.autodata.target-binding/v2"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 
@@ -37,6 +38,11 @@ class TargetBinding:
     @property
     def endpoint(self) -> dict[str, str]:
         return dict(self.value["endpoint"])
+
+    @property
+    def chain_id(self) -> str | None:
+        value = self.value.get("chain_id")
+        return value if isinstance(value, str) else None
 
     def solve_environment(self) -> dict[str, str]:
         endpoint = self.endpoint
@@ -107,13 +113,18 @@ def _validate_endpoint(value: Any) -> dict[str, str]:
     }:
         raise RuntimeError("target endpoint is malformed")
     required = ("url", "model", "deployment_id")
-    if any(not isinstance(value.get(name), str) or not value[name].strip() for name in required):
+    if any(
+        not isinstance(value.get(name), str) or not value[name].strip()
+        for name in required
+    ):
         raise RuntimeError("target endpoint is incomplete")
     parsed = urlsplit(value["url"])
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise RuntimeError("target endpoint URL must be absolute HTTP(S)")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise RuntimeError("target endpoint URL must not contain credentials or parameters")
+        raise RuntimeError(
+            "target endpoint URL must not contain credentials or parameters"
+        )
     deployment_id = value["deployment_id"].strip()
     if not _IDENTIFIER.fullmatch(deployment_id):
         raise RuntimeError("target deployment ID is invalid")
@@ -132,9 +143,7 @@ def _validate_endpoint(value: Any) -> dict[str, str]:
     return endpoint
 
 
-def _verified_components(
-    *, base: Path, adapter: Path, merged: Path
-) -> dict[str, Any]:
+def _verified_components(*, base: Path, adapter: Path, merged: Path) -> dict[str, Any]:
     receipt_path = merged / ".merge-complete.json"
     receipt = _json_file(receipt_path, "merge receipt")
     _same_path(receipt.get("base_checkpoint"), base, "base checkpoint")
@@ -163,8 +172,10 @@ def _verified_components(
         raise RuntimeError("merged checkpoint config does not match the fixed base")
 
     shards = receipt.get("merged_shards")
-    if not isinstance(shards, list) or not shards or any(
-        not isinstance(name, str) or Path(name).name != name for name in shards
+    if (
+        not isinstance(shards, list)
+        or not shards
+        or any(not isinstance(name, str) or Path(name).name != name for name in shards)
     ):
         raise RuntimeError("merge receipt shard list is invalid")
     actual_bytes = 0
@@ -190,7 +201,7 @@ def _verified_components(
 
 
 def _identity_payload(value: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         "schema": SCHEMA,
         "iteration": value["iteration"],
         "incumbent_run_id": value["incumbent_run_id"],
@@ -200,6 +211,11 @@ def _identity_payload(value: dict[str, Any]) -> dict[str, Any]:
         "endpoint": value["endpoint"],
         "verified": value["verified"],
     }
+    if value.get("schema") == SCHEMA_V1:
+        payload["schema"] = SCHEMA_V1
+    else:
+        payload["chain_id"] = value["chain_id"]
+    return payload
 
 
 def _checkpoint_hash(value: dict[str, Any]) -> str:
@@ -217,16 +233,19 @@ def create_binding(
     adapter_checkpoint: str,
     merged_checkpoint: str,
     endpoint: dict[str, str],
+    chain_id: str | None = None,
 ) -> TargetBinding:
     if isinstance(iteration, bool) or iteration < 2:
         raise RuntimeError("adapter-backed target binding requires AAR iteration >= 2")
     if not _IDENTIFIER.fullmatch(incumbent_run_id):
         raise RuntimeError("incumbent run ID is invalid")
+    if chain_id is not None and not _IDENTIFIER.fullmatch(chain_id):
+        raise RuntimeError("chain ID is invalid")
     base = _real_directory(base_checkpoint, "base checkpoint")
     adapter = _real_directory(adapter_checkpoint, "adapter checkpoint")
     merged = _real_directory(merged_checkpoint, "merged checkpoint")
     value: dict[str, Any] = {
-        "schema": SCHEMA,
+        "schema": SCHEMA if chain_id is not None else SCHEMA_V1,
         "iteration": iteration,
         "incumbent_run_id": incumbent_run_id,
         "base_checkpoint": str(base),
@@ -236,12 +255,14 @@ def create_binding(
         "verified": _verified_components(base=base, adapter=adapter, merged=merged),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    if chain_id is not None:
+        value["chain_id"] = chain_id
     value["checkpoint_hash"] = _checkpoint_hash(value)
     return TargetBinding(value)
 
 
 def validate_binding(value: Any, *, verify_files: bool = True) -> TargetBinding:
-    if not isinstance(value, dict) or value.get("schema") != SCHEMA:
+    if not isinstance(value, dict) or value.get("schema") not in {SCHEMA_V1, SCHEMA}:
         raise RuntimeError("target binding schema is invalid")
     required = {
         "schema",
@@ -255,8 +276,13 @@ def validate_binding(value: Any, *, verify_files: bool = True) -> TargetBinding:
         "created_at",
         "checkpoint_hash",
     }
+    if value["schema"] == SCHEMA:
+        required.add("chain_id")
     if set(value) != required:
         raise RuntimeError("target binding fields are invalid")
+    chain_id = value.get("chain_id")
+    if chain_id is not None and not _IDENTIFIER.fullmatch(chain_id):
+        raise RuntimeError("target binding chain ID is invalid")
     endpoint = _validate_endpoint(value["endpoint"])
     if endpoint != value["endpoint"]:
         raise RuntimeError("target endpoint is not canonical")
@@ -271,6 +297,7 @@ def validate_binding(value: Any, *, verify_files: bool = True) -> TargetBinding:
             adapter_checkpoint=value["adapter_checkpoint"],
             merged_checkpoint=value["merged_checkpoint"],
             endpoint=endpoint,
+            chain_id=chain_id,
         )
         if recreated.value["verified"] != value["verified"]:
             raise RuntimeError("target binding no longer matches checkpoint files")
@@ -280,7 +307,9 @@ def validate_binding(value: Any, *, verify_files: bool = True) -> TargetBinding:
 
 
 def load_binding(path: Path, *, verify_files: bool = True) -> TargetBinding:
-    return validate_binding(_json_file(path, "target binding"), verify_files=verify_files)
+    return validate_binding(
+        _json_file(path, "target binding"), verify_files=verify_files
+    )
 
 
 def write_binding(path: Path, binding: TargetBinding) -> None:
@@ -307,6 +336,7 @@ def _parser() -> argparse.ArgumentParser:
     create = subparsers.add_parser("create")
     create.add_argument("--iteration", required=True, type=int)
     create.add_argument("--incumbent-run-id", required=True)
+    create.add_argument("--chain-id")
     create.add_argument("--base-checkpoint", required=True)
     create.add_argument("--adapter-checkpoint", required=True)
     create.add_argument("--merged-checkpoint", required=True)
@@ -329,6 +359,7 @@ def main() -> int:
             base_checkpoint=args.base_checkpoint,
             adapter_checkpoint=args.adapter_checkpoint,
             merged_checkpoint=args.merged_checkpoint,
+            chain_id=args.chain_id,
             endpoint={
                 "url": args.target_url,
                 "host_header": args.target_host_header,

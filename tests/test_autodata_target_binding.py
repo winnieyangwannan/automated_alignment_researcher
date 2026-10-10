@@ -65,6 +65,7 @@ class TargetBindingTest(unittest.TestCase):
             base, adapter, merged = make_checkpoint_fixture(root)
             binding = create_binding(
                 iteration=2,
+                chain_id="alpha",
                 incumbent_run_id="candidate-1",
                 base_checkpoint=str(base),
                 adapter_checkpoint=str(adapter),
@@ -81,6 +82,8 @@ class TargetBindingTest(unittest.TestCase):
             loaded = load_binding(path)
 
             self.assertEqual(loaded.checkpoint_hash, binding.checkpoint_hash)
+            self.assertEqual(loaded.chain_id, "alpha")
+            self.assertEqual(loaded.value["schema"], "aar.autodata.target-binding/v2")
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(
                 loaded.solve_environment()["AUTODATA_TARGET_DEPLOYMENT_ID"],

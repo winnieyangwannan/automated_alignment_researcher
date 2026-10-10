@@ -25,6 +25,15 @@ TARGET_HOST="ram-inference-gateway.ingress."
 TARGET_MODEL="gemma-4-31B-it"
 MAX_ATTEMPTS="${AAR_RUN12_MAX_CHAIN_ATTEMPTS:-8}"
 TARGET_PAIRS="${AAR_RUN12_TARGET_PAIRS:-5}"
+: "${AAR_AUTODATA_PROFILE_CONFIG:?missing AutoData profile YAML}"
+: "${AAR_AUTODATA_RUN_CONFIG:?missing AutoData run YAML}"
+: "${AAR_AUTODATA_RUNTIME_ENV:?missing compiled AutoData runtime environment}"
+# shellcheck disable=SC1090
+source "${AAR_AUTODATA_RUNTIME_ENV}"
+[ "${AAR_AUTODATA_TARGET_REQUIRED:-0}" = 1 ] || {
+  echo "Run 12 controller requires target-aware AutoData" >&2
+  exit 2
+}
 
 export TEAM_DIR LOCAL_FINDINGS_DIR="${TEAM_DIR}/forum"
 export SUBMISSIONS_DIR="${TEAM_DIR}/submissions" SCORES_DIR="${TEAM_DIR}/scores"
@@ -170,7 +179,8 @@ while [ "${pairs}" -lt "${TARGET_PAIRS}" ]; do
     deploy_checkpoint "${new_deployment}" "${merged}"
     binding="${CHAIN_ROOT}/bindings/iteration-${next_iteration}.json"
     PYTHONPATH="${REPO}" "${PY}" -m aar.autodata_target_binding create \
-      --iteration "${next_iteration}" --incumbent-run-id "${run_id}" \
+      --iteration "${next_iteration}" --chain-id "${SEED}" \
+      --incumbent-run-id "${run_id}" \
       --base-checkpoint "${BASE_CHECKPOINT}" --adapter-checkpoint "${adapter}" \
       --merged-checkpoint "${merged}" --target-url "${TARGET_URL}" \
       --target-host-header "${TARGET_HOST}" --target-model "${TARGET_MODEL}" \
@@ -191,7 +201,8 @@ while [ "${pairs}" -lt "${TARGET_PAIRS}" ]; do
     run_id="$(jq -r '.run_id' "${current}")"
     binding="${CHAIN_ROOT}/bindings/iteration-${next_iteration}.json"
     PYTHONPATH="${REPO}" "${PY}" -m aar.autodata_target_binding create \
-      --iteration "${next_iteration}" --incumbent-run-id "${run_id}" \
+      --iteration "${next_iteration}" --chain-id "${SEED}" \
+      --incumbent-run-id "${run_id}" \
       --base-checkpoint "${BASE_CHECKPOINT}" \
       --adapter-checkpoint "$(jq -r '.adapter_checkpoint' "${current}")" \
       --merged-checkpoint "$(jq -r '.merged_checkpoint' "${current}")" \
@@ -202,24 +213,24 @@ while [ "${pairs}" -lt "${TARGET_PAIRS}" ]; do
   else
     binding="${CHAIN_ROOT}/bindings/iteration-${next_iteration}.json"
     PYTHONPATH="${REPO}" "${PY}" -m aar.autodata_campaign_policy create-base-target \
-      --iteration "${next_iteration}" --base-checkpoint "${BASE_CHECKPOINT}" \
+      --iteration "${next_iteration}" --chain-id "${SEED}" \
+      --base-checkpoint "${BASE_CHECKPOINT}" \
       --target-url "${TARGET_URL}" --target-host-header "${TARGET_HOST}" \
       --target-model "${TARGET_MODEL}" --target-deployment-id "${current_deployment}" \
       --output "${binding}"
     current_target="${binding}"
   fi
 
-  PYTHONPATH="${REPO}" "${PY}" -m aar.autodata_campaign_policy create-policy \
-    --campaign-id "run12-${SEED}" --target-manifest "${current_target}" \
-    --generator-deployment-id "${AAR_AUTODATA_GENERATOR_DEPLOYMENT}" \
-    --runtime-profile "${AAR_AUTODATA_PROFILE}" \
-    --max-cost-usd 299 --output "${current_policy}"
-  PYTHONPATH="${REPO}" "${PY}" -m aar.infrastructure.autodata_contract \
-    --create --campaign-policy "${current_policy}" --required-rows 1000 \
-    --minimum-successful-task-fraction 0.95 \
-    --judge-rubric-version run9-axis-conditioned-v2 \
-    --output "${current_contract}" >/dev/null
-  export AAR_AUTODATA_CAMPAIGN_POLICY="${current_policy}"
+  PYTHONPATH="${REPO}" "${PY}" -m aar.autodata_run_config compile \
+    --profile "${AAR_AUTODATA_PROFILE_CONFIG}" --run "${AAR_AUTODATA_RUN_CONFIG}" \
+    --target-binding "${current_target}" --chain "${SEED}" --repo "${REPO}" \
+    --output-dir "${CHAIN_ROOT}/metadata" >/dev/null
+  # shellcheck disable=SC1090
+  source "${AAR_AUTODATA_RUNTIME_ENV}"
+  [ "${AAR_AUTODATA_TARGET_REQUIRED:-0}" = 1 ] || {
+    record_event "fatal=compiled_configuration_not_target_aware"
+    exit 2
+  }
 
   before="${pairs}"
   job="$(submit_session)"

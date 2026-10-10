@@ -78,16 +78,14 @@ export AAR_EVAL_TIME=7-00:00:00 AAR_EVAL_IDLE_SECONDS=604200
 export AAR_CHAIN_MAX_HOURS=72 AAR_CHAIN_SANITIZE_ENV=1 AAR_RUNTIME_ENV_DISABLE_FILE=1
 export AAR_RESEARCH_ENV_ISOLATION=0 AAR_HIDE_EVAL_CONFIG=1
 
-export AAR_AUTODATA=1 AAR_AUTODATA_PROFILE=target-aware-local-v1
-# shellcheck disable=SC1091
-source "${REPO}/scripts/autodata_runtime_profile.sh"
-aar_set_autodata_runtime_profile
-export AAR_AUTODATA_META_MAX_ITERATIONS=3 AAR_AUTODATA_META_MIN_ITERATIONS=3
-export AAR_AUTODATA_META_EARLY_STOP_PATIENCE=3
-export AAR_AUTODATA_TUNING_TASKS=64 AAR_AUTODATA_VALIDATION_TASKS=32 AAR_AUTODATA_TEST_TASKS=32
-export AAR_AUTODATA_PRODUCTION_ROWS=1000 AAR_AUTODATA_PRODUCTION_INITIAL_TASKS=1250
-export AAR_AUTODATA_PRODUCTION_MAX_TASKS=2000
-export AAR_AUTODATA_RECIPE_ROOT="${REPO}/aar/autodata_recipes/dishonest_sycophancy_concealing"
+export AAR_AUTODATA=1
+: "${AAR_AUTODATA_RUNTIME_ENV:?missing compiled AutoData runtime environment}"
+# shellcheck disable=SC1090
+source "${AAR_AUTODATA_RUNTIME_ENV}"
+[ "${AAR_AUTODATA_TARGET_REQUIRED:-0}" = 1 ] || {
+  echo "Run 12 compiled configuration is not target-aware" >&2
+  exit 2
+}
 
 "${HARNESS_PY}" "${REPO}/scripts/validate_reused_multidimensional_baseline.py" \
   "${REUSED_BASELINE}" --recovered-source-dir "${RECOVERED_SOURCES}" \
@@ -103,8 +101,13 @@ for seed in "${seeds[@]}"; do
   export AAR_TEAM_ID="${team_id}"
   export AAR_IDEA_UID_OVERRIDE="run12-${seed}-iteration-1"
   export AAR_RESUME_APPROVED_PROPOSAL=0
-  export AAR_AUTODATA_CAMPAIGN_POLICY="${chain_root}/metadata/campaign-policy.json"
-  export AAR_AUTODATA_TRAINING_DATA_CONTRACT="${chain_root}/metadata/autodata-training-data-contract.json"
+  export AAR_AUTODATA_RUNTIME_ENV="${chain_root}/metadata/autodata-runtime.env"
+  # shellcheck disable=SC1090
+  source "${AAR_AUTODATA_RUNTIME_ENV}"
+  [ "${AAR_AUTODATA_TARGET_REQUIRED:-0}" = 1 ] || {
+    echo "chain ${seed} is not target-aware" >&2
+    exit 2
+  }
   export AAR_AUTODATA_PROPOSAL_BINDINGS="${chain_root}/secrets/proposal-bindings.json"
   export AAR_VLLM_MERGED_ROOT="${AAR_RUN12_CHECKPOINT_ROOT:?}/chains/${seed}/merged_candidates"
   AAR_AUTODATA_CAPABILITY="$(<"${chain_root}/secrets/capability")"

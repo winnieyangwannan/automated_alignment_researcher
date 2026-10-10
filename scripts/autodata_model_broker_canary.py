@@ -113,6 +113,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--capacity-profile", type=Path)
     parser.add_argument(
+        "--campaign-policy",
+        type=Path,
+        help="trusted compiled campaign policy; overrides duplicated provider flags",
+    )
+    parser.add_argument(
         "--target-binding",
         type=Path,
         help="trusted base-plus-adapter endpoint binding for a target-aware task",
@@ -162,7 +167,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--target-max-output-tokens", type=_positive_integer, default=65536
     )
-    parser.add_argument("--model-request-max-attempts", type=_positive_integer, default=3)
+    parser.add_argument(
+        "--model-request-max-attempts", type=_positive_integer, default=3
+    )
     parser.add_argument("--timeout-seconds", type=_positive_integer, default=900)
     parser.add_argument(
         "--allow-judge-rejection",
@@ -208,6 +215,7 @@ def _read_owned_token(path: Path) -> str:
             os.close(descriptor)
     except OSError as error:
         raise RuntimeError("broker auth token file could not be read safely") from error
+
     def identity(value: os.stat_result) -> tuple[int, int, int, int]:
         return (
             value.st_dev,
@@ -293,7 +301,9 @@ def _read_recipe_contract(recipe_root: Path) -> _RecipeContract:
 
 
 def _task_input(*, target_aware: bool = False) -> dict[str, Any]:
-    task_id = "run12-adapter-target-canary" if target_aware else "run8-model-backed-canary"
+    task_id = (
+        "run12-adapter-target-canary" if target_aware else "run8-model-backed-canary"
+    )
     return {
         "schema": "autodata.command-input/v1",
         "task": {
@@ -335,6 +345,26 @@ def _task_input(*, target_aware: bool = False) -> dict[str, Any]:
 def _model_environment(
     args: argparse.Namespace, target_binding: TargetBinding | None = None
 ) -> dict[str, str]:
+    if args.campaign_policy is not None:
+        try:
+            policy = json.loads(args.campaign_policy.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise RuntimeError("compiled campaign policy is unreadable") from error
+        environment = (
+            policy.get("required_solve_env") if isinstance(policy, dict) else None
+        )
+        if not isinstance(environment, dict) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in environment.items()
+        ):
+            raise RuntimeError("compiled campaign policy has invalid solve environment")
+        if target_binding is not None:
+            expected = target_binding.solve_environment()
+            if any(environment.get(key) != value for key, value in expected.items()):
+                raise RuntimeError(
+                    "compiled campaign policy does not match target binding"
+                )
+        return dict(environment)
     if args.capacity_profile is not None:
         profile = load_capacity_profile(args.capacity_profile)
         return profile.solve_environment(
@@ -421,18 +451,18 @@ def _validate_task_result(
     if not isinstance(items, list) or len(items) not in expected_item_counts:
         raise RuntimeError("model-backed canary returned the wrong item count")
     metadata = items[0].get("metadata") if items else None
-    if target_binding is None and require_accepted and (
-        not isinstance(metadata, dict) or metadata.get("judge_accepted") is not True
+    if (
+        target_binding is None
+        and require_accepted
+        and (
+            not isinstance(metadata, dict) or metadata.get("judge_accepted") is not True
+        )
     ):
         raise RuntimeError("model-backed canary sample was not accepted by the judge")
     metrics = value.get("metrics")
     if not isinstance(metrics, dict):
         raise RuntimeError("model-backed canary metrics are missing")
-    if (
-        target_binding is None
-        and require_accepted
-        and metrics.get("valid") != 1.0
-    ):
+    if target_binding is None and require_accepted and metrics.get("valid") != 1.0:
         raise RuntimeError("model-backed canary sample is not valid")
     if (
         target_binding is None
@@ -480,8 +510,7 @@ def _validate_task_result(
         request_ids.add(request_id)
         if role == "target" and target_binding is not None:
             if (
-                call.get("deployment_id")
-                != target_binding.endpoint["deployment_id"]
+                call.get("deployment_id") != target_binding.endpoint["deployment_id"]
                 or call.get("checkpoint_hash") != target_binding.checkpoint_hash
             ):
                 raise RuntimeError(
@@ -522,10 +551,11 @@ def _validate_task_result(
             metadata.get("target_model") != target_binding.endpoint["model"]
             or metadata.get("target_deployment_id")
             != target_binding.endpoint["deployment_id"]
-            or metadata.get("target_checkpoint_hash")
-            != target_binding.checkpoint_hash
+            or metadata.get("target_checkpoint_hash") != target_binding.checkpoint_hash
         ):
-            raise RuntimeError("model-backed canary item target provenance is incorrect")
+            raise RuntimeError(
+                "model-backed canary item target provenance is incorrect"
+            )
     return safe_usage
 
 
@@ -636,6 +666,19 @@ def run(args: argparse.Namespace, *, runtime: _Runtime | None = None) -> dict[st
     target_binding = (
         load_binding(args.target_binding) if args.target_binding is not None else None
     )
+    campaign_policy: dict[str, Any] | None = None
+    if args.campaign_policy is not None:
+        try:
+            loaded_policy = json.loads(args.campaign_policy.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise RuntimeError("compiled campaign policy is unreadable") from error
+        if (
+            not isinstance(loaded_policy, dict)
+            or loaded_policy.get("schema") != "autodata.broker-campaign-policy/v1"
+        ):
+            raise RuntimeError("compiled campaign policy schema is invalid")
+        campaign_policy = loaded_policy
+    model_environment = _model_environment(args, target_binding)
     recipe_root = args.recipe_root.resolve(strict=True)
     contract = _read_recipe_contract(recipe_root)
     with tempfile.TemporaryDirectory(prefix="autodata-model-canary-") as temporary:
@@ -673,22 +716,38 @@ def run(args: argparse.Namespace, *, runtime: _Runtime | None = None) -> dict[st
                     if target_binding is not None
                     else "Run one approved Run 8 Kimi generation and Luna judgment"
                 ),
-                "environment": args.environment,
-                "image": args.image,
-                "expected_image_id": args.expected_image_id,
+                "environment": (
+                    campaign_policy["environment"]
+                    if campaign_policy
+                    else args.environment
+                ),
+                "image": campaign_policy["image"] if campaign_policy else args.image,
+                "expected_image_id": (
+                    campaign_policy["expected_image_id"]
+                    if campaign_policy
+                    else args.expected_image_id
+                ),
                 "workspace": {
                     "sha256": identity.sha256,
                     "size_bytes": identity.size,
                 },
                 "resources": {
-                    "cpus": capacity_profile.max_cpus if capacity_profile else 2,
+                    "cpus": (
+                        campaign_policy["max_cpus"]
+                        if campaign_policy
+                        else capacity_profile.max_cpus if capacity_profile else 2
+                    ),
                     "memory_mb": (
-                        capacity_profile.max_memory_mb if capacity_profile else 2048
+                        campaign_policy["max_memory_mb"]
+                        if campaign_policy
+                        else (
+                            capacity_profile.max_memory_mb if capacity_profile else 2048
+                        )
                     ),
                 },
                 "solve": {
                     "argv": rendered_argv,
-                    "env": _model_environment(args, target_binding),
+                    "env": model_environment,
                     "timeout_seconds": contract.timeout_seconds,
                     "network": "host",
                     "result_paths": [contract.output_path],
@@ -724,12 +783,12 @@ def run(args: argparse.Namespace, *, runtime: _Runtime | None = None) -> dict[st
             raise RuntimeError("model-backed canary result is unreadable") from error
         rates = {
             "generator": (
-                args.generator_input_usd_per_million,
-                args.generator_output_usd_per_million,
+                Decimal(model_environment["AUTODATA_GENERATOR_INPUT_USD_PER_MILLION"]),
+                Decimal(model_environment["AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION"]),
             ),
             "judge": (
-                args.judge_input_usd_per_million,
-                args.judge_output_usd_per_million,
+                Decimal(model_environment["AUTODATA_JUDGE_INPUT_USD_PER_MILLION"]),
+                Decimal(model_environment["AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION"]),
             ),
         }
         if target_binding is not None:
@@ -747,16 +806,24 @@ def run(args: argparse.Namespace, *, runtime: _Runtime | None = None) -> dict[st
             "broker_job_id": job_id,
             "broker_status": status.get("status"),
             "sandoq_session_id": status.get("session_id"),
-            "environment": args.environment,
-            "image": args.image,
-            "expected_image_id": args.expected_image_id,
+            "environment": (
+                campaign_policy["environment"] if campaign_policy else args.environment
+            ),
+            "image": campaign_policy["image"] if campaign_policy else args.image,
+            "expected_image_id": (
+                campaign_policy["expected_image_id"]
+                if campaign_policy
+                else args.expected_image_id
+            ),
             "workspace_sha256": identity.sha256,
             "task_result_schema": result.get("schema"),
             "task_result_schema_valid": True,
             "task_result_outcome": result.get("outcome"),
             "generated_item_count": len(result["generated_items"]),
             "provider_call_count": len(usage),
-            "generator_deployment_id": args.generator_deployment_id,
+            "generator_deployment_id": model_environment[
+                "AUTODATA_GENERATOR_DEPLOYMENT_ID"
+            ],
             "provider_usage": usage,
             "accepted_row_count": len(result["generated_items"]),
             "metrics": result["metrics"],
@@ -768,13 +835,9 @@ def run(args: argparse.Namespace, *, runtime: _Runtime | None = None) -> dict[st
                     "schema": "aar.autodata.adapter-target-canary/v1",
                     "target_binding_checkpoint_hash": target_binding.checkpoint_hash,
                     "target_iteration": target_binding.value["iteration"],
-                    "target_incumbent_run_id": target_binding.value[
-                        "incumbent_run_id"
-                    ],
+                    "target_incumbent_run_id": target_binding.value["incumbent_run_id"],
                     "target_model": target_binding.endpoint["model"],
-                    "target_deployment_id": target_binding.endpoint[
-                        "deployment_id"
-                    ],
+                    "target_deployment_id": target_binding.endpoint["deployment_id"],
                     "accepted_row_count": len(result["generated_items"]),
                     "metrics": result["metrics"],
                     "reason_code": result.get("reason_code"),
