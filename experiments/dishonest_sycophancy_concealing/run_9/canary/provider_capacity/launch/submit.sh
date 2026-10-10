@@ -3,8 +3,10 @@ set -euo pipefail
 umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
-source "${SCRIPT_DIR}/autodata_version.env"
+CANARY_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+RUN_DIR="$(cd -- "${CANARY_DIR}/../.." && pwd)"
+REPO="$(cd -- "${RUN_DIR}/../../.." && pwd)"
+source "${RUN_DIR}/config/autodata_version.env"
 AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pipelines}"
 SECRET_ENV="${AAR_RUN9_SECRET_ENV:-/storage/home/${USER}/aar-worktrees/autodata/.env}"
 FIRECRACKER_TOKEN="${AAR_RUN9_FIRECRACKER_TOKEN:-/storage/home/${USER}/aar-worktrees/autodata/.sandoq-firecracker-token}"
@@ -16,7 +18,7 @@ CAPACITY_PROFILE="${AAR_AUTODATA_CAPACITY_PROFILE:-}"
 SLURM_DEPENDENCY="${AAR_SLURM_DEPENDENCY:-}"
 
 if [ -n "${TARGET_BINDING_SOURCE}" ] && [ -z "${CAPACITY_PROFILE}" ]; then
-  CAPACITY_PROFILE="${SCRIPT_DIR}/target_aware_capacity.yaml"
+  CAPACITY_PROFILE="${CANARY_DIR}/config/run.yaml"
 fi
 if [ -n "${CAPACITY_PROFILE}" ]; then
   [ -f "${CAPACITY_PROFILE}" ] || { echo "capacity profile is missing: ${CAPACITY_PROFILE}" >&2; exit 2; }
@@ -216,7 +218,7 @@ sbatch_args=(--parsable --output="${root}/slurm-%j.out" --export=ALL)
 if [ -n "${SLURM_DEPENDENCY}" ]; then
   sbatch_args+=(--dependency="${SLURM_DEPENDENCY}")
 fi
-job_id="$(sbatch "${sbatch_args[@]}" "${SCRIPT_DIR}/run_9_capacity_canary.sbatch")"
+job_id="$(sbatch "${sbatch_args[@]}" "${CANARY_DIR}/slurm/capacity.sbatch")"
 printf 'job_id=%s\nroot=%s\nbroker_runner=%s\nenvironment=%s\nconcurrency=%s\ntask_count=%s\nmodel_request_max_attempts=%s\ngenerator_deployment_id=%s\ncapacity_profile=%s\ntarget_aware=%s\naar_git_commit=%s\nautodata_git_commit=%s\n' \
   "${job_id}" "${root}" "${RUNNER}" "${ENVIRONMENT}" "${CONCURRENCY}" "${TASK_COUNT}" "${MODEL_REQUEST_MAX_ATTEMPTS}" "${GENERATOR_DEPLOYMENT}" "${CAPACITY_PROFILE}" "$([ -n "${target_binding}" ] && printf true || printf false)" "$(git -C "${REPO}" rev-parse HEAD)" "$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)" \
   | tee "${root}/submission.txt"

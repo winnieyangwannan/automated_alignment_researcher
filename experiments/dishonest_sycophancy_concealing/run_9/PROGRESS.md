@@ -4,9 +4,13 @@ This file is the durable handoff for the five-successful-iteration AAR campaign.
 All retained outputs are under `/storage/home/winnieyangwn/aar-runs`; shared
 `/checkpoint/ram` inputs are read-only.
 
+Historical entries retain their original date headings and embedded time-zone
+labels. New entries use Pacific Time (`America/Los_Angeles`) and are labeled
+`PT`.
+
 ## 2026-10-08 — implementation and prelaunch
 
-- Approved configuration is recorded in `aar_run_plan.md`.
+- Approved configuration is recorded in [`PLAN.md`](PLAN.md).
 - AutoData native early stopping now enforces maximum 10, minimum 3, and
   patience 3 in its own execution engine.
 - The attempt-scoped broker policy binds the image, SandoQ tier, resource
@@ -517,3 +521,17 @@ with `reason_code=judge_rejected`; there were no model, parsing, broker, lease,
 or routing failures. This satisfies the production admission gate for the
 local Bubblewrap runner at concurrency 16 without resizing the one-endpoint
 `winnieyangwn-kimi26` deployment.
+
+## 2026-10-10 — source organization
+
+- 2026-10-10 16:12 PT — Reorganized the Run 9 source directory using the
+  proven Run 12 responsibility-based structure. Launchers, Slurm payloads,
+  configuration, recovery tools, runtime helpers, canaries, documentation,
+  and analysis now have distinct homes. Stable launcher root discovery and
+  repository references were updated with the moves.
+  Source commit: this organizational commit (resolved by Git history)
+  Attempt: not created
+  Jobs: none
+  Evidence: [`README.md`](README.md), the reorganized source tree, and focused tests
+  Decision: use the new operator paths; preserve all retained run artifacts and
+  operational history unchanged.

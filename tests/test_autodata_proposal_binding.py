@@ -169,7 +169,8 @@ def test_run9_prompt_and_launcher_require_proposal_binding() -> None:
         / "experiments"
         / "dishonest_sycophancy_concealing"
         / "run_9"
-        / "submit_run_9.sh"
+        / "launch"
+        / "submit_full.sh"
     ).read_text()
 
     assert "Required AutoData ordering" in prompt

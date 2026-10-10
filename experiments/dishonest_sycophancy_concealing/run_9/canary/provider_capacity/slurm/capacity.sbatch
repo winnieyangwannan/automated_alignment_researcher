@@ -9,7 +9,7 @@
 set -euo pipefail
 umask 077
 
-REPO="${AAR_REPO:?submit through submit_run_9_capacity_canary.sh}"
+REPO="${AAR_REPO:?submit through provider_capacity/launch/submit.sh}"
 AUTODATA="${AAR_AUTODATA_CHECKOUT:?missing AutoData checkout}"
 ROOT="${AAR_RUN9_CANARY_ROOT:?missing retained canary root}"
 ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:?missing Firecracker environment}"

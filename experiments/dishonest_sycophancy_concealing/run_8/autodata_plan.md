@@ -2,7 +2,7 @@
 
 > Historical record: this plan describes the retired adapter/MCP integration.
 > The executable Run 8 launchers were removed. The current native-plugin plan
-> is [`../run_9/autodata_plugin_plan.md`](../run_9/autodata_plugin_plan.md).
+> is [`../run_9/docs/autodata_plugin_plan.md`](../run_9/docs/autodata_plugin_plan.md).
 
 ## Goal
 

@@ -4,11 +4,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN9 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_9"
+FULL_SUBMIT = RUN9 / "launch" / "submit_full.sh"
+PIPELINE = RUN9 / "slurm" / "pipeline.sbatch"
+CAPACITY = RUN9 / "canary" / "provider_capacity"
+NATIVE = RUN9 / "canary" / "native_lifecycle"
+RECOVERY = RUN9 / "recovery"
 
 
 def test_run9_snapshots_the_complete_hash_bound_vllm_runtime() -> None:
-    snapshotter = (RUN9 / "snapshot_vllm_runtime.sh").read_text()
-    submitter = (RUN9 / "submit_run_9.sh").read_text()
+    snapshotter = (RUN9 / "runtime" / "snapshot_vllm_runtime.sh").read_text()
+    submitter = FULL_SUBMIT.read_text()
 
     assert "EXPECTED_TREE_SHA256=" in snapshotter
     assert 'worker/container.sh' in snapshotter
@@ -20,7 +25,7 @@ def test_run9_snapshots_the_complete_hash_bound_vllm_runtime() -> None:
 
 
 def test_run9_uses_safe_ephemeral_merged_checkpoints() -> None:
-    pipeline = (RUN9 / "run_9_pipeline.sbatch").read_text()
+    pipeline = PIPELINE.read_text()
     worker = (ROOT / "scripts" / "eval_worker.sh").read_text()
 
     assert "AAR_VLLM_EPHEMERAL_MERGED=1" in pipeline
@@ -33,8 +38,8 @@ def test_run9_uses_safe_ephemeral_merged_checkpoints() -> None:
 
 
 def test_run9_pins_local_bwrap_and_safe_concurrency() -> None:
-    submitter = (RUN9 / "submit_run_9.sh").read_text()
-    pipeline = (RUN9 / "run_9_pipeline.sbatch").read_text()
+    submitter = FULL_SUBMIT.read_text()
+    pipeline = PIPELINE.read_text()
     runtime = (ROOT / "scripts" / "aar_runtime_env.sh").read_text()
 
     assert "AAR_AUTODATA_BROKER_RUNNER:-local-bwrap" in submitter
@@ -67,8 +72,8 @@ def test_agent_prompt_distinguishes_native_adapter_from_physical_runner() -> Non
 
 
 def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
-    submitter = (RUN9 / "submit_run_9_capacity_canary.sh").read_text()
-    canary = (RUN9 / "run_9_capacity_canary.sbatch").read_text()
+    submitter = (CAPACITY / "launch" / "submit.sh").read_text()
+    canary = (CAPACITY / "slurm" / "capacity.sbatch").read_text()
 
     assert '--max-concurrent "${CONCURRENCY}"' in canary
     assert "autodata_model_broker_canary.py" in canary
@@ -86,7 +91,7 @@ def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
     assert 'export AAR_AUTODATA_GENERATOR_DEPLOYMENT="${GENERATOR_DEPLOYMENT}"' in submitter
     assert '"AUTODATA_GENERATOR_DEPLOYMENT_ID": "${GENERATOR_DEPLOYMENT}"' in submitter
     assert "generator_deployment_id=%s" in submitter
-    assert "target_aware_capacity.yaml" in submitter
+    assert 'CAPACITY_PROFILE="${CANARY_DIR}/config/run.yaml"' in submitter
     assert "aar.autodata_capacity_profile render-policy" in submitter
     assert '--capacity-profile "${CAPACITY_PROFILE}"' in canary
     assert 'export AAR_AUTODATA_TARGET_BINDING="${target_binding}"' in submitter
@@ -110,8 +115,8 @@ def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
 
 
 def test_run9_native_preflight_covers_the_real_lifecycle() -> None:
-    submitter = (RUN9 / "submit_run_9_native_preflight.sh").read_text()
-    preflight = (RUN9 / "run_9_native_preflight.sbatch").read_text()
+    submitter = (NATIVE / "launch" / "submit.sh").read_text()
+    preflight = (NATIVE / "slurm" / "preflight.sbatch").read_text()
 
     assert "autodata_native_real_e2e.py" in preflight
     assert '--task-count 16' in preflight
@@ -126,7 +131,7 @@ def test_run9_native_preflight_covers_the_real_lifecycle() -> None:
 
 
 def test_run9_bounds_meta_work_and_has_production_acceptance_headroom() -> None:
-    pipeline = (RUN9 / "run_9_pipeline.sbatch").read_text()
+    pipeline = PIPELINE.read_text()
 
     assert "AAR_AUTODATA_META_MIN_ITERATIONS=3" in pipeline
     assert "AAR_AUTODATA_META_MAX_ITERATIONS=3" in pipeline
@@ -136,7 +141,7 @@ def test_run9_bounds_meta_work_and_has_production_acceptance_headroom() -> None:
 
 
 def test_run9_requires_target_aware_autodata_by_default() -> None:
-    submitter = (RUN9 / "submit_run_9.sh").read_text()
+    submitter = FULL_SUBMIT.read_text()
     recipe = (
         ROOT
         / "aar"
@@ -200,7 +205,7 @@ def test_chain_prebootstraps_and_pins_autodata_plugin_python() -> None:
 
 def test_run9_keeps_the_hot_broker_database_on_node_local_storage() -> None:
     chain = (ROOT / "scripts" / "slurm_aar_chain.sh").read_text()
-    canary = (RUN9 / "run_9_capacity_canary.sbatch").read_text()
+    canary = (CAPACITY / "slurm" / "capacity.sbatch").read_text()
 
     assert '${SLURM_TMPDIR:-/tmp}/aar-autodata-broker-' in chain
     assert '--database "${_autodata_broker_database}"' in chain
@@ -215,7 +220,7 @@ def test_run9_keeps_the_hot_broker_database_on_node_local_storage() -> None:
 
 
 def test_run9_production_recovery_uses_an_attempt_local_broker_ledger() -> None:
-    recovery = (RUN9 / "run_9_production_recovery.sbatch").read_text()
+    recovery = (RECOVERY / "production.sbatch").read_text()
 
     assert 'LOCAL_BROKER="${LOCAL_ROOT}/broker/broker.db"' in recovery
     assert 'BROKER_ARCHIVE_DIR="${BROKER_ROOT}/attempt-ledgers"' in recovery
@@ -228,7 +233,7 @@ def test_run9_production_recovery_uses_an_attempt_local_broker_ledger() -> None:
 def test_run9_chain_can_route_kimi_through_the_authenticated_loopback_bridge() -> None:
     chain = (ROOT / "scripts" / "slurm_aar_chain.sh").read_text()
     runtime = (ROOT / "scripts" / "aar_runtime_env.sh").read_text()
-    submitter = (RUN9 / "submit_run_9.sh").read_text()
+    submitter = FULL_SUBMIT.read_text()
     agent = (ROOT / "aar" / "research_loop" / "agent.py").read_text()
 
     assert 'if [ -n "${AAR_KIMI_PROXY_INFO:-}" ]; then' in chain
@@ -248,7 +253,7 @@ def test_run9_chain_can_route_kimi_through_the_authenticated_loopback_bridge() -
 def test_run9_uses_one_supervised_node_local_autodata_lifecycle() -> None:
     chain = (ROOT / "scripts" / "slurm_aar_chain.sh").read_text()
     submit_train = (ROOT / "scripts" / "submit_train_job.sh").read_text()
-    pipeline = (RUN9 / "run_9_pipeline.sbatch").read_text()
+    pipeline = PIPELINE.read_text()
     prompt = (ROOT / "aar" / "research_loop" / "prompt_safety.jinja2").read_text()
 
     assert "AAR_AUTODATA_LIFECYCLE_SUPERVISED=1" in pipeline
@@ -268,13 +273,13 @@ def test_run9_uses_one_supervised_node_local_autodata_lifecycle() -> None:
     assert "Never add `v2`, `prod2`" in prompt
     assert "Never register the workspace's automatically created" in prompt
     assert "AAR_AUTODATA_RETAINED_STATE" in prompt
-    version = (RUN9 / "autodata_version.env").read_text()
+    version = (RUN9 / "config" / "autodata_version.env").read_text()
     assert "823c5948854df14664f3168bc5e6c49a2cecb975" in version
     for launcher in (
-        "submit_run_9.sh",
-        "submit_run_9_native_preflight.sh",
-        "submit_run_9_capacity_canary.sh",
+        FULL_SUBMIT,
+        NATIVE / "launch" / "submit.sh",
+        CAPACITY / "launch" / "submit.sh",
     ):
-        text = (RUN9 / launcher).read_text()
-        assert "autodata_version.env" in text
+        text = launcher.read_text()
+        assert "config/autodata_version.env" in text
         assert "RUN9_REQUIRED_AUTODATA_SHA" in text

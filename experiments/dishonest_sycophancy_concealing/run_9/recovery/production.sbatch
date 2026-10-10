@@ -9,7 +9,7 @@
 set -euo pipefail
 umask 077
 
-REPO="${AAR_REPO:?submit through submit_run_9_production_recovery.sh}"
+REPO="${AAR_REPO:?submit through recovery/submit_production.sh}"
 ATTEMPT_DIR="${AAR_RUN_ATTEMPT_DIR:?missing Run 9 attempt root}"
 AUTODATA="${AAR_AUTODATA_CHECKOUT:?missing pinned AutoData checkout}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:?missing broker interpreter}"

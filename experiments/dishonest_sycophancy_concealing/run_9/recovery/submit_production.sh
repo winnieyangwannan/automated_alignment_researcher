@@ -3,7 +3,8 @@ set -euo pipefail
 umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
+RUN_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+REPO="$(cd -- "${RUN_DIR}/../../.." && pwd)"
 ATTEMPT_DIR="${AAR_RUN_ATTEMPT_DIR:-/storage/home/${USER:?}/aar-runs/run9-five-iteration/20261009T042010Z-9177dca332eb}"
 AUTODATA="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER}/autodata-recovery-clones/run9-823c594-speedup}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
@@ -41,7 +42,7 @@ chmod 700 "${logs}"
 job_id="$(sbatch --parsable \
   --output="${logs}/${ATTEMPT_LABEL}-%j.out" \
   --export="AAR_REPO=${REPO},AAR_RUN_ATTEMPT_DIR=${ATTEMPT_DIR},AAR_AUTODATA_CHECKOUT=${AUTODATA},AAR_AUTODATA_BROKER_PYTHON=${BROKER_PYTHON},AAR_PRODUCTION_EXECUTION_ID=${EXECUTION_ID},AAR_AUTODATA_CONCURRENCY=${CONCURRENCY},AAR_SPEEDUP_MAX_SECONDS=${MAX_SECONDS},AAR_SPEEDUP_ATTEMPT_LABEL=${ATTEMPT_LABEL},AAR_EXPECTED_AAR_SHA=${aar_sha},AAR_EXPECTED_AUTODATA_SHA=${EXPECTED_AUTODATA_SHA},AAR_KIMI_PROXY_INFO=${KIMI_PROXY_INFO}" \
-  "${SCRIPT_DIR}/run_9_production_recovery.sbatch")"
+  "${SCRIPT_DIR}/production.sbatch")"
 record="${logs}/${ATTEMPT_LABEL}-submission.txt"
 printf 'job_id=%s\nattempt_label=%s\naar_commit=%s\nautodata_commit=%s\nconcurrency=%s\nmax_seconds=%s\nexecution_id=%s\n' \
   "${job_id}" "${ATTEMPT_LABEL}" "${aar_sha}" "${EXPECTED_AUTODATA_SHA}" \

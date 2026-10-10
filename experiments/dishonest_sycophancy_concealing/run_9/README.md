@@ -5,6 +5,27 @@ sycophancy resistance, and uncertainty disclosure in Gemma-4 31B. Five
 successes means five durable score/result pairs from one sequential research
 chain, not five research chains running in parallel.
 
+## Directory layout
+
+```text
+run_9/
+├── config/                         # Pinned AutoData revision
+├── launch/submit_full.sh           # Full-run operator entrypoint
+├── slurm/pipeline.sbatch           # Scheduled full-run payload
+├── canary/
+│   ├── provider_capacity/          # Kimi → Gemma → Luna capacity test
+│   └── native_lifecycle/           # Bounded native AutoData lifecycle test
+├── recovery/                       # Preserved-production recovery only
+├── runtime/                        # Immutable vLLM runtime snapshot helper
+├── docs/                           # Design and implementation records
+├── analysis/                       # Timing and production-speed studies
+├── PLAN.md                         # Approved experiment contract
+└── PROGRESS.md                     # Durable operational history
+```
+
+Large attempts, broker ledgers, datasets, checkpoints, and logs remain outside
+Git under the retained run storage roots described below.
+
 ## System topology
 
 ```text
@@ -126,10 +147,38 @@ reloadable adapter save. The generated method required a small compatibility
 fix because Gemma's tokenizer returned a Transformers `BatchEncoding` rather
 than a plain token-ID list.
 
+## Operator commands
+
+Run commands from the repository root. A new full launch requires the trusted
+target variables documented in [`PLAN.md`](PLAN.md):
+
+```bash
+bash experiments/dishonest_sycophancy_concealing/run_9/launch/submit_full.sh
+```
+
+The bounded canaries have independent entrypoints:
+
+```bash
+bash experiments/dishonest_sycophancy_concealing/run_9/canary/native_lifecycle/launch/submit.sh
+AAR_AUTODATA_TARGET_BINDING=<binding.json> \
+  bash experiments/dishonest_sycophancy_concealing/run_9/canary/provider_capacity/launch/submit.sh
+```
+
+`recovery/submit_production.sh` is tied to preserved native state. It is not a
+new-run launcher and must receive the intended attempt, execution, concurrency,
+and recovery label explicitly before use.
+
+Monitor submitted jobs with `squeue -u "$USER"`; use the attempt directory
+printed by the launcher for retained logs and metadata. Job IDs and live state
+transitions belong in [`PROGRESS.md`](PROGRESS.md), not in reusable config.
+
 ## Related documentation
 
-- [AAR run plan](aar_run_plan.md)
-- [AutoData design](autodata.md)
-- [Implementation changes](implementation_changes.md)
-- [Stage timing](stage_timing.md)
-- [Progress log](run_9_progress.md)
+- [AAR run plan](PLAN.md)
+- [Progress log](PROGRESS.md)
+- [AutoData design](docs/autodata.md)
+- [AutoData plugin design](docs/autodata_plugin.md)
+- [Implementation changes](docs/implementation_changes.md)
+- [Stage timing](analysis/stage_timing.md)
+- [Production speed study](analysis/speed_up_production.md)
+- [Canary guide](canary/README.md)

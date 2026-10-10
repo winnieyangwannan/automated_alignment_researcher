@@ -9,7 +9,7 @@
 set -euo pipefail
 umask 077
 
-REPO="${AAR_REPO:?submit through submit_run_9.sh}"
+REPO="${AAR_REPO:?submit through run_9/launch/submit_full.sh}"
 ATTEMPT_DIR="${AAR_RUN_ATTEMPT_DIR:?missing retained attempt}"
 
 export AAR_EXPECTED_BRANCH=autodata

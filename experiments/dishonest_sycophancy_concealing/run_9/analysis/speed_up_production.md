@@ -75,8 +75,8 @@ throughput rose from 60.0 to 94.5 tasks/min, a 57% improvement.
 
 ## What future runs get automatically
 
-A new **Run 9** launched through the committed `submit_run_9.sh` and
-`run_9_pipeline.sbatch` gets these defaults:
+A new **Run 9** launched through the committed `launch/submit_full.sh` and
+`slurm/pipeline.sbatch` gets these defaults:
 
 - Local Bubblewrap with supervised node-local native SQLite state;
 - a fresh node-local broker ledger for each chain job;

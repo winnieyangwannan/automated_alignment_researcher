@@ -53,7 +53,7 @@ AAR Python process
 ```
 
 AAR constructs this runtime in
-[`../../../aar/research_loop/agent.py`](../../../aar/research_loop/agent.py).
+[`../../../../aar/research_loop/agent.py`](../../../../aar/research_loop/agent.py).
 The important SDK classes currently used by AAR are `ClaudeSDKClient` and
 `ClaudeAgentOptions`.
 
@@ -216,11 +216,11 @@ Claude plugin:
 
 The plugin manifest is:
 
-[`../../../../../autodata_pipelines/plugin/autodata/.claude-plugin/plugin.json`](../../../../../autodata_pipelines/plugin/autodata/.claude-plugin/plugin.json)
+[`../../../../../../autodata_pipelines/plugin/autodata/.claude-plugin/plugin.json`](../../../../../../autodata_pipelines/plugin/autodata/.claude-plugin/plugin.json)
 
 The AutoData skill entry point is:
 
-[`../../../../../autodata_pipelines/plugin/autodata/skills/autodata/SKILL.md`](../../../../../autodata_pipelines/plugin/autodata/skills/autodata/SKILL.md)
+[`../../../../../../autodata_pipelines/plugin/autodata/skills/autodata/SKILL.md`](../../../../../../autodata_pipelines/plugin/autodata/skills/autodata/SKILL.md)
 
 When this local plugin is loaded into the Claude Agent SDK, its qualified
 skill name is:
@@ -306,7 +306,7 @@ AutoData revision.
 ### 2. Pass the plugin and skill to the SDK
 
 Extend `BaseAgent` in
-[`../../../aar/research_loop/agent.py`](../../../aar/research_loop/agent.py) so
+[`../../../../aar/research_loop/agent.py`](../../../../aar/research_loop/agent.py) so
 it accepts `plugins` and `skills` and includes them in the options passed to
 `ClaudeAgentOptions`.
 
@@ -347,7 +347,7 @@ before attempting to author or run an AutoData workflow.
 ### 3. Expose the plugin inside the research sandbox
 
 The Run 9 research subprocess is launched through
-[`../../../scripts/claude_research_bwrap.sh`](../../../scripts/claude_research_bwrap.sh).
+[`../../../../scripts/claude_research_bwrap.sh`](../../../../scripts/claude_research_bwrap.sh).
 That sandbox hides the user's home directory and currently restores only
 approved paths. Because the canonical AutoData checkout is separate from the
 AAR checkout, the plugin would otherwise be invisible even if the SDK were

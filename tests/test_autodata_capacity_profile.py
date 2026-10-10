@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PROFILE = (
     ROOT
     / "experiments/dishonest_sycophancy_concealing/run_9"
-    / "target_aware_capacity.yaml"
+    / "canary/provider_capacity/config/run.yaml"
 )
 
 

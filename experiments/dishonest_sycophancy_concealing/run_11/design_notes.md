@@ -257,5 +257,5 @@ minute, not raw request throughput.
 ## Related notes
 
 - [Run 7 five-chain precedent](../run_7/README.md)
-- [Run 9 implementation changes](../run_9/implementation_changes.md)
-- [Run 9 AutoData nested-loop diagram](../run_9/autodata_nested_loops.svg)
+- [Run 9 implementation changes](../run_9/docs/implementation_changes.md)
+- [Run 9 AutoData nested-loop diagram](../run_9/docs/figures/autodata_nested_loops.svg)

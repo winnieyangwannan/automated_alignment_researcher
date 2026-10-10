@@ -322,7 +322,7 @@ offline bootstrap, native authoring, execution, and export.
 
 The detailed Run 9 plan is in:
 
-[Run 9 AutoData plugin plan](../../experiments/dishonest_sycophancy_concealing/run_9/autodata_plugin_plan.md)
+[Run 9 AutoData plugin plan](../../experiments/dishonest_sycophancy_concealing/run_9/docs/autodata_plugin_plan.md)
 
 ## Design rule
 

@@ -3,8 +3,9 @@ set -euo pipefail
 umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
-source "${SCRIPT_DIR}/autodata_version.env"
+RUN_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+REPO="$(cd -- "${RUN_DIR}/../../.." && pwd)"
+source "${RUN_DIR}/config/autodata_version.env"
 AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata-worktrees/aar-optimized-823c594}"
 SECRET_ENV="${AAR_RUN9_SECRET_ENV:-/storage/home/${USER}/aar-worktrees/autodata/.env}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
@@ -86,7 +87,7 @@ elif [ "${target_setting_count}" != 0 ]; then
   exit 2
 fi
 
-for required in "${SECRET_ENV}" "${REUSED_BASELINE}" "${SCRIPT_DIR}/snapshot_vllm_runtime.sh" "${KIMI_PROXY_INFO}"; do
+for required in "${SECRET_ENV}" "${REUSED_BASELINE}" "${RUN_DIR}/runtime/snapshot_vllm_runtime.sh" "${KIMI_PROXY_INFO}"; do
   [ -f "${required}" ] || { echo "missing required input: ${required}" >&2; exit 2; }
 done
 [ "$(stat -c %a "${SECRET_ENV}")" = 600 ] || { echo "secret env must be mode 600" >&2; exit 2; }
@@ -111,7 +112,7 @@ attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "${REPO}" rev-parse --short=12 H
 attempt_dir="/storage/home/${USER}/aar-runs/run9-five-iteration/${attempt_id}"
 mkdir -p "${attempt_dir}"/{metadata,logs,secrets}
 chmod 700 "${attempt_dir}" "${attempt_dir}/secrets"
-vllm_worker="$("${SCRIPT_DIR}/snapshot_vllm_runtime.sh" "${attempt_dir}")"
+vllm_worker="$("${RUN_DIR}/runtime/snapshot_vllm_runtime.sh" "${attempt_dir}")"
 [ "$(sha256sum "${vllm_worker}" | awk '{print $1}')" = "${VLLM_WORKER_SHA256}" ] || {
   echo "snapshotted vLLM worker digest mismatch" >&2
   exit 2
@@ -261,7 +262,7 @@ export AAR_VLLM_WORKER_SH="${vllm_worker}"
 job_id="$(sbatch --parsable \
   --output="${attempt_dir}/logs/pipeline-%j.out" \
   --export=ALL \
-  "${SCRIPT_DIR}/run_9_pipeline.sbatch")"
+  "${RUN_DIR}/slurm/pipeline.sbatch")"
 printf 'launch_job_id=%s\nattempt_dir=%s\naar_git_commit=%s\nautodata_git_commit=%s\nbroker_runner=%s\nenvironment=%s\nconcurrency=%s\nmodel_request_max_attempts=%s\ntarget_aware=%s\nvllm_worker_sha256=%s\n' \
   "${job_id}" "${attempt_dir}" "${commit}" "${autodata_sha}" "${AAR_AUTODATA_BROKER_RUNNER}" "${AAR_AUTODATA_ENVIRONMENT}" "${AAR_AUTODATA_CONCURRENCY}" "${AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS}" "${target_enabled}" "${VLLM_WORKER_SHA256}" \
   | tee "${attempt_dir}/metadata/submission.txt"

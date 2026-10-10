@@ -346,7 +346,7 @@ following pass:
 ## Monitoring and progress record
 
 The durable operator record is
-`experiments/dishonest_sycophancy_concealing/run_9/run_9_progress.md`.
+[`PROGRESS.md`](PROGRESS.md).
 Record at least:
 
 - source commits and synchronization evidence;

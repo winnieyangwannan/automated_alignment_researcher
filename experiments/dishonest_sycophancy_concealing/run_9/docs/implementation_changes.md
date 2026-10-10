@@ -469,7 +469,7 @@ scores individual Kimi-generated examples.
 
 ### Architecture
 
-![AAR, MCP, and AutoData trust boundary](autodata_mcp_boundary.svg)
+![AAR, MCP, and AutoData trust boundary](figures/autodata_mcp_boundary.svg)
 
 Shareable copy: [Pixelcloud diagram](https://pxl.cl/fq8DG)
 
@@ -495,7 +495,7 @@ Shareable copy: [Pixelcloud diagram](https://pxl.cl/fq8DG)
 ## Add target-aware data generation
 
 Architecture overview: [AutoData inside AAR: three nested optimization
-loops](autodata_nested_loops.svg). Shareable copy:
+loops](figures/autodata_nested_loops.svg). Shareable copy:
 [Pixelcloud](https://pxl.cl/fqk0n).
 
 ### Problem
@@ -939,7 +939,7 @@ apply to launches pinned to the reviewed AutoData commit
 
 ### One exact AutoData revision in every launcher
 
-All Run 9 launch entry points source `autodata_version.env` and refuse to run
+All Run 9 launch entry points source `config/autodata_version.env` and refuse to run
 unless the AutoData checkout is exactly the pinned SHA. The pin includes SQLite
 write serialization, selective finalization/recovery, the offline plugin bundle,
 and the new completion policy. Branch names are no longer treated as sufficient:
@@ -1034,7 +1034,8 @@ retry policy provide headroom for the measured 62.5% accepted yield. A pipeline
 that adds target-model probing must validate that additional endpoint separately
 and may override concurrency downward.
 
-Detailed per-attempt measurements are in `speed_up_production.md`.
+Detailed per-attempt measurements are in
+[`analysis/speed_up_production.md`](../analysis/speed_up_production.md).
 
 ### Give target-aware generation its own stable default
 
@@ -1046,7 +1047,7 @@ request attempts substantially reduced transient failures before the Luna
 stage. A sustained concurrency-64 run suffered one local broker upload reset,
 so its higher burst throughput was not promoted as the stable setting.
 
-`submit_run_9.sh` now chooses concurrency 32 and three request attempts when
+`launch/submit_full.sh` now chooses concurrency 32 and three request attempts when
 target probing is enabled, which is the normal Run 9 configuration. It retains
 concurrency 64 and one attempt for an explicitly target-disabled question-only
 run. Explicit values are still supported and bounded. This prevents a future

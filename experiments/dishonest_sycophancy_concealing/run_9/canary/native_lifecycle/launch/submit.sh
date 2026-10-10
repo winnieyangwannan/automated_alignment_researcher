@@ -3,8 +3,10 @@ set -euo pipefail
 umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
-source "${SCRIPT_DIR}/autodata_version.env"
+CANARY_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+RUN_DIR="$(cd -- "${CANARY_DIR}/../.." && pwd)"
+REPO="$(cd -- "${RUN_DIR}/../../.." && pwd)"
+source "${RUN_DIR}/config/autodata_version.env"
 AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pipelines}"
 SECRET_ENV="${AAR_RUN9_SECRET_ENV:-/storage/home/${USER}/aar-worktrees/autodata/.env}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
@@ -84,7 +86,7 @@ export AAR_AUTODATA_CAMPAIGN_POLICY="${policy}"
 export AAR_AUTODATA_GENERATOR_URL="${generator_url}"
 export AAR_AUTODATA_GENERATOR_HOST_HEADER="${generator_host_header}"
 
-job_id="$(sbatch --parsable --output="${root}/slurm-%j.out" --export=ALL "${SCRIPT_DIR}/run_9_native_preflight.sbatch")"
+job_id="$(sbatch --parsable --output="${root}/slurm-%j.out" --export=ALL "${CANARY_DIR}/slurm/preflight.sbatch")"
 printf 'job_id=%s\nroot=%s\naar_git_commit=%s\nautodata_git_commit=%s\nconcurrency=%s\n' \
   "${job_id}" "${root}" "$(git -C "${REPO}" rev-parse HEAD)" "$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)" "${CONCURRENCY}" \
   | tee "${root}/submission.txt"

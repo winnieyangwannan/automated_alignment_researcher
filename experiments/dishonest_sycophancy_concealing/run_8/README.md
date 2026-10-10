@@ -3,7 +3,7 @@
 > Historical record: this adapter/MCP design was retired during the Run 9
 > native-plugin refactor. Its launchers were removed and must not be used.
 > Current work is documented in
-> [`../run_9/autodata_plugin_plan.md`](../run_9/autodata_plugin_plan.md).
+> [`../run_9/docs/autodata_plugin_plan.md`](../run_9/docs/autodata_plugin_plan.md).
 
 Run 8 will make Autodata a real data-generation tool inside the AAR research
 loop for the dishonest/sycophancy/concealing workflow. AAR chooses and approves

@@ -9,7 +9,7 @@
 set -euo pipefail
 umask 077
 
-REPO="${AAR_REPO:?submit through submit_run_9_native_preflight.sh}"
+REPO="${AAR_REPO:?submit through native_lifecycle/launch/submit.sh}"
 AUTODATA="${AAR_AUTODATA_CHECKOUT:?missing AutoData checkout}"
 ROOT="${AAR_RUN9_PREFLIGHT_ROOT:?missing retained preflight root}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:?missing broker Python}"
