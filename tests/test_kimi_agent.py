@@ -1040,6 +1040,7 @@ class KimiAgentTest(unittest.TestCase):
             },
         ):
             recipe_prompt = agent._continuation_prompt(literature)
+            self.assertIn("head -n 10000", recipe_prompt)
             self.assertIn("judge_rubric.json", recipe_prompt)
             self.assertIn("recipe/task.py", recipe_prompt)
             self.assertEqual(agent._continuation_tool(literature), "Bash")

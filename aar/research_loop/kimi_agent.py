@@ -597,8 +597,9 @@ class KimiAgent:
             )
         )
         if self._autodata_enabled() and not recipe_context_seen:
-            command = "awk 'FNR == 1 {print \"===== \" FILENAME \" =====\"} {print}' "
-            command += " ".join(shlex.quote(str(path)) for path in recipe_files)
+            command = "head -n 10000 " + " ".join(
+                shlex.quote(str(path)) for path in recipe_files
+            )
             return (
                 "Call the native Bash tool exactly once now with command="
                 f"{json.dumps(command)}. This reads the complete reviewed AutoData "
