@@ -1,0 +1,168 @@
+#!/bin/bash
+#SBATCH --job-name=run9-production-recovery
+#SBATCH --account=ram
+#SBATCH --partition=g3
+#SBATCH --qos=g3_ram_high
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=128G
+#SBATCH --time=08:30:00
+set -euo pipefail
+umask 077
+
+REPO="${AAR_REPO:?submit through submit_run_9_production_recovery.sh}"
+ATTEMPT_DIR="${AAR_RUN_ATTEMPT_DIR:?missing Run 9 attempt root}"
+AUTODATA="${AAR_AUTODATA_CHECKOUT:?missing pinned AutoData checkout}"
+BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:?missing broker interpreter}"
+EXECUTION_ID="${AAR_PRODUCTION_EXECUTION_ID:?missing production execution id}"
+CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:?missing concurrency}"
+MAX_SECONDS="${AAR_SPEEDUP_MAX_SECONDS:-0}"
+ATTEMPT_LABEL="${AAR_SPEEDUP_ATTEMPT_LABEL:?missing speed-up attempt label}"
+EXPECTED_AAR_SHA="${AAR_EXPECTED_AAR_SHA:?missing expected AAR revision}"
+EXPECTED_AUTODATA_SHA="${AAR_EXPECTED_AUTODATA_SHA:?missing expected AutoData revision}"
+export PYTHONPATH="${REPO}${PYTHONPATH:+:${PYTHONPATH}}"
+
+TEAM_ID=run9-gemma4-31b-opus48-autodata-five-success-v1
+TEAM_DIR="${ATTEMPT_DIR}/aar_teams/${TEAM_ID}"
+NATIVE_DIR="${TEAM_DIR}/autodata/native"
+RETAINED_STATE="${NATIVE_DIR}/state.db"
+ARTIFACTS="${NATIVE_DIR}/artifacts"
+WORKSPACES="${NATIVE_DIR}/workspaces"
+CONTROL_FILE="${NATIVE_DIR}/production-recovery-control.json"
+STATUS_FILE="${NATIVE_DIR}/production-recovery-status.json"
+LOCK_FILE="${NATIVE_DIR}/production-recovery.lock"
+BROKER_ROOT="${TEAM_DIR}/autodata/broker"
+BROKER_RETAINED="${BROKER_ROOT}/broker.db"
+CAPABILITY_FILE="${BROKER_ROOT}/capability"
+MODEL_ENV="${ATTEMPT_DIR}/secrets/model-api.env"
+CAMPAIGN_POLICY="${ATTEMPT_DIR}/metadata/autodata-campaign-policy.json"
+METRICS_DIR="${TEAM_DIR}/logs/production-speedup"
+METRICS_FILE="${METRICS_DIR}/${ATTEMPT_LABEL}.jsonl"
+SUPERVISOR_LOG="${METRICS_DIR}/${ATTEMPT_LABEL}-supervisor.log"
+BROKER_LOG="${METRICS_DIR}/${ATTEMPT_LABEL}-broker.log"
+SUPERVISOR="${REPO}/scripts/autodata_lifecycle_supervisor.py"
+
+case "${CONCURRENCY}" in 16|24|32) ;; *) echo "unsupported concurrency" >&2; exit 2;; esac
+case "${MAX_SECONDS}" in ''|*[!0-9]*) echo "invalid observation duration" >&2; exit 2;; esac
+[ "$(git -C "${REPO}" rev-parse HEAD)" = "${EXPECTED_AAR_SHA}" ] || { echo "AAR revision changed" >&2; exit 2; }
+[ "$(git -C "${AUTODATA}" rev-parse HEAD)" = "${EXPECTED_AUTODATA_SHA}" ] || { echo "AutoData revision changed" >&2; exit 2; }
+[ "$(git -C "${AUTODATA}" branch --show-current)" = main ] || { echo "AutoData recovery checkout must use branch main" >&2; exit 2; }
+for required in "${RETAINED_STATE}" "${CAPABILITY_FILE}" "${MODEL_ENV}" "${CAMPAIGN_POLICY}" "${SUPERVISOR}" "${BROKER_PYTHON}"; do
+  [ -e "${required}" ] || { echo "missing recovery input: ${required}" >&2; exit 2; }
+done
+
+mkdir -p "${METRICS_DIR}" "${ARTIFACTS}" "${WORKSPACES}"
+chmod 700 "${METRICS_DIR}" "${ARTIFACTS}" "${WORKSPACES}"
+LOCAL_ROOT="${SLURM_TMPDIR:-/tmp}/run9-production-${SLURM_JOB_ID}"
+LOCAL_STATE="${LOCAL_ROOT}/native/state.db"
+LOCAL_BROKER="${LOCAL_ROOT}/broker/broker.db"
+mkdir -p "$(dirname -- "${LOCAL_STATE}")" "$(dirname -- "${LOCAL_BROKER}")"
+chmod 700 "${LOCAL_ROOT}" "$(dirname -- "${LOCAL_STATE}")" "$(dirname -- "${LOCAL_BROKER}")"
+
+export AUTODATA_CACHE_DIR="${ATTEMPT_DIR}/autodata/plugin-cache"
+mkdir -p "${AUTODATA_CACHE_DIR}"
+chmod 700 "${AUTODATA_CACHE_DIR}"
+WRAPPER_PYTHON="$(AUTODATA_CACHE_DIR="${AUTODATA_CACHE_DIR}" "${BROKER_PYTHON}" "${AUTODATA}/plugin/autodata/scripts/bootstrap.py")"
+[ -x "${WRAPPER_PYTHON}" ] || { echo "plugin bootstrap failed" >&2; exit 2; }
+"${WRAPPER_PYTHON}" -c 'import autodata,autodata.engine; assert autodata.__version__ == "1.0.0"'
+
+BACKUP_MARKER="${NATIVE_DIR}/speedup-baseline.sha256"
+if [ ! -f "${BACKUP_MARKER}" ]; then
+  baseline="${NATIVE_DIR}/state.pre-speedup.$(date -u +%Y%m%dT%H%M%SZ).db"
+  cp --reflink=auto --preserve=mode,timestamps "${RETAINED_STATE}" "${baseline}"
+  sha256sum "${baseline}" > "${BACKUP_MARKER}.tmp.${SLURM_JOB_ID}"
+  mv -- "${BACKUP_MARKER}.tmp.${SLURM_JOB_ID}" "${BACKUP_MARKER}"
+fi
+if [ ! -f "${RETAINED_STATE}.snapshot.json" ]; then
+  "${REPO}/.venv/bin/python" "${SUPERVISOR}" snapshot --state "${RETAINED_STATE}" --retained-state "${RETAINED_STATE}" --reason speedup-bootstrap >/dev/null
+fi
+"${REPO}/.venv/bin/python" "${SUPERVISOR}" restore --state "${LOCAL_STATE}" --retained-state "${RETAINED_STATE}" --require-manifest >/dev/null
+if [ -f "${BROKER_RETAINED}" ]; then
+  cp -- "${BROKER_RETAINED}" "${LOCAL_BROKER}"
+  chmod 600 "${LOCAL_BROKER}"
+fi
+
+export AAR_AUTODATA_STATE="${LOCAL_STATE}"
+export AAR_AUTODATA_RETAINED_STATE="${RETAINED_STATE}"
+export AAR_AUTODATA_ARTIFACTS="${ARTIFACTS}"
+export AAR_AUTODATA_WORKSPACES="${WORKSPACES}"
+export AAR_AUTODATA_CAPABILITY
+AAR_AUTODATA_CAPABILITY="$(<"${CAPABILITY_FILE}")"
+# The frozen execution manifest records this loopback port. Bind recovery to it
+# rather than rewriting immutable execution provenance.
+export AAR_AUTODATA_BROKER_URL=http://127.0.0.1:30610
+
+broker_pid=''
+supervisor_pid=''
+snapshot_broker() {
+  [ -f "${LOCAL_BROKER}" ] || return 0
+  "${BROKER_PYTHON}" -c 'import os,pathlib,sqlite3,sys; source=pathlib.Path(sys.argv[1]); retained=pathlib.Path(sys.argv[2]); temporary=retained.with_name(retained.name+".tmp."+str(os.getpid())); source_db=sqlite3.connect("file:"+str(source)+"?mode=ro",uri=True); destination_db=sqlite3.connect(temporary); source_db.backup(destination_db); destination_db.close(); source_db.close(); check=sqlite3.connect("file:"+str(temporary)+"?mode=ro",uri=True); assert check.execute("PRAGMA quick_check").fetchall()==[("ok",)]; check.close(); temporary.chmod(0o600); os.replace(temporary,retained)' "${LOCAL_BROKER}" "${BROKER_RETAINED}"
+}
+cleanup() {
+  status=$?
+  trap - EXIT INT TERM
+  if [ -n "${supervisor_pid}" ] && kill -0 "${supervisor_pid}" 2>/dev/null; then
+    kill "${supervisor_pid}" 2>/dev/null || true
+    wait "${supervisor_pid}" 2>/dev/null || true
+  fi
+  "${REPO}/.venv/bin/python" "${SUPERVISOR}" snapshot --state "${LOCAL_STATE}" --retained-state "${RETAINED_STATE}" --reason "speedup-cleanup-${ATTEMPT_LABEL}" >/dev/null || true
+  if [ -n "${broker_pid}" ] && kill -0 "${broker_pid}" 2>/dev/null; then
+    kill "${broker_pid}" 2>/dev/null || true
+    wait "${broker_pid}" 2>/dev/null || true
+  fi
+  snapshot_broker || true
+  exit "${status}"
+}
+trap cleanup EXIT INT TERM
+
+PYTHONPATH="${AUTODATA}/src" "${BROKER_PYTHON}" -m autodata.broker.cli \
+  --runner local-bwrap --root "${BROKER_ROOT}" --database "${LOCAL_BROKER}" \
+  --host 127.0.0.1 --port 30610 --max-concurrent "${CONCURRENCY}" \
+  --auth-token-file "${CAPABILITY_FILE}" --workload-env-file "${MODEL_ENV}" \
+  --campaign-policy "${CAMPAIGN_POLICY}" --anonymous-registry docker.io \
+  >"${BROKER_LOG}" 2>&1 &
+broker_pid=$!
+for _ in $(seq 1 60); do
+  if "${REPO}/.venv/bin/python" -c 'import os,urllib.request; r=urllib.request.Request(os.environ["AAR_AUTODATA_BROKER_URL"]+"/healthz",headers={"Authorization":"Bearer "+os.environ["AAR_AUTODATA_CAPABILITY"]}); urllib.request.urlopen(r,timeout=2).read()' 2>/dev/null; then break; fi
+  kill -0 "${broker_pid}" 2>/dev/null || { echo "broker exited during startup" >&2; exit 2; }
+  sleep 1
+done
+kill -0 "${broker_pid}" 2>/dev/null || { echo "broker is not running" >&2; exit 2; }
+
+"${REPO}/.venv/bin/python" "${SUPERVISOR}" register --state "${LOCAL_STATE}" --retained-state "${RETAINED_STATE}" --control-file "${CONTROL_FILE}" --subject-kind execution --subject-id "${EXECUTION_ID}" >/dev/null
+"${REPO}/.venv/bin/python" "${SUPERVISOR}" run \
+  --python "${WRAPPER_PYTHON}" --state "${LOCAL_STATE}" --retained-state "${RETAINED_STATE}" \
+  --control-file "${CONTROL_FILE}" --artifacts "${ARTIFACTS}" --workspaces "${WORKSPACES}" \
+  --lock-file "${LOCK_FILE}" --status-file "${STATUS_FILE}" --log-file "${SUPERVISOR_LOG}" \
+  --snapshot-interval-seconds 60 &
+supervisor_pid=$!
+
+started=$(date +%s)
+while kill -0 "${supervisor_pid}" 2>/dev/null; do
+  now=$(date +%s)
+  metric="$("${REPO}/.venv/bin/python" -c '
+import json,pathlib,sqlite3,sys
+state,broker,execution,label,elapsed=sys.argv[1:]
+with sqlite3.connect(f"file:{state}?mode=ro",uri=True) as db:
+    row=db.execute("SELECT status,phase,taskAttemptsUsed,updatedAt FROM executions WHERE id=?",(execution,)).fetchone()
+    completed=db.execute("SELECT count(*) FROM events WHERE scopeId=? AND kind=\"task_attempt.completed\"",(execution,)).fetchone()[0]
+    succeeded=db.execute("SELECT count(DISTINCT taskId) FROM task_attempts WHERE scopeId=? AND outcome=\"succeeded\"",(execution,)).fetchone()[0]
+jobs={}
+if pathlib.Path(broker).is_file():
+    with sqlite3.connect(f"file:{broker}?mode=ro",uri=True) as db:
+        jobs=dict(db.execute("SELECT status,count(*) FROM jobs GROUP BY status"))
+print(json.dumps({"attempt":label,"elapsed_seconds":int(elapsed),"status":row[0],"phase":row[1],"attempts_used":row[2],"updated_at":row[3],"completed_events":completed,"succeeded_tasks":succeeded,"broker_jobs":jobs},sort_keys=True))
+' "${LOCAL_STATE}" "${LOCAL_BROKER}" "${EXECUTION_ID}" "${ATTEMPT_LABEL}" "$((now - started))")"
+  printf '%s\n' "${metric}" | tee -a "${METRICS_FILE}"
+  status="$("${REPO}/.venv/bin/python" -c 'import sqlite3,sys; c=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True); print(c.execute("SELECT status FROM executions WHERE id=?",(sys.argv[2],)).fetchone()[0])' "${LOCAL_STATE}" "${EXECUTION_ID}")"
+  [ "${status}" = active ] || break
+  if [ "${MAX_SECONDS}" -gt 0 ] && [ "$((now - started))" -ge "${MAX_SECONDS}" ]; then
+    echo "speed-up observation window reached ${MAX_SECONDS}s"
+    break
+  fi
+  sleep 10
+done
+
+if ! kill -0 "${supervisor_pid}" 2>/dev/null; then
+  wait "${supervisor_pid}"
+  supervisor_pid=''
+fi
