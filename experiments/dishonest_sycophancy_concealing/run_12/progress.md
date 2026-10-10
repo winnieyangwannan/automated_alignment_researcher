@@ -39,6 +39,15 @@ contract whenever it rotates the target binding, so generator, judge, and the
 current `base + adapter` target provenance remain consistent across outer AAR
 iterations.
 
+The following canary's target endpoint became healthy, but its queued launcher
+then failed its source-identity gate because a concurrent Run 13 commit advanced
+the shared HPC `autodata` checkout between submission and Slurm start. The
+checkout was clean; this was coordination drift, not a code failure. Subsequent
+Run 12 jobs use a separate immutable checkout at the recorded commit. The next
+bootstrap canary may reuse this already-verified base-only endpoint to avoid
+another cold start; `full` mode explicitly forbids endpoint reuse and still
+creates five isolated chain endpoints.
+
 ## Five-chain attempt: proposal bootstrap failure isolated
 
 Attempt `20261009T170629Z-08f3d6a9be40` launched five Kimi researchers and five

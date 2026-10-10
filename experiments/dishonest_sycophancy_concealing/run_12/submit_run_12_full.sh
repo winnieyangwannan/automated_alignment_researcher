@@ -19,6 +19,7 @@ GENERATOR_DEPLOYMENT=aar_8-kimi26
 RUN_MODE="${AAR_RUN12_MODE:-full}"
 SEEDS_RAW="${AAR_RUN12_SEEDS:-alpha beta gamma delta epsilon}"
 TARGET_PAIRS="${AAR_RUN12_TARGET_PAIRS:-5}"
+REUSE_BASE_DEPLOYMENT="${AAR_RUN12_REUSE_BASE_DEPLOYMENT:-}"
 
 case "${RUN_MODE}" in
   full|bootstrap-canary) ;;
@@ -34,6 +35,9 @@ case "${TARGET_PAIRS}" in ''|*[!0-9]*) echo "target pairs must be an integer" >&
   echo "target pairs must be between 1 and 5" >&2; exit 2;
 }
 if [ "${RUN_MODE}" = full ]; then
+  [ -z "${REUSE_BASE_DEPLOYMENT}" ] || {
+    echo "full mode forbids reusing a canary base deployment" >&2; exit 2;
+  }
   [ "${SEEDS_RAW}" = "alpha beta gamma delta epsilon" ] && [ "${TARGET_PAIRS}" = 5 ] || {
     echo "full mode requires the canonical five seeds and five target pairs" >&2; exit 2;
   }
@@ -41,6 +45,10 @@ else
   [ "${#seeds[@]}" -eq 1 ] && [ "${TARGET_PAIRS}" = 1 ] || {
     echo "bootstrap-canary mode requires exactly one seed and one target pair" >&2; exit 2;
   }
+  if [ -n "${REUSE_BASE_DEPLOYMENT}" ] && \
+      [[ ! "${REUSE_BASE_DEPLOYMENT}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    echo "invalid reusable base deployment ID" >&2; exit 2
+  fi
 fi
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "Run 12 requires branch autodata" >&2; exit 2; }
@@ -130,16 +138,18 @@ for seed in "${seeds[@]}"; do
   printf '{"schema":"aar.autodata.proposal-bindings/v1","proposals":{},"workspaces":{}}\n' \
     > "${chain_root}/secrets/proposal-bindings.json"
   chmod 600 "${chain_root}/secrets/"*
-  deployment="winnieyangwn-r12-${seed}-i1-${suffix}"
+  deployment="${REUSE_BASE_DEPLOYMENT:-winnieyangwn-r12-${seed}-i1-${suffix}}"
   deployments+=("${deployment}")
-  env -u SSL_CERT_FILE -u NODE_EXTRA_CA_CERTS \
-    -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
-    -u NO_PROXY -u no_proxy \
-    "${SV}/serve.sh" deploy "${deployment}" --model gemma-4-31B-it \
-      --checkpoint "${BASE_CHECKPOINT}" --endpoints 1 --cluster fair-cw-use2-1 \
-      --image docker.io/vllm/vllm-openai:v0.25.1 \
-      --partition g3 --account ram --qos g3_ram_high \
-      --gateway-register --lifetime 7d --no-watch
+  if [ -z "${REUSE_BASE_DEPLOYMENT}" ]; then
+    env -u SSL_CERT_FILE -u NODE_EXTRA_CA_CERTS \
+      -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+      -u NO_PROXY -u no_proxy \
+      "${SV}/serve.sh" deploy "${deployment}" --model gemma-4-31B-it \
+        --checkpoint "${BASE_CHECKPOINT}" --endpoints 1 --cluster fair-cw-use2-1 \
+        --image docker.io/vllm/vllm-openai:v0.25.1 \
+        --partition g3 --account ram --qos g3_ram_high \
+        --gateway-register --lifetime 7d --no-watch
+  fi
   "${REPO}/.venv/bin/python" -m aar.autodata_campaign_policy create-base-target \
     --base-checkpoint "${BASE_CHECKPOINT}" \
     --target-url http://fair-cw-use2-1-ingress-slurm-ingress/v1 \
@@ -198,8 +208,11 @@ export AAR_RUN12_TARGET_PAIRS="${TARGET_PAIRS}"
 
 job="$(sbatch --parsable --output="${attempt}/logs/pipeline-%j.out" --export=ALL \
   "${SCRIPT_DIR}/run_12_full_pipeline.sbatch")"
-printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nmode=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nkimi_deployment=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\n' \
+base_reused=false
+[ -z "${REUSE_BASE_DEPLOYMENT}" ] || base_reused=true
+printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nmode=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nkimi_deployment=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \
   "${job}" "${attempt}" "${checkpoint_root}" "${commit}" "${RUN_MODE}" \
-  "${GENERATOR_DEPLOYMENT}" "${#seeds[@]}" "${TARGET_PAIRS}" "${SEEDS_RAW}" "${deployments[*]}" \
+  "${GENERATOR_DEPLOYMENT}" "${#seeds[@]}" "${TARGET_PAIRS}" "${SEEDS_RAW}" \
+  "${deployments[*]}" "${base_reused}" \
   | tee "${attempt}/metadata/submission.txt"
 unset MODEL_API_KEY HF_TOKEN

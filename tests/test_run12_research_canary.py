@@ -48,3 +48,11 @@ def test_run12_full_chain_rotates_the_training_contract_with_its_target() -> Non
     assert controller.index("create-policy") < controller.index(
         "aar.infrastructure.autodata_contract"
     ) < controller.index('job="$(submit_session)"')
+
+
+def test_only_bootstrap_canary_may_reuse_a_verified_base_deployment() -> None:
+    launcher = (RUN12 / "submit_run_12_full.sh").read_text()
+
+    assert "AAR_RUN12_REUSE_BASE_DEPLOYMENT" in launcher
+    assert "full mode forbids reusing a canary base deployment" in launcher
+    assert "base_deployment_reused=%s" in launcher
