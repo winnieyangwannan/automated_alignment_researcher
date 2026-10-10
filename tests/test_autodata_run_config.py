@@ -13,6 +13,7 @@ from aar.autodata_campaign_policy import (
     create_base_target_manifest,
 )
 from aar.autodata_run_config import (
+    DEFAULT_TARGET_FEEDBACK_MAX_ATTEMPTS,
     compile_run_config,
     inspect_configs,
     load_run_config,
@@ -201,3 +202,21 @@ def test_inspect_reports_static_yaml_values() -> None:
         "agent_backend": "kimi",
         "turn_timeout_seconds": 300,
     }
+
+
+@pytest.mark.parametrize("generation", [None, {}])
+def test_run_config_defaults_target_feedback_attempts_to_five(
+    tmp_path: Path, generation: dict[str, object] | None
+) -> None:
+    config = yaml.safe_load(RUN.read_text())
+    if generation is None:
+        config.pop("generation")
+    else:
+        config["generation"] = generation
+    path = tmp_path / "default-generation.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    loaded = load_run_config(path)
+
+    assert DEFAULT_TARGET_FEEDBACK_MAX_ATTEMPTS == 5
+    assert loaded["generation"]["target_feedback_max_attempts"] == 5

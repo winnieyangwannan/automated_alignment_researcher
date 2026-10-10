@@ -52,6 +52,12 @@ protected rubric, target-failure gate, and provenance checks therefore remain
 authoritative while target awareness becomes a failure-specific
 generate-probe-revise loop instead of a one-shot measurement.
 
+Five is also the code-level default in both the strict run-config compiler and
+the isolated recipe runtime. A future run may omit `generation` (or use an
+empty mapping) and still compile to five attempts. Run 12 pins the same value
+explicitly so its resolved configuration remains self-describing; narrow smoke
+canaries may intentionally override the default.
+
 The mutable strategy's `system_prompt` and `scenario_prompt_prefix` each have a
 262,144-byte static envelope, approximately 65,536 English tokens per
 component. The former 6,000- and 2,000-byte limits were arbitrary toy bounds:

@@ -25,6 +25,7 @@ from aar.infrastructure.autodata_contract import (
 PROFILE_SCHEMA = "aar.autodata.runtime-profile/v2"
 RUN_SCHEMA = "aar.autodata.run-config/v1"
 RESOLVED_SCHEMA = "aar.autodata.resolved-run-config/v1"
+DEFAULT_TARGET_FEEDBACK_MAX_ATTEMPTS = 5
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 
 
@@ -349,8 +350,11 @@ def load_runtime_profile(path: Path) -> dict[str, Any]:
 
 
 def load_run_config(path: Path) -> dict[str, Any]:
+    loaded = _load_yaml(path, "AutoData run config")
+    if isinstance(loaded, dict) and "generation" not in loaded:
+        loaded = {**loaded, "generation": {}}
     root = _mapping(
-        _load_yaml(path, "AutoData run config"),
+        loaded,
         "AutoData run config",
         {
             "schema",
@@ -380,12 +384,21 @@ def load_run_config(path: Path) -> dict[str, Any]:
         root["deployments"], "deployments", {"researcher_kimi", "generator_kimi"}
     )
     budget = _mapping(root["budget"], "budget", {"max_cost_usd"})
-    generation = _mapping(
-        root["generation"], "generation", {"target_feedback_max_attempts"}
-    )
+    generation = root["generation"]
+    if not isinstance(generation, dict):
+        raise ValueError("generation must be a mapping")
+    unexpected_generation = set(generation) - {"target_feedback_max_attempts"}
+    if unexpected_generation:
+        raise ValueError(
+            "generation keys differ; missing=[], "
+            f"unexpected={sorted(unexpected_generation)}"
+        )
     generation = {
         "target_feedback_max_attempts": _positive_integer(
-            generation["target_feedback_max_attempts"],
+            generation.get(
+                "target_feedback_max_attempts",
+                DEFAULT_TARGET_FEEDBACK_MAX_ATTEMPTS,
+            ),
             "generation.target_feedback_max_attempts",
             maximum=5,
         )

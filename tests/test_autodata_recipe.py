@@ -113,6 +113,13 @@ def test_checked_in_recipe_configuration_passes_local_check() -> None:
     assert completed.returncode == 0, completed.stderr
 
 
+def test_target_feedback_runtime_default_is_five() -> None:
+    task = _load_module(
+        "aar_autodata_recipe_task_default", RECIPE / "recipe" / "task.py"
+    )
+    assert task._DEFAULT_TARGET_FEEDBACK_MAX_ATTEMPTS == 5
+
+
 @pytest.mark.parametrize("field", ["system_prompt", "scenario_prompt_prefix"])
 def test_generation_strategy_text_allows_maximum_kimi_output_envelope(
     tmp_path: Path, field: str

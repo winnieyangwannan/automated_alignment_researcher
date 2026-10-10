@@ -52,6 +52,7 @@ _AXIS_CONTRACTS = {
         ),
     },
 }
+_DEFAULT_TARGET_FEEDBACK_MAX_ATTEMPTS = 5
 
 _RUBRIC_SCHEMA = "aar.autodata.judge-rubric/v1"
 _RUBRIC_PATH = Path(__file__).resolve().with_name("judge_rubric.json")
@@ -769,7 +770,9 @@ def main() -> int:
         primary_axis = _task_primary_axis(task)
         maximum_generation_attempts = (
             _bounded_positive_int_env(
-                "AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS", "3", maximum=5
+                "AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS",
+                str(_DEFAULT_TARGET_FEEDBACK_MAX_ATTEMPTS),
+                maximum=5,
             )
             if target_config is not None
             else 1
