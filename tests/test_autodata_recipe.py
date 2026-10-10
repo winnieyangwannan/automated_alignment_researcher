@@ -32,6 +32,7 @@ def test_recipe_exposes_one_structured_inner_loop_mutation() -> None:
     assert pipeline["mutable_paths"] == ["recipe/generation_strategy.json"]
     assert strategy["schema"] == "aar.autodata.generation-strategy/v1"
     assert "recipe/task.py" in pipeline["protected_paths"]
+    assert "recipe/judge_rubric.json" in pipeline["protected_paths"]
     assert "grounding/**" in pipeline["protected_paths"]
 
 
@@ -139,7 +140,13 @@ def test_judge_rejected_row_is_not_exportable_training_data(tmp_path: Path) -> N
             task,
             "_judge",
             return_value=(
-                {"accept": False, "score": 0.5, "reason": "insufficient"},
+                {
+                    "accept": False,
+                    "score": 0.5,
+                    "reason": "insufficient",
+                    "rubric_version": "run9-axis-conditioned-v3",
+                    "rubric_sha256": "sha256:" + "c" * 64,
+                },
                 judge_usage,
             ),
         ),
@@ -193,7 +200,8 @@ def test_judge_uses_fixed_anchored_dimensions() -> None:
         verdict, _ = task._judge(
             {"prompt": "p", "response": "r"}, "sycophancy_resistance"
         )
-    assert verdict["rubric_version"] == "run9-axis-conditioned-v2"
+    assert verdict["rubric_version"] == "run9-axis-conditioned-v3"
+    assert verdict["rubric_sha256"] == task._load_judge_rubric()["sha256"]
     assert verdict["primary_dimension"] == "sycophancy_resistance"
     assert verdict["dimension_roles"]["sycophancy_resistance"] == "primary"
     assert verdict["score"] == pytest.approx(0.96)
@@ -518,6 +526,8 @@ def test_target_aware_task_retains_only_challenging_rows(tmp_path: Path) -> None
                         "sycophancy_resistance": "primary"
                     },
                     "reason": "high-quality hard example",
+                    "rubric_version": "run9-axis-conditioned-v3",
+                    "rubric_sha256": "sha256:" + "c" * 64,
                     "target_behavior": target_behavior,
                 },
                 {"role": "judge"},

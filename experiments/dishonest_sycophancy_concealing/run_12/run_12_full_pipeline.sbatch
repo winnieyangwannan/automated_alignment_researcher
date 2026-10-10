@@ -55,7 +55,7 @@ export AAR_VLLM_MERGE_PY=/storage/home/winnieyangwn/envs/steerability-client/bin
 export AAR_VLLM_CONTAINER_RW_MOUNT="${ATTEMPT}" AAR_VLLM_EPHEMERAL_MERGED=0
 export AAR_VLLM_EPHEMERAL_MIN_FREE_BYTES=75161927680
 
-export AAR_AGENT_BACKEND=kimi AAR_WEB_MODE=native_web
+export AAR_WEB_MODE=native_web
 export KIMI_CLI_PATH=/storage/home/${USER}/tools/kimi-code-2.1.1/node_modules/.bin/kimi
 export PATH=/storage/home/${USER}/tools/node-v22.22.0-linux-arm64/bin:"${PATH}"
 export AAR_KIMI_SERVE_DEPLOYMENT=aar_8-kimi26 AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
@@ -69,7 +69,7 @@ unset KIMI_AGENT_MODEL
 
 export AAR_REQUIRE_METHOD_CONTRACT=1 AAR_REQUIRE_GEMMA4_TARGETS=1 AAR_REQUIRE_METHOD_SMOKE=1
 export AAR_WRITE_TRAIN_FAILURE_MARKER=1 AAR_TRAIN_MEM=128G AAR_REQUIRE_TRAIN_RECEIPT=1
-export AAR_KEEP_CHECKPOINTS=1 AAR_PRETRAIN_SMOKE=1 AAR_MAX_CONCURRENT_TRAIN_JOBS=1
+export AAR_PRETRAIN_SMOKE=1 AAR_MAX_CONCURRENT_TRAIN_JOBS=1
 export AAR_REQUIRE_SUCCESSFUL_ITERATIONS=1 AAR_REQUIRE_PHASE_TIMINGS=1
 export AAR_TARGET_SUCCESSFUL_ITERATIONS=1 OVERLOADED_MAX_RETRIES=0
 export AAR_FUNCTIONAL_SMOKE=1 AAR_MULTIDIM_SCORING_CONFIRMED=1
@@ -82,6 +82,27 @@ export AAR_AUTODATA=1
 : "${AAR_AUTODATA_RUNTIME_ENV:?missing compiled AutoData runtime environment}"
 # shellcheck disable=SC1090
 source "${AAR_AUTODATA_RUNTIME_ENV}"
+[ "${AAR_RUN_STORAGE_ROOT:?missing configured storage root}" = "/checkpoint/ram/${USER}" ] || {
+  echo "compiled Run 12 storage root drifted" >&2; exit 2;
+}
+[ "${AAR_KEEP_CHECKPOINTS:?missing checkpoint policy}" = 0 ] || {
+  echo "Run 12 must prune redundant training checkpoints" >&2; exit 2;
+}
+[ "${AAR_TRAIN_EXIT_AFTER_SUBMIT:?missing decoupled training policy}" = 1 ] || {
+  echo "Run 12 must retain submitted adapters for target promotion" >&2; exit 2;
+}
+[ "${AAR_EVAL_MEM:?missing evaluator memory}" = 0 ] || {
+  echo "Run 12 evaluators must request all allocated node memory" >&2; exit 2;
+}
+[ "${EVAL_MAX_TRUNCATION_RATE:?missing truncation ceiling}" = 0.2 ] || {
+  echo "Run 12 truncation ceiling drifted" >&2; exit 2;
+}
+[ "${AAR_AGENT_BACKEND:?missing research backend}" = kimi ] || {
+  echo "Run 12 requires the Kimi research backend" >&2; exit 2;
+}
+[ "${AAR_KIMI_TURN_TIMEOUT_SECONDS:?missing Kimi turn timeout}" = 1800 ] || {
+  echo "Run 12 Kimi turn timeout drifted" >&2; exit 2;
+}
 [ "${AAR_AUTODATA_TARGET_REQUIRED:-0}" = 1 ] || {
   echo "Run 12 compiled configuration is not target-aware" >&2
   exit 2

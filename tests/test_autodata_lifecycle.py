@@ -18,6 +18,11 @@ from aar.infrastructure.autodata_lifecycle import (
     verify_preflight,
 )
 
+RUBRIC = {
+    "version": "run9-axis-conditioned-v3",
+    "sha256": "sha256:" + "c" * 64,
+}
+
 
 def _write_json(path: Path, value: object) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -256,7 +261,10 @@ def test_digest_verified_cross_run_dataset_reuse(tmp_path: Path) -> None:
     dataset = json.loads(dataset_path.read_text())
     checkpoint = "sha256:" + "a" * 64
     for item in dataset["items"]:
-        item["metadata"].update(judge_rubric_version="run9-axis-conditioned-v2")
+        item["metadata"].update(
+            judge_rubric_version=RUBRIC["version"],
+            judge_rubric_sha256=RUBRIC["sha256"],
+        )
         item["_autodata_usage"] = [
             {
                 "role": "generator",
@@ -291,7 +299,7 @@ def test_digest_verified_cross_run_dataset_reuse(tmp_path: Path) -> None:
             "required_item_fields": ["prompt", "response"],
             "required_rows": 1000,
             "minimum_successful_task_fraction": 0.95,
-            "judge_rubric_version": "run9-axis-conditioned-v2",
+            "judge_rubric": RUBRIC,
             "generator": {"model": "Kimi-K2.6", "deployment_id": "kimi"},
             "judge": {"model": "gpt-5-6-luna"},
             "target": {
@@ -337,7 +345,10 @@ def test_cross_run_reuse_rejects_dataset_tampering(tmp_path: Path) -> None:
             "required_item_fields": ["prompt", "response"],
             "required_rows": 1000,
             "minimum_successful_task_fraction": 0.95,
-            "judge_rubric_version": "v1",
+            "judge_rubric": {
+                "version": "v1",
+                "sha256": "sha256:" + "d" * 64,
+            },
             "generator": {"model": "generator", "deployment_id": "deployment"},
             "judge": {"model": "judge"},
             "target": {"required": False},

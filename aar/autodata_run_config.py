@@ -90,12 +90,87 @@ def _fraction(value: Any, label: str) -> float:
     return result
 
 
+def _bounded_fraction(value: Any, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be numeric")
+    result = float(value)
+    if not 0 <= result <= 1:
+        raise ValueError(f"{label} must be between zero and one")
+    return result
+
+
+def _storage_root(value: Any, label: str) -> str:
+    root = _text(value, label)
+    user = os.environ.get("USER", "")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", user):
+        raise ValueError("USER is missing or unsafe")
+    root = root.replace("{user}", user)
+    if re.search(r"\{[^{}]+\}", root):
+        raise ValueError(f"{label} supports only the {{user}} template")
+    path = Path(root)
+    if not path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"{label} must be an absolute path without traversal")
+    return root.rstrip("/") or "/"
+
+
+def _slurm_memory(value: Any, label: str) -> str:
+    if value == "max":
+        return "0"
+    if isinstance(value, int) and not isinstance(value, bool):
+        value = str(value)
+    if not isinstance(value, str) or not re.fullmatch(
+        r"(?:0|[1-9][0-9]*[KMGTP]?)", value
+    ):
+        raise ValueError(f"{label} must be max or a Slurm memory value")
+    return value
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(1 << 20), b""):
             digest.update(block)
     return "sha256:" + digest.hexdigest()
+
+
+def _judge_rubric_identity(
+    repo: Path, run: Mapping[str, Any]
+) -> tuple[Path, dict[str, str]]:
+    recipe_root = (repo / str(run["recipe_root"])).resolve(strict=True)
+    if not recipe_root.is_dir() or repo not in recipe_root.parents:
+        raise ValueError("recipe_root must resolve to a repository directory")
+    relative = Path(str(run["training_contract"]["judge_rubric"]))
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("judge rubric must be relative to recipe_root")
+    if relative != Path("recipe/judge_rubric.json"):
+        raise ValueError("recipe task requires recipe/judge_rubric.json")
+    unresolved_rubric_path = recipe_root / relative
+    if unresolved_rubric_path.is_symlink():
+        raise ValueError("judge rubric must not be a symlink")
+    rubric_path = unresolved_rubric_path.resolve(strict=True)
+    if not rubric_path.is_file() or recipe_root not in rubric_path.parents:
+        raise ValueError("judge rubric must resolve to a regular recipe file")
+    try:
+        rubric = json.loads(rubric_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("judge rubric is not valid JSON") from error
+    if (
+        not isinstance(rubric, dict)
+        or rubric.get("schema") != "aar.autodata.judge-rubric/v1"
+        or not isinstance(rubric.get("version"), str)
+        or not rubric["version"].strip()
+    ):
+        raise ValueError("judge rubric identity is invalid")
+    pipeline = json.loads(
+        (recipe_root / "autodata.pipeline.json").read_text(encoding="utf-8")
+    )
+    protected = pipeline.get("protected_paths") if isinstance(pipeline, dict) else None
+    if not isinstance(protected, list) or relative.as_posix() not in protected:
+        raise ValueError("judge rubric is not protected by the AutoData pipeline")
+    return rubric_path, {
+        "version": rubric["version"].strip(),
+        "sha256": _sha256(rubric_path),
+    }
 
 
 def _load_yaml(path: Path, label: str) -> dict[str, Any]:
@@ -286,6 +361,9 @@ def load_run_config(path: Path) -> dict[str, Any]:
             "budget",
             "meta_optimization",
             "production",
+            "storage",
+            "evaluation",
+            "agent",
             "recipe_root",
             "training_contract",
         },
@@ -352,10 +430,41 @@ def load_run_config(path: Path) -> dict[str, Any]:
         raise ValueError(
             "production task counts must cover required rows monotonically"
         )
+    storage = _mapping(
+        root["storage"], "storage", {"root", "keep_checkpoints"}
+    )
+    storage = {
+        "root": _storage_root(storage["root"], "storage.root"),
+        "keep_checkpoints": _boolean(
+            storage["keep_checkpoints"], "storage.keep_checkpoints"
+        ),
+    }
+    evaluation = _mapping(
+        root["evaluation"], "evaluation", {"memory", "max_truncation_rate"}
+    )
+    evaluation = {
+        "memory": _slurm_memory(evaluation["memory"], "evaluation.memory"),
+        "max_truncation_rate": _bounded_fraction(
+            evaluation["max_truncation_rate"],
+            "evaluation.max_truncation_rate",
+        ),
+    }
+    agent = _mapping(root["agent"], "agent", {"backend", "turn_timeout_seconds"})
+    backend = _text(agent["backend"], "agent.backend")
+    if backend not in {"claude", "kimi"}:
+        raise ValueError("agent.backend must be claude or kimi")
+    agent = {
+        "backend": backend,
+        "turn_timeout_seconds": _positive_integer(
+            agent["turn_timeout_seconds"],
+            "agent.turn_timeout_seconds",
+            maximum=86_400,
+        ),
+    }
     training = _mapping(
         root["training_contract"],
         "training_contract",
-        {"objective", "judge_rubric_version"},
+        {"objective", "judge_rubric"},
     )
     if training["objective"] != "sft":
         raise ValueError("Run 12 AutoData supports only the sft objective")
@@ -383,12 +492,15 @@ def load_run_config(path: Path) -> dict[str, Any]:
         },
         "meta_optimization": meta,
         "production": production,
+        "storage": storage,
+        "evaluation": evaluation,
+        "agent": agent,
         "recipe_root": recipe_root,
         "training_contract": {
             "objective": "sft",
-            "judge_rubric_version": _text(
-                training["judge_rubric_version"],
-                "training_contract.judge_rubric_version",
+            "judge_rubric": _text(
+                training["judge_rubric"],
+                "training_contract.judge_rubric",
             ),
         },
     }
@@ -482,6 +594,9 @@ def _runtime_environment(
 ) -> dict[str, str]:
     meta = run["meta_optimization"]
     production = run["production"]
+    storage = run["storage"]
+    evaluation = run["evaluation"]
+    agent = run["agent"]
     recipe_root = (repo / run["recipe_root"]).resolve(strict=True)
     if not recipe_root.is_dir() or repo not in recipe_root.parents:
         raise ValueError("recipe_root must resolve to a repository directory")
@@ -517,6 +632,17 @@ def _runtime_environment(
         "AAR_AUTODATA_PRODUCTION_INITIAL_TASKS": str(production["initial_tasks"]),
         "AAR_AUTODATA_PRODUCTION_MAX_TASKS": str(production["maximum_tasks"]),
         "AAR_AUTODATA_RECIPE_ROOT": str(recipe_root),
+        "AAR_RUN_STORAGE_ROOT": storage["root"],
+        "AAR_KEEP_CHECKPOINTS": "1" if storage["keep_checkpoints"] else "0",
+        "AAR_EVAL_MEM": evaluation["memory"],
+        "EVAL_MAX_TRUNCATION_RATE": format(
+            evaluation["max_truncation_rate"], ".12g"
+        ),
+        "AAR_EXPECTED_MAX_TRUNCATION_RATE": format(
+            evaluation["max_truncation_rate"], ".12g"
+        ),
+        "AAR_AGENT_BACKEND": agent["backend"],
+        "AAR_KIMI_TURN_TIMEOUT_SECONDS": str(agent["turn_timeout_seconds"]),
     }
 
 
@@ -547,6 +673,7 @@ def compile_run_config(
         raise ValueError("target binding chain does not match the compiled chain")
     target_environment = target_environment_from_manifest(target_binding_path)
     solve_environment = _solve_environment(profile, run, target_environment)
+    rubric_path, rubric_identity = _judge_rubric_identity(repo, run)
     policy = {
         "schema": "autodata.broker-campaign-policy/v1",
         "campaign_id": f"{run['run_id']}-{chain}",
@@ -565,7 +692,7 @@ def compile_run_config(
         minimum_successful_task_fraction=run["production"][
             "minimum_successful_task_fraction"
         ],
-        judge_rubric_version=run["training_contract"]["judge_rubric_version"],
+        judge_rubric=rubric_identity,
     )
     if contract["target"].get("required") is not True:
         raise ValueError("compiled training contract is not target-aware")
@@ -599,6 +726,8 @@ def compile_run_config(
         "run_source_sha256": _sha256(run_path),
         "target_binding": str(target_binding_path),
         "target_binding_sha256": _sha256(target_binding_path),
+        "judge_rubric_source": str(rubric_path),
+        "judge_rubric_source_sha256": rubric_identity["sha256"],
         "target": {
             "iteration": manifest.get("iteration"),
             "deployment_id": solve_environment["AUTODATA_TARGET_DEPLOYMENT_ID"],
@@ -631,6 +760,9 @@ def validate_compiled_config(
         Path(resolved["profile_source"]): resolved["profile_source_sha256"],
         Path(resolved["run_source"]): resolved["run_source_sha256"],
         Path(resolved["target_binding"]): resolved["target_binding_sha256"],
+        Path(resolved["judge_rubric_source"]): resolved[
+            "judge_rubric_source_sha256"
+        ],
         campaign_policy_path: resolved["artifacts"]["campaign_policy_sha256"],
         contract_path: resolved["artifacts"]["training_data_contract_sha256"],
         Path(resolved["artifacts"]["runtime_environment"]): resolved["artifacts"][
@@ -645,6 +777,14 @@ def validate_compiled_config(
     policy = json.loads(campaign_policy_path.read_text(encoding="utf-8"))
     contract = json.loads(contract_path.read_text(encoding="utf-8"))
     validate_training_data_contract(contract, campaign_policy=policy)
+    rubric_source = Path(resolved["judge_rubric_source"]).resolve(strict=True)
+    rubric_document = json.loads(rubric_source.read_text(encoding="utf-8"))
+    rubric_identity = {
+        "version": rubric_document.get("version"),
+        "sha256": _sha256(rubric_source),
+    }
+    if contract.get("judge_rubric") != rubric_identity:
+        raise ValueError("compiled judge rubric identity changed")
     environment = policy.get("required_solve_env", {})
     if environment.get("AUTODATA_TARGET_ENABLED") != "1":
         raise ValueError("compiled campaign is no longer target-aware")
@@ -676,6 +816,12 @@ def inspect_configs(profile_path: Path, run_path: Path) -> dict[str, Any]:
         "generator_host_header": profile["providers"]["generator"]["host_header"],
         "generator_model": profile["providers"]["generator"]["model"],
         "target_model": profile["providers"]["target"]["model"],
+        "storage_root": run["storage"]["root"],
+        "keep_checkpoints": run["storage"]["keep_checkpoints"],
+        "evaluation_memory": run["evaluation"]["memory"],
+        "max_truncation_rate": run["evaluation"]["max_truncation_rate"],
+        "agent_backend": run["agent"]["backend"],
+        "turn_timeout_seconds": run["agent"]["turn_timeout_seconds"],
     }
 
 

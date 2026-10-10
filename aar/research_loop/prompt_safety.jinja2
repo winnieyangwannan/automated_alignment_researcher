@@ -440,6 +440,10 @@ verified production dataset/execution as one-element lists, with
 `$TEAM_DIR/autodata/<run_id>/training-consumption.json`. Merely running AutoData or
 parsing the JSON directly does not satisfy the proposed method.
 
+Load the approved `autodata-training-data-contract.json` and pass its
+content-addressed `judge_rubric` object to the dataset loader. This binds the rows to
+the exact protected rubric bytes rather than trusting a manually copied version label.
+
 Use this exact loader shape so the static approval contract can verify the future
 handoff before the AutoData workspace is legally created:
 
@@ -449,6 +453,7 @@ items = load_autodata_campaign_datasets(
     receipt_path=training_consumption_path,
     required_rows=1000,
     expected_execution_ids=[production_execution_id],
+    judge_rubric=training_data_contract["judge_rubric"],
     training_objective="sft",  # use "dpo" only for prompt/chosen/rejected rows
 )
 ```

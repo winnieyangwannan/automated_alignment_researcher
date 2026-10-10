@@ -14,6 +14,7 @@ RECOVERED_SOURCES="${RECOVERY_BUNDLE}/source_artifacts"
 CANARY_ROOT="$(realpath -e -- "${AAR_RUN13_CANARY_ROOT:-/storage/home/${USER}/aar-runs/run13-adapter-target/20261009T104306Z-6cf11ae65d2b}")"
 SV="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
+JUDGE_RUBRIC="${REPO}/aar/autodata_recipes/dishonest_sycophancy_concealing/recipe/judge_rubric.json"
 REQUIRED_AUTODATA_SHA=823c5948854df14664f3168bc5e6c49a2cecb975
 GENERATOR_DEPLOYMENT=aar_8-kimi26
 export AAR_AUTODATA=1
@@ -94,6 +95,8 @@ openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "${approval_pr
 openssl pkey -in "${approval_private}" -pubout -out "${approval_public}" >/dev/null 2>&1
 chmod 600 "${model_env}" "${approval_private}" "${approval_public}"
 approval_digest="sha256:$(sha256sum "${approval_public}" | awk '{print $1}')"
+judge_rubric_version="$(jq -er '.version | select(type == "string" and length > 0)' "${JUDGE_RUBRIC}")"
+judge_rubric_sha256="sha256:$(sha256sum "${JUDGE_RUBRIC}" | awk '{print $1}')"
 
 export PATH=/storage/home/${USER}/tools/node-v22.22.0-linux-arm64/bin:"${PATH}"
 export KIMI_CLI_PATH=/storage/home/${USER}/tools/kimi-code-2.1.1/node_modules/.bin/kimi
@@ -142,7 +145,8 @@ for seed in alpha beta gamma delta epsilon; do
   "${REPO}/.venv/bin/python" -m aar.infrastructure.autodata_contract \
     --create --campaign-policy "${chain_root}/metadata/campaign-policy.json" \
     --required-rows 1000 --minimum-successful-task-fraction 0.95 \
-    --judge-rubric-version run9-axis-conditioned-v2 \
+    --judge-rubric-version "${judge_rubric_version}" \
+    --judge-rubric-sha256 "${judge_rubric_sha256}" \
     --output "${chain_root}/metadata/autodata-training-data-contract.json" >/dev/null
 done
 

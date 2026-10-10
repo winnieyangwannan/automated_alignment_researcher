@@ -20,7 +20,16 @@ production:
   initial_tasks: 1
   maximum_tasks: 1
   minimum_successful_task_fraction: 1.0
+storage:
+  root: /checkpoint/ram/{user}
+  keep_checkpoints: false
+evaluation:
+  memory: max
+  max_truncation_rate: 0.20
+agent:
+  backend: kimi
+  turn_timeout_seconds: 1800
 recipe_root: aar/autodata_recipes/dishonest_sycophancy_concealing
 training_contract:
   objective: sft
-  judge_rubric_version: run9-axis-conditioned-v2
+  judge_rubric: recipe/judge_rubric.json

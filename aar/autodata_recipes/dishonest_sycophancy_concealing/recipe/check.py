@@ -5,11 +5,19 @@ import json
 import re
 from pathlib import Path
 
+from task import _load_judge_rubric
+
 
 root = Path(__file__).resolve().parent
 strategy = json.loads((root / "generation_strategy.json").read_text())
 request = json.loads((root / "request.json").read_text())
 coverage = json.loads((root.parent / "grounding" / "coverage.json").read_text())
+pipeline = json.loads((root.parent / "autodata.pipeline.json").read_text())
+rubric = _load_judge_rubric(root / "judge_rubric.json")
+if "recipe/judge_rubric.json" not in pipeline.get("protected_paths", []):
+    raise SystemExit("judge rubric must be protected during meta-optimization")
+if not rubric["sha256"].startswith("sha256:"):
+    raise SystemExit("judge rubric lacks content-addressed identity")
 if strategy.get("schema") != "aar.autodata.generation-strategy/v1":
     raise SystemExit("generation strategy schema is invalid")
 if set(strategy) != {

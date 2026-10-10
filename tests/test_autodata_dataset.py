@@ -11,6 +11,11 @@ from aar.infrastructure.autodata_dataset import (
     load_autodata_dataset,
 )
 
+RUBRIC = {
+    "version": "run9-axis-conditioned-v3",
+    "sha256": "sha256:" + "c" * 64,
+}
+
 
 def _dataset(*, accepted: bool = True, mode: str = "production") -> dict:
     usage = [
@@ -78,7 +83,8 @@ def _dataset(*, accepted: bool = True, mode: str = "production") -> dict:
                             "safety",
                         )
                     },
-                    "judge_rubric_version": "run9-axis-conditioned-v2",
+                    "judge_rubric_version": RUBRIC["version"],
+                    "judge_rubric_sha256": RUBRIC["sha256"],
                     "judge_dimensions": {
                         name: {"pass": accepted, "score": 2 if accepted else 0}
                         for name in (
@@ -114,6 +120,7 @@ def test_load_records_bound_consumption_receipt():
             receipt_path=receipt,
             required_rows=1,
             expected_execution_id="exec_test",
+            judge_rubric=RUBRIC,
         )
         assert len(rows) == 1
         saved = json.loads(receipt.read_text())
@@ -140,7 +147,26 @@ def test_load_fails_closed(value: dict, error: str):
                 receipt_path=root / "receipt.json",
                 required_rows=1,
                 expected_execution_id="exec_test",
+                judge_rubric=RUBRIC,
             )
+
+
+def test_load_rejects_same_rubric_version_with_different_content_hash(
+    tmp_path: Path,
+) -> None:
+    value = _dataset()
+    value["items"][0]["metadata"]["judge_rubric_sha256"] = "sha256:" + "d" * 64
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(json.dumps(value))
+
+    with pytest.raises(ValueError, match="rubric identity"):
+        load_autodata_dataset(
+            dataset,
+            receipt_path=tmp_path / "receipt.json",
+            required_rows=1,
+            expected_execution_id="exec_test",
+            judge_rubric=RUBRIC,
+        )
 
 
 def test_campaign_loader_combines_batches_and_retains_exact_target():
@@ -161,6 +187,7 @@ def test_campaign_loader_combines_batches_and_retains_exact_target():
             receipt_path=root / "campaign-receipt.json",
             required_rows=1,
             expected_execution_ids=ids,
+            judge_rubric=RUBRIC,
         )
         assert len(rows) == 1
         receipt = json.loads((root / "campaign-receipt.json").read_text())
@@ -177,6 +204,7 @@ def test_campaign_receipt_is_safely_reusable_when_binding_matches(tmp_path: Path
         "receipt_path": receipt,
         "required_rows": 1,
         "expected_execution_ids": ["exec_test"],
+        "judge_rubric": RUBRIC,
     }
 
     first = load_autodata_campaign_datasets([dataset], **arguments)
@@ -199,6 +227,7 @@ def test_campaign_receipt_reuse_rejects_changed_dataset(tmp_path: Path):
         "receipt_path": receipt,
         "required_rows": 1,
         "expected_execution_ids": ["exec_test"],
+        "judge_rubric": RUBRIC,
     }
     load_autodata_campaign_datasets([dataset], **arguments)
     changed = _dataset()
@@ -222,6 +251,7 @@ def test_dpo_schema_is_validated(tmp_path: Path):
         receipt_path=tmp_path / "receipt.json",
         required_rows=1,
         expected_execution_id="exec_test",
+        judge_rubric=RUBRIC,
         training_objective="dpo",
     )
     assert rows[0]["chosen"] == "Answer"

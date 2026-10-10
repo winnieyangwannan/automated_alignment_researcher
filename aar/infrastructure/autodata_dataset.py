@@ -6,12 +6,27 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 RECEIPT_SCHEMA = "aar.autodata.native-consumption/v1"
 _VOLATILE_RECEIPT_FIELDS = {"loaded_at_unix", "consumer_pid"}
+_SHA256 = re.compile(r"sha256:[0-9a-f]{64}\Z")
+
+
+def _rubric_identity(value: Mapping[str, str]) -> dict[str, str]:
+    identity = dict(value)
+    if (
+        set(identity) != {"version", "sha256"}
+        or not isinstance(identity.get("version"), str)
+        or not identity["version"].strip()
+        or not isinstance(identity.get("sha256"), str)
+        or _SHA256.fullmatch(identity["sha256"]) is None
+    ):
+        raise ValueError("judge rubric identity is invalid")
+    return identity
 
 
 def _write_or_refresh_receipt(destination: Path, receipt: dict[str, Any]) -> None:
@@ -112,11 +127,12 @@ def load_autodata_dataset(
     generator_model: str = "Kimi-K2.6",
     judge_model: str = "gpt-5-6-luna",
     judge_threshold: float = 0.75,
-    judge_rubric_version: str = "run9-axis-conditioned-v2",
+    judge_rubric: Mapping[str, str],
     require_target: bool = True,
     training_objective: str = "sft",
 ) -> list[dict[str, Any]]:
     """Validate, load, and record consumption of one production export."""
+    expected_rubric = _rubric_identity(judge_rubric)
     if isinstance(required_rows, bool) or required_rows < 1:
         raise ValueError("required_rows must be a positive integer")
     if training_objective not in {"sft", "dpo"}:
@@ -162,7 +178,10 @@ def load_autodata_dataset(
             or float(score) < judge_threshold
         ):
             raise ValueError("AutoData dataset contains a row below the fixed judge threshold")
-        if metadata.get("judge_rubric_version") != judge_rubric_version:
+        if {
+            "version": metadata.get("judge_rubric_version"),
+            "sha256": metadata.get("judge_rubric_sha256"),
+        } != expected_rubric:
             raise ValueError("AutoData judge rubric identity does not match")
         dimensions = metadata.get("judge_dimensions")
         expected_dimensions = {
@@ -182,7 +201,7 @@ def load_autodata_dataset(
             for value in dimensions.values()
         ):
             raise ValueError("AutoData row failed a fixed judge dimension")
-        if judge_rubric_version == "run9-axis-conditioned-v2":
+        if expected_rubric["version"] == "run9-axis-conditioned-v3":
             axis_contracts = {
                 "honesty": ("factual_honesty", "dishonesty"),
                 "sycophancy_resistance": (
@@ -271,6 +290,7 @@ def load_autodata_dataset(
         "required_rows": required_rows,
         "generator_model": generator_model,
         "judge_model": judge_model,
+        "judge_rubric": expected_rubric,
         "model_calls": model_calls,
         "input_tokens": total_input,
         "output_tokens": total_output,
@@ -294,11 +314,12 @@ def load_autodata_campaign_datasets(
     generator_model: str = "Kimi-K2.6",
     judge_model: str = "gpt-5-6-luna",
     judge_threshold: float = 0.75,
-    judge_rubric_version: str = "run9-axis-conditioned-v2",
+    judge_rubric: Mapping[str, str],
     require_target: bool = True,
     training_objective: str = "sft",
 ) -> list[dict[str, Any]]:
     """Verify bounded production batches and retain exactly the target rows."""
+    expected_rubric = _rubric_identity(judge_rubric)
     if len(dataset_paths) != len(expected_execution_ids) or not dataset_paths:
         raise ValueError("production datasets and execution ids must be paired")
     combined: list[dict[str, Any]] = []
@@ -323,7 +344,7 @@ def load_autodata_campaign_datasets(
                 generator_model=generator_model,
                 judge_model=judge_model,
                 judge_threshold=judge_threshold,
-                judge_rubric_version=judge_rubric_version,
+                judge_rubric=expected_rubric,
                 require_target=require_target,
                 training_objective=training_objective,
             )
@@ -348,7 +369,7 @@ def load_autodata_campaign_datasets(
             "generator_model": generator_model,
             "judge_model": judge_model,
             "judge_threshold": judge_threshold,
-            "judge_rubric_version": judge_rubric_version,
+            "judge_rubric": expected_rubric,
             "target_required": require_target,
             "training_objective": training_objective,
             "loaded_at_unix": time.time(),

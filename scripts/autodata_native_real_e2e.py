@@ -609,12 +609,18 @@ class Driver:
         self.cli("export", execution_id, "--output", str(dataset))
         from aar.infrastructure.autodata_dataset import load_autodata_dataset
 
+        rubric_path = self.recipe / "recipe" / "judge_rubric.json"
+        rubric = json.loads(rubric_path.read_text(encoding="utf-8"))
         rows = load_autodata_dataset(
             dataset,
             receipt_path=self.export / "training-consumption.json",
             required_rows=self.args.required_rows,
             expected_execution_id=execution_id,
-            judge_rubric_version="run9-anchored-v1",
+            judge_rubric={
+                "version": rubric["version"],
+                "sha256": "sha256:"
+                + hashlib.sha256(rubric_path.read_bytes()).hexdigest(),
+            },
             require_target=False,
         )
         self.milestone(

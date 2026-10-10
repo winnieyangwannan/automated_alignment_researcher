@@ -31,6 +31,7 @@
     "objective.json",
     "comparator.json",
     "schemas/**",
+    "recipe/judge_rubric.json",
     "recipe/task.py",
     "recipe/check.py",
     "recipe/request.json"

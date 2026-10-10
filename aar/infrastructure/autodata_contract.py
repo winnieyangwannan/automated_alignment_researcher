@@ -51,7 +51,7 @@ def validate_training_data_contract(
         "required_item_fields",
         "required_rows",
         "minimum_successful_task_fraction",
-        "judge_rubric_version",
+        "judge_rubric",
         "generator",
         "judge",
         "target",
@@ -73,9 +73,15 @@ def validate_training_data_contract(
         or not 0 < float(fraction) <= 1
     ):
         raise ValueError("minimum_successful_task_fraction must be in (0,1]")
-    rubric = contract.get("judge_rubric_version")
-    if not isinstance(rubric, str) or not rubric.strip():
-        raise ValueError("judge_rubric_version must be non-empty")
+    rubric = _object(contract.get("judge_rubric"), "judge rubric provenance")
+    if (
+        set(rubric) != {"version", "sha256"}
+        or not isinstance(rubric.get("version"), str)
+        or not rubric["version"].strip()
+        or not isinstance(rubric.get("sha256"), str)
+        or _DIGEST.fullmatch(rubric["sha256"]) is None
+    ):
+        raise ValueError("judge rubric provenance is incomplete")
 
     generator = _object(contract.get("generator"), "generator provenance")
     if set(generator) != {"model", "deployment_id"} or not all(
@@ -147,7 +153,7 @@ def training_data_contract_from_campaign_policy(
     *,
     required_rows: int,
     minimum_successful_task_fraction: float,
-    judge_rubric_version: str,
+    judge_rubric: Mapping[str, str],
 ) -> dict[str, Any]:
     """Derive the immutable training contract from one trusted campaign policy."""
     policy = _object(dict(campaign_policy), "campaign policy")
@@ -170,7 +176,7 @@ def training_data_contract_from_campaign_policy(
         "required_item_fields": ["prompt", "response"],
         "required_rows": required_rows,
         "minimum_successful_task_fraction": minimum_successful_task_fraction,
-        "judge_rubric_version": judge_rubric_version,
+        "judge_rubric": dict(judge_rubric),
         "generator": {
             "model": environment.get("AUTODATA_GENERATOR_MODEL"),
             "deployment_id": environment.get("AUTODATA_GENERATOR_DEPLOYMENT_ID"),
@@ -252,7 +258,11 @@ def validate_dataset_items(items: Any, contract: Mapping[str, Any]) -> None:
             if not isinstance(item.get(field), str) or not item[field].strip():
                 raise ValueError(f"dataset item {index} is missing contracted {field}")
         metadata = _object(item.get("metadata"), f"dataset item {index} metadata")
-        if metadata.get("judge_rubric_version") != checked["judge_rubric_version"]:
+        actual_rubric = {
+            "version": metadata.get("judge_rubric_version"),
+            "sha256": metadata.get("judge_rubric_sha256"),
+        }
+        if actual_rubric != checked["judge_rubric"]:
             raise ValueError("dataset rubric does not match the training-data contract")
         usage = item.get("_autodata_usage")
         if not isinstance(usage, list):
@@ -291,17 +301,26 @@ def main() -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--required-rows", type=int, default=1000)
     parser.add_argument("--minimum-successful-task-fraction", type=float, default=0.95)
-    parser.add_argument("--judge-rubric-version", default="run9-axis-conditioned-v2")
+    parser.add_argument("--judge-rubric-version")
+    parser.add_argument("--judge-rubric-sha256")
     args = parser.parse_args()
     policy = _load(args.campaign_policy, "campaign policy")
     if args.create:
         if args.contract is not None or args.output is None:
             parser.error("--create requires --output and forbids --contract")
+        if args.judge_rubric_version is None or args.judge_rubric_sha256 is None:
+            parser.error(
+                "--create requires --judge-rubric-version and "
+                "--judge-rubric-sha256"
+            )
         contract = training_data_contract_from_campaign_policy(
             policy,
             required_rows=args.required_rows,
             minimum_successful_task_fraction=args.minimum_successful_task_fraction,
-            judge_rubric_version=args.judge_rubric_version,
+            judge_rubric={
+                "version": args.judge_rubric_version,
+                "sha256": args.judge_rubric_sha256,
+            },
         )
         _atomic_write_contract(args.output, contract)
     else:

@@ -211,6 +211,7 @@ load_autodata_campaign_datasets(
     receipt_path=receipt_path,
     required_rows=64,
     expected_execution_ids=[execution_id],
+    judge_rubric=training_data_contract["judge_rubric"],
     training_objective="sft",
 )
 """
@@ -224,6 +225,7 @@ load_autodata_campaign_datasets(
     receipt_path=receipt_path,
     required_rows=1000,
     expected_execution_ids=[execution_id],
+    judge_rubric=training_data_contract["judge_rubric"],
 )
 """
     assert "training_objective" in (
@@ -236,6 +238,7 @@ load_autodata_campaign_datasets(
     receipt_path=receipt_path,
     required_rows=1000,
     expected_execution_ids=[execution_id],
+    judge_rubric=training_data_contract["judge_rubric"],
     training_objective="sft",
 )
 """

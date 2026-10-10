@@ -129,10 +129,11 @@ declared models and isolation boundaries.
 - Let Kimi propose one method and let the normal training job produce a real
   PEFT artifact containing `adapter_config.json` and non-empty
   `adapter_model.safetensors` (or the supported binary equivalent).
-- Set `AAR_KEEP_CHECKPOINTS=1` for the canary and final run so the submission is
-  not deleted immediately after scoring. Retain candidates until the trusted
-  promotion decision is complete, then prune non-incumbent artifacts through a
-  separate bounded cleanup step.
+- Set `AAR_KEEP_CHECKPOINTS=0` for the canary and final run so redundant
+  `_train` staging is pruned. Keep decoupled
+  `AAR_TRAIN_EXIT_AFTER_SUBMIT=1`, which leaves the submitted adapter available
+  until the trusted promotion decision is complete; then prune non-incumbent
+  artifacts through a separate bounded cleanup step.
 - Require the evaluator to produce a valid score/result pair for the same
   source-hash-bound run ID. A training artifact without a successful evaluation
   is not eligible for promotion.

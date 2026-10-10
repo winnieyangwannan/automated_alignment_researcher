@@ -11,6 +11,11 @@ from aar.infrastructure.autodata_contract import (
     validate_training_data_contract,
 )
 
+RUBRIC = {
+    "version": "run9-axis-conditioned-v3",
+    "sha256": "sha256:" + "c" * 64,
+}
+
 
 def _contract(objective: str = "sft") -> dict:
     return {
@@ -23,7 +28,7 @@ def _contract(objective: str = "sft") -> dict:
         ),
         "required_rows": 1000,
         "minimum_successful_task_fraction": 0.95,
-        "judge_rubric_version": "run9-axis-conditioned-v2",
+        "judge_rubric": RUBRIC,
         "generator": {"model": "Kimi-K2.6", "deployment_id": "kimi"},
         "judge": {"model": "gpt-5-6-luna"},
         "target": {
@@ -65,7 +70,7 @@ def test_contract_is_derived_from_the_iteration_campaign_policy() -> None:
         _policy(),
         required_rows=1000,
         minimum_successful_task_fraction=0.95,
-        judge_rubric_version="run9-axis-conditioned-v2",
+        judge_rubric=RUBRIC,
     )
 
     assert contract == _contract()

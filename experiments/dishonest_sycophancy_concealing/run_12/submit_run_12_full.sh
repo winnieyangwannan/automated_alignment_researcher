@@ -11,14 +11,6 @@ SECRET_ENV="$(realpath -e -- "${AAR_RUN12_SECRET_ENV:-${REPO}/.env}")"
 RECOVERY_BUNDLE="$(realpath -e -- "${AAR_RUN12_RECOVERY_BUNDLE:-/storage/home/${USER}/aar-recovery/run7_20261007T004406Z-1b3303d02821/baseline_salvage}")"
 REUSED_BASELINE="${RECOVERY_BUNDLE}/gemma4_31b_multidimensional_baseline.json"
 RECOVERED_SOURCES="${RECOVERY_BUNDLE}/source_artifacts"
-RUN12_STORAGE_ROOT="${AAR_RUN12_STORAGE_ROOT:-/checkpoint/ram/${USER:?}}"
-mkdir -p "${RUN12_STORAGE_ROOT}/aar-runs" "${RUN12_STORAGE_ROOT}/aar-checkpoints"
-RUN12_STORAGE_ROOT="$(realpath -e -- "${RUN12_STORAGE_ROOT}")"
-case "${RUN12_STORAGE_ROOT}" in
-  /checkpoint/ram/"${USER}") ;;
-  *) echo "Run 12 storage root must be /checkpoint/ram/${USER}" >&2; exit 2 ;;
-esac
-CANARY_ROOT="$(realpath -e -- "${AAR_RUN12_CANARY_ROOT:-${RUN12_STORAGE_ROOT}/aar-runs/run12-adapter-target/20261009T150557Z-68f6178b2ac4}")"
 SV="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
 REQUIRED_AUTODATA_SHA=823c5948854df14664f3168bc5e6c49a2cecb975
@@ -30,8 +22,25 @@ config_json="$(PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_r
 [ "$(jq -r '.target_enabled' <<<"${config_json}")" = true ] || {
   echo "Run 12 requires target-aware AutoData YAML" >&2; exit 2;
 }
+RUN12_STORAGE_ROOT="${AAR_RUN12_STORAGE_ROOT:-$(jq -r '.storage_root' <<<"${config_json}")}"
+mkdir -p "${RUN12_STORAGE_ROOT}/aar-runs" "${RUN12_STORAGE_ROOT}/aar-checkpoints"
+RUN12_STORAGE_ROOT="$(realpath -e -- "${RUN12_STORAGE_ROOT}")"
+case "${RUN12_STORAGE_ROOT}" in
+  /checkpoint/ram/"${USER}") ;;
+  *) echo "Run 12 storage root must be /checkpoint/ram/${USER}" >&2; exit 2 ;;
+esac
+CANARY_ROOT="$(realpath -e -- "${AAR_RUN12_CANARY_ROOT:-${RUN12_STORAGE_ROOT}/aar-runs/run12-adapter-target/20261009T150557Z-68f6178b2ac4}")"
 RESEARCHER_DEPLOYMENT="$(jq -r '.researcher_kimi_deployment' <<<"${config_json}")"
 GENERATOR_DEPLOYMENT="$(jq -r '.generator_kimi_deployment' <<<"${config_json}")"
+AGENT_BACKEND="$(jq -r '.agent_backend' <<<"${config_json}")"
+[ "${AGENT_BACKEND}" = kimi ] || { echo "Run 12 requires agent.backend=kimi" >&2; exit 2; }
+export AAR_RUN_STORAGE_ROOT="${RUN12_STORAGE_ROOT}"
+export AAR_KEEP_CHECKPOINTS="$(jq -r 'if .keep_checkpoints then "1" else "0" end' <<<"${config_json}")"
+export AAR_EVAL_MEM="$(jq -r '.evaluation_memory' <<<"${config_json}")"
+export EVAL_MAX_TRUNCATION_RATE="$(jq -r '.max_truncation_rate' <<<"${config_json}")"
+export AAR_EXPECTED_MAX_TRUNCATION_RATE="${EVAL_MAX_TRUNCATION_RATE}"
+export AAR_AGENT_BACKEND="${AGENT_BACKEND}"
+export AAR_KIMI_TURN_TIMEOUT_SECONDS="$(jq -r '.turn_timeout_seconds' <<<"${config_json}")"
 export AAR_AUTODATA=1
 export AAR_AUTODATA_PROFILE="$(jq -r '.profile_name' <<<"${config_json}")"
 export AAR_AUTODATA_PROFILE_CONFIG="$(realpath -e -- "${PROFILE_CONFIG}")"
@@ -137,7 +146,7 @@ approval_digest="sha256:$(sha256sum "${approval_public}" | awk '{print $1}')"
 
 export PATH=/storage/home/${USER}/tools/node-v22.22.0-linux-arm64/bin:"${PATH}"
 export KIMI_CLI_PATH=/storage/home/${USER}/tools/kimi-code-2.1.1/node_modules/.bin/kimi
-export AAR_AGENT_BACKEND=kimi AAR_WEB_MODE=native_web
+export AAR_WEB_MODE=native_web
 export AAR_KIMI_SERVE_DEPLOYMENT="${RESEARCHER_DEPLOYMENT}" AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
 export AAR_KIMI_PROVIDER_TYPE=kimi AAR_KIMI_DISABLE_THINKING=1
 export AAR_SERVE_API_V2_ROOT="${SV}" KIMI_MODEL_CAPABILITIES=tool_use

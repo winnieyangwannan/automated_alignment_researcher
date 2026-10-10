@@ -12,13 +12,6 @@ TARGET_URL="${AAR_RUN12_TARGET_URL:-http://fair-cw-use2-1-ingress-slurm-ingress/
 TARGET_HOST_HEADER="${AAR_RUN12_TARGET_HOST_HEADER:-ram-inference-gateway.ingress.}"
 TARGET_MODEL="${AAR_RUN12_TARGET_MODEL:-gemma-4-31B-it}"
 TARGET_DEPLOYMENT_ID="${AAR_RUN12_TARGET_DEPLOYMENT_ID:-winnieyangwn-run12-gemma4-cshc}"
-RUN12_STORAGE_ROOT="${AAR_RUN12_STORAGE_ROOT:-/checkpoint/ram/${USER:?}}"
-mkdir -p "${RUN12_STORAGE_ROOT}/aar-runs"
-RUN12_STORAGE_ROOT="$(realpath -e -- "${RUN12_STORAGE_ROOT}")"
-case "${RUN12_STORAGE_ROOT}" in
-  /checkpoint/ram/"${USER}") ;;
-  *) echo "Run 12 storage root must be /checkpoint/ram/${USER}" >&2; exit 2 ;;
-esac
 GENERATOR_URL="${AAR_RUN12_GENERATOR_URL:-http://fair-cw-use2-1-ingress-slurm-ingress/v1}"
 GENERATOR_HOST_HEADER="${AAR_RUN12_GENERATOR_HOST_HEADER:-ram-inference-gateway.ingress.}"
 GENERATOR_MODEL="${AAR_RUN12_GENERATOR_MODEL:-Kimi-K2.6}"
@@ -46,6 +39,22 @@ GENERATOR_URL="$(jq -r '.generator_url' <<<"${config_json}")"
 GENERATOR_HOST_HEADER="$(jq -r '.generator_host_header' <<<"${config_json}")"
 GENERATOR_MODEL="$(jq -r '.generator_model' <<<"${config_json}")"
 GENERATOR_DEPLOYMENT_ID="$(jq -r '.generator_kimi_deployment' <<<"${config_json}")"
+RUN12_STORAGE_ROOT="${AAR_RUN12_STORAGE_ROOT:-$(jq -r '.storage_root' <<<"${config_json}")}"
+mkdir -p "${RUN12_STORAGE_ROOT}/aar-runs"
+RUN12_STORAGE_ROOT="$(realpath -e -- "${RUN12_STORAGE_ROOT}")"
+case "${RUN12_STORAGE_ROOT}" in
+  /checkpoint/ram/"${USER}") ;;
+  *) echo "Run 12 storage root must be /checkpoint/ram/${USER}" >&2; exit 2 ;;
+esac
+AGENT_BACKEND="$(jq -r '.agent_backend' <<<"${config_json}")"
+[ "${AGENT_BACKEND}" = kimi ] || { echo "Run 12 requires agent.backend=kimi" >&2; exit 2; }
+export AAR_RUN_STORAGE_ROOT="${RUN12_STORAGE_ROOT}"
+export AAR_KEEP_CHECKPOINTS="$(jq -r 'if .keep_checkpoints then "1" else "0" end' <<<"${config_json}")"
+export AAR_EVAL_MEM="$(jq -r '.evaluation_memory' <<<"${config_json}")"
+export EVAL_MAX_TRUNCATION_RATE="$(jq -r '.max_truncation_rate' <<<"${config_json}")"
+export AAR_EXPECTED_MAX_TRUNCATION_RATE="${EVAL_MAX_TRUNCATION_RATE}"
+export AAR_AGENT_BACKEND="${AGENT_BACKEND}"
+export AAR_KIMI_TURN_TIMEOUT_SECONDS="$(jq -r '.turn_timeout_seconds' <<<"${config_json}")"
 
 if [ "${ACTION}" = preflight ]; then
   attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "${REPO}" rev-parse --short=12 HEAD)"

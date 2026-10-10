@@ -6,7 +6,8 @@ New full launches compile two strict YAML sources:
   defines the reusable target-aware runtime, broker, concurrency, retry, and
   provider/token settings;
 - [`autodata_run.yaml`](autodata_run.yaml) defines Run 12's chains,
-  meta-optimization sizes, production budget, and training-data contract.
+  meta-optimization sizes, production budget, operational storage/evaluation/
+  agent policy, and training-data contract.
 
 `aar.autodata_run_config` validates both files and atomically generates each
 chain's campaign policy, training-data contract, shell runtime environment, and
@@ -15,6 +16,23 @@ cross-chain bindings, or changes to compiled artifacts fail before generation.
 The one-row infrastructure canary uses the smaller
 [`autodata_canary.yaml`](autodata_canary.yaml) run configuration with the same
 reusable profile.
+
+The operational sections use the same contract as Run 10: `storage` selects
+checkpoint-backed durable state and retention, `evaluation` selects Slurm memory
+and the generation-truncation ceiling, and `agent` selects the research backend
+and turn timeout. The strict AutoData compiler validates these sections and
+emits their shared AAR environment variables into every chain-local runtime
+file. Run 12 prunes each redundant `_train` checkpoint while its decoupled
+training job exits after submission, leaving the evaluated adapter available
+for promotion into the following iteration's target.
+
+The run YAML names the protected `recipe/judge_rubric.json`; it does not copy a
+free-text rubric version. The compiler reads that JSON, derives its declared
+version and SHA-256 content identity, and freezes both into the training-data
+contract and resolved configuration. Every generated row carries the same two
+fields, and training consumption fails if either differs. The rubric remains
+fixed during an AutoData meta-optimization execution, while an outer AAR
+iteration may revise it only by forking and approving a new pipeline revision.
 
 The resulting `target-aware-local-v1` runtime uses local Bubblewrap,
 concurrency 32 per chain, three model-request attempts, node-local state,

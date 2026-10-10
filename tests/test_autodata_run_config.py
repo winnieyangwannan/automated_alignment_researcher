@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,7 @@ from aar.autodata_campaign_policy import (
 from aar.autodata_run_config import (
     compile_run_config,
     inspect_configs,
+    load_run_config,
     load_runtime_profile,
     validate_compiled_config,
 )
@@ -75,9 +78,25 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
     assert policy["required_solve_env"]["AUTODATA_TARGET_MAX_OUTPUT"] == "65536"
     assert contract["target"]["required"] is True
     assert contract["required_rows"] == 1000
+    rubric_path = (
+        ROOT
+        / "aar/autodata_recipes/dishonest_sycophancy_concealing/recipe/judge_rubric.json"
+    )
+    assert contract["judge_rubric"] == {
+        "version": "run9-axis-conditioned-v3",
+        "sha256": "sha256:" + hashlib.sha256(rubric_path.read_bytes()).hexdigest(),
+    }
+    assert resolved["judge_rubric_source"] == str(rubric_path)
     assert "export AAR_AUTODATA_CONCURRENCY=32\n" in runtime
     assert "export AAR_AUTODATA_META_MAX_ITERATIONS=3\n" in runtime
     assert "export AAR_AUTODATA_PRODUCTION_ROWS=1000\n" in runtime
+    assert f"export AAR_RUN_STORAGE_ROOT=/checkpoint/ram/{os.environ['USER']}\n" in runtime
+    assert "export AAR_KEEP_CHECKPOINTS=0\n" in runtime
+    assert "export AAR_EVAL_MEM=0\n" in runtime
+    assert "export EVAL_MAX_TRUNCATION_RATE=0.2\n" in runtime
+    assert "export AAR_EXPECTED_MAX_TRUNCATION_RATE=0.2\n" in runtime
+    assert "export AAR_AGENT_BACKEND=kimi\n" in runtime
+    assert "export AAR_KIMI_TURN_TIMEOUT_SECONDS=1800\n" in runtime
     validated = validate_compiled_config(
         output / "resolved-config.yaml",
         output / "campaign-policy.json",
@@ -131,6 +150,29 @@ def test_profile_requires_all_target_aware_gates(tmp_path: Path) -> None:
         load_runtime_profile(path)
 
 
+@pytest.mark.parametrize(
+    ("section", "key", "value", "message"),
+    [
+        ("storage", "root", "relative/path", "absolute path"),
+        ("storage", "keep_checkpoints", "yes", "must be boolean"),
+        ("evaluation", "memory", "all", "Slurm memory value"),
+        ("evaluation", "max_truncation_rate", 1.1, "between zero and one"),
+        ("agent", "backend", "autodata", "must be claude or kimi"),
+        ("agent", "turn_timeout_seconds", 0, "positive integer"),
+    ],
+)
+def test_run_config_rejects_invalid_operational_policy(
+    tmp_path: Path, section: str, key: str, value: object, message: str
+) -> None:
+    config = yaml.safe_load(RUN.read_text())
+    config[section][key] = value
+    path = tmp_path / "invalid-run.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        load_run_config(path)
+
+
 def test_inspect_reports_static_yaml_values() -> None:
     inspected = inspect_configs(PROFILE, RUN)
     assert inspected == {
@@ -146,4 +188,10 @@ def test_inspect_reports_static_yaml_values() -> None:
         "generator_host_header": "ram-inference-gateway.ingress.",
         "generator_model": "Kimi-K2.6",
         "target_model": "gemma-4-31B-it",
+        "storage_root": f"/checkpoint/ram/{os.environ['USER']}",
+        "keep_checkpoints": False,
+        "evaluation_memory": "0",
+        "max_truncation_rate": 0.2,
+        "agent_backend": "kimi",
+        "turn_timeout_seconds": 1800,
     }

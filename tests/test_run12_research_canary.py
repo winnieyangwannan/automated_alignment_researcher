@@ -67,6 +67,7 @@ def test_only_bootstrap_canary_may_reuse_a_verified_base_deployment() -> None:
 def test_run12_artifacts_default_to_checkpoint_storage() -> None:
     full = (RUN12 / "submit_run_12_full.sh").read_text()
     target = (RUN12 / "submit_run_12.sh").read_text()
+    run_config = yaml.safe_load((RUN12 / "autodata_run.yaml").read_text())
 
     for launcher in (full, target):
         assert "AAR_RUN12_STORAGE_ROOT" in launcher
@@ -74,6 +75,40 @@ def test_run12_artifacts_default_to_checkpoint_storage() -> None:
         assert "Run 12 storage root must be" in launcher
     assert 'attempt="${RUN12_STORAGE_ROOT}/aar-runs/' in full
     assert 'checkpoint_root="${RUN12_STORAGE_ROOT}/aar-checkpoints/' in full
+    assert run_config["storage"] == {
+        "root": "/checkpoint/ram/{user}",
+        "keep_checkpoints": False,
+    }
+
+
+def test_run12_operational_defaults_flow_from_autodata_yaml() -> None:
+    run_config = yaml.safe_load((RUN12 / "autodata_run.yaml").read_text())
+    launcher = (RUN12 / "submit_run_12_full.sh").read_text()
+    pipeline = (RUN12 / "run_12_full_pipeline.sbatch").read_text()
+    compiler = (ROOT / "aar" / "autodata_run_config.py").read_text()
+
+    assert run_config["evaluation"] == {
+        "memory": "max",
+        "max_truncation_rate": 0.20,
+    }
+    assert run_config["agent"] == {
+        "backend": "kimi",
+        "turn_timeout_seconds": 1800,
+    }
+    for name in (
+        "AAR_RUN_STORAGE_ROOT",
+        "AAR_KEEP_CHECKPOINTS",
+        "AAR_EVAL_MEM",
+        "EVAL_MAX_TRUNCATION_RATE",
+        "AAR_AGENT_BACKEND",
+        "AAR_KIMI_TURN_TIMEOUT_SECONDS",
+    ):
+        assert name in compiler
+    assert "'.storage_root'" in launcher
+    assert 'source "${AAR_AUTODATA_RUNTIME_ENV}"' in pipeline
+    assert "compiled Run 12 storage root drifted" in pipeline
+    assert '"${AAR_KEEP_CHECKPOINTS:?missing checkpoint policy}" = 0' in pipeline
+    assert '"${AAR_TRAIN_EXIT_AFTER_SUBMIT:?missing decoupled training policy}" = 1' in pipeline
 
 
 def test_run12_deferred_launch_waits_for_a_working_gateway_route() -> None:
