@@ -38,7 +38,11 @@ AAR control plane
 │  └─ Gemma 4 31B IT fixed base + a new PEFT adapter
 │     Runs locally in the one-step GPU training job; it is not an API
 └─ AAR evaluator and evaluation judge
-   └─ Not launched in Canary 2; there is no held-out score
+   └─ Canary 2: not launched; there is no held-out score
+      Full Run 12: one persistent evaluator lane per chain serves the merged
+      Gemma base + candidate adapter through vLLM. gpt-5-6-luna judges the
+      suite's model-judged outputs through Meta Model API; deterministic and
+      rule-scored portions do not call a judge model
 
 AutoData data plane
 ├─ AutoData generator (the row-authoring model)
