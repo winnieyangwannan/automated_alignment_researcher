@@ -5,6 +5,98 @@ execution `exe_570e1daeb28c4a7795a2be9fac37fdf9`. A speed-up counts only durable
 `task_attempt.completed` events and accepted exported rows. The
 `taskAttemptsUsed` reservation counter is not treated as completed throughput.
 
+## What made production fast and stable
+
+The most important improvements, in impact order, were:
+
+1. **Move hot native SQLite state to node-local storage.** The controller now
+   restores the retained database into `$SLURM_TMPDIR`, performs live reads and
+   writes there, and publishes periodic online backups only after integrity and
+   digest checks. This removed the network-filesystem SQLite stall that produced
+   zero durable rows during Attempt 0.
+2. **Route directly to the healthy Kimi deployment through an authenticated
+   loopback bridge.** The shared inference ingress was returning HTTP 503 even
+   though Kimi itself was healthy. Attempt 2 therefore processed work quickly
+   but accepted zero rows. The direct bridge restored real model generation;
+   Attempt 3 immediately reached 45.7 accepted rows/min over its full window.
+3. **Use Local Bubblewrap instead of one Firecracker lease per example.** The
+   trusted question-only recipe can run as lightweight sandboxed processes on
+   the already allocated CPU node. This removes VM-pool 429s, lease latency,
+   OCI preparation, and other per-task gateway failure points.
+4. **Raise measured concurrency from 16 to 24 at both the native execution and
+   broker.** Attempt 5 sustained 23--24 jobs in flight and reached 94.5
+   successful tasks/min during active generation, about 57% above Attempt 3's
+   60.0 tasks/min at concurrency 16. Concurrency 32 was not assumed safe.
+5. **Give every recovery/chain job a fresh node-local broker ledger.** Native
+   AutoData state is the durable authority. Reusing an old transport ledger
+   caused HTTP 409 when a retry's repaired routing changed its job
+   specification. Per-job ledgers eliminate that collision and are archived
+   by attempt for auditability.
+6. **Use the recovery-aware, target-aware AutoData engine.** Pinned AutoData
+   `823c594` includes serialized SQLite writes, interrupted-finalization
+   reconciliation, selective final retries, and production-target stopping.
+   Together with the persistent lifecycle supervisor, this allowed Attempt 7
+   to finish in 10m43s with 1,083 accepted rows.
+
+The final active-generation rate was 64.8 accepted rows/min. The full Attempt
+7 rate, including restore, reconciliation, and final export, was 55.3 accepted
+rows/min.
+
+### Speed-up in numbers
+
+- **Worst observed interval:** 0 new durable rows in 19m07s. The controller was
+  stalled before inference, so a multiplicative speed-up is undefined.
+- **Original pre-fix production period:** 47 accepted rows in 83m25s, or 0.56
+  accepted rows/min and 106.5 aggregate seconds per accepted row.
+- **First healthy concurrency-16 window:** 45.7 accepted rows/min, about 81x
+  the original end-to-end rate.
+- **Peak measured concurrency-24 window:** 73.4 accepted rows/min during active
+  generation, about 130x the original end-to-end rate.
+- **Successful completion run:** 64.8 accepted rows/min during active
+  generation and 55.3 accepted rows/min including restore, reconciliation, and
+  export. Those are about 115x and 98x the original end-to-end rate,
+  respectively.
+- **Sandbox overhead context:** the earlier infrastructure canaries reduced
+  median broker-task latency from approximately 37 seconds with Firecracker to
+  approximately 9 seconds with Local Bubblewrap, while removing the finite VM
+  lease pool as the concurrency limiter.
+
+The end-to-end ratios include the original SQLite stall and therefore represent
+operator wall-clock improvement. The concurrency-16 versus concurrency-24
+comparison isolates healthy generation more directly: successful-task
+throughput rose from 60.0 to 94.5 tasks/min, a 57% improvement.
+
+## What future runs get automatically
+
+A new **Run 9** launched through the committed `submit_run_9.sh` and
+`run_9_pipeline.sbatch` gets these defaults:
+
+- Local Bubblewrap with supervised node-local native SQLite state;
+- a fresh node-local broker ledger for each chain job;
+- the authenticated Kimi loopback bridge when the configured proxy contract is
+  present;
+- pinned AutoData `823c594` or a fail-closed launch instead of silently using a
+  different engine; and
+- durable retained snapshots and cleanup.
+
+The following are not universal defaults:
+
+- Run 9's normal launcher still defaults to concurrency **16**. To use the
+  measured faster setting, launch with `AAR_AUTODATA_CONCURRENCY=24`. Keep 16
+  for a different endpoint/node until 24 has passed a capacity canary there.
+- The direct bridge requires a valid `AAR_KIMI_PROXY_INFO` for the intended
+  deployment. Run 9 supplies its known path automatically; another experiment
+  or deployment must supply and verify its own proxy contract.
+- A running Slurm job does not acquire later source changes. Relaunch or resume
+  through the updated chain launcher to receive these fixes.
+- Other AAR experiment launchers benefit from the generic fresh-ledger and
+  bridge code only when they enable supervised AutoData, choose `local-bwrap`,
+  provide `AAR_KIMI_PROXY_INFO`, and pin AutoData `823c594` or a newer commit
+  containing the same fixes.
+- The 25-hour controller ceiling is specific to the retained Run 9 recovery
+  launcher. Ordinary fast production should finish well below the standard
+  ceiling; unusually long retained executions must set a compatible timeout.
+
 ## Measurement contract
 
 - Preserve the original retained database and all failed-attempt logs.
@@ -36,7 +128,7 @@ Attempt 7 completed this plan successfully. The retained production execution
 is terminal `completed`, and the final dataset contains 1,083 rows, exceeding
 the 1,000-row requirement by 83.
 
-The completion attempt will use:
+The completion attempt used:
 
 - a node-local live native SQLite database restored from an immutable retained
   snapshot;
@@ -52,7 +144,7 @@ The completion attempt will use:
 - no artificial observation cutoff; the supervisor will run until native
   finalization reaches a terminal state.
 
-It will start only after one end-to-end task produces non-empty provider usage
+It started only after one end-to-end task produced non-empty provider usage
 and a non-`model_or_parse_failure` result. At the end of Attempt 2 the shared
 gateway ingress returned HTTP 503, while deployment `winnieyangwn-kimi26`
 remained healthy with one ready endpoint and zero load. Raising AutoData
