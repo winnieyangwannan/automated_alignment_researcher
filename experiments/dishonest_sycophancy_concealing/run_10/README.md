@@ -80,6 +80,20 @@ python experiments/dishonest_sycophancy_concealing/run_10/status_run_10.py <atte
 squeue -j <launch-and-child-job-ids> -o '%.18i %.30j %.10T %.10M %R'
 ```
 
+The Run-7-style frontier plot is generated from durable score and session
+artifacts rather than a run-specific hard-coded point list:
+
+```bash
+python scripts/plot_aar_frontier.py <attempt-or-team-dir> \
+  --output-stem <output-dir>/aar_frontier \
+  --title 'AAR Run 10 · Kimi 5×50'
+```
+
+The reusable plotter discovers the single team when given an attempt, joins
+score creation timestamps to chronological per-chain session logs across
+restarts, treats a point as frontier-valid only when both the capability and
+regression gates pass, and writes PNG, SVG, and a JSON provenance snapshot.
+
 After confirming a chain is terminal or genuinely hung, resume only the affected
 seed in the same preserved attempt:
 
