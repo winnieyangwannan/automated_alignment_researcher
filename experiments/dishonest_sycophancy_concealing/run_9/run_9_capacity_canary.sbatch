@@ -16,6 +16,7 @@ ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:?missing Firecracker environment}"
 CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:?missing canary concurrency}"
 TASK_COUNT="${AAR_AUTODATA_CANARY_TASK_COUNT:?missing canary task count}"
 MODEL_REQUEST_MAX_ATTEMPTS="${AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS:?missing model request max attempts}"
+GENERATOR_DEPLOYMENT="${AAR_AUTODATA_GENERATOR_DEPLOYMENT:?missing generator deployment id}"
 RUNNER="${AAR_AUTODATA_BROKER_RUNNER:?missing broker runner}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:?missing broker Python}"
 CAPABILITY_FILE="${AAR_AUTODATA_CAPABILITY_FILE:?missing capability file}"
@@ -149,6 +150,7 @@ for index in $(seq 1 "${TASK_COUNT}"); do
     --environment "${ENVIRONMENT}" \
     --generator-url "${generator_url}" \
     --generator-host-header "" \
+    --generator-deployment-id "${GENERATOR_DEPLOYMENT}" \
     --generator-max-output-tokens 768 \
     --model-request-max-attempts "${MODEL_REQUEST_MAX_ATTEMPTS}" \
     --allow-judge-rejection \

@@ -83,6 +83,7 @@ def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
     assert 'export AAR_AUTODATA_CONCURRENCY="${CONCURRENCY}"' in submitter
     assert 'export AAR_AUTODATA_CANARY_TASK_COUNT="${TASK_COUNT}"' in submitter
     assert 'export AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS="${MODEL_REQUEST_MAX_ATTEMPTS}"' in submitter
+    assert 'export AAR_AUTODATA_GENERATOR_DEPLOYMENT="${GENERATOR_DEPLOYMENT}"' in submitter
     assert '"AUTODATA_GENERATOR_DEPLOYMENT_ID": "${GENERATOR_DEPLOYMENT}"' in submitter
     assert "generator_deployment_id=%s" in submitter
     assert 'export AAR_AUTODATA_TARGET_BINDING="${target_binding}"' in submitter
@@ -94,6 +95,7 @@ def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
     assert 'install -m 600 "${KIMI_PROXY_INFO}" "${kimi_proxy_info}"' in submitter
     assert 'sbatch_args+=(--dependency="${SLURM_DEPENDENCY}")' in submitter
     assert "loopback_model_auth_bridge.py" in canary
+    assert '--generator-deployment-id "${GENERATOR_DEPLOYMENT}"' in canary
     assert 'environment.pop("AUTODATA_GENERATOR_HOST_HEADER", None)' in canary
     assert "--allow-judge-rejection" in canary
     assert '"accepted_rows_per_minute"' in canary
