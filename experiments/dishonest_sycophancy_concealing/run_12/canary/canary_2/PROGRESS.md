@@ -155,3 +155,24 @@ Commit this progress record, synchronize the resulting exact source revision,
 repeat endpoint/source preflight, and launch one fresh Canary 2 attempt. Continue
 to require a verified 1,000-row handoff and one real optimizer step before the
 canary can pass.
+
+<a id="run12-canary2-recovery-sync"></a>
+
+### ✅ 16:46 PT — RECOVERY SOURCE SYNCHRONIZED
+
+- Progress-record commit:
+  `6d5a162282ea54924b5e62b68f8e6c528685ab5f`.
+- The devserver source and isolated FAIR HPC execution checkout now resolve to
+  that exact commit.
+- The synchronized history includes the action-bridge correction at
+  `346b0852f0e87765801b46fa43aee6f43cb0e86d`.
+- Both checkouts were clean after synchronization; the separate `uv` checkout
+  and all retained attempt artifacts were left untouched.
+- No Canary 2 Slurm job was active during synchronization.
+
+#### ⏭️ Next step
+
+Run the endpoint and source preflight against this exact revision, then start a
+fresh Canary 2 attempt. Record all new job IDs, stage-transition times, task
+throughput, acceptance counts, model-call latency/rate limits, the verified
+1,000-row handoff, and the one-step training result here.
