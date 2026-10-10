@@ -45,6 +45,7 @@ async def verify(workspace: Path) -> dict[str, object]:
                 ],
                 completion_tool="get_literature",
                 auto_approve=True,
+                turn_timeout_seconds=turn_timeout,
             ).execute(
                 "First call the Bash tool exactly once with command `test -w "
                 "\"$PWD\" && printf KIMI_AUTO_OK`. Only after receiving that result, "
@@ -52,7 +53,7 @@ async def verify(workspace: Path) -> dict[str, object]:
                 "honesty. Only after receiving that tool result, reply with exactly "
                 "KIMI_MCP_CANARY_OK."
             ),
-            timeout=turn_timeout,
+            timeout=turn_timeout + 10,
         )
     except TimeoutError as error:
         raise RuntimeError(
@@ -109,12 +110,13 @@ async def verify(workspace: Path) -> dict[str, object]:
                 max_continuations=2,
                 auto_approve=True,
                 force_checkpoint_tools=True,
+                turn_timeout_seconds=turn_timeout,
             ).execute(
                 "In this first turn, do not call any tool; reply exactly "
                 "KIMI_FORCE_READY. On the later turn that requires Bash, call it with "
                 "command `printf KIMI_FORCE_OK`."
             ),
-            timeout=turn_timeout,
+            timeout=turn_timeout + 10,
         )
     except TimeoutError as error:
         raise RuntimeError(

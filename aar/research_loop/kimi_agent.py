@@ -437,10 +437,21 @@ class KimiAgent:
                 )
             except TimeoutError as error:
                 await self._terminate_process_group(process)
+                tool_names = [
+                    str(item.get("tool", ""))
+                    for item in output.get("tool_uses", [])
+                ]
+                last_event = output.get("raw_messages", [])[-1:]
+                last_event_type = (
+                    str(last_event[0].get("type", ""))
+                    if last_event and isinstance(last_event[0], dict)
+                    else ""
+                )
                 raise RuntimeError(
                     "Kimi Code turn exceeded "
                     f"{self.turn_timeout_seconds:g} seconds; terminated its "
-                    "process group"
+                    f"process group; tools={tool_names}, "
+                    f"last_event_type={last_event_type!r}"
                 ) from error
             stderr = (await stderr_task).decode("utf-8", errors="replace").strip()
             if stderr:
