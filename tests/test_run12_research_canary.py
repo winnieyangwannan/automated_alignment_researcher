@@ -76,10 +76,33 @@ def test_run12_deferred_launch_waits_for_a_working_gateway_route() -> None:
 
     assert 'STORAGE_ROOT="${AAR_RUN12_STORAGE_ROOT:-/checkpoint/ram/${USER:?}}"' in gate
     assert '"${STORAGE_ROOT}" = "/checkpoint/ram/${USER}"' in gate
-    assert 'GENERATOR_DEPLOYMENT="aar_8-kimi26"' in gate
+    assert 'GENERATOR_DEPLOYMENT="autodata_8-kimi26"' in gate
     assert 'GENERATOR_MODEL="Kimi-K2.6"' in gate
+    assert '"enable_thinking":false' in gate
     assert '"${INGRESS}/health"' in gate
     assert '"${INGRESS}/status"' in gate
     assert '"${INGRESS}/v1/models"' in gate
     assert '"${INGRESS}/v1/chat/completions"' in gate
     assert "submit_run_12_full.sh" in gate
+
+
+def test_run12_uses_separate_kimi_deployments_and_maximum_token_allowances() -> None:
+    launcher = (RUN12 / "submit_run_12_full.sh").read_text()
+    pipeline = (RUN12 / "run_12_full_pipeline.sbatch").read_text()
+    canary_submitter = (RUN12 / "submit_run_12.sh").read_text()
+    canary_job = (RUN12 / "run_12_target_canary.sbatch").read_text()
+
+    assert "RESEARCHER_DEPLOYMENT=aar_8-kimi26" in launcher
+    assert "GENERATOR_DEPLOYMENT=autodata_8-kimi26" in launcher
+    assert 'AAR_KIMI_SERVE_DEPLOYMENT="${RESEARCHER_DEPLOYMENT}"' in launcher
+    assert "KIMI_MODEL_MAX_OUTPUT_SIZE=65536" in launcher
+    assert "KIMI_MODEL_MAX_COMPLETION_TOKENS=65536" in launcher
+    assert "KIMI_MODEL_MAX_CONTEXT_SIZE=262144" in pipeline
+    assert "KIMI_MODEL_MAX_OUTPUT_SIZE=65536" in pipeline
+    assert "KIMI_MODEL_MAX_COMPLETION_TOKENS=65536" in pipeline
+    assert '"AUTODATA_GENERATOR_MAX_INPUT": "196608"' in canary_submitter
+    assert '"AUTODATA_GENERATOR_MAX_OUTPUT": "65536"' in canary_submitter
+    assert '"AUTODATA_JUDGE_MAX_INPUT": "1000000"' in canary_submitter
+    assert '"AUTODATA_JUDGE_MAX_OUTPUT": "65536"' in canary_submitter
+    assert "--generator-max-output-tokens 65536" in canary_job
+    assert "--judge-max-output-tokens 65536" in canary_job

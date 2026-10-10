@@ -22,7 +22,8 @@ CANARY_ROOT="$(realpath -e -- "${AAR_RUN12_CANARY_ROOT:-${RUN12_STORAGE_ROOT}/aa
 SV="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
 REQUIRED_AUTODATA_SHA=34f0a22c89a2a40e605afd43f3a7b11c25003ab7
-GENERATOR_DEPLOYMENT=aar_8-kimi26
+RESEARCHER_DEPLOYMENT=aar_8-kimi26
+GENERATOR_DEPLOYMENT=autodata_8-kimi26
 RUN_MODE="${AAR_RUN12_MODE:-full}"
 SEEDS_RAW="${AAR_RUN12_SEEDS:-alpha beta gamma delta epsilon}"
 TARGET_PAIRS="${AAR_RUN12_TARGET_PAIRS:-5}"
@@ -125,10 +126,10 @@ approval_digest="sha256:$(sha256sum "${approval_public}" | awk '{print $1}')"
 export PATH=/storage/home/${USER}/tools/node-v22.22.0-linux-arm64/bin:"${PATH}"
 export KIMI_CLI_PATH=/storage/home/${USER}/tools/kimi-code-2.1.1/node_modules/.bin/kimi
 export AAR_AGENT_BACKEND=kimi AAR_WEB_MODE=native_web
-export AAR_KIMI_SERVE_DEPLOYMENT="${GENERATOR_DEPLOYMENT}" AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
+export AAR_KIMI_SERVE_DEPLOYMENT="${RESEARCHER_DEPLOYMENT}" AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
 export AAR_KIMI_PROVIDER_TYPE=kimi AAR_KIMI_DISABLE_THINKING=1
 export AAR_SERVE_API_V2_ROOT="${SV}" KIMI_MODEL_CAPABILITIES=tool_use
-export KIMI_MODEL_MAX_OUTPUT_SIZE=4096 KIMI_MODEL_MAX_COMPLETION_TOKENS=4096
+export KIMI_MODEL_MAX_OUTPUT_SIZE=65536 KIMI_MODEL_MAX_COMPLETION_TOKENS=65536
 export AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS=180
 unset KIMI_AGENT_MODEL
 timeout 420 "${REPO}/.venv/bin/python" "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/verify_kimi_endpoint.py" \
@@ -217,9 +218,9 @@ job="$(sbatch --parsable --output="${attempt}/logs/pipeline-%j.out" --export=ALL
   "${SCRIPT_DIR}/run_12_full_pipeline.sbatch")"
 base_reused=false
 [ -z "${REUSE_BASE_DEPLOYMENT}" ] || base_reused=true
-printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nmode=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nkimi_deployment=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \
+printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nmode=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nresearcher_kimi_deployment=%s\nautodata_kimi_deployment=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \
   "${job}" "${attempt}" "${checkpoint_root}" "${commit}" "${RUN_MODE}" \
-  "${GENERATOR_DEPLOYMENT}" "${#seeds[@]}" "${TARGET_PAIRS}" "${SEEDS_RAW}" \
+  "${RESEARCHER_DEPLOYMENT}" "${GENERATOR_DEPLOYMENT}" "${#seeds[@]}" "${TARGET_PAIRS}" "${SEEDS_RAW}" \
   "${deployments[*]}" "${base_reused}" \
   | tee "${attempt}/metadata/submission.txt"
 unset MODEL_API_KEY HF_TOKEN

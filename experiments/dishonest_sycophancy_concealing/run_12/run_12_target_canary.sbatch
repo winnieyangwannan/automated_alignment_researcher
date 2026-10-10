@@ -80,7 +80,12 @@ PYTHONPATH="${CANARY_PYTHONPATH}" "${REPO}/.venv/bin/python" \
   --generator-url "${AAR_RUN12_GENERATOR_URL:?}" \
   --generator-host-header "${AAR_RUN12_GENERATOR_HOST_HEADER:?}" \
   --generator-deployment-id "${AAR_RUN12_GENERATOR_DEPLOYMENT_ID:?}" \
-  --generator-max-output-tokens 768 \
+  --generator-max-input-tokens 196608 \
+  --generator-max-output-tokens 65536 \
+  --judge-max-input-tokens 1000000 \
+  --judge-max-output-tokens 65536 \
+  --target-max-input-tokens 196608 \
+  --target-max-output-tokens 65536 \
   --model-request-max-attempts 1 \
   --timeout-seconds 600 \
   > "${ROOT}/canary.log" 2>&1

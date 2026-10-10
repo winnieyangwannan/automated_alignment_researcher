@@ -282,6 +282,22 @@ one-GPU persistent logical Gemma research lanes. It starts at AutoData
 concurrency eight per chain, bounding fleet-wide generation concurrency at
 forty while retaining substantial parallelism.
 
+### Default model token allowances
+
+Run 12 and future AutoData campaigns use the maximum supported token ceilings
+by default:
+
+- AAR researcher Kimi: 262,144-token context and 65,536 output tokens;
+- AutoData Kimi: 196,608 input and 65,536 output tokens, preserving the full
+  262,144-token combined context window; and
+- GPT-5.6 Luna AutoData judge: 1,000,000 input and 65,536 output tokens.
+
+These values are allowances, not generation targets. Normal structured
+generation and judgment should stop much earlier. Health probes remain small
+because they test routing rather than research quality. Shared recipe and
+campaign-policy defaults own these ceilings so future run launchers inherit
+them; focused launch tests reject Run 12 scripts that restore lower overrides.
+
 ## Backend-independent AutoData bootstrap
 
 After `submit_idea_proposal` approves and freezes a method, trusted AAR

@@ -15,7 +15,7 @@ EXPECTED_COMMIT="${AAR_RUN12_EXPECTED_COMMIT:?missing pinned Run 12 commit}"
 STORAGE_ROOT="${AAR_RUN12_STORAGE_ROOT:-/checkpoint/ram/${USER:?}}"
 INGRESS="http://fair-cw-use2-1-ingress-slurm-ingress"
 HOST_HEADER="ram-inference-gateway.ingress."
-GENERATOR_DEPLOYMENT="aar_8-kimi26"
+GENERATOR_DEPLOYMENT="autodata_8-kimi26"
 GENERATOR_MODEL="Kimi-K2.6"
 WAIT_SECONDS="${AAR_RUN12_GATEWAY_WAIT_SECONDS:-10800}"
 POLL_SECONDS="${AAR_RUN12_GATEWAY_POLL_SECONDS:-30}"
@@ -63,7 +63,7 @@ while (( SECONDS < deadline )); do
     probe_code="$(curl -sS --noproxy '*' --max-time 90 -o "${response}" -w '%{http_code}' \
       -H "Host: ${HOST_HEADER}" -H "Content-Type: application/json" \
       -H "X-Deployment-Id: ${GENERATOR_DEPLOYMENT}" \
-      --data '{"model":"Kimi-K2.6","messages":[{"role":"user","content":"Reply with OK."}],"temperature":0,"max_tokens":8}' \
+      --data '{"model":"Kimi-K2.6","messages":[{"role":"user","content":"Reply with OK."}],"temperature":0,"max_tokens":32,"chat_template_kwargs":{"enable_thinking":false}}' \
       "${INGRESS}/v1/chat/completions" || true)"
     if [ "${probe_code}" = 200 ] && jq -e '.choices[0].message.content | type == "string"' \
         "${response}" >/dev/null; then

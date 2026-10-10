@@ -127,8 +127,12 @@ def _parser() -> argparse.ArgumentParser:
         default="run12-adapter-target-canary",
         help="run-specific idempotency prefix for a target-aware canary",
     )
-    parser.add_argument("--generator-max-input-tokens", type=_positive_integer, default=4096)
-    parser.add_argument("--generator-max-output-tokens", type=_positive_integer, default=1536)
+    parser.add_argument(
+        "--generator-max-input-tokens", type=_positive_integer, default=196608
+    )
+    parser.add_argument(
+        "--generator-max-output-tokens", type=_positive_integer, default=65536
+    )
     parser.add_argument(
         "--generator-input-usd-per-million", type=_decimal, default=Decimal("1")
     )
@@ -141,10 +145,18 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--judge-output-usd-per-million", type=_decimal, default=Decimal("4")
     )
-    parser.add_argument("--judge-max-input-tokens", type=_positive_integer, default=4096)
-    parser.add_argument("--judge-max-output-tokens", type=_positive_integer, default=512)
-    parser.add_argument("--target-max-input-tokens", type=_positive_integer, default=8192)
-    parser.add_argument("--target-max-output-tokens", type=_positive_integer, default=512)
+    parser.add_argument(
+        "--judge-max-input-tokens", type=_positive_integer, default=1_000_000
+    )
+    parser.add_argument(
+        "--judge-max-output-tokens", type=_positive_integer, default=65536
+    )
+    parser.add_argument(
+        "--target-max-input-tokens", type=_positive_integer, default=196608
+    )
+    parser.add_argument(
+        "--target-max-output-tokens", type=_positive_integer, default=65536
+    )
     parser.add_argument("--model-request-max-attempts", type=_positive_integer, default=3)
     parser.add_argument("--timeout-seconds", type=_positive_integer, default=900)
     parser.add_argument(

@@ -269,7 +269,7 @@ def _probe_target(
     row: dict[str, str], task: dict[str, Any], config: dict[str, str]
 ) -> tuple[dict[str, str], dict[str, Any]]:
     max_tokens = _bounded_positive_int_env(
-        "AUTODATA_TARGET_MAX_OUTPUT", "1024", maximum=65536
+        "AUTODATA_TARGET_MAX_OUTPUT", "65536", maximum=65536
     )
     headers = {"X-Deployment-Id": config["AUTODATA_TARGET_DEPLOYMENT_ID"]}
     host_header = os.environ.get("AUTODATA_TARGET_HOST_HEADER", "").strip()
@@ -298,7 +298,7 @@ def _probe_target(
             os.environ.get("AUTODATA_TARGET_OUTPUT_USD_PER_MILLION", "0")
         ),
         max_input_tokens=_bounded_positive_int_env(
-            "AUTODATA_TARGET_MAX_INPUT", "8192", maximum=1_000_000
+            "AUTODATA_TARGET_MAX_INPUT", "196608", maximum=1_000_000
         ),
         max_output_tokens=max_tokens,
     )
@@ -322,7 +322,9 @@ def _generate(
     base = _required_env("AUTODATA_GENERATOR_URL").rstrip("/")
     model = _required_env("AUTODATA_GENERATOR_MODEL")
     deployment = _required_env("AUTODATA_GENERATOR_DEPLOYMENT_ID")
-    max_tokens = int(os.environ.get("AUTODATA_GENERATOR_MAX_OUTPUT", "1536"))
+    max_tokens = _bounded_positive_int_env(
+        "AUTODATA_GENERATOR_MAX_OUTPUT", "65536", maximum=65536
+    )
     headers = {"X-Deployment-Id": deployment}
     host_header = os.environ.get("AUTODATA_GENERATOR_HOST_HEADER", "").strip()
     if host_header:
@@ -364,7 +366,7 @@ def _generate(
         input_rate=Decimal(_required_env("AUTODATA_GENERATOR_INPUT_USD_PER_MILLION")),
         output_rate=Decimal(_required_env("AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION")),
         max_input_tokens=_bounded_positive_int_env(
-            "AUTODATA_GENERATOR_MAX_INPUT", "4096", maximum=1_000_000
+            "AUTODATA_GENERATOR_MAX_INPUT", "196608", maximum=1_000_000
         ),
         max_output_tokens=max_tokens,
     )
@@ -468,7 +470,9 @@ def _judge(
                 + json.dumps(rubric, sort_keys=True)
             ),
             "reasoning": {"effort": "low"},
-            "max_output_tokens": int(os.environ.get("AUTODATA_JUDGE_MAX_OUTPUT", "512")),
+            "max_output_tokens": _bounded_positive_int_env(
+                "AUTODATA_JUDGE_MAX_OUTPUT", "65536", maximum=65536
+            ),
         },
         headers={"Authorization": "Bearer " + _required_env("MODEL_API_KEY")},
         timeout=int(os.environ.get("AUTODATA_JUDGE_TIMEOUT", "90")),
@@ -480,9 +484,11 @@ def _judge(
         input_rate=Decimal(_required_env("AUTODATA_JUDGE_INPUT_USD_PER_MILLION")),
         output_rate=Decimal(_required_env("AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION")),
         max_input_tokens=_bounded_positive_int_env(
-            "AUTODATA_JUDGE_MAX_INPUT", "4096", maximum=1_000_000
+            "AUTODATA_JUDGE_MAX_INPUT", "1000000", maximum=1_000_000
         ),
-        max_output_tokens=int(os.environ.get("AUTODATA_JUDGE_MAX_OUTPUT", "512")),
+        max_output_tokens=_bounded_positive_int_env(
+            "AUTODATA_JUDGE_MAX_OUTPUT", "65536", maximum=65536
+        ),
     )
     try:
         verdict = _json_object(_judge_text(response))
