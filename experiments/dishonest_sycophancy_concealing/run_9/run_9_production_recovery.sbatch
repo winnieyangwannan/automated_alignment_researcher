@@ -89,7 +89,8 @@ done
 "${REPO}/.venv/bin/python" "${SUPERVISOR}" restore --state "${LOCAL_STATE}" --retained-state "${RETAINED_STATE}" --require-manifest >/dev/null
 "${REPO}/.venv/bin/python" - \
   "${LOCAL_STATE}" "${CAMPAIGN_POLICY_SOURCE}" "${CAMPAIGN_POLICY}" \
-  "${EXECUTION_ID}" "${METRICS_DIR}/${ATTEMPT_LABEL}-routing.json" <<'PY'
+  "${EXECUTION_ID}" "${METRICS_DIR}/${ATTEMPT_LABEL}-routing.json" \
+  "${CONCURRENCY}" <<'PY'
 import datetime
 import hashlib
 import json
@@ -97,8 +98,14 @@ import pathlib
 import sqlite3
 import sys
 
-state, source_policy, target_policy, execution_id, receipt = map(pathlib.Path, sys.argv[1:])
-execution_id_text = str(execution_id)
+state = pathlib.Path(sys.argv[1])
+source_policy = pathlib.Path(sys.argv[2])
+target_policy = pathlib.Path(sys.argv[3])
+execution_id_text = sys.argv[4]
+receipt_path = pathlib.Path(sys.argv[5])
+desired_concurrency = int(sys.argv[6])
+if desired_concurrency not in {16, 24, 32}:
+    raise RuntimeError("unsupported repaired execution concurrency")
 bridge_url = "http://127.0.0.1:30611/v1"
 with sqlite3.connect(state) as database:
     row = database.execute(
@@ -117,6 +124,8 @@ with sqlite3.connect(state) as database:
         raise RuntimeError("unexpected generator URL; refusing routing repair")
     environment["AUTODATA_GENERATOR_URL"] = bridge_url
     environment["AUTODATA_GENERATOR_HOST_HEADER"] = ""
+    previous_concurrency = repaired.get("concurrency")
+    repaired["concurrency"] = desired_concurrency
     database.execute(
         "UPDATE executions SET executionJson=?,updatedAt=CURRENT_TIMESTAMP WHERE id=?",
         (json.dumps(repaired, sort_keys=True, separators=(",", ":")), execution_id_text),
@@ -140,10 +149,11 @@ record = {
     "new_execution_sha256": hashlib.sha256(canonical(repaired)).hexdigest(),
     "old_url": previous_url,
     "new_url": bridge_url,
+    "old_concurrency": previous_concurrency,
+    "new_concurrency": desired_concurrency,
     "generator_model": environment["AUTODATA_GENERATOR_MODEL"],
     "generator_deployment_id": environment["AUTODATA_GENERATOR_DEPLOYMENT_ID"],
 }
-receipt_path = pathlib.Path(receipt)
 receipt_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 receipt_path.chmod(0o600)
 PY
