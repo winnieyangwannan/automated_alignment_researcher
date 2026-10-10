@@ -702,71 +702,65 @@ class KimiAgent:
         ):
             workspace_id = self._autodata_workspace_id(approved_run_id)
             if workspace_id is not None:
-                begun_action = self._latest_begun_autodata_action(names, inputs)
-                if begun_action is not None:
-                    action_id, _begin_index = begun_action
-                    action = self._autodata_action_record(action_id)
-                    if action is not None and action.get("status") == "in_progress":
-                        result_path = Path(
-                            f"/tmp/aar-autodata-{action_id}-result.json"
+                action = self._autodata_pending_action_record()
+                if action is not None and action["kind"] in {
+                    "approve_grounding",
+                    "approve_baseline",
+                    "approve_resources",
+                }:
+                    return (
+                        "Call the native structured MCP tool review_autodata_action "
+                        f"exactly once now with action_id={action['id']}. This is a "
+                        "delegated approval action; do not begin, complete, or approve "
+                        "it through Bash and do not emit prose."
+                    )
+                if action is not None:
+                    if action["status"] == "pending":
+                        self._autodata_begin_action(action["id"])
+                        action = self._autodata_action_record(action["id"])
+                    if action is None or action["status"] != "in_progress":
+                        raise RuntimeError(
+                            "trusted AutoData action bridge failed to acquire action"
                         )
-                        if not result_path.is_file():
-                            action_spec = json.dumps(
-                                action.get("spec"), sort_keys=True
-                            )[:6000]
-                            return (
-                                f"Resume the already leased native AutoData action "
-                                f"{action_id}; do not call action begin or status again. "
-                                "Call the native Write tool exactly once now. If the "
-                                "action still requires one scoped allowed file edit, "
-                                "make that edit under editable_root first. Otherwise "
-                                f"write a valid JSON object to {result_path} satisfying "
-                                "the action's requested outputs. Use only the action "
-                                "instructions and allowed paths, and do not use Bash. "
-                                "Action specification: "
-                                f"{action_spec}"
-                            )
+                    result_path = Path(
+                        f"/tmp/aar-autodata-{action['id']}-result.json"
+                    )
+                    if not result_path.is_file():
+                        action_spec = json.dumps(action.get("spec"), sort_keys=True)[:6000]
                         return (
-                            f"Resume the already leased native AutoData action "
-                            f"{action_id}. Its result file exists at {result_path}. "
-                            "Call the native Bash tool exactly once now to run the "
-                            "plugin wrapper's `action complete` for this action with "
-                            "the exact lease token returned by its prior `action begin` "
-                            f"and `--result {result_path}`. Do not print or alter the "
-                            "lease token, do not begin the action again, and do not call "
-                            "another tool."
+                            "The trusted controller has securely leased native AutoData "
+                            f"action {action['id']}; do not call action begin, action "
+                            "complete, or status. Call the native Write tool exactly "
+                            "once now. If the action still requires one scoped allowed "
+                            "file edit, make that edit under editable_root first. "
+                            "Otherwise write a valid JSON object to "
+                            f"{result_path} satisfying the requested outputs. Use only "
+                            "the action instructions and allowed paths; do not use Bash. "
+                            f"Action specification: {action_spec}"
                         )
+                    self._autodata_complete_action(action["id"], result_path)
                 status_subject = self._autodata_status_subject(workspace_id)
+                status_snapshot = self._autodata_native_status(status_subject)
                 status_command = (
-                    'python3 "${AAR_AUTODATA_PLUGIN_ROOT}/scripts/autodata.py" '
-                    '--state "$AAR_AUTODATA_STATE" '
-                    '--artifacts "$AAR_AUTODATA_ARTIFACTS" '
-                    '--workspaces "$AAR_AUTODATA_WORKSPACES" '
-                    f"status {shlex.quote(status_subject)}"
+                    "sleep 10"
                 )
                 return (
                     f"The proposal is approved with run_id={approved_run_id}, and "
                     "trusted orchestration already created and registered native "
                     f"AutoData workspace_id={workspace_id}. The current supervised "
-                    f"status subject is {status_subject}. Do not load a skill, "
+                    f"status subject is {status_subject}. Trusted read-only native "
+                    "status is "
+                    f"{json.dumps(status_snapshot, sort_keys=True)[:12000]}. "
+                    "Do not load a skill, "
                     "create/fork/register a workspace, edit the approved method, or "
-                    "submit another proposal. Call the native Bash tool exactly once "
-                    f"now with command={json.dumps(status_command)}. After status "
-                    "returns, remain in this same turn and fulfill only its exact "
-                    "pending visible host action through the native action lease "
-                    "workflow; do not stop after describing the next tool call. For "
-                    "approve_grounding, approve_baseline, or approve_resources, call "
-                    "review_autodata_action with the exact action ID instead. The "
-                    "ordinary native protocol is exactly `action begin ACTION_ID`, "
-                    "perform only the returned instructions and allowed edits, use "
-                    "the native Write tool to create a valid JSON result file at "
-                    "`/tmp/aar-autodata-ACTION_ID-result.json`, then call `action "
-                    "complete ACTION_ID --lease-token TOKEN --result RESULT_FILE`. "
-                    "Never embed action-result JSON in Bash, a heredoc, printf, echo, "
-                    "or inline Python. "
-                    "lifecycle supervisor alone calls workspace/execution step. "
-                    "Continue meta-optimization and production until the verified "
-                    "training-handoff exists; emit real tool calls, not planning prose."
+                    "submit another proposal. If the status is still active with no "
+                    "pending host action, the lifecycle supervisor owns the next "
+                    "deterministic step: call the native Bash tool exactly once now "
+                    f"with command={json.dumps(status_command)} and do not run a "
+                    "lifecycle or status command yourself. If the status is terminal, "
+                    "use the system prompt's exact next non-action export or supervised "
+                    "execution-creation command instead. Continue until the verified "
+                    "training handoff exists."
                 )
             return (
                 f"The proposal is already approved with run_id={approved_run_id}. "
@@ -940,20 +934,6 @@ class KimiAgent:
         return None
 
     @staticmethod
-    def _latest_begun_autodata_action(
-        names: list[str], inputs: list[dict[str, Any]]
-    ) -> tuple[str, int] | None:
-        begun: list[tuple[str, int]] = []
-        for index, name in enumerate(names):
-            if name != "Bash":
-                continue
-            command = str(inputs[index].get("command", ""))
-            match = re.search(r"\baction\s+begin\s+(act_[0-9a-f]{24})\b", command)
-            if match:
-                begun.append((match.group(1), index))
-        return begun[-1] if begun else None
-
-    @staticmethod
     def _autodata_action_record(action_id: str) -> dict[str, Any] | None:
         """Read non-secret action state needed to resume a leased host action."""
         if not re.fullmatch(r"act_[0-9a-f]{24}", action_id):
@@ -980,7 +960,152 @@ class KimiAgent:
             return None
         if not isinstance(spec, dict):
             return None
-        return {"kind": str(row[0]), "status": str(row[1]), "spec": spec}
+        return {
+            "id": action_id,
+            "kind": str(row[0]),
+            "status": str(row[1]),
+            "spec": spec,
+        }
+
+    @staticmethod
+    def _autodata_pending_action_record() -> dict[str, Any] | None:
+        state_raw = os.environ.get("AAR_AUTODATA_STATE", "").strip()
+        if not state_raw:
+            return None
+        state = Path(state_raw)
+        if state.is_symlink() or not state.is_file():
+            return None
+        try:
+            with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
+                row = connection.execute(
+                    "SELECT id FROM actions WHERE status IN ('pending','in_progress') "
+                    "ORDER BY createdAt,id LIMIT 1"
+                ).fetchone()
+        except sqlite3.Error:
+            return None
+        if row is None:
+            return None
+        return KimiAgent._autodata_action_record(str(row[0]))
+
+    @staticmethod
+    def _autodata_cli(*arguments: str) -> dict[str, Any]:
+        plugin_raw = os.environ.get("AAR_AUTODATA_PLUGIN_ROOT", "").strip()
+        state = os.environ.get("AAR_AUTODATA_STATE", "").strip()
+        artifacts = os.environ.get("AAR_AUTODATA_ARTIFACTS", "").strip()
+        workspaces = os.environ.get("AAR_AUTODATA_WORKSPACES", "").strip()
+        if not all((plugin_raw, state, artifacts, workspaces)):
+            raise RuntimeError("trusted AutoData action bridge is not configured")
+        wrapper = Path(plugin_raw) / "scripts/autodata.py"
+        if wrapper.is_symlink() or not wrapper.is_file():
+            raise RuntimeError("trusted AutoData wrapper is unavailable")
+        python = os.environ.get("AAR_AUTODATA_WRAPPER_PYTHON", sys.executable)
+        completed = subprocess.run(
+            [
+                python,
+                str(wrapper),
+                "--state",
+                state,
+                "--artifacts",
+                artifacts,
+                "--workspaces",
+                workspaces,
+                *arguments,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = completed.stderr.strip()[-2000:]
+            raise RuntimeError(
+                "trusted AutoData action bridge command failed: "
+                + (detail or f"exit {completed.returncode}")
+            )
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(
+                "trusted AutoData action bridge returned invalid JSON"
+            ) from error
+        if not isinstance(payload, dict):
+            raise RuntimeError("trusted AutoData action bridge returned a non-object")
+        return payload
+
+    @staticmethod
+    def _autodata_action_lease_path(action_id: str) -> Path:
+        team_raw = os.environ.get("TEAM_DIR", "").strip()
+        if not team_raw:
+            raise RuntimeError("TEAM_DIR is required for AutoData action leases")
+        job_id = re.sub(
+            r"[^A-Za-z0-9_.-]", "_", os.environ.get("SLURM_JOB_ID", "local")
+        )
+        root = Path(team_raw) / "autodata" / "runtime" / job_id / "action-leases"
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        root.chmod(0o700)
+        return root / f"{action_id}.token"
+
+    @staticmethod
+    def _write_private_text(path: Path, value: str) -> None:
+        temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(value)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    @classmethod
+    def _autodata_begin_action(cls, action_id: str) -> None:
+        lease_path = cls._autodata_action_lease_path(action_id)
+        lease_path.unlink(missing_ok=True)
+        payload = cls._autodata_cli("action", "begin", action_id)
+        token = payload.get("lease_token")
+        action = payload.get("action")
+        if not isinstance(token, str) or len(token) < 20:
+            raise RuntimeError("trusted AutoData action begin returned no lease")
+        if not isinstance(action, dict) or action.get("id") != action_id:
+            raise RuntimeError("trusted AutoData action begin returned the wrong action")
+        cls._write_private_text(lease_path, token)
+
+    @classmethod
+    def _autodata_complete_action(cls, action_id: str, result_path: Path) -> None:
+        try:
+            result = json.loads(result_path.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("AutoData action result is not valid JSON") from error
+        if not isinstance(result, dict):
+            raise RuntimeError("AutoData action result must be one JSON object")
+        lease_path = cls._autodata_action_lease_path(action_id)
+        try:
+            token = lease_path.read_text().strip()
+        except OSError as error:
+            raise RuntimeError("trusted AutoData action lease is unavailable") from error
+        if len(token) < 20:
+            raise RuntimeError("trusted AutoData action lease is invalid")
+        cls._autodata_cli(
+            "action",
+            "complete",
+            action_id,
+            "--lease-token",
+            token,
+            "--result",
+            str(result_path),
+        )
+        lease_path.unlink(missing_ok=True)
+        result_path.unlink(missing_ok=True)
+
+    @classmethod
+    def _autodata_native_status(cls, subject_id: str) -> dict[str, Any]:
+        return cls._autodata_cli("status", subject_id)
 
     @staticmethod
     def _autodata_status_subject(workspace_id: str) -> str:

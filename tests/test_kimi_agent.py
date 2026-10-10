@@ -1289,11 +1289,8 @@ class KimiAgentTest(unittest.TestCase):
             }
             with sqlite3.connect(state) as connection:
                 connection.execute(
-                    "CREATE TABLE actions(id TEXT,kind TEXT,status TEXT,specJson TEXT)"
-                )
-                connection.execute(
-                    "INSERT INTO actions VALUES(?,?,?,?)",
-                    (action_id, "clarify_design", "in_progress", json.dumps(action_spec)),
+                    "CREATE TABLE actions("
+                    "id TEXT,kind TEXT,status TEXT,specJson TEXT,createdAt TEXT)"
                 )
             control = root / "lifecycle-control.json"
             control.write_text(json.dumps({"schema": "test", "subjects": []}))
@@ -1328,51 +1325,72 @@ class KimiAgentTest(unittest.TestCase):
                 bootstrap.parent.mkdir(parents=True)
                 workspace_id = "ws_" + "1" * 32
                 bootstrap.write_text(json.dumps({"workspace_id": workspace_id}))
-                bootstrapped_prompt = agent._continuation_prompt(output)
+                with patch.object(
+                    KimiAgent,
+                    "_autodata_native_status",
+                    return_value={"status": "active"},
+                ):
+                    bootstrapped_prompt = agent._continuation_prompt(output)
+                    bootstrapped_tool = agent._continuation_tool(output)
                 self.assertIn("trusted orchestration already created", bootstrapped_prompt)
                 self.assertIn(workspace_id, bootstrapped_prompt)
                 self.assertIn("Do not load a skill", bootstrapped_prompt)
                 self.assertNotIn("create or resume", bootstrapped_prompt)
-                self.assertIn("autodata.py", bootstrapped_prompt)
-                self.assertIn(f"status {workspace_id}", bootstrapped_prompt)
-                self.assertIn("remain in this same turn", bootstrapped_prompt)
-                self.assertIn("action begin ACTION_ID", bootstrapped_prompt)
-                self.assertIn("native Write tool", bootstrapped_prompt)
-                self.assertIn(
-                    "Never embed action-result JSON in Bash", bootstrapped_prompt
-                )
-                self.assertEqual(agent._continuation_tool(output), "Bash")
+                self.assertIn("Trusted read-only native status", bootstrapped_prompt)
+                self.assertIn('command="sleep 10"', bootstrapped_prompt)
+                self.assertEqual(bootstrapped_tool, "Bash")
 
-                leased_output = {
-                    "tool_uses": [
-                        *output["tool_uses"],
-                        {
-                            "tool": "Bash",
-                            "input": {
-                                "command": (
-                                    "python autodata.py action begin " + action_id
-                                )
-                            },
-                        },
-                    ]
-                }
+                with sqlite3.connect(state) as connection:
+                    connection.execute(
+                        "INSERT INTO actions VALUES(?,?,?,?,CURRENT_TIMESTAMP)",
+                        (
+                            action_id,
+                            "clarify_design",
+                            "in_progress",
+                            json.dumps(action_spec),
+                        ),
+                    )
+                lease_path = agent._autodata_action_lease_path(action_id)
+                agent._write_private_text(lease_path, "x" * 32)
                 result_path = Path(f"/tmp/aar-autodata-{action_id}-result.json")
                 result_path.unlink(missing_ok=True)
                 try:
-                    action_prompt = agent._continuation_prompt(leased_output)
-                    self.assertIn("already leased", action_prompt)
+                    action_prompt = agent._continuation_prompt(output)
+                    self.assertIn("securely leased", action_prompt)
                     self.assertIn(str(result_path), action_prompt)
                     self.assertIn("Confirm the reviewed workspace intent", action_prompt)
-                    self.assertEqual(agent._continuation_tool(leased_output), "Write")
+                    self.assertEqual(agent._continuation_tool(output), "Write")
 
                     result_path.write_text(
                         json.dumps({"summary": "confirmed", "decisions": []})
                     )
-                    completion_prompt = agent._continuation_prompt(leased_output)
-                    self.assertIn("action complete", completion_prompt)
-                    self.assertIn("exact lease token", completion_prompt)
-                    self.assertEqual(agent._continuation_tool(leased_output), "Bash")
+                    with (
+                        patch.object(
+                            KimiAgent,
+                            "_autodata_cli",
+                            return_value={"status": "completed"},
+                        ) as cli,
+                        patch.object(
+                            KimiAgent,
+                            "_autodata_native_status",
+                            return_value={"status": "active"},
+                        ),
+                    ):
+                        completion_prompt = agent._continuation_prompt(output)
+                    cli.assert_called_once_with(
+                        "action",
+                        "complete",
+                        action_id,
+                        "--lease-token",
+                        "x" * 32,
+                        "--result",
+                        str(result_path),
+                    )
+                    self.assertIn("Trusted read-only native status", completion_prompt)
+                    self.assertFalse(lease_path.exists())
+                    self.assertFalse(result_path.exists())
                 finally:
+                    lease_path.unlink(missing_ok=True)
                     result_path.unlink(missing_ok=True)
 
                 execution_id = "exe_" + "3" * 32
