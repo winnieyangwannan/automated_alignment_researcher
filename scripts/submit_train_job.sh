@@ -72,6 +72,9 @@ if [ "${AAR_REQUIRE_METHOD_CONTRACT:-0}" = "1" ]; then
   if [ "${AAR_REQUIRE_METHOD_SMOKE:-0}" = "1" ]; then
     _contract_args+=(--require-smoke-run)
   fi
+  if [ "${AAR_AUTODATA:-0}" = "1" ]; then
+    _contract_args+=(--require-autodata-loader)
+  fi
   timeout 60s "${AAR_METHOD_VALIDATOR_PY:-${HARNESS_PY:-python}}" \
     "${REPO}/scripts/validate_method_contract.py" \
     "${_contract_args[@]}" >&2

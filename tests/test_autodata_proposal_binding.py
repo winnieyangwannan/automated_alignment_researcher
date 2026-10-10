@@ -247,6 +247,15 @@ load_autodata_campaign_datasets(
     )
 
     valid = """
+run_id = os.environ["AAR_CURRENT_RUN_ID"]
+team_dir = os.environ["TEAM_DIR"]
+names = (
+    "training-handoff.json",
+    "autodata-training-data-contract.json",
+    "production_dataset",
+    "production_execution_id",
+    "training-consumption.json",
+)
 load_autodata_campaign_datasets(
     [dataset_path],
     receipt_path=receipt_path,
@@ -257,3 +266,11 @@ load_autodata_campaign_datasets(
 )
 """
     assert server_api_tools._autodata_method_contract_error(valid) is None
+
+    swallowed = valid.replace(
+        "load_autodata_campaign_datasets(",
+        "try:\n    load_autodata_campaign_datasets(",
+    ) + "\nexcept Exception:\n    items = fallback_rows\n"
+    assert "may not be swallowed" in (
+        server_api_tools._autodata_method_contract_error(swallowed) or ""
+    )

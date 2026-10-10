@@ -26,6 +26,13 @@ class ValidateMethodContractTest(unittest.TestCase):
         valid = _autodata_loader_errors(
             ast.parse(
                 """
+run_id = os.environ["AAR_CURRENT_RUN_ID"]
+team_dir = os.environ["TEAM_DIR"]
+handoff_name = "training-handoff.json"
+contract_name = "autodata-training-data-contract.json"
+dataset_key = "production_dataset"
+execution_key = "production_execution_id"
+receipt_name = "training-consumption.json"
 items = load_autodata_campaign_datasets(
     [production_dataset_path],
     receipt_path=training_consumption_path,
@@ -38,6 +45,34 @@ items = load_autodata_campaign_datasets(
             )
         )
         self.assertEqual(valid, [])
+
+        swallowed = _autodata_loader_errors(
+            ast.parse(
+                """
+run_id = os.environ["AAR_CURRENT_RUN_ID"]
+team_dir = os.environ["TEAM_DIR"]
+names = (
+    "training-handoff.json",
+    "autodata-training-data-contract.json",
+    "production_dataset",
+    "production_execution_id",
+    "training-consumption.json",
+)
+try:
+    items = load_autodata_campaign_datasets(
+        [production_dataset_path],
+        receipt_path=training_consumption_path,
+        required_rows=1000,
+        expected_execution_ids=[production_execution_id],
+        judge_rubric=training_data_contract["judge_rubric"],
+        training_objective="sft",
+    )
+except Exception:
+    items = fallback_rows
+"""
+            )
+        )
+        self.assertIn("may not be swallowed", swallowed[0])
 
         empty_execution_ids = _autodata_loader_errors(
             ast.parse(

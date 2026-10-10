@@ -1386,6 +1386,20 @@ def _autodata_method_contract_error(code: str) -> str | None:
         tree = ast.parse(code)
     except SyntaxError as error:
         return f"method is not valid Python: {error}"
+    string_literals = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    required_literals = {
+        "AAR_CURRENT_RUN_ID",
+        "TEAM_DIR",
+        "training-handoff.json",
+        "autodata-training-data-contract.json",
+        "production_dataset",
+        "production_execution_id",
+        "training-consumption.json",
+    }
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -1418,6 +1432,40 @@ def _autodata_method_contract_error(code: str) -> str | None:
             or objective.value not in {"sft", "dpo"}
         ):
             return "AutoData loader must declare literal training_objective='sft' or 'dpo'"
+        missing_literals = sorted(required_literals - string_literals)
+        if missing_literals:
+            return (
+                "AutoData method must resolve the verified run handoff; missing "
+                "literal(s): " + ", ".join(missing_literals)
+            )
+        for candidate in ast.walk(tree):
+            if not isinstance(candidate, ast.Try):
+                continue
+            if not any(
+                isinstance(child, ast.Call)
+                and (
+                    isinstance(child.func, ast.Name)
+                    and child.func.id == "load_autodata_campaign_datasets"
+                    or isinstance(child.func, ast.Attribute)
+                    and child.func.attr == "load_autodata_campaign_datasets"
+                )
+                for statement in candidate.body
+                for child in ast.walk(statement)
+            ):
+                continue
+            for handler in candidate.handlers:
+                catches_everything = handler.type is None or (
+                    isinstance(handler.type, ast.Name)
+                    and handler.type.id in {"Exception", "BaseException"}
+                )
+                reraises = any(
+                    isinstance(child, ast.Raise) for child in ast.walk(handler)
+                )
+                if catches_everything and not reraises:
+                    return (
+                        "AutoData loader failures may not be swallowed or replaced "
+                        "with fallback training data"
+                    )
         return None
     return (
         "method must call aar.infrastructure.autodata_dataset."
