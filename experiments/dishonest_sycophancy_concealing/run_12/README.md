@@ -13,8 +13,9 @@ New full launches compile two strict YAML sources:
 chain's campaign policy, training-data contract, shell runtime environment, and
 resolved configuration snapshot. Unknown YAML keys, target-disabled settings,
 cross-chain bindings, or changes to compiled artifacts fail before generation.
-The one-row infrastructure canary uses the smaller
-[`autodata_canary.yaml`](autodata_canary.yaml) run configuration with the same
+The standalone canary code and configuration are documented under
+[`canary/`](canary/README.md). The one-row infrastructure canary uses
+[`canary/autodata_canary.yaml`](canary/autodata_canary.yaml) with the same
 reusable profile.
 
 The operational sections use the same contract as Run 10: `storage` selects
@@ -173,8 +174,9 @@ fast-forwarded to `/storage/home/winnieyangwn/aar-worktrees/autodata`.
    gateway default.
 2. Verify one serving endpoint, direct `/v1/models`, a deterministic generation,
    and gateway routing by deployment ID.
-3. On HPC, run `submit_run_12.sh preflight`. Wait for success.
-4. Run `submit_run_12.sh canary <attempt-root>`. Wait for `canary-report.json`.
+3. On HPC, run `canary/submit_target_canary.sh preflight`. Wait for success.
+4. Run `canary/submit_target_canary.sh canary <attempt-root>`. Wait for
+   `canary-report.json`.
 5. Stop the dedicated deployment after evidence is retained.
 
 The launcher defaults to iteration 2 and deployment

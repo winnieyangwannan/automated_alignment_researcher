@@ -9,7 +9,7 @@
 set -euo pipefail
 umask 077
 
-REPO="${AAR_REPO:?submit through submit_run_12.sh}"
+REPO="${AAR_REPO:?submit through canary/submit_target_canary.sh}"
 ROOT="${AAR_RUN12_ROOT:?missing attempt root}"
 BINDING="${AAR_RUN12_TARGET_BINDING:?missing target binding}"
 
@@ -98,4 +98,3 @@ print(json.dumps(report, sort_keys=True))
 PY
 
 echo "Run 12 endpoint preflight passed: ${ROOT}/preflight.json"
-

@@ -419,8 +419,8 @@ class ModelBrokerCanaryTest(unittest.TestCase):
     def test_static_routes_delegate_credentials_to_broker_and_recipe(self):
         canary_source = SCRIPT.read_text()
         recipe_source = (RECIPE / "recipe" / "task.py").read_text()
-        run12_submit = (RUN12 / "submit_run_12.sh").read_text()
-        run12_canary = (RUN12 / "run_12_target_canary.sbatch").read_text()
+        run12_submit = (RUN12 / "canary" / "submit_target_canary.sh").read_text()
+        run12_canary = (RUN12 / "canary" / "target_canary.sbatch").read_text()
         self.assertIn('"model_backed": True', canary_source)
         self.assertIn("ram-inference-gateway.ingress.fair-cw-use2-1", canary_source)
         self.assertNotIn('"MODEL_API_KEY":', canary_source)

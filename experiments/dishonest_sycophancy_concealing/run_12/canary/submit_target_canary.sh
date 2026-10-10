@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
+REPO="$(cd -- "${SCRIPT_DIR}/../../../.." && pwd)"
 ACTION="${1:-preflight}"
 AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pipelines}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
@@ -75,7 +75,7 @@ if [ "${ACTION}" = preflight ]; then
     --target-deployment-id "${TARGET_DEPLOYMENT_ID}" \
     --output "${binding}"
   export AAR_REPO="${REPO}" AAR_RUN12_ROOT="${root}" AAR_RUN12_TARGET_BINDING="${binding}"
-  job_id="$(sbatch --parsable --output="${root}/preflight-%j.out" --export=ALL "${SCRIPT_DIR}/run_12_endpoint_preflight.sbatch")"
+  job_id="$(sbatch --parsable --output="${root}/preflight-%j.out" --export=ALL "${SCRIPT_DIR}/endpoint_preflight.sbatch")"
   printf 'phase=preflight\njob_id=%s\nroot=%s\naar_git_commit=%s\ntarget_deployment_id=%s\n' \
     "${job_id}" "${root}" "$(git -C "${REPO}" rev-parse HEAD)" "${TARGET_DEPLOYMENT_ID}" \
     | tee "${root}/submission.txt"
@@ -122,7 +122,7 @@ export AAR_AUTODATA_CAMPAIGN_POLICY="${policy}"
 export AAR_RUN12_GENERATOR_URL="${GENERATOR_URL}"
 export AAR_RUN12_GENERATOR_HOST_HEADER="${GENERATOR_HOST_HEADER}"
 export AAR_RUN12_GENERATOR_DEPLOYMENT_ID="${GENERATOR_DEPLOYMENT_ID}"
-job_id="$(sbatch --parsable --output="${root}/canary-%j.out" --export=ALL "${SCRIPT_DIR}/run_12_target_canary.sbatch")"
+job_id="$(sbatch --parsable --output="${root}/canary-%j.out" --export=ALL "${SCRIPT_DIR}/target_canary.sbatch")"
 printf 'phase=canary\njob_id=%s\naar_git_commit=%s\ngenerator_model=%s\ngenerator_deployment_id=%s\n' \
   "${job_id}" "$(git -C "${REPO}" rev-parse HEAD)" "${GENERATOR_MODEL}" \
   "${GENERATOR_DEPLOYMENT_ID}" | tee -a "${root}/submission.txt"

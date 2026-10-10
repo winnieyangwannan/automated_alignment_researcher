@@ -5,10 +5,11 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN12 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_12"
+CANARY = RUN12 / "canary"
 
 
 def test_run12_research_canary_is_one_scored_kimi_iteration() -> None:
-    launcher = (RUN12 / "submit_research_canary.sh").read_text()
+    launcher = (CANARY / "submit_research_canary.sh").read_text()
 
     assert "AAR_EXPECTED_BRANCH=autodata" in launcher
     assert "AAR_KIMI_SERVE_DEPLOYMENT=aar_8-kimi26" in launcher
@@ -20,7 +21,7 @@ def test_run12_research_canary_is_one_scored_kimi_iteration() -> None:
 
 
 def test_run12_research_canary_can_continue_with_safe_memory() -> None:
-    launcher = (RUN12 / "submit_research_canary.sh").read_text()
+    launcher = (CANARY / "submit_research_canary.sh").read_text()
 
     assert "AAR_RUN12_RESEARCH_MAX_ITERATIONS:-1" in launcher
     assert "AAR_RUN12_RECOVERED_AGENT_LOG_DIR" in launcher
@@ -28,7 +29,7 @@ def test_run12_research_canary_can_continue_with_safe_memory() -> None:
 
 
 def test_run12_target_binding_accepts_a_newly_promoted_incumbent() -> None:
-    launcher = (RUN12 / "submit_run_12.sh").read_text()
+    launcher = (CANARY / "submit_target_canary.sh").read_text()
 
     assert "AAR_RUN12_INCUMBENT_RUN_ID" in launcher
     assert "AAR_RUN12_ADAPTER_CHECKPOINT" in launcher
@@ -66,7 +67,7 @@ def test_only_bootstrap_canary_may_reuse_a_verified_base_deployment() -> None:
 
 def test_run12_artifacts_default_to_checkpoint_storage() -> None:
     full = (RUN12 / "submit_run_12_full.sh").read_text()
-    target = (RUN12 / "submit_run_12.sh").read_text()
+    target = (CANARY / "submit_target_canary.sh").read_text()
     run_config = yaml.safe_load((RUN12 / "autodata_run.yaml").read_text())
 
     for launcher in (full, target):
@@ -129,8 +130,8 @@ def test_run12_deferred_launch_waits_for_a_working_gateway_route() -> None:
 def test_run12_uses_separate_kimi_deployments_and_maximum_token_allowances() -> None:
     launcher = (RUN12 / "submit_run_12_full.sh").read_text()
     pipeline = (RUN12 / "run_12_full_pipeline.sbatch").read_text()
-    canary_submitter = (RUN12 / "submit_run_12.sh").read_text()
-    canary_job = (RUN12 / "run_12_target_canary.sbatch").read_text()
+    canary_submitter = (CANARY / "submit_target_canary.sh").read_text()
+    canary_job = (CANARY / "target_canary.sbatch").read_text()
     run_config = yaml.safe_load((RUN12 / "autodata_run.yaml").read_text())
     profile = yaml.safe_load(
         (ROOT / "configs/autodata/target_aware_local_v1.yaml").read_text()
