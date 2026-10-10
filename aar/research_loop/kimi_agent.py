@@ -747,6 +747,8 @@ class KimiAgent:
                 command += " --require-gemma4-targets"
             if os.environ.get("AAR_REQUIRE_METHOD_SMOKE") == "1":
                 command += " --require-smoke-run"
+            if self._autodata_enabled():
+                command += " --require-autodata-loader"
             return (
                 "Call the native Bash tool exactly once now with command="
                 f"{json.dumps(command)} to validate the complete import, MethodConfig, "

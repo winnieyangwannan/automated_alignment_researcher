@@ -12,12 +12,33 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.validate_method_contract import (
+    _autodata_loader_errors,
     _undefined_name_errors,
     _unsafe_training_api_errors,
 )
 
 
 class ValidateMethodContractTest(unittest.TestCase):
+    def test_autodata_loader_gate_matches_native_proposal_contract(self) -> None:
+        missing = _autodata_loader_errors(ast.parse("items = json.load(handle)"))
+        self.assertIn("load_autodata_campaign_datasets", missing[0])
+
+        valid = _autodata_loader_errors(
+            ast.parse(
+                """
+items = load_autodata_campaign_datasets(
+    [production_dataset_path],
+    receipt_path=training_consumption_path,
+    required_rows=1000,
+    expected_execution_ids=[production_execution_id],
+    judge_rubric=training_data_contract["judge_rubric"],
+    training_objective="sft",
+)
+"""
+            )
+        )
+        self.assertEqual(valid, [])
+
     def test_rejects_observed_target_runtime_failures_before_gpu(self) -> None:
         tree = ast.parse(
             """

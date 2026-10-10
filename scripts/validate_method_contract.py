@@ -329,6 +329,45 @@ def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
     return sorted(errors)
 
 
+def _autodata_loader_errors(tree: ast.AST) -> list[str]:
+    """Mirror the native proposal gate for receipt-producing AutoData loads."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        function = node.func
+        name = (
+            function.id
+            if isinstance(function, ast.Name)
+            else function.attr if isinstance(function, ast.Attribute) else ""
+        )
+        if name != "load_autodata_campaign_datasets":
+            continue
+        keywords = {item.arg: item.value for item in node.keywords if item.arg}
+        required = keywords.get("required_rows")
+        if not isinstance(required, ast.Constant) or required.value != 1000:
+            return ["AutoData loader must use literal required_rows=1000"]
+        if "receipt_path" not in keywords:
+            return ["AutoData loader must write a training consumption receipt"]
+        if "expected_execution_ids" not in keywords:
+            return ["AutoData loader must bind expected_execution_ids"]
+        if "judge_rubric" not in keywords:
+            return ["AutoData loader must bind the content-addressed judge rubric"]
+        objective = keywords.get("training_objective")
+        if (
+            not isinstance(objective, ast.Constant)
+            or objective.value not in {"sft", "dpo"}
+        ):
+            return [
+                "AutoData loader must declare literal training_objective='sft' or "
+                "'dpo'"
+            ]
+        return []
+    return [
+        "method must call aar.infrastructure.autodata_dataset."
+        "load_autodata_campaign_datasets"
+    ]
+
+
 def _undefined_name_errors(method_path: Path) -> list[str]:
     """Run the target environment's Ruff F821 analysis on generated code."""
     adjacent_ruff = Path(sys.executable).with_name("ruff")
@@ -359,6 +398,7 @@ def validate(
     run_dry_run: bool = False,
     require_gemma4_targets: bool = False,
     require_smoke_run: bool = False,
+    require_autodata_loader: bool = False,
 ) -> dict[str, Any]:
     method_path = method_path.resolve()
     source = method_path.read_bytes()
@@ -420,6 +460,8 @@ def validate(
                 )
             errors.extend(_undefined_name_errors(method_path))
             errors.extend(_unsafe_training_api_errors(tree))
+        if require_autodata_loader:
+            errors.extend(_autodata_loader_errors(tree))
 
     module = None
     if tree is not None:
@@ -505,6 +547,7 @@ def main() -> None:
     parser.add_argument("--run-dry-run", action="store_true")
     parser.add_argument("--require-gemma4-targets", action="store_true")
     parser.add_argument("--require-smoke-run", action="store_true")
+    parser.add_argument("--require-autodata-loader", action="store_true")
     args = parser.parse_args()
     proof = args.proof or args.method_path.parent / ".aar-method-contract.json"
     try:
@@ -531,6 +574,7 @@ def main() -> None:
             run_dry_run=args.run_dry_run,
             require_gemma4_targets=args.require_gemma4_targets,
             require_smoke_run=args.require_smoke_run,
+            require_autodata_loader=args.require_autodata_loader,
         )
     except Exception as error:  # noqa: BLE001 - always leave a diagnostic proof
         result = {
