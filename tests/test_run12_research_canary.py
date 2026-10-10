@@ -47,7 +47,8 @@ def test_run12_full_chain_rotates_the_training_contract_with_its_target() -> Non
     assert "aar.autodata_run_config compile" in launcher
     assert contract in compiler
     assert "training_data_contract_from_campaign_policy" in compiler
-    assert "AAR_AUTODATA_TRAINING_DATA_CONTRACT" in pipeline
+    assert 'source "${AAR_AUTODATA_RUNTIME_ENV}"' in pipeline
+    assert "AAR_AUTODATA_TRAINING_DATA_CONTRACT" in compiler
     assert contract in controller
     assert "aar.autodata_run_config compile" in controller
     assert controller.index("aar.autodata_run_config compile") < controller.index(
