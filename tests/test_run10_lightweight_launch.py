@@ -135,11 +135,14 @@ def test_initial_launch_and_targeted_resume_share_runtime_configuration() -> Non
 
 def test_targeted_resume_is_budgeted_and_duplicate_safe() -> None:
     resume = (RUN10 / "resume_run_10.sh").read_text()
+    shared = (ROOT / "scripts" / "resume_aar_team.sh").read_text()
 
-    assert "seed_has_active_job" in resume
-    assert "refusing duplicate active chain" in resume
-    assert "max_sessions - started" in resume
-    assert 'session_*_${seed}_*.log' in resume
-    assert "recovery_jobs.tsv" in resume
-    assert "expected exactly one Run 10 team" in resume
-    assert "launch_eval_worker.sh" in resume
+    assert 'exec "${REPO}/scripts/resume_aar_team.sh"' in resume
+    assert "seed_has_active_job" in shared
+    assert "refusing duplicate active chain" in shared
+    assert "max_sessions - started" in shared
+    assert 'session_*_${seed}_*.log' in shared
+    assert "recovery_jobs.tsv" in shared
+    assert "expected exactly one AAR team" in shared
+    assert "launch_eval_worker.sh" in shared
+    assert "AAR_RESUME_ALLOWED_SEEDS" in resume

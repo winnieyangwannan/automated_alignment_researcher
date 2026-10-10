@@ -61,11 +61,19 @@ experiments/dishonest_sycophancy_concealing/run_10/resume_run_10.sh \
   /storage/home/winnieyangwn/aar-runs/run10_kimi/full_attempts/<attempt> beta
 ```
 
-The helper refuses duplicate active jobs, replenishes missing evaluators, and
-subtracts already-started sessions from the seed's original 50-session budget.
+The Run 10 wrapper configures its endpoint and experiment policy, then delegates
+to the reusable `scripts/resume_aar_team.sh` recovery engine. The engine refuses
+duplicate active jobs, replenishes missing evaluators, and subtracts
+already-started sessions from the seed's original 50-session budget.
 Pass multiple space-separated seeds as one quoted argument when needed. Recovery
 job IDs, remaining budgets, timestamps, and the recovery source commit are appended
 to `metadata/recovery_jobs.tsv`; existing results are never reset.
+
+Future experiments can build a thin wrapper around the same engine by sourcing
+their normal runtime configuration and exporting `AAR_RESUME_DEFAULT_SEEDS`,
+`AAR_RESUME_EVALUATOR_COUNT`, and `AAR_RESUME_HOURS`. An optional
+`AAR_RESUME_ALLOWED_SEEDS` allowlist and expected branch/mode guards keep
+experiment-specific policy outside the shared recovery mechanics.
 
 ## Exporting the champion
 
