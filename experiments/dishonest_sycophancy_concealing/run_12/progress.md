@@ -195,7 +195,17 @@ does not allow `--auto` with noninteractive `--prompt` mode. Inspection of the
 pinned CLI implementation then established that prompt mode already forces the
 agent permission service to `auto`; the CLI flag was reverted rather than
 weakening or skipping the MCP preflight. The remaining investigation therefore
-focuses on the post-tool model/MCP round trip and its timeout, not approval.
+focuses on the model/MCP round trip and its timeout, not approval.
+
+The retained trace and vLLM worker logs then localized the repeatable stall to
+the initial model response: the CLI emitted only `system.version`, while one
+Kimi worker generated continuously at about 87 tokens/second for the entire
+180 seconds without producing a tool call. The endpoint remained healthy; the
+health probe had incorrectly inherited the research session's 65,536-token
+output allowance. The verifier now uses a process-local 1,024-token ceiling
+and a named-tool checkpoint for `get_literature`. This does not reduce the
+maximum input or output allowances of production researcher or AutoData
+sessions.
 
 Separately, the reusable runtime profile was corrected from an accidental
 concurrency value of 32 back to the documented production value of eight per

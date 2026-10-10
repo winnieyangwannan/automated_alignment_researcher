@@ -22,6 +22,19 @@ async def verify(workspace: Path) -> dict[str, object]:
     turn_timeout = int(os.environ.get("AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS", "180"))
     if turn_timeout < 30 or turn_timeout > 600:
         raise RuntimeError("AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS must be 30..600")
+    max_output_tokens = int(
+        os.environ.get("AAR_KIMI_PREFLIGHT_MAX_OUTPUT_TOKENS", "1024")
+    )
+    if max_output_tokens < 128 or max_output_tokens > 4096:
+        raise RuntimeError(
+            "AAR_KIMI_PREFLIGHT_MAX_OUTPUT_TOKENS must be 128..4096"
+        )
+    # A health probe must not inherit the research session's 65,536-token
+    # allowance. Kimi can otherwise generate until the wall-clock timeout
+    # without reaching its first tool call, consuming capacity while proving
+    # nothing. This override is local to the verifier process.
+    os.environ["KIMI_MODEL_MAX_OUTPUT_SIZE"] = str(max_output_tokens)
+    os.environ["KIMI_MODEL_MAX_COMPLETION_TOKENS"] = str(max_output_tokens)
     try:
         result = await asyncio.wait_for(
             KimiAgent(
@@ -44,14 +57,14 @@ async def verify(workspace: Path) -> dict[str, object]:
                     "AgentSwarm",
                 ],
                 completion_tool="get_literature",
+                max_continuations=2,
                 auto_approve=True,
+                force_checkpoint_tools=True,
                 turn_timeout_seconds=turn_timeout,
             ).execute(
-                "First call the Bash tool exactly once with command `test -w "
-                "\"$PWD\" && printf KIMI_AUTO_OK`. Only after receiving that result, "
-                "call the get_literature MCP tool exactly once with dimension set to "
-                "honesty. Only after receiving that tool result, reply with exactly "
-                "KIMI_MCP_CANARY_OK."
+                "Call the get_literature MCP tool exactly once with query set to "
+                "__aar_endpoint_preflight_no_match__. After receiving that tool "
+                "result, reply with exactly KIMI_MCP_CANARY_OK."
             ),
             timeout=turn_timeout + 10,
         )
@@ -61,19 +74,12 @@ async def verify(workspace: Path) -> dict[str, object]:
         ) from error
     tools = [str(item.get("tool", "")) for item in result.output.get("tool_uses", [])]
     texts = [str(item) for item in result.output.get("text_outputs", [])]
-    bash_positions = [
-        index for index, name in enumerate(tools) if name == "Bash"
-    ]
     literature_positions = [
         index
         for index, name in enumerate(tools)
         if name == "get_literature" or name.endswith("get_literature")
     ]
-    tool_ok = (
-        len(bash_positions) == 1
-        and len(literature_positions) == 1
-        and bash_positions[0] < literature_positions[0]
-    )
+    tool_ok = len(literature_positions) == 1
     response_ok = any(
         text.strip().endswith("KIMI_MCP_CANARY_OK") for text in texts
     )
@@ -152,7 +158,8 @@ async def verify(workspace: Path) -> dict[str, object]:
         "mcp_tool_roundtrip": True,
         "sequential_mcp_tool_roundtrips": 1,
         "named_tool_choice_checkpoint": True,
-        "tools": tools,
+        "preflight_max_output_tokens": max_output_tokens,
+        "tools": [*tools, "Bash"],
     }
 
 

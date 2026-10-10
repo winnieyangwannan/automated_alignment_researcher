@@ -91,6 +91,9 @@ def test_kimi_preflight_records_the_requested_deployment() -> None:
     assert '"deployment": deployment' in verifier
     assert '"model": expected_model' in verifier
     assert 'AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS' in verifier
+    assert 'AAR_KIMI_PREFLIGHT_MAX_OUTPUT_TOKENS' in verifier
+    assert 'KIMI_MODEL_MAX_OUTPUT_SIZE' in verifier
+    assert 'force_checkpoint_tools=True' in verifier
     assert 'asyncio.wait_for(' in verifier
     assert 'Kimi MCP round trip exceeded' in verifier
 
