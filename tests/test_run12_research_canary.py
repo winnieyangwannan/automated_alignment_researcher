@@ -120,7 +120,7 @@ def test_run12_operational_defaults_flow_from_autodata_yaml() -> None:
     assert '"${AAR_TRAIN_EXIT_AFTER_SUBMIT:?missing decoupled training policy}" = 1' in pipeline
 
 
-def test_bootstrap_canary_stops_after_verified_production_without_evaluator() -> None:
+def test_bootstrap_canary_stops_after_one_training_step_without_evaluator() -> None:
     launcher = (LAUNCH / "submit_full.sh").read_text()
     pipeline = (SLURM / "pipeline.sbatch").read_text()
     controller = (SLURM / "chain_controller.sbatch").read_text()
@@ -133,19 +133,31 @@ def test_bootstrap_canary_stops_after_verified_production_without_evaluator() ->
     assert "export AAR_START_EVAL_WORKER=0" in pipeline
     assert 'if [ "${AAR_START_EVAL_WORKER}" = 1 ]; then' in pipeline
     assert "production-canary-complete.json" in controller
-    assert "production_canary_not_completed" in controller
+    assert "training-smoke-canary-complete.json" in controller
+    assert "training_smoke_canary_not_completed" in controller
     assert 'AAR_RUN12_AUTODATA_RUN_CONFIG="${SCRIPT_DIR}/autodata_run.yaml"' in wrapper
-    assert "target_aware_local_c32_v1.yaml" in wrapper
+    assert "AAR_RUN12_AUTODATA_PROFILE_CONFIG" not in wrapper
+    assert (
+        canary_config["runtime_profile"]
+        == "configs/autodata/target_aware_local_c32_v1.yaml"
+    )
+    assert "resolve-profile" in launcher
     assert "full mode requires the canonical Run 12 YAML" in launcher
     assert full_config["production"]["required_rows"] == 1000
     assert canary_config["production"] == {
-        "required_rows": 100,
-        "initial_tasks": 125,
+        "required_rows": 1000,
+        "initial_tasks": 1250,
         "minimum_successful_task_fraction": 0.95,
+    }
+    assert canary_config["bootstrap_canary"] == {"stop_after": "training_smoke"}
+    assert 'export AAR_METHOD_SMOKE=1' in pipeline
+    assert canary_config["authoring"] == {"max_wall_seconds": 604800}
+    assert canary_config["stage_timing"] == {
+        "mode": "observe_only",
+        "native_schema_wall_seconds": 604800,
     }
     for section in (
         "deployments",
-        "authoring",
         "generation",
         "meta_optimization",
         "storage",

@@ -383,11 +383,23 @@ reasoning role. Handle ordinary analysis/mutation actions through the native
 `action begin` and `action complete` workflow from the AutoData skill. When status
 instead exposes `approve_grounding`, `approve_baseline`, or `approve_resources`,
 do not complete it yourself: complete the `review_autodata_action` flow below.
-The same supervisor resumes after either kind of action completes. Meta
-workspaces/executions must use `max_wall_seconds` no greater than 6,300 seconds;
-production executions must use no more than 28,200 seconds. These native budgets
-leave a ten-minute cleanup/snapshot grace inside the supervisor's two-hour meta
-and eight-hour production hard ceilings.
+The same supervisor resumes after either kind of action completes.
+{% if autodata_stage_timeout_policy == "observe-only" %}
+This measurement canary has no elapsed-time deadline for workspace authoring,
+meta-optimization, or production. Native AutoData still requires a positive
+`max_wall_seconds` schema field, so use exactly
+`{{ autodata_native_schema_wall_seconds }}` for every workspace, meta execution,
+and production execution. That value matches the outer controller envelope and
+is not an operative per-stage budget. The supervisor records elapsed time and
+retains its no-progress watchdog, but it does not terminate a healthy stage for
+total elapsed time. Never substitute the ordinary 6,300- or 28,200-second Run 12
+budgets in this canary.
+{% else %}
+Meta workspaces/executions must use `max_wall_seconds` no greater than 6,300
+seconds; production executions must use no more than 28,200 seconds. These
+native budgets leave a ten-minute cleanup/snapshot grace inside the supervisor's
+two-hour meta and eight-hour production hard ceilings.
+{% endif %}
 
 After meta-optimization completes, use native `execution export-winner` to create a
 pristine, digest-bound winner export and never modify it. Copy that export to a

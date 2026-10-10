@@ -171,9 +171,10 @@ if pretrain_smoke and not smoke_run:
         shutil.rmtree(smoke_dir, ignore_errors=True)
 with phase("train.method_total"):
     out = run_experiment(MethodConfig(**config_kwargs))
+autodata_consumption = None
 if "${AAR_AUTODATA:-0}" == "1":
     from aar.infrastructure.autodata_lifecycle import verify_consumption
-    verify_consumption("${RUN_ID}")
+    autodata_consumption = verify_consumption("${RUN_ID}")
 if "${AAR_REQUIRE_PHASE_TIMINGS:-0}".lower() in {"1", "true", "yes", "on"}:
     require_successful_phases("${AAR_PHASE_TIMINGS_PATH}")
 if smoke_run:
@@ -199,6 +200,10 @@ if smoke_run:
             "run_id": "${RUN_ID}",
             "model_path": str(model_path),
             "adapter_weight_file": weights[0].name,
+            "smoke_run": True,
+            "optimizer_steps": 1,
+            "autodata_consumption": autodata_consumption,
+            "phase_timings": os.environ.get("AAR_PHASE_TIMINGS_PATH"),
             "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
         }, sort_keys=True) + "\n")
         os.replace(temporary, marker)

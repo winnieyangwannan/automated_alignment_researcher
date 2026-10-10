@@ -15,10 +15,17 @@ RECOVERED_SOURCES="${RECOVERY_BUNDLE}/source_artifacts"
 SV="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
 REQUIRED_AUTODATA_SHA=823c5948854df14664f3168bc5e6c49a2cecb975
-PROFILE_CONFIG="${AAR_RUN12_AUTODATA_PROFILE_CONFIG:-${REPO}/configs/autodata/target_aware_local_v1.yaml}"
 CANONICAL_RUN_CONFIG="$(realpath -e -- "${RUN12_DIR}/config/autodata_run.yaml")"
 RUN_CONFIG="$(realpath -e -- "${AAR_RUN12_AUTODATA_RUN_CONFIG:-${CANONICAL_RUN_CONFIG}}")"
 [ -x "${REPO}/.venv/bin/python" ] || { echo "missing AAR runtime" >&2; exit 2; }
+profile_resolver=(env PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m
+  aar.autodata_run_config resolve-profile --repo "${REPO}" --run "${RUN_CONFIG}")
+if [ -n "${AAR_RUN12_AUTODATA_PROFILE_CONFIG:-}" ]; then
+  profile_resolver+=(--profile "${AAR_RUN12_AUTODATA_PROFILE_CONFIG}")
+else
+  profile_resolver+=(--fallback-profile "${REPO}/configs/autodata/target_aware_local_v1.yaml")
+fi
+PROFILE_CONFIG="$("${profile_resolver[@]}")"
 config_json="$(PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_run_config inspect \
   --profile "${PROFILE_CONFIG}" --run "${RUN_CONFIG}")"
 [ "$(jq -r '.target_enabled' <<<"${config_json}")" = true ] || {
@@ -82,9 +89,13 @@ if [ "${RUN_MODE}" = full ]; then
     echo "full mode must match the checked-in Run 12 YAML" >&2; exit 2;
   }
 else
-  [ "${configured_canary_stop}" = production ] || {
-    echo "bootstrap-canary YAML must stop after production" >&2; exit 2;
-  }
+  case "${configured_canary_stop}" in
+    production|training_smoke) ;;
+    *)
+      echo "bootstrap-canary YAML must stop after production or training_smoke" >&2
+      exit 2
+      ;;
+  esac
   export AAR_AUTODATA_STOP_AFTER="${configured_canary_stop}"
   [ "${#seeds[@]}" -eq 1 ] && [ "${TARGET_PAIRS}" = 1 ] || {
     echo "bootstrap-canary mode requires exactly one seed and one target pair" >&2; exit 2;

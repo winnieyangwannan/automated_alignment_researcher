@@ -248,6 +248,12 @@ def resolve_prompt(template_path: str | Path, output_path: str | Path) -> str:
         autodata_production_min_success_fraction=float(
             os.getenv("AAR_AUTODATA_PRODUCTION_MIN_SUCCESS_FRACTION", "0.95")
         ),
+        autodata_stage_timeout_policy=os.getenv(
+            "AAR_AUTODATA_STAGE_TIMEOUT_POLICY", "enforce"
+        ),
+        autodata_native_schema_wall_seconds=int(
+            os.getenv("AAR_AUTODATA_NATIVE_SCHEMA_WALL_SECONDS", "0")
+        ),
     )
 
     with open(output_path, 'w') as f:
@@ -652,7 +658,8 @@ class AutonomousAgentLoop:
     def _create_agent(self, session_id: str, message_callback=None):
         meta_secure_web = os.getenv("AAR_WEB_MODE", "native_web") == "meta_secure"
         if getattr(self, "backend", "claude") == "kimi":
-            if os.getenv("AAR_AUTODATA_STOP_AFTER", "").strip() == "production":
+            autodata_stop_after = os.getenv("AAR_AUTODATA_STOP_AFTER", "").strip()
+            if autodata_stop_after == "production":
                 kimi_system_prompt = (
                     "You are running a production-only AutoData canary "
                     "noninteractively. Complete the approved target-aware AutoData "
@@ -660,6 +667,20 @@ class AutonomousAgentLoop:
                     "iteration is complete when the verified production handoff "
                     "contains the configured accepted-row target. Do not submit "
                     "training, wait for a score, evaluate an adapter, or call "
+                    "share_finding. Never end with a statement of future intent such "
+                    "as 'let me' or 'next I will'. During initial discovery, call "
+                    "get_literature exactly once with an empty input."
+                )
+            elif autodata_stop_after == "training_smoke":
+                kimi_system_prompt = (
+                    "You are running a data-to-training AutoData canary "
+                    "noninteractively. Complete the approved target-aware AutoData "
+                    "meta-optimization and production workflow, submit the approved "
+                    "method to the trusted training wrapper, and wait for its real-GPU "
+                    "one-optimizer-step smoke result. The iteration is complete only "
+                    "when all configured production rows were consumed and a loadable "
+                    "non-empty PEFT adapter was saved. Do not run full training, start "
+                    "an evaluator, wait for a score, evaluate an adapter, or call "
                     "share_finding. Never end with a statement of future intent such "
                     "as 'let me' or 'next I will'. During initial discovery, call "
                     "get_literature exactly once with an empty input."

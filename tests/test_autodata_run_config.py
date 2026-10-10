@@ -18,6 +18,7 @@ from aar.autodata_run_config import (
     inspect_configs,
     load_run_config,
     load_runtime_profile,
+    resolve_runtime_profile_path,
     validate_compiled_config,
 )
 
@@ -146,7 +147,7 @@ def test_compiled_config_rejects_artifact_tamper(tmp_path: Path) -> None:
         )
 
 
-def test_canary2_compiles_independent_100_row_production_contract(
+def test_canary2_compiles_independent_1000_row_training_smoke_contract(
     tmp_path: Path,
 ) -> None:
     output = tmp_path / "canary2-compiled"
@@ -161,13 +162,34 @@ def test_canary2_compiles_independent_100_row_production_contract(
     contract = json.loads((output / "autodata-training-data-contract.json").read_text())
     runtime = (output / "autodata-runtime.env").read_text()
 
-    assert contract["required_rows"] == 100
+    assert contract["required_rows"] == 1000
     assert "export AAR_AUTODATA_PROFILE=target-aware-local-c32-v1\n" in runtime
     assert "export AAR_AUTODATA_CONCURRENCY=32\n" in runtime
-    assert "export AAR_AUTODATA_PRODUCTION_ROWS=100\n" in runtime
-    assert "export AAR_AUTODATA_PRODUCTION_INITIAL_TASKS=125\n" in runtime
+    assert "export AAR_AUTODATA_PRODUCTION_ROWS=1000\n" in runtime
+    assert "export AAR_AUTODATA_PRODUCTION_INITIAL_TASKS=1250\n" in runtime
     assert "AAR_AUTODATA_PRODUCTION_MAX_TASKS" not in runtime
     assert "export AAR_AUTODATA_PRODUCTION_MIN_SUCCESS_FRACTION=0.95\n" in runtime
+    assert "export AAR_AUTODATA_AUTHORING_MAX_WALL_SECONDS=604800\n" in runtime
+    assert "export AAR_AUTODATA_STAGE_TIMEOUT_POLICY=observe-only\n" in runtime
+    assert "export AAR_AUTODATA_NATIVE_SCHEMA_WALL_SECONDS=604800\n" in runtime
+
+
+def test_canary2_run_yaml_selects_and_enforces_its_shared_profile() -> None:
+    run = load_run_config(CANARY2_RUN)
+
+    assert run["runtime_profile"] == (
+        "configs/autodata/target_aware_local_c32_v1.yaml"
+    )
+    assert resolve_runtime_profile_path(
+        run_path=CANARY2_RUN,
+        repo=ROOT,
+    ) == CANARY2_PROFILE
+    with pytest.raises(ValueError, match="does not match the run config"):
+        resolve_runtime_profile_path(
+            run_path=CANARY2_RUN,
+            repo=ROOT,
+            profile_path=PROFILE,
+        )
 
 
 def test_compiler_rejects_cross_chain_target_binding(tmp_path: Path) -> None:
@@ -267,5 +289,7 @@ def test_run_config_rejects_non_production_bootstrap_stop(tmp_path: Path) -> Non
     path = tmp_path / "invalid-canary.yaml"
     path.write_text(yaml.safe_dump(config), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="stop_after must be production"):
+    with pytest.raises(
+        ValueError, match="stop_after must be production or training_smoke"
+    ):
         load_run_config(path)

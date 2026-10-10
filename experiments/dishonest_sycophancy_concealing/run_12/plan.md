@@ -198,10 +198,13 @@ but it does not replace this automatic-promotion test.
 
 - Run the production launcher in `bootstrap-canary` mode with one isolated
   chain and one base target lane, but no evaluator lane.
-- Complete target-aware meta-optimization and production, then stop only after
-  the native handoff verifies the Canary 2 YAML's 100 accepted rows.
-- Do not submit SFT training, create an adapter, evaluate, or require a
-  score/result pair in this data-generation canary.
+- Complete target-aware meta-optimization and production, require 1,000
+  accepted rows, and verify the native handoff.
+- Submit the normal trusted training path in one-step smoke mode. It must
+  consume the exact verified 1,000-row dataset, perform one real GPU optimizer
+  step, save a non-empty PEFT adapter, and publish its consumption receipt.
+- Stop before full training or held-out evaluation; do not require a
+  score/result pair.
 - Preserve the canary attempt and retire its temporary jobs/endpoints before
   launching the canonical five-chain, five-pair run.
 - Keep `full` mode fail-closed on the canonical seeds and pair count so canary

@@ -232,7 +232,7 @@ class Subject:
     kind: str
     subject_id: str
     phase: str
-    timeout_seconds: int
+    timeout_seconds: int | None
     stall_seconds: int
 
 
@@ -584,8 +584,11 @@ def next_subject(
     control_file: Path,
     *,
     production_timeout_seconds: int = PRODUCTION_TIMEOUT_SECONDS,
+    stage_timeout_policy: str = "enforce",
 ) -> Subject | None:
     """Return the next explicitly registered subject ready for stepping."""
+    if stage_timeout_policy not in {"enforce", "observe-only"}:
+        raise ValueError("stage_timeout_policy must be enforce or observe-only")
     registrations = [
         entry
         for entry in _load_control(control_file)["subjects"]
@@ -639,7 +642,11 @@ def next_subject(
                 continue
             if kind == "workspace":
                 native_wall = int(row["maxWallSeconds"])
-                if native_wall + NATIVE_WALL_GRACE_SECONDS > META_TIMEOUT_SECONDS:
+                if (
+                    stage_timeout_policy == "enforce"
+                    and native_wall + NATIVE_WALL_GRACE_SECONDS
+                    > META_TIMEOUT_SECONDS
+                ):
                     raise RuntimeError(
                         f"workspace {subject_id} native wall budget plus grace exceeds "
                         "the 2-hour controller ceiling"
@@ -648,7 +655,11 @@ def next_subject(
                     "workspace",
                     subject_id,
                     str(row["phase"]),
-                    META_TIMEOUT_SECONDS,
+                    (
+                        META_TIMEOUT_SECONDS
+                        if stage_timeout_policy == "enforce"
+                        else None
+                    ),
                     META_STALL_SECONDS,
                 )
             spec = json.loads(str(row["executionJson"]))
@@ -659,7 +670,10 @@ def next_subject(
                 else META_TIMEOUT_SECONDS
             )
             native_wall = int(row["maxWallSeconds"])
-            if native_wall + NATIVE_WALL_GRACE_SECONDS > timeout:
+            if (
+                stage_timeout_policy == "enforce"
+                and native_wall + NATIVE_WALL_GRACE_SECONDS > timeout
+            ):
                 label = (
                     f"{timeout}-second production"
                     if production
@@ -673,7 +687,7 @@ def next_subject(
                 kind,
                 subject_id,
                 str(row["phase"]),
-                timeout,
+                timeout if stage_timeout_policy == "enforce" else None,
                 PRODUCTION_STALL_SECONDS if production else META_STALL_SECONDS,
             )
     return None
@@ -777,7 +791,10 @@ class Supervisor:
         last_progress = started
         while self.current.poll() is None and not self.stop_requested:
             now = time.monotonic()
-            if now - started >= subject.timeout_seconds:
+            if (
+                subject.timeout_seconds is not None
+                and now - started >= subject.timeout_seconds
+            ):
                 timed_out = True
                 os.killpg(self.current.pid, signal.SIGTERM)
                 try:
@@ -834,6 +851,7 @@ class Supervisor:
                     self.args.state,
                     self.args.control_file,
                     production_timeout_seconds=self.args.production_timeout_seconds,
+                    stage_timeout_policy=self.args.stage_timeout_policy,
                 )
             except Exception as error:
                 self._snapshot("supervisor-configuration-failure")
@@ -909,6 +927,11 @@ def _parser() -> argparse.ArgumentParser:
         "--production-timeout-seconds",
         type=int,
         default=PRODUCTION_TIMEOUT_SECONDS,
+    )
+    run.add_argument(
+        "--stage-timeout-policy",
+        choices=("enforce", "observe-only"),
+        default="enforce",
     )
     return parser
 

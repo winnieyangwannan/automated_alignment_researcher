@@ -400,7 +400,7 @@ class KimiAgent:
                         self._submitted_proposal_in_output(output)
                         and self._proposal_marker_changed_this_session()
                     ) or self._resume_approved_proposal_enabled()
-                    production_canary_complete = False
+                    bounded_canary_complete = False
                     if owns_approved_run:
                         approved_run_id = self._approved_run_id()
                         if approved_run_id is not None and (
@@ -411,7 +411,14 @@ class KimiAgent:
                                 self._complete_autodata_production_canary(
                                     approved_run_id
                                 )
-                                production_canary_complete = True
+                                bounded_canary_complete = True
+                            elif self._autodata_stop_after_training_smoke():
+                                self._ensure_approved_training_submission()
+                                await self._wait_for_training_smoke_result()
+                                self._complete_autodata_training_smoke_canary(
+                                    approved_run_id
+                                )
+                                bounded_canary_complete = True
                             else:
                                 self._ensure_approved_training_submission()
                                 await self._wait_for_training_result()
@@ -426,7 +433,7 @@ class KimiAgent:
                                             training_failure, sort_keys=True
                                         )[:2000]
                                     )
-                    if production_canary_complete:
+                    if bounded_canary_complete:
                         break
                     if not self.completion_tool or self._completion_tool_used(output):
                         break
@@ -1753,6 +1760,13 @@ class KimiAgent:
     def _autodata_stop_after_production() -> bool:
         return os.getenv("AAR_AUTODATA_STOP_AFTER", "").strip() == "production"
 
+    @staticmethod
+    def _autodata_stop_after_training_smoke() -> bool:
+        return (
+            os.getenv("AAR_AUTODATA_STOP_AFTER", "").strip()
+            == "training_smoke"
+        )
+
     @classmethod
     def _complete_autodata_production_canary(cls, run_id: str) -> Path:
         """Verify and durably mark a production-only AutoData canary."""
@@ -1822,6 +1836,136 @@ class KimiAgent:
         )
         return marker
 
+    @classmethod
+    def _complete_autodata_training_smoke_canary(cls, run_id: str) -> Path:
+        """Verify full data consumption and one real optimizer step."""
+        if not cls._autodata_stop_after_training_smoke():
+            raise RuntimeError("AutoData training-smoke stop is not active")
+        team_raw = os.getenv("TEAM_DIR", "").strip()
+        if not team_raw:
+            raise RuntimeError("TEAM_DIR is required for the training-smoke canary")
+        team = Path(team_raw)
+        try:
+            required_rows = int(os.environ["AAR_AUTODATA_PRODUCTION_ROWS"])
+        except (KeyError, ValueError) as error:
+            raise RuntimeError(
+                "AAR_AUTODATA_PRODUCTION_ROWS must be an integer"
+            ) from error
+        from aar.infrastructure.autodata_lifecycle import verify_preflight
+
+        verification = verify_preflight(run_id)
+        if verification.get("available_rows", 0) < required_rows:
+            raise RuntimeError(
+                "verified production handoff did not satisfy the configured row target"
+            )
+        timing = verification.get("timing")
+        if not isinstance(timing, dict) or timing.get("schema") != (
+            "aar.autodata.lifecycle-timing/v1"
+        ):
+            raise RuntimeError("verified production handoff has no lifecycle timing")
+        timing_path = team / "autodata" / run_id / "autodata-lifecycle-timing.json"
+        cls._write_private_text(
+            timing_path, json.dumps(timing, indent=2, sort_keys=True)
+        )
+
+        job_id = cls._current_training_job_id(run_id)
+        if job_id is None:
+            raise RuntimeError("training-smoke canary has no training submission receipt")
+        smoke_path = team / "method_smoke" / f"{run_id}.passed.json"
+        try:
+            smoke = json.loads(smoke_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("training-smoke result marker is unreadable") from error
+        consumption = smoke.get("autodata_consumption")
+        if (
+            smoke.get("schema_version") != 1
+            or smoke.get("status") != "passed"
+            or smoke.get("run_id") != run_id
+            or smoke.get("smoke_run") is not True
+            or smoke.get("optimizer_steps") != 1
+            or smoke.get("slurm_job_id") != job_id
+            or not isinstance(consumption, dict)
+            or consumption.get("run_id") != run_id
+            or consumption.get("consumed_rows") != required_rows
+            or consumption.get("required_rows") != required_rows
+            or consumption.get("dataset_sha256") != verification.get("dataset_sha256")
+            or consumption.get("production_execution_id")
+            != verification.get("production_execution_id")
+        ):
+            raise RuntimeError(
+                "training-smoke result does not prove exact AutoData consumption"
+            )
+        model_path_raw = smoke.get("model_path")
+        weight_name = smoke.get("adapter_weight_file")
+        if not isinstance(model_path_raw, str) or not isinstance(weight_name, str):
+            raise RuntimeError("training-smoke result has no adapter identity")
+        receipt_raw = consumption.get("consumption_receipt")
+        if not isinstance(receipt_raw, str):
+            raise RuntimeError("training-smoke result has no consumption receipt")
+        phase_timings_raw = smoke.get("phase_timings")
+        if not isinstance(phase_timings_raw, str):
+            raise RuntimeError("training-smoke result has no phase timing artifact")
+        receipt_candidate = Path(receipt_raw)
+        if receipt_candidate.is_symlink():
+            raise RuntimeError("training-smoke consumption receipt is unsafe")
+        receipt_path = receipt_candidate.resolve(strict=True)
+        phase_timings_path = Path(phase_timings_raw).resolve(strict=True)
+        model_path = Path(model_path_raw).resolve(strict=True)
+        team_root = team.resolve(strict=True)
+        if (
+            team_root not in model_path.parents
+            or team_root not in receipt_path.parents
+            or team_root not in phase_timings_path.parents
+        ):
+            raise RuntimeError(
+                "training-smoke evidence is outside the team directory"
+            )
+        weight_path = (model_path / weight_name).resolve(strict=True)
+        if model_path not in weight_path.parents or weight_path.stat().st_size <= 0:
+            raise RuntimeError("training-smoke adapter weight file is empty or unsafe")
+
+        marker = team / "autodata" / run_id / "training-smoke-canary-complete.json"
+        payload = {
+            "schema": "aar.autodata.training-smoke-canary-complete/v1",
+            "run_id": run_id,
+            "stop_after": "training_smoke",
+            "required_accepted_rows": required_rows,
+            "verification": verification,
+            "timing_report": str(timing_path),
+            "training": {
+                "job_id": job_id,
+                "optimizer_steps": 1,
+                "consumed_rows": consumption["consumed_rows"],
+                "consumption_receipt": str(receipt_path),
+                "phase_timings": str(phase_timings_path),
+                "method_smoke_marker": str(smoke_path),
+                "model_path": str(model_path),
+                "adapter_weight_file": weight_name,
+                "adapter_weight_sha256": hashlib.sha256(
+                    weight_path.read_bytes()
+                ).hexdigest(),
+            },
+        }
+        encoded = json.dumps(payload, indent=2, sort_keys=True)
+        if marker.exists():
+            try:
+                existing = json.loads(marker.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as error:
+                raise RuntimeError(
+                    "existing training-smoke canary marker is unreadable"
+                ) from error
+            if existing != payload:
+                raise RuntimeError(
+                    "existing training-smoke canary marker does not match verification"
+                )
+        else:
+            cls._write_private_text(marker, encoded)
+        print(
+            "[Kimi] verified AutoData training-smoke canary: "
+            f"{required_rows} rows consumed; one optimizer step passed"
+        )
+        return marker
+
     @staticmethod
     def _resume_approved_proposal_enabled() -> bool:
         return os.getenv("AAR_RESUME_APPROVED_PROPOSAL", "0").strip().lower() in {
@@ -1886,6 +2030,7 @@ class KimiAgent:
                 "execution and finish its verified production handoff before training."
             )
         return task
+
     def _validate_protected_submission_files(self) -> None:
         """Verify submission infrastructure against Git before executing it."""
         for relative_path in PROTECTED_SUBMISSION_FILES:
@@ -2073,6 +2218,46 @@ class KimiAgent:
             await asyncio.sleep(10)
         raise RuntimeError(
             f"timed out waiting for score or failure marker for approved run {run_id}"
+        )
+
+    async def _wait_for_training_smoke_result(self) -> None:
+        """Wait for the one-step marker without requiring an evaluator score."""
+        run_id = self._approved_run_id()
+        team_raw = os.getenv("TEAM_DIR", "").strip()
+        if run_id is None or not team_raw:
+            return
+        job_id = self._current_training_job_id(run_id)
+        if job_id is None:
+            return
+        marker = Path(team_raw) / "method_smoke" / f"{run_id}.passed.json"
+        timeout_seconds = int(os.environ.get("AAR_KIMI_SCORE_WAIT_SECONDS", "10800"))
+        deadline = time.monotonic() + timeout_seconds
+        next_update = time.monotonic()
+        next_scheduler_check = time.monotonic()
+        while time.monotonic() < deadline:
+            if marker.is_file():
+                print(f"[Kimi] one-step training smoke ready for approved run {run_id}")
+                return
+            failure = self._current_training_failure()
+            if failure is not None:
+                raise RuntimeError(
+                    "Kimi training smoke failed closed: "
+                    + json.dumps(failure, sort_keys=True)[:2000]
+                )
+            if time.monotonic() >= next_scheduler_check:
+                failure = self._reconcile_terminal_training_job(run_id, job_id)
+                if failure is not None:
+                    raise RuntimeError(
+                        "Kimi training smoke failed closed: "
+                        + json.dumps(failure, sort_keys=True)[:2000]
+                    )
+                next_scheduler_check = time.monotonic() + 30
+            if time.monotonic() >= next_update:
+                print(f"[Kimi] waiting for one-step training job {job_id}")
+                next_update = time.monotonic() + 60
+            await asyncio.sleep(10)
+        raise RuntimeError(
+            f"timed out waiting for one-step marker for approved run {run_id}"
         )
 
     @staticmethod

@@ -355,27 +355,32 @@ def load_run_config(path: Path) -> dict[str, Any]:
         loaded = {**loaded, "generation": {}}
     if isinstance(loaded, dict) and "bootstrap_canary" not in loaded:
         loaded = {**loaded, "bootstrap_canary": {"stop_after": "production"}}
+    root_keys = {
+        "schema",
+        "run_id",
+        "chains",
+        "target_pairs_per_chain",
+        "bootstrap_canary",
+        "deployments",
+        "budget",
+        "authoring",
+        "generation",
+        "meta_optimization",
+        "production",
+        "storage",
+        "evaluation",
+        "agent",
+        "recipe_root",
+        "training_contract",
+    }
+    if "runtime_profile" in loaded:
+        root_keys.add("runtime_profile")
+    if "stage_timing" in loaded:
+        root_keys.add("stage_timing")
     root = _mapping(
         loaded,
         "AutoData run config",
-        {
-            "schema",
-            "run_id",
-            "chains",
-            "target_pairs_per_chain",
-            "bootstrap_canary",
-            "deployments",
-            "budget",
-            "authoring",
-            "generation",
-            "meta_optimization",
-            "production",
-            "storage",
-            "evaluation",
-            "agent",
-            "recipe_root",
-            "training_contract",
-        },
+        root_keys,
     )
     if root["schema"] != RUN_SCHEMA:
         raise ValueError(f"unsupported run config schema: {root['schema']!r}")
@@ -389,8 +394,10 @@ def load_run_config(path: Path) -> dict[str, Any]:
         "bootstrap_canary",
         {"stop_after"},
     )
-    if bootstrap_canary["stop_after"] != "production":
-        raise ValueError("bootstrap_canary.stop_after must be production")
+    if bootstrap_canary["stop_after"] not in {"production", "training_smoke"}:
+        raise ValueError(
+            "bootstrap_canary.stop_after must be production or training_smoke"
+        )
     deployments = _mapping(
         root["deployments"], "deployments", {"researcher_kimi", "generator_kimi"}
     )
@@ -402,9 +409,31 @@ def load_run_config(path: Path) -> dict[str, Any]:
         "max_wall_seconds": _positive_integer(
             authoring["max_wall_seconds"],
             "authoring.max_wall_seconds",
-            maximum=86_400,
+            maximum=2_592_000,
         )
     }
+    stage_timing = None
+    if "stage_timing" in root:
+        stage_timing = _mapping(
+            root["stage_timing"],
+            "stage_timing",
+            {"mode", "native_schema_wall_seconds"},
+        )
+        if stage_timing["mode"] != "observe_only":
+            raise ValueError("stage_timing.mode must be observe_only")
+        stage_timing = {
+            "mode": "observe_only",
+            "native_schema_wall_seconds": _positive_integer(
+                stage_timing["native_schema_wall_seconds"],
+                "stage_timing.native_schema_wall_seconds",
+                maximum=2_592_000,
+            ),
+        }
+        if authoring["max_wall_seconds"] != stage_timing["native_schema_wall_seconds"]:
+            raise ValueError(
+                "observe-only authoring max_wall_seconds must equal the native "
+                "schema wall value"
+            )
     generation = root["generation"]
     if not isinstance(generation, dict):
         raise ValueError("generation must be a mapping")
@@ -507,14 +536,14 @@ def load_run_config(path: Path) -> dict[str, Any]:
     recipe_path = Path(recipe_root)
     if recipe_path.is_absolute() or ".." in recipe_path.parts:
         raise ValueError("recipe_root must be a repository-relative path")
-    return {
+    result = {
         "schema": RUN_SCHEMA,
         "run_id": _identifier(root["run_id"], "run_id"),
         "chains": chains,
         "target_pairs_per_chain": _positive_integer(
             root["target_pairs_per_chain"], "target_pairs_per_chain"
         ),
-        "bootstrap_canary": {"stop_after": "production"},
+        "bootstrap_canary": {"stop_after": bootstrap_canary["stop_after"]},
         "deployments": {
             "researcher_kimi": _identifier(
                 deployments["researcher_kimi"], "deployments.researcher_kimi"
@@ -542,6 +571,53 @@ def load_run_config(path: Path) -> dict[str, Any]:
             ),
         },
     }
+    if "runtime_profile" in root:
+        runtime_profile = _text(root["runtime_profile"], "runtime_profile")
+        runtime_profile_path = Path(runtime_profile)
+        if runtime_profile_path.is_absolute() or ".." in runtime_profile_path.parts:
+            raise ValueError(
+                "runtime_profile must be a repository-relative path without traversal"
+            )
+        result["runtime_profile"] = runtime_profile_path.as_posix()
+    if stage_timing is not None:
+        result["stage_timing"] = stage_timing
+    return result
+
+
+def resolve_runtime_profile_path(
+    *,
+    run_path: Path,
+    repo: Path,
+    profile_path: Path | None = None,
+    fallback_path: Path | None = None,
+) -> Path:
+    """Resolve a run-declared profile and reject a conflicting shell override."""
+
+    repo = repo.resolve(strict=True)
+    run = load_run_config(run_path)
+    declared_reference = run.get("runtime_profile")
+    declared_path: Path | None = None
+    if declared_reference is not None:
+        declared_path = (repo / declared_reference).resolve(strict=True)
+        if repo not in declared_path.parents or not declared_path.is_file():
+            raise ValueError(
+                "runtime_profile must resolve to a regular file inside the repository"
+            )
+
+    explicit_path = profile_path.resolve(strict=True) if profile_path else None
+    if declared_path is not None and explicit_path is not None:
+        if declared_path != explicit_path:
+            raise ValueError(
+                "explicit runtime profile does not match the run config declaration"
+            )
+    selected = declared_path or explicit_path
+    if selected is None and fallback_path is not None:
+        selected = fallback_path.resolve(strict=True)
+    if selected is None:
+        raise ValueError("run config does not declare a runtime_profile")
+    if not selected.is_file():
+        raise ValueError("runtime profile must resolve to a regular file")
+    return selected
 
 
 def _target_manifest_chain(value: Mapping[str, Any]) -> str | None:
@@ -641,7 +717,7 @@ def _runtime_environment(
     recipe_root = (repo / run["recipe_root"]).resolve(strict=True)
     if not recipe_root.is_dir() or repo not in recipe_root.parents:
         raise ValueError("recipe_root must resolve to a repository directory")
-    return {
+    environment = {
         "AAR_AUTODATA_PROFILE": profile["name"],
         "AAR_AUTODATA_PROFILE_CONFIG": str(profile_path),
         "AAR_AUTODATA_RUN_CONFIG": str(run_path),
@@ -696,6 +772,15 @@ def _runtime_environment(
         "AAR_AGENT_BACKEND": agent["backend"],
         "AAR_KIMI_TURN_TIMEOUT_SECONDS": str(agent["turn_timeout_seconds"]),
     }
+    stage_timing = run.get("stage_timing")
+    if stage_timing is None:
+        environment["AAR_AUTODATA_STAGE_TIMEOUT_POLICY"] = "enforce"
+    else:
+        environment["AAR_AUTODATA_STAGE_TIMEOUT_POLICY"] = "observe-only"
+        environment["AAR_AUTODATA_NATIVE_SCHEMA_WALL_SECONDS"] = str(
+            stage_timing["native_schema_wall_seconds"]
+        )
+    return environment
 
 
 def compile_run_config(
@@ -707,10 +792,14 @@ def compile_run_config(
     repo: Path,
     output_dir: Path,
 ) -> dict[str, Any]:
-    profile_path = profile_path.resolve(strict=True)
     run_path = run_path.resolve(strict=True)
     target_binding_path = target_binding_path.resolve(strict=True)
     repo = repo.resolve(strict=True)
+    profile_path = resolve_runtime_profile_path(
+        run_path=run_path,
+        repo=repo,
+        profile_path=profile_path,
+    )
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     profile = load_runtime_profile(profile_path)
@@ -888,6 +977,11 @@ def main() -> int:
     inspect = subparsers.add_parser("inspect")
     inspect.add_argument("--profile", required=True, type=Path)
     inspect.add_argument("--run", required=True, type=Path)
+    resolve_profile = subparsers.add_parser("resolve-profile")
+    resolve_profile.add_argument("--run", required=True, type=Path)
+    resolve_profile.add_argument("--repo", required=True, type=Path)
+    resolve_profile.add_argument("--profile", type=Path)
+    resolve_profile.add_argument("--fallback-profile", type=Path)
     compile_parser = subparsers.add_parser("compile")
     compile_parser.add_argument("--profile", required=True, type=Path)
     compile_parser.add_argument("--run", required=True, type=Path)
@@ -902,6 +996,16 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "inspect":
         result = inspect_configs(args.profile, args.run)
+    elif args.command == "resolve-profile":
+        print(
+            resolve_runtime_profile_path(
+                run_path=args.run,
+                repo=args.repo,
+                profile_path=args.profile,
+                fallback_path=args.fallback_profile,
+            )
+        )
+        return 0
     elif args.command == "compile":
         result = compile_run_config(
             profile_path=args.profile,

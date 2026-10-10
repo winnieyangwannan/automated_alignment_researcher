@@ -189,6 +189,47 @@ if [ "${AAR_AUTODATA_STOP_AFTER:-}" = production ]; then
     wait_job "${job}"
   done
 fi
+if [ "${AAR_AUTODATA_STOP_AFTER:-}" = training_smoke ]; then
+  next_iteration=1
+  while true; do
+    shopt -s nullglob
+    markers=("${TEAM_DIR}"/autodata/*/training-smoke-canary-complete.json)
+    shopt -u nullglob
+    if [ "${#markers[@]}" -eq 1 ] && jq -e \
+      --argjson required "${AAR_AUTODATA_PRODUCTION_ROWS:?}" '
+        .schema == "aar.autodata.training-smoke-canary-complete/v1"
+        and .stop_after == "training_smoke"
+        and .required_accepted_rows == $required
+        and .verification.available_rows >= $required
+        and .training.consumed_rows == $required
+        and .training.optimizer_steps == 1
+        and .verification.run_id == .run_id
+      ' "${markers[0]}" >/dev/null; then
+      cp -- "${markers[0]}" "${CHAIN_ROOT}/metadata/training-smoke-canary-complete.json"
+      record_event "complete=training_smoke_canary accepted_rows=$(jq -r '.verification.available_rows' "${markers[0]}") consumed_rows=$(jq -r '.training.consumed_rows' "${markers[0]}") attempts=${attempts}"
+      jq -n \
+        --arg chain "${SEED}" \
+        --arg marker "${markers[0]}" \
+        --argjson attempts "${attempts}" \
+        --argjson required "${AAR_AUTODATA_PRODUCTION_ROWS}" \
+        '{schema:"aar.run12.training-smoke-canary/v1",chain:$chain,stop_after:"training_smoke",required_accepted_rows:$required,optimizer_steps:1,attempts:$attempts,marker:$marker}' \
+        > "${CHAIN_ROOT}/metadata/complete.json"
+      exit 0
+    fi
+    if [ "${#markers[@]}" -gt 1 ]; then
+      record_event "fatal=multiple_training_smoke_canary_markers count=${#markers[@]}"
+      exit 1
+    fi
+    if [ "${attempts}" -ge "${MAX_ATTEMPTS}" ]; then
+      record_event "fatal=training_smoke_canary_not_completed attempts=${attempts}"
+      exit 1
+    fi
+    job="$(submit_session)"
+    attempts=$((attempts + 1))
+    record_event "training_smoke_canary_retry=${job} attempts=${attempts}"
+    wait_job "${job}"
+  done
+fi
 pairs="$(pair_count)"
 while [ "${pairs}" -lt "${TARGET_PAIRS}" ]; do
   if [ "${attempts}" -ge "${MAX_ATTEMPTS}" ]; then

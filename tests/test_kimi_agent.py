@@ -1227,6 +1227,88 @@ class KimiAgentTest(unittest.TestCase):
             self.assertEqual(json.loads(timing_path.read_text()), verification["timing"])
             self.assertFalse((team / ".train_submissions").exists())
 
+    def test_training_smoke_canary_proves_consumption_and_one_step(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            team = Path(temp) / "team"
+            run_id = "chain-uid-candidate-1"
+            run_root = team / "autodata" / run_id
+            run_root.mkdir(parents=True)
+            model_path = team / "_train" / run_id
+            model_path.mkdir(parents=True)
+            weight = model_path / "adapter_model.safetensors"
+            weight.write_bytes(b"adapter")
+            receipt = run_root / "training-consumption.json"
+            receipt.write_text("{}")
+            phase_timings = team / "timings" / f"{run_id}.research.jsonl"
+            phase_timings.parent.mkdir()
+            phase_timings.write_text('{"phase":"training"}\n')
+            job_id = "12345"
+            submission = team / ".train_submissions" / f"{run_id}.env"
+            submission.parent.mkdir()
+            submission.write_text(f"run_id={run_id}\njob_id={job_id}\n")
+            verification = {
+                "schema": "aar.autodata.lifecycle-verification/v1",
+                "run_id": run_id,
+                "available_rows": 1000,
+                "required_rows": 1000,
+                "dataset_sha256": "sha256:dataset",
+                "production_execution_id": "exe_production",
+                "timing": {
+                    "schema": "aar.autodata.lifecycle-timing/v1",
+                    "run_id": run_id,
+                },
+            }
+            smoke_dir = team / "method_smoke"
+            smoke_dir.mkdir()
+            (smoke_dir / f"{run_id}.passed.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "status": "passed",
+                        "run_id": run_id,
+                        "model_path": str(model_path),
+                        "adapter_weight_file": weight.name,
+                        "smoke_run": True,
+                        "optimizer_steps": 1,
+                        "slurm_job_id": job_id,
+                        "phase_timings": str(phase_timings),
+                        "autodata_consumption": {
+                            **verification,
+                            "consumed_rows": 1000,
+                            "consumption_receipt": str(receipt),
+                        },
+                    }
+                )
+            )
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "TEAM_DIR": str(team),
+                        "AAR_AUTODATA_STOP_AFTER": "training_smoke",
+                        "AAR_AUTODATA_PRODUCTION_ROWS": "1000",
+                    },
+                    clear=False,
+                ),
+                patch(
+                    "aar.infrastructure.autodata_lifecycle.verify_preflight",
+                    return_value=verification,
+                ),
+            ):
+                marker = KimiAgent._complete_autodata_training_smoke_canary(run_id)
+
+            value = json.loads(marker.read_text())
+            self.assertEqual(
+                value["schema"],
+                "aar.autodata.training-smoke-canary-complete/v1",
+            )
+            self.assertEqual(value["training"]["consumed_rows"], 1000)
+            self.assertEqual(value["training"]["optimizer_steps"], 1)
+            self.assertEqual(
+                value["training"]["adapter_weight_sha256"],
+                hashlib.sha256(b"adapter").hexdigest(),
+            )
+
     def test_autodata_approval_defers_training_until_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -14,9 +14,13 @@ chain's campaign policy, training-data contract, shell runtime environment, and
 resolved configuration snapshot. Unknown YAML keys, target-disabled settings,
 cross-chain bindings, or changes to compiled artifacts fail before generation.
 Canary 2 supplies its separate `canary/canary_2/autodata_run.yaml`, where
-`bootstrap_canary.stop_after: production` and `production.required_rows: 100`
-make the success boundary explicit. The canonical full-run YAML remains at
-1,000 rows. Both modes use the same launcher and production implementation.
+`bootstrap_canary.stop_after: training_smoke`,
+`production.required_rows: 1000`, and `production.initial_tasks: 1250` make
+the success boundary explicit. Canary 2 consumes the verified 1,000-row
+handoff in exactly one real GPU optimizer step, validates a non-empty PEFT
+adapter, and stops before full training or evaluation. The canonical full run
+also requires 1,000 rows. Both modes use the same launcher and production
+implementation.
 The standalone canary code and configuration are documented under
 [`canary/`](canary/README.md). The one-row infrastructure canary uses
 [`canary/canary_1/autodata_canary.yaml`](canary/canary_1/autodata_canary.yaml) with the same

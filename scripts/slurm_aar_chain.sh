@@ -325,14 +325,15 @@ PY
       --workspaces "${AAR_AUTODATA_WORKSPACES}" \
       --lock-file "${TEAM_DIR}/autodata/native/lifecycle-supervisor.lock" \
       --status-file "${TEAM_DIR}/autodata/native/lifecycle-supervisor-status.json" \
-      --log-file "${TEAM_DIR}/logs/autodata-lifecycle-supervisor.log" &
+      --log-file "${TEAM_DIR}/logs/autodata-lifecycle-supervisor.log" \
+      --stage-timeout-policy "${AAR_AUTODATA_STAGE_TIMEOUT_POLICY:-enforce}" &
     _autodata_supervisor_pid=$!
     sleep 1
     kill -0 "${_autodata_supervisor_pid}" 2>/dev/null || {
       echo "[aar] ERROR: AutoData lifecycle supervisor exited during startup" >&2
       exit 2
     }
-    echo "[aar] AutoData lifecycle supervisor ready (pid=${_autodata_supervisor_pid}, meta_timeout=2h, production_timeout=8h, state=node-local)"
+    echo "[aar] AutoData lifecycle supervisor ready (pid=${_autodata_supervisor_pid}, stage_timeout_policy=${AAR_AUTODATA_STAGE_TIMEOUT_POLICY:-enforce}, state=node-local)"
   fi
   unset _autodata_broker_args _autodata_broker_database_root \
     _autodata_capability_file _autodata_probe _autodata_port \

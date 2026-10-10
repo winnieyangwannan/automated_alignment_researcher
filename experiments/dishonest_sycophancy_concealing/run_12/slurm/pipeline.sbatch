@@ -108,17 +108,28 @@ source "${AAR_AUTODATA_RUNTIME_ENV}"
   exit 2
 }
 if [ "${AAR_RUN12_MODE:-full}" = bootstrap-canary ]; then
-  [ "${AAR_AUTODATA_STOP_AFTER:-}" = production ] || {
-    echo "bootstrap canary is not configured to stop after production" >&2
-    exit 2
-  }
-  # This canary deliberately creates no adapter and performs no evaluation.
+  case "${AAR_AUTODATA_STOP_AFTER:-}" in
+    production)
+      export AAR_METHOD_SMOKE=0
+      ;;
+    training_smoke)
+      # Consume the complete verified dataset but bound optimization to the
+      # method contract's real-CUDA one-step path.
+      export AAR_METHOD_SMOKE=1
+      ;;
+    *)
+      echo "bootstrap canary has an unsupported stop boundary" >&2
+      exit 2
+      ;;
+  esac
+  # Canary modes deliberately perform no held-out evaluation.
   export AAR_START_EVAL_WORKER=0
 else
   [ -z "${AAR_AUTODATA_STOP_AFTER:-}" ] || {
     echo "full mode must not inherit a canary stop boundary" >&2
     exit 2
   }
+  export AAR_METHOD_SMOKE=0
 fi
 
 "${HARNESS_PY}" "${REPO}/scripts/validate_reused_multidimensional_baseline.py" \
@@ -128,7 +139,7 @@ cp -- "${REUSED_BASELINE}" "${AAR_BASELINE_OVERRIDES}"
 if [ "${AAR_START_EVAL_WORKER}" = 1 ]; then
   bash "${REPO}/scripts/publish_holdout.sh"
 else
-  echo "[run12] production-only canary: skipping evaluator holdout publication"
+  echo "[run12] bounded canary: skipping evaluator holdout publication"
 fi
 
 children="${ATTEMPT}/metadata/children.tsv"

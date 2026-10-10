@@ -217,6 +217,33 @@ def test_next_subject_pauses_for_actions_and_uses_phase_timeouts(tmp_path: Path)
     assert subject.stall_seconds == META_STALL_SECONDS
 
 
+def test_observe_only_subject_keeps_stall_detection_without_elapsed_timeout(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state.db"
+    control = tmp_path / "control.json"
+    _state(state)
+    with sqlite3.connect(state) as connection:
+        connection.execute(
+            "INSERT INTO executions VALUES (?,?,?,?,?,?)",
+            (
+                "exe_observe",
+                "active",
+                "baseline_pending",
+                "2026-01-01",
+                json.dumps({"mode": "production"}),
+                604800,
+            ),
+        )
+    register_subject(state, control, kind="execution", subject_id="exe_observe")
+
+    subject = next_subject(state, control, stage_timeout_policy="observe-only")
+
+    assert subject is not None
+    assert subject.timeout_seconds is None
+    assert subject.stall_seconds == PRODUCTION_STALL_SECONDS
+
+
 def test_next_subject_rejects_native_budget_without_controller_grace(
     tmp_path: Path,
 ) -> None:
