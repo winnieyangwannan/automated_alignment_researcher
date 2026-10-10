@@ -20,7 +20,13 @@ from unittest.mock import patch
 
 import requests
 
-from aar.research_loop.kimi_agent import KimiAgent, KimiToolUseBlock
+from aar.research_loop.kimi_agent import (
+    PROTECTED_SUBMISSION_FILES,
+    KimiAgent,
+    KimiToolUseBlock,
+    OrchestrationIncident,
+)
+from aar.research_loop.kimi_write_guard import validate_tool_call
 from aar.research_loop.tools.kimi_mcp_server import (
     SERVER_TOOLS,
     _text_content,
@@ -483,7 +489,7 @@ class KimiAgentTest(unittest.TestCase):
                 ],
             )
             self.assertNotIn("--auto", observed["argv"])
-            self.assertTrue(observed["config_is_link"])
+            self.assertFalse(observed["config_is_link"])
             self.assertEqual(
                 set(observed["mcp"]["mcpServers"]),
                 {"existing", "server-api-tools", "prior-work-tools"},
@@ -584,6 +590,9 @@ class KimiAgentTest(unittest.TestCase):
             self.assertIn(
                 'defaultPermissionMode = "auto"', observed["config"]
             )
+            self.assertIn('event = "PreToolUse"', observed["config"])
+            self.assertIn('matcher = "^(Write|Edit)$"', observed["config"])
+            self.assertIn("aar.research_loop.kimi_write_guard", observed["config"])
             self.assertNotIn("System-level AAR instructions.", observed["argv"])
             self.assertIn(
                 'disallowedTools: ["CreateGoal", "AgentSwarm"]',
@@ -1168,6 +1177,7 @@ class KimiAgentTest(unittest.TestCase):
                         "IDEA_UID": "chain-uid",
                     },
                 ),
+                patch.object(agent, "_validate_protected_submission_files"),
                 patch("aar.research_loop.kimi_agent.subprocess.run", side_effect=submit),
             ):
                 agent._ensure_approved_training_submission()
@@ -1260,6 +1270,7 @@ class KimiAgentTest(unittest.TestCase):
             }
             with (
                 patch.dict(os.environ, environment, clear=False),
+                patch.object(agent, "_validate_protected_submission_files"),
                 patch(
                     "aar.research_loop.kimi_agent.subprocess.run", side_effect=submit
                 ) as run,
@@ -1648,6 +1659,109 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                 self.assertFalse(
                     KimiAgent._autodata_pipeline_feedback_requires_edit(action)
                 )
+    def test_write_guard_allows_only_ideas_tree_and_chain_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ideas = root / "ideas"
+            scripts = root / "scripts"
+            ideas.mkdir()
+            scripts.mkdir()
+            memory = root / "logs" / "AGENT_LOG_seed.md"
+            env = {
+                "AAR_IDEAS_DIR": str(ideas),
+                "AAR_AGENT_LOG_PATH": str(memory),
+            }
+
+            for destination in (ideas / "candidate" / "run.py", memory):
+                allowed, reason = validate_tool_call(
+                    {
+                        "tool_name": "Write",
+                        "tool_input": {"path": str(destination)},
+                        "cwd": str(root),
+                    },
+                    env,
+                )
+                self.assertTrue(allowed, reason)
+
+            allowed, reason = validate_tool_call(
+                {
+                    "tool_name": "Edit",
+                    "tool_input": {"path": "scripts/submit_train_job.sh"},
+                    "cwd": str(root),
+                },
+                env,
+            )
+            self.assertFalse(allowed)
+            self.assertIn("outside", reason)
+
+            (ideas / "escape").symlink_to(scripts, target_is_directory=True)
+            allowed, _ = validate_tool_call(
+                {
+                    "tool_name": "Write",
+                    "tool_input": {"path": "ideas/escape/submit_train_job.sh"},
+                    "cwd": str(root),
+                },
+                env,
+            )
+            self.assertFalse(allowed)
+
+    def test_protected_submission_hash_mismatch_publishes_team_incident(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for relative_path in PROTECTED_SUBMISSION_FILES:
+                path = root / relative_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("#!/bin/bash\ntrue\n" if path.suffix == ".sh" else "pass\n")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=AAR Test",
+                    "-c",
+                    "user.email=aar-test@example.com",
+                    "commit",
+                    "-qm",
+                    "fixture",
+                ],
+                cwd=root,
+                check=True,
+            )
+            corrupted = root / "scripts" / "submit_train_job.sh"
+            corrupted.write_text("SCRIPT\n")
+            team_dir = root / "team"
+            agent = KimiAgent("test-agent", root, cli_path="/bin/true")
+
+            with patch.dict(
+                os.environ,
+                {"TEAM_DIR": str(team_dir), "IDEA_UID": "chain-alpha"},
+                clear=False,
+            ), self.assertRaisesRegex(
+                OrchestrationIncident, "protected file hash mismatch"
+            ):
+                agent._validate_protected_submission_files()
+
+            incident = json.loads(
+                (team_dir / ".orchestration_incident.json").read_text()
+            )
+            self.assertEqual(incident["status"], "paused")
+            self.assertEqual(incident["stage"], "training_submission")
+            self.assertEqual(incident["chain"], "chain-alpha")
+            self.assertIn("submit_train_job.sh", incident["error"])
+            with patch.dict(
+                os.environ, {"TEAM_DIR": str(team_dir)}, clear=False
+            ):
+                self.assertEqual(incident, agent.active_orchestration_incident())
+
+    def test_orchestration_incident_escapes_kimi_result_wrapping(self) -> None:
+        agent = KimiAgent("test-agent", Path.cwd(), cli_path="/bin/true")
+        with patch.object(
+            agent,
+            "_execute_once",
+            side_effect=OrchestrationIncident("shared wrapper failed"),
+        ), self.assertRaisesRegex(OrchestrationIncident, "shared wrapper failed"):
+            asyncio.run(agent.execute("task"))
 
     def test_standard_mcp_bridge_advertises_existing_tool_objects(self) -> None:
         names = {tool.name for tool in SERVER_TOOLS["server-api-tools"]}

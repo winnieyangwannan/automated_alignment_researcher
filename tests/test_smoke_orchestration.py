@@ -124,6 +124,51 @@ class SmokeOrchestrationTest(TestCase):
         self.assertEqual(loop._run_session.await_count, 1)
         self.assertEqual(result["sessions"], 1)
 
+    def test_orchestration_incident_stops_kimi_loop_without_retry(self):
+        from aar.research_loop.agent import AutonomousAgentLoop
+        from aar.research_loop.kimi_agent import OrchestrationIncident
+
+        class StopChecker:
+            elapsed_time = 0.0
+
+            @staticmethod
+            def check():
+                return None
+
+            @staticmethod
+            def record_error():
+                return None
+
+        class Probe:
+            @staticmethod
+            def active_orchestration_incident():
+                return None
+
+        loop = object.__new__(AutonomousAgentLoop)
+        loop.local_mode = True
+        loop.backend = "kimi"
+        loop.model = "kimi-test"
+        loop.run_id = "agent-run"
+        loop.idea_name = "smoke"
+        loop.idea_uid = "smoke"
+        loop.max_runtime_seconds = 3600
+        loop.max_iterations = 50
+        loop.findings_sync = None
+        loop.session_count = 0
+        loop.stop_checker = StopChecker()
+        loop._create_agent = lambda *args, **kwargs: Probe()
+        loop._run_session = AsyncMock(
+            side_effect=OrchestrationIncident("protected wrapper changed")
+        )
+
+        with patch("aar.research_loop.agent.asyncio.sleep", new=AsyncMock()) as sleep:
+            result = asyncio.run(loop.run())
+
+        self.assertEqual(loop._run_session.await_count, 1)
+        sleep.assert_not_awaited()
+        self.assertEqual(result["sessions"], 1)
+        self.assertEqual(result["stop_reason"], "orchestration_incident")
+
     def test_put_model_stages_model_and_tokenizer_before_marker(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

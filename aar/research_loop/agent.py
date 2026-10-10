@@ -51,7 +51,7 @@ from .autodata_plugin import resolve_autodata_plugin
 from .tools.server_api_tools import create_server_api_tools_server
 from .tools.prior_work_tools import create_prior_work_tools_server
 from .tools.findings_sync import FindingsSync
-from .kimi_agent import KimiAgent
+from .kimi_agent import KimiAgent, OrchestrationIncident
 
 
 # These values belong to the operator-side integrity monitor and other trusted
@@ -861,6 +861,17 @@ class AutonomousAgentLoop:
                 print(f"\n[Loop] Stopping: {stop_reason.value}")
                 break
 
+            if getattr(self, "backend", "claude") == "kimi":
+                probe = self._create_agent(f"incident-check-{self.session_count}")
+                incident = probe.active_orchestration_incident()
+                if incident is not None:
+                    print(
+                        "\n[Loop] Paused by shared orchestration incident: "
+                        f"{incident.get('error', 'unknown infrastructure failure')}"
+                    )
+                    stop_reason = "orchestration_incident"
+                    break
+
             try:
                 with phase(
                     "research.session",
@@ -886,6 +897,13 @@ class AutonomousAgentLoop:
             except KeyboardInterrupt:
                 print("\n[Loop] Interrupted")
                 stop_reason = StopReason.USER_INTERRUPT
+                break
+
+            except OrchestrationIncident as error:
+                print(f"\n[Loop] Paused by orchestration incident: {error}")
+                self.stop_checker.record_error()
+                failed_sessions += 1
+                stop_reason = "orchestration_incident"
                 break
 
             except Exception as e:

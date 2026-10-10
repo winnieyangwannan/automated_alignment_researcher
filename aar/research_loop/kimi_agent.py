@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Iterator, Optional
+from typing import Any, Callable, Iterator, NoReturn, Optional
 from urllib.parse import urlsplit
 
 import requests
@@ -53,6 +53,18 @@ class KimiAgentResult:
     duration: float
     iteration_count: int
     error: Optional[str] = None
+
+
+class OrchestrationIncident(RuntimeError):
+    """Shared infrastructure failure that research sessions cannot repair."""
+
+
+PROTECTED_SUBMISSION_FILES = (
+    "scripts/submit_train_job.sh",
+    "scripts/slurm_train_submit.sh",
+    "scripts/aar_runtime_env.sh",
+    "scripts/validate_method_contract.py",
+)
 
 
 def _policy_proxy_handler(
@@ -293,6 +305,8 @@ class KimiAgent:
         start_time = time.time()
         try:
             return await self._execute_once(task, start_time)
+        except OrchestrationIncident:
+            raise
         except Exception as error:
             return KimiAgentResult(
                 success=False,
@@ -1657,6 +1671,12 @@ class KimiAgent:
             or os.environ.get("AAR_REQUIRE_TRAIN_RECEIPT") != "1"
         ):
             return
+        active_incident = self.active_orchestration_incident()
+        if active_incident is not None:
+            raise OrchestrationIncident(
+                "team is paused by a shared orchestration incident: "
+                f"{active_incident.get('error', 'unknown infrastructure failure')}"
+            )
         run_id = self._approved_run_id()
         if run_id is None or self._current_training_job_id(run_id) is not None:
             return
@@ -1680,6 +1700,7 @@ class KimiAgent:
             r"[A-Za-z_][A-Za-z0-9_]*", idea_name
         ):
             raise RuntimeError("approved proposal has an unsafe method module name")
+        self._validate_protected_submission_files()
         command = [
             "bash",
             str(self.workspace / "scripts/submit_train_job.sh"),
@@ -1697,16 +1718,26 @@ class KimiAgent:
                 check=False,
             )
         except subprocess.TimeoutExpired as error:
-            raise RuntimeError("approved training submission timed out") from error
+            incident = OrchestrationIncident(
+                "approved training submission wrapper timed out"
+            )
+            self._publish_orchestration_incident(incident)
+            raise incident from error
         job_id = completed.stdout.strip()
         if completed.returncode != 0 or not re.fullmatch(r"[0-9]+", job_id):
             detail = completed.stderr.strip() or completed.stdout.strip()
-            raise RuntimeError(
-                "approved training submission failed: " + detail[-4000:]
+            incident = OrchestrationIncident(
+                "approved training submission wrapper failed: " + detail[-4000:]
             )
+            self._publish_orchestration_incident(incident)
+            raise incident
         receipt_job = self._current_training_job_id(run_id)
         if receipt_job != job_id:
-            raise RuntimeError("training submission did not publish its verified receipt")
+            incident = OrchestrationIncident(
+                "training submission did not publish its verified receipt"
+            )
+            self._publish_orchestration_incident(incident)
+            raise incident
         print(f"[Kimi] deterministically submitted approved training job {job_id}")
 
     @staticmethod
@@ -1855,6 +1886,151 @@ class KimiAgent:
                 "execution and finish its verified production handoff before training."
             )
         return task
+    def _validate_protected_submission_files(self) -> None:
+        """Verify submission infrastructure against Git before executing it."""
+        for relative_path in PROTECTED_SUBMISSION_FILES:
+            path = self.workspace / relative_path
+            try:
+                committed = subprocess.run(
+                    ["git", "show", f"HEAD:{relative_path}"],
+                    cwd=self.workspace,
+                    capture_output=True,
+                    timeout=30,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as error:
+                self._raise_orchestration_incident(
+                    f"cannot verify protected file from Git: {relative_path}: {error}"
+                )
+            if committed.returncode != 0:
+                detail = committed.stderr.decode(errors="replace").strip()
+                self._raise_orchestration_incident(
+                    f"cannot read protected file from Git: {relative_path}: {detail}"
+                )
+            try:
+                actual = path.read_bytes()
+            except OSError as error:
+                self._raise_orchestration_incident(
+                    f"cannot read protected file: {relative_path}: {error}"
+                )
+            expected_hash = hashlib.sha256(committed.stdout).hexdigest()
+            actual_hash = hashlib.sha256(actual).hexdigest()
+            if actual_hash != expected_hash:
+                self._raise_orchestration_incident(
+                    "protected file hash mismatch: "
+                    f"{relative_path} expected={expected_hash} actual={actual_hash}"
+                )
+            if path.suffix == ".sh":
+                try:
+                    syntax = subprocess.run(
+                        ["bash", "-n", str(path)],
+                        cwd=self.workspace,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        check=False,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    self._raise_orchestration_incident(
+                        f"cannot syntax-check protected shell file: "
+                        f"{relative_path}: {error}"
+                    )
+                if syntax.returncode != 0:
+                    detail = syntax.stderr.strip() or syntax.stdout.strip()
+                    self._raise_orchestration_incident(
+                        f"protected shell syntax check failed: {relative_path}: "
+                        f"{detail[-2000:]}"
+                    )
+
+    def _raise_orchestration_incident(self, message: str) -> NoReturn:
+        incident = OrchestrationIncident(message)
+        self._publish_orchestration_incident(incident)
+        raise incident
+
+    def _publish_orchestration_incident(self, error: Exception) -> None:
+        """Atomically publish a team-wide fail-stop marker for operators/peers."""
+        team_dir_value = os.environ.get("TEAM_DIR", "").strip()
+        if not team_dir_value:
+            return
+        try:
+            team_dir = Path(team_dir_value)
+            team_dir.mkdir(parents=True, exist_ok=True)
+            marker = team_dir / ".orchestration_incident.json"
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=self.workspace,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            payload = {
+                "status": "paused",
+                "stage": "training_submission",
+                "error": str(error),
+                "source_head": head.stdout.strip() if head.returncode == 0 else None,
+                "chain": os.environ.get("IDEA_UID") or os.environ.get("IDEA_NAME"),
+                "created_at": datetime.now().astimezone().isoformat(),
+                "operator_action": (
+                    "Repair and validate shared submission infrastructure, deploy "
+                    "a new commit, then resume the team."
+                ),
+            }
+            fd, temporary = tempfile.mkstemp(
+                prefix=f".{marker.name}.", dir=team_dir, text=True
+            )
+            try:
+                with os.fdopen(fd, "w") as handle:
+                    json.dump(payload, handle, indent=2)
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, marker)
+            finally:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(temporary)
+        except (OSError, subprocess.SubprocessError) as publish_error:
+            # The originating OrchestrationIncident must still escape and stop
+            # this chain even if the shared filesystem cannot accept the marker.
+            print(
+                "[Kimi] WARNING: could not publish orchestration incident marker: "
+                f"{publish_error}",
+                file=sys.stderr,
+            )
+
+    def active_orchestration_incident(self) -> Optional[dict[str, Any]]:
+        """Return this revision's shared incident, if another chain published one."""
+        team_dir = os.environ.get("TEAM_DIR", "").strip()
+        if not team_dir:
+            return None
+        try:
+            payload = json.loads(
+                (Path(team_dir) / ".orchestration_incident.json").read_text()
+            )
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        try:
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=self.workspace,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return payload
+        marker_head = payload.get("source_head")
+        if (
+            head.returncode == 0
+            and isinstance(marker_head, str)
+            and marker_head
+            and marker_head != head.stdout.strip()
+        ):
+            return None
+        return payload
 
     async def _wait_for_training_result(self) -> None:
         """Keep Kimi out of shell polling while the asynchronous job/evaluator runs."""
@@ -2082,27 +2258,40 @@ class KimiAgent:
             for child in source_home.iterdir():
                 if child.name == "mcp.json":
                     continue
-                if child.name == "config.toml" and self.auto_approve:
+                if child.name == "config.toml":
                     config_text = child.read_text()
-                    permission = 'defaultPermissionMode = "auto"'
-                    if re.search(
-                        r"(?m)^\s*defaultPermissionMode\s*=.*$", config_text
-                    ):
-                        config_text = re.sub(
-                            r"(?m)^\s*defaultPermissionMode\s*=.*$",
-                            permission,
-                            config_text,
-                        )
-                    else:
-                        config_text = f"{permission}\n{config_text}"
+                    if self.auto_approve:
+                        permission = 'defaultPermissionMode = "auto"'
+                        if re.search(
+                            r"(?m)^\s*defaultPermissionMode\s*=.*$", config_text
+                        ):
+                            config_text = re.sub(
+                                r"(?m)^\s*defaultPermissionMode\s*=.*$",
+                                permission,
+                                config_text,
+                            )
+                        else:
+                            config_text = f"{permission}\n{config_text}"
                     (overlay_home / child.name).write_text(config_text)
                     continue
                 (overlay_home / child.name).symlink_to(
                     child, target_is_directory=child.is_dir()
                 )
-        if self.auto_approve and not (overlay_home / "config.toml").exists():
-            (overlay_home / "config.toml").write_text(
-                'defaultPermissionMode = "auto"\n'
+        config_path = overlay_home / "config.toml"
+        if not config_path.exists():
+            config_path.write_text(
+                'defaultPermissionMode = "auto"\n' if self.auto_approve else ""
+            )
+        guard_command = shlex.join(
+            [sys.executable, "-m", "aar.research_loop.kimi_write_guard"]
+        )
+        with config_path.open("a") as config:
+            config.write(
+                "\n[[hooks]]\n"
+                'event = "PreToolUse"\n'
+                'matcher = "^(Write|Edit)$"\n'
+                f"command = {json.dumps(guard_command)}\n"
+                "timeout = 5\n"
             )
 
         mcp_config: dict[str, Any] = {"mcpServers": {}}

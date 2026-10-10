@@ -16,6 +16,18 @@ The research prompt is installed as a Kimi agent profile, so its constraints are
 
 Kimi AAR sessions set Kimi Code's `defaultPermissionMode = "auto"` in the temporary session configuration because `--prompt` cannot be combined with the `--auto` CLI flag. This lets the checkpointed scaffold, edit, validation, and training commands execute without an unanswered approval prompt. It is opt-in for this backend and does not change the user's Kimi configuration, generic Kimi invocations, or Claude.
 
+The same temporary Kimi configuration installs a fail-closed `PreToolUse` hook:
+direct `Write` and `Edit` calls may target only `AAR_IDEAS_DIR` or the chain's
+exact `AAR_AGENT_LOG_PATH`. Immediately before deterministic training submission,
+the adapter hashes the shared submission scripts against the current Git commit
+and runs `bash -n` on every protected shell file. Any mismatch, syntax failure,
+wrapper timeout, nonzero wrapper exit, or missing verified receipt is a shared
+orchestration incident—not a method iteration. The detecting chain writes
+`.orchestration_incident.json`, exits without retry backoff, and peer chains stop
+at their next boundary or before training submission. A repaired, newly deployed
+commit makes the old revision-scoped marker inactive so selective recovery can
+resume preserved state.
+
 Run-10's Kimi-only request shim exposes one required function on exact continuation checkpoints and uses `tool_choice="required"`. Initial research and tool arguments remain model-selected; the shim only ensures that a checkpoint requiring `Read`, `Bash`, `Write`, or an AAR MCP function is emitted as a real structured call rather than narrated as prose.
 
 Before proposal submission, Run 10 also requires a source-hash-bound method-contract proof with a no-GPU dry run. This catches import failures, unavailable BitsAndBytes use, invalid Gemma-4 PEFT targets, and missing `MethodConfig`, `run_experiment`, result fields, or timing phases that syntax compilation cannot detect. The training submitter repeats the proof independently and emits a terminal failure marker on any later training failure.
