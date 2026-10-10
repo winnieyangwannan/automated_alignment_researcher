@@ -412,13 +412,20 @@ def _validate_task_result(
     ):
         raise RuntimeError("model-backed canary returned a rejection reason")
     usage = value.get("provider_usage")
-    expected = [("generator", GENERATOR_MODEL)]
+    full_expected = [("generator", GENERATOR_MODEL)]
     if target_binding is not None:
-        expected.append(("target", target_binding.endpoint["model"]))
-    if outcome == "succeeded" or (
-        not require_accepted and isinstance(usage, list) and len(usage) > len(expected)
-    ):
-        expected.append(("judge", JUDGE_MODEL))
+        full_expected.append(("target", target_binding.endpoint["model"]))
+    full_expected.append(("judge", JUDGE_MODEL))
+    if outcome == "succeeded":
+        expected = full_expected
+    elif not require_accepted and isinstance(usage, list):
+        if not 1 <= len(usage) <= len(full_expected):
+            raise RuntimeError(
+                "failed model-backed canary retained an invalid provider-call count"
+            )
+        expected = full_expected[: len(usage)]
+    else:
+        expected = full_expected
     if not isinstance(usage, list) or len(usage) != len(expected):
         count_name = {2: "two", 3: "three"}.get(len(expected), str(len(expected)))
         raise RuntimeError(

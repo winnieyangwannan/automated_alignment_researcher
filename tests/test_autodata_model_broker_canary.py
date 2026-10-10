@@ -6,6 +6,7 @@ import json
 import sys
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -388,6 +389,22 @@ class ModelBrokerCanaryTest(unittest.TestCase):
                 ]
             )
             report = self.module.run(args, runtime=runtime)
+            failed = json.loads(json.dumps(_FakeBrokerClient.result))
+            failed["outcome"] = "failed"
+            failed["provider_usage"] = [generator]
+            failed["reason_code"] = "model_or_parse_failure"
+            usage = self.module._validate_task_result(
+                failed,
+                self.module._read_recipe_contract(RECIPE).schema,
+                rates={
+                    "generator": (Decimal("1"), Decimal("4")),
+                    "target": (Decimal("0"), Decimal("0")),
+                    "judge": (Decimal("1"), Decimal("4")),
+                },
+                target_binding=binding,
+                require_accepted=False,
+            )
+            self.assertEqual([call["role"] for call in usage], ["generator"])
 
         environment = _FakeBrokerJobSpec.captured["solve"]["env"]
         self.assertTrue(

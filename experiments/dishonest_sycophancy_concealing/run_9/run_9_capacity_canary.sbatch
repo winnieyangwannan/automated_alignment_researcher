@@ -19,6 +19,7 @@ RUNNER="${AAR_AUTODATA_BROKER_RUNNER:?missing broker runner}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:?missing broker Python}"
 CAPABILITY_FILE="${AAR_AUTODATA_CAPABILITY_FILE:?missing capability file}"
 KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:?missing Kimi proxy contract}"
+TARGET_BINDING="${AAR_AUTODATA_TARGET_BINDING:-}"
 
 port=$(( 10000 + (${SLURM_JOB_ID:?} % 40000) ))
 broker_url="http://127.0.0.1:${port}"
@@ -129,6 +130,13 @@ kill -0 "${broker_pid}" 2>/dev/null || { echo "broker is not running" >&2; exit 
 
 pids=()
 failed=0
+target_args=()
+if [ -n "${TARGET_BINDING}" ]; then
+  target_args=(
+    --target-binding "${TARGET_BINDING}"
+    --target-canary-id-prefix run9-target-capacity-canary
+  )
+fi
 load_started_ns="$(date +%s%N)"
 for index in $(seq 1 "${TASK_COUNT}"); do
   PYTHONPATH="${AUTODATA}/src:${REPO}" "${REPO}/.venv/bin/python" \
@@ -143,6 +151,7 @@ for index in $(seq 1 "${TASK_COUNT}"); do
     --generator-max-output-tokens 768 \
     --model-request-max-attempts 1 \
     --allow-judge-rejection \
+    "${target_args[@]}" \
     --timeout-seconds 1800 \
     > "${ROOT}/canary-${index}.log" 2>&1 &
   pids+=("$!")
@@ -180,6 +189,15 @@ client_failure_count = int(sys.argv[6])
 broker_database = pathlib.Path(sys.argv[7])
 elapsed_seconds = (int(sys.argv[9]) - int(sys.argv[8])) / 1_000_000_000
 reports = [json.loads(path.read_text()) for path in sorted((root / "reports").glob("canary-*.json"))]
+target_aware = any(
+    report.get("schema") == "aar.autodata.adapter-target-canary/v1"
+    for report in reports
+)
+if target_aware and not all(
+    report.get("schema") == "aar.autodata.adapter-target-canary/v1"
+    for report in reports
+):
+    raise SystemExit("capacity canary mixed target-aware and question-only reports")
 if any(report.get("environment") != environment for report in reports):
     raise SystemExit("capacity canary used the wrong Firecracker environment")
 connection = sqlite3.connect(f"file:{broker_database}?mode=ro", uri=True)
@@ -218,6 +236,7 @@ summary = {
     "environment": environment,
     "concurrency": concurrency,
     "task_count": task_count,
+    "target_aware": target_aware,
     "broker_job_ids": [job["broker_job_id"] for job in jobs],
     "runner_session_ids": [job["runner_session_id"] for job in jobs],
     "audited_sample_count": len(reports),
@@ -233,6 +252,10 @@ summary = {
     ),
     "judge_call_count": sum(
         any(call.get("role") == "judge" for call in report.get("provider_usage", []))
+        for report in reports
+    ),
+    "target_call_count": sum(
+        any(call.get("role") == "target" for call in report.get("provider_usage", []))
         for report in reports
     ),
 }

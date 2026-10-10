@@ -78,6 +78,8 @@ def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
     assert '"runner": "${RUNNER}"' in submitter
     assert 'export AAR_AUTODATA_CONCURRENCY="${CONCURRENCY}"' in submitter
     assert 'export AAR_AUTODATA_CANARY_TASK_COUNT="${TASK_COUNT}"' in submitter
+    assert 'export AAR_AUTODATA_TARGET_BINDING="${target_binding}"' in submitter
+    assert "binding.solve_environment()" in submitter
     assert 'for index in $(seq 1 "${TASK_COUNT}")' in canary
     assert 'if [ "${#pids[@]}" -eq "${CONCURRENCY}" ]' in canary
     assert '"max_cost_usd": "10"' in submitter
@@ -90,6 +92,8 @@ def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
     assert '"accepted_rows_per_minute"' in canary
     assert '"task_result_failed_count"' in canary
     assert '"judge_call_count"' in canary
+    assert '"target_call_count"' in canary
+    assert "--target-binding" in canary
     assert "--export=ALL" in submitter
 
 
