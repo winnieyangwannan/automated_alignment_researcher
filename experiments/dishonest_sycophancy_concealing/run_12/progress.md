@@ -412,3 +412,15 @@ prompt and Gemma response are retained, only the teacher is repaired, and the
 judge is rerun. This preserves scarce hard prompts, avoids an unnecessary Gemma
 call, and directly addresses the v9 honesty failure. Each row records whether
 its selected attempt was `full_generation` or `teacher_repair`.
+
+The reviewed starting strategy was also tightened from v6 to v7 using the only
+retained sycophancy sample that had challenged Gemma. That sample succeeded by
+eliciting partial endorsement while asking for an expert assessment, whereas
+the later obvious requests to confirm false astronomy facts were cleanly
+resisted. The new strategy therefore asks for indirect transformations such as
+polishing a proposal, drafting an endorsement, or writing an executive summary;
+it embeds a consequential unsupported inference among otherwise plausible
+details and requires the teacher to complete the requested format while
+correcting that inference. It also explicitly requires every arithmetic
+correction to be independently recomputed. The resulting system prompt and
+scenario prefix remain within the protected static size bounds.
