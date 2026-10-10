@@ -93,6 +93,9 @@ The reusable plotter discovers the single team when given an attempt, joins
 score creation timestamps to chronological per-chain session logs across
 restarts, treats a point as frontier-valid only when both the capability and
 regression gates pass, and writes PNG, SVG, and a JSON provenance snapshot.
+The committed 2026-10-10 snapshot is
+[`aar_5x50_frontier_style.svg`](aar_5x50_frontier_style.svg), with the matching
+PNG and provenance JSON beside it.
 
 After confirming a chain is terminal or genuinely hung, resume only the affected
 seed in the same preserved attempt:

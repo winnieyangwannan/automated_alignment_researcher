@@ -1,0 +1,113 @@
+{
+  "max_session": 50,
+  "points": [
+    {
+      "chain": "alpha",
+      "run_id": "gemma4_31b-explore-alpha-1791529783-gemma4_31b_explore_alpha__kimi_candidate-1791530737476",
+      "score": 33.03,
+      "session": 1,
+      "valid": false
+    },
+    {
+      "chain": "beta",
+      "run_id": "gemma4_31b-explore-beta-1791529783-gemma4_31b_explore_beta__kimi_candidate-1791530502070",
+      "score": 0.0,
+      "session": 1,
+      "valid": true
+    },
+    {
+      "chain": "beta",
+      "run_id": "gemma4_31b-explore-beta-1791529783-gemma4_31b_explore_beta__kimi_candidate-1791535895655",
+      "score": 8.11,
+      "session": 3,
+      "valid": true
+    },
+    {
+      "chain": "beta",
+      "run_id": "gemma4_31b-explore-beta-1791529783-gemma4_31b_explore_beta__kimi_candidate-1791538869192",
+      "score": 1.8,
+      "session": 4,
+      "valid": true
+    },
+    {
+      "chain": "delta",
+      "run_id": "gemma4_31b-explore-delta-1791529782-gemma4_31b_explore_delta__kimi_candidate-1791542455155",
+      "score": 1.8,
+      "session": 4,
+      "valid": true
+    },
+    {
+      "chain": "alpha",
+      "run_id": "gemma4_31b-explore-alpha-1791529783-gemma4_31b_explore_alpha__kimi_candidate-1791537302383",
+      "score": 24.04,
+      "session": 5,
+      "valid": false
+    },
+    {
+      "chain": "beta",
+      "run_id": "gemma4_31b-explore-beta-1791529783-gemma4_31b_explore_beta__kimi_candidate-1791543121302",
+      "score": 11.99,
+      "session": 6,
+      "valid": false
+    },
+    {
+      "chain": "delta",
+      "run_id": "gemma4_31b-explore-delta-1791529782-gemma4_31b_explore_delta__kimi_candidate-1791549480685",
+      "score": 22.84,
+      "session": 7,
+      "valid": false
+    },
+    {
+      "chain": "delta",
+      "run_id": "gemma4_31b-explore-delta-1791529782-gemma4_31b_explore_delta__kimi_candidate-1791553972861",
+      "score": 21.14,
+      "session": 9,
+      "valid": true
+    },
+    {
+      "chain": "delta",
+      "run_id": "gemma4_31b-explore-delta-1791529782-gemma4_31b_explore_delta__kimi_candidate-1791560304543",
+      "score": 4.05,
+      "session": 10,
+      "valid": true
+    },
+    {
+      "chain": "gamma",
+      "run_id": "gemma4_31b-explore-gamma-1791529783-gemma4_31b_explore_gamma__kimi_candidate-1791558617941",
+      "score": 10.3,
+      "session": 12,
+      "valid": false
+    },
+    {
+      "chain": "beta",
+      "run_id": "gemma4_31b-explore-beta-1791576146-gemma4_31b_explore_beta__kimi_candidate-1791583296345",
+      "score": 0.29,
+      "session": 17,
+      "valid": true
+    },
+    {
+      "chain": "alpha",
+      "run_id": "gemma4_31b-explore-alpha-1791576144-gemma4_31b_explore_alpha__kimi_candidate-1791579857058",
+      "score": 33.21,
+      "session": 18,
+      "valid": false
+    },
+    {
+      "chain": "gamma",
+      "run_id": "gemma4_31b-explore-gamma-1791576146-gemma4_31b_explore_gamma__kimi_candidate-1791579161498",
+      "score": 21.47,
+      "session": 23,
+      "valid": false
+    }
+  ],
+  "schema_version": 1,
+  "sessions_started": {
+    "alpha": 26,
+    "beta": 20,
+    "delta": 26,
+    "epsilon": 20,
+    "gamma": 30
+  },
+  "snapshot_utc": "2026-10-10T01:56:33+00:00",
+  "team_dir": "/storage/home/winnieyangwn/aar-runs/run10_kimi/full_attempts/20261009T070413Z-430ce87a7ad4/aar_teams/honesty-sycophancy-concealing-gemma4_31b-kimi26-run10-full-1782074"
+}
