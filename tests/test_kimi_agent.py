@@ -1544,8 +1544,7 @@ class KimiAgentTest(unittest.TestCase):
                         "action",
                         "complete",
                         action_id,
-                        "--lease-token",
-                        "x" * 32,
+                        "--lease-token=" + "x" * 32,
                         "--result",
                         str(result_path),
                     )
@@ -1741,6 +1740,7 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                 self.assertFalse(
                     KimiAgent._autodata_pipeline_feedback_requires_edit(action)
                 )
+
     def test_write_guard_allows_only_ideas_tree_and_chain_memory(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1786,6 +1786,114 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                 env,
             )
             self.assertFalse(allowed)
+
+    def test_write_guard_allows_only_live_autodata_action_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ideas = root / "ideas"
+            ideas.mkdir()
+            memory = root / "agent-log.md"
+            draft = root / "draft"
+            draft.mkdir()
+            grounding = draft / "grounding"
+            grounding.mkdir()
+            state = root / "state.db"
+            active_id = "act_" + "a" * 24
+            pending_id = "act_" + "b" * 24
+            completed_id = "act_" + "c" * 24
+            spec = {
+                "editable_root": str(draft),
+                "allowed_paths": ["autodata.workspace.json", "grounding/**"],
+            }
+            with sqlite3.connect(state) as connection:
+                connection.execute(
+                    "CREATE TABLE actions("
+                    "id TEXT,kind TEXT,status TEXT,specJson TEXT,createdAt TEXT)"
+                )
+                for action_id, status in (
+                    (active_id, "in_progress"),
+                    (pending_id, "pending"),
+                    (completed_id, "completed"),
+                ):
+                    connection.execute(
+                        "INSERT INTO actions VALUES(?,?,?,?,CURRENT_TIMESTAMP)",
+                        (action_id, "clarify_design", status, json.dumps(spec)),
+                    )
+            env = {
+                "AAR_IDEAS_DIR": str(ideas),
+                "AAR_AGENT_LOG_PATH": str(memory),
+                "AAR_AUTODATA_STATE": str(state),
+            }
+
+            def decision(path: Path) -> tuple[bool, str]:
+                return validate_tool_call(
+                    {
+                        "tool_name": "Write",
+                        "tool_input": {"path": str(path)},
+                        "cwd": str(root),
+                    },
+                    env,
+                )
+
+            for destination in (
+                Path(f"/tmp/aar-autodata-{active_id}-result.json"),
+                draft / "autodata.workspace.json",
+                grounding / "manifest.json",
+            ):
+                allowed, reason = decision(destination)
+                self.assertTrue(allowed, reason)
+
+            for destination in (
+                Path(f"/tmp/aar-autodata-{pending_id}-result.json"),
+                Path(f"/tmp/aar-autodata-{completed_id}-result.json"),
+                Path(f"/tmp/aar-autodata-act_{'d' * 24}-result.json"),
+                draft / "recipe" / "generation_strategy.json",
+                root / "outside.json",
+            ):
+                allowed, _ = decision(destination)
+                self.assertFalse(allowed)
+
+            escape = grounding / "escape"
+            escape.symlink_to(root, target_is_directory=True)
+            allowed, _ = decision(escape / "outside.json")
+            self.assertFalse(allowed)
+
+            safe_target = grounding / "safe-target.json"
+            safe_target.write_text("{}")
+            safe_link = grounding / "safe-link.json"
+            safe_link.symlink_to(safe_target)
+            allowed, _ = decision(safe_link)
+            self.assertFalse(allowed)
+
+    def test_autodata_action_completion_quotes_leading_hyphen_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            action_id = "act_" + "d" * 24
+            result_path = root / "result.json"
+            result_path.write_text('{"summary":"done"}')
+            with (
+                patch.dict(os.environ, {"TEAM_DIR": str(root)}, clear=False),
+                patch.object(
+                    KimiAgent,
+                    "_autodata_action_record",
+                    return_value=None,
+                ),
+                patch.object(KimiAgent, "_autodata_cli") as cli,
+            ):
+                lease_path = KimiAgent._autodata_action_lease_path(action_id)
+                KimiAgent._write_private_text(lease_path, "-" + "x" * 42)
+                KimiAgent._autodata_complete_action(action_id, result_path)
+
+            cli.assert_called_once_with(
+                "action",
+                "complete",
+                action_id,
+                "--lease-token=-" + "x" * 42,
+                "--result",
+                str(result_path),
+            )
+            self.assertFalse(lease_path.exists())
+            self.assertFalse(result_path.exists())
 
     def test_protected_submission_hash_mismatch_publishes_team_incident(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

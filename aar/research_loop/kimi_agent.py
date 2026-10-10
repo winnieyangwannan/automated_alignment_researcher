@@ -1185,8 +1185,7 @@ class KimiAgent:
             "action",
             "complete",
             action_id,
-            "--lease-token",
-            token,
+            f"--lease-token={token}",
             "--result",
             str(result_path),
         )
