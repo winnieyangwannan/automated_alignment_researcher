@@ -1248,6 +1248,10 @@ class KimiAgentTest(unittest.TestCase):
                 self.assertIn(workspace_id, bootstrapped_prompt)
                 self.assertIn("Do not load a skill", bootstrapped_prompt)
                 self.assertNotIn("create or resume", bootstrapped_prompt)
+                self.assertIn("autodata.py", bootstrapped_prompt)
+                self.assertIn(f"status {workspace_id}", bootstrapped_prompt)
+                self.assertIn("remain in this same turn", bootstrapped_prompt)
+                self.assertEqual(agent._continuation_tool(output), "Bash")
 
                 with patch.dict(
                     os.environ, {"AAR_RESUME_APPROVED_PROPOSAL": "1"}, clear=False

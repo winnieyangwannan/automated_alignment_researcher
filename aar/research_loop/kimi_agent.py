@@ -685,17 +685,28 @@ class KimiAgent:
         ):
             workspace_id = self._autodata_workspace_id(approved_run_id)
             if workspace_id is not None:
+                status_command = (
+                    'python3 "${AAR_AUTODATA_PLUGIN_ROOT}/scripts/autodata.py" '
+                    '--state "$AAR_AUTODATA_STATE" '
+                    '--artifacts "$AAR_AUTODATA_ARTIFACTS" '
+                    '--workspaces "$AAR_AUTODATA_WORKSPACES" '
+                    f"status {shlex.quote(workspace_id)}"
+                )
                 return (
                     f"The proposal is approved with run_id={approved_run_id}, and "
                     "trusted orchestration already created and registered native "
                     f"AutoData workspace_id={workspace_id}. Do not load a skill, "
                     "create/fork/register a workspace, edit the approved method, or "
-                    "submit another proposal. Use a native Bash tool call now to "
-                    f"inspect status for {workspace_id}, then fulfill only its exact "
-                    "pending visible host action. The lifecycle supervisor alone "
-                    "calls workspace/execution step. Continue meta-optimization and "
-                    "production until the verified training-handoff exists; emit a "
-                    "real tool call, not planning prose."
+                    "submit another proposal. Call the native Bash tool exactly once "
+                    f"now with command={json.dumps(status_command)}. After status "
+                    "returns, remain in this same turn and fulfill only its exact "
+                    "pending visible host action through the native action lease "
+                    "workflow; do not stop after describing the next tool call. For "
+                    "approve_grounding, approve_baseline, or approve_resources, call "
+                    "review_autodata_action with the exact action ID instead. The "
+                    "lifecycle supervisor alone calls workspace/execution step. "
+                    "Continue meta-optimization and production until the verified "
+                    "training-handoff exists; emit real tool calls, not planning prose."
                 )
             return (
                 f"The proposal is already approved with run_id={approved_run_id}. "
