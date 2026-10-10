@@ -174,11 +174,29 @@ broker campaign policy atomically, retires the previous backend, and only then
 starts the next research job. If no candidate passes the promotion gates, the
 controller correctly retains the previous verified parent.
 
-The final researcher and AutoData generator both route to the validated
-multi-replica `aar_8-kimi26` deployment. The five Gemma target lanes remain
-chain-specific. AutoData concurrency is eight per chain, for at most forty
-simultaneous tasks across the five chains; this is a deliberately safer first
-production setting than five times sixteen.
+The final researchers route to the validated multi-replica `aar_8-kimi26`
+deployment. AutoData generation separately routes to the dedicated
+multi-replica `autodata_8-kimi26` deployment, so generation cannot starve the
+research sessions. The five Gemma target lanes remain chain-specific. AutoData
+concurrency is eight per chain, for at most forty simultaneous tasks across the
+five chains; this is a deliberately safer first production setting than five
+times sixteen.
+
+## Final bootstrap-canary recovery
+
+The first clean bootstrap-canary attempt failed closed before creating a Gemma
+endpoint or submitting evaluator, researcher, or controller jobs. Kimi Code
+2.1.1 reached its first native Bash action but then waited until the bounded
+180-second MCP preflight killed its process group. The AAR adapter requested
+automatic approval in its overlay configuration but did not pass Kimi's
+documented command-line `--auto` mode.
+
+The adapter now maps `auto_approve=True` to `--auto` on every initial and
+continuation invocation, with a regression test that records the actual child
+process arguments. The reusable runtime profile was also corrected from an
+accidental concurrency value of 32 back to the documented production value of
+eight per chain. A fresh canary must pass these gates before the five-chain
+launch.
 
 ## Validation
 

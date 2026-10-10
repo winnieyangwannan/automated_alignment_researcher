@@ -35,7 +35,7 @@ fixed during an AutoData meta-optimization execution, while an outer AAR
 iteration may revise it only by forking and approving a new pipeline revision.
 
 The resulting `target-aware-local-v1` runtime uses local Bubblewrap,
-concurrency 32 per chain, three model-request attempts, node-local state,
+concurrency 8 per chain, three model-request attempts, node-local state,
 supervised lifecycle, authenticated routing to `autodata_8-kimi26`, selective
 finalization, and digest-verified reuse support.
 

@@ -177,7 +177,7 @@ def test_inspect_reports_static_yaml_values() -> None:
     inspected = inspect_configs(PROFILE, RUN)
     assert inspected == {
         "profile_name": "target-aware-local-v1",
-        "concurrency_per_chain": 32,
+        "concurrency_per_chain": 8,
         "model_request_max_attempts": 3,
         "researcher_kimi_deployment": "aar_8-kimi26",
         "generator_kimi_deployment": "autodata_8-kimi26",
