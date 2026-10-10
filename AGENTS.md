@@ -36,6 +36,7 @@ Copy `.env.example` to `.env`; never commit credentials. Preserve the research/e
   `/home/winnieyangwn/aar-worktrees/uv` on the devserver. The execution worktree is
   `/storage/home/winnieyangwn/aar-worktrees/uv` on FAIR HPC.
 - Use `fair-cw-use2-1` as the default HPC cluster for this project unless the user specifies another cluster.
+  - you can also use `fair-cw-use2-3` if I tell you to use cw-2-3.
 - Before editing or running, verify the checkout path and confirm `git branch --show-current` prints `uv`. Do not
   edit, stage, or commit repository work in the `main` worktree unless the user explicitly requests it; it may contain
   unrelated work in progress.
