@@ -22,10 +22,11 @@ execution `exe_570e1daeb28c4a7795a2be9fac37fdf9`. A speed-up counts only durable
 | Attempt | Configuration | Result | Durable rate | Decision |
 | ------- | ------------- | ------ | ------------ | -------- |
 | 0 | Recovery job `1795274`; AutoData `223af462`; hot native SQLite on network storage; local-bwrap concurrency 16 | Cancelled at user request after 19m07s. Durable completions stayed at 62, the new broker ledger received zero jobs, and Kimi reported zero load while `taskAttemptsUsed` rose. The CLI held many simultaneous handles to the network-mounted SQLite database. | 0 new rows / 19m07s = 0 rows/min | Confirmed orchestration/SQLite as the pre-inference bottleneck. Do not raise concurrency on this configuration. |
+| 1 | Job `1795630`; node-local native SQLite; AutoData `823c594`; local-bwrap concurrency 16; five-minute observation requested | Failed closed after 35s before model work. Restore, broker health, execution registration, and metrics succeeded, but the supervisor rejected the existing execution's 24-hour native wall budget because its default production ceiling was eight hours. The failure-status snapshot originally obscured the error by rewriting status to `running`. | 0 new rows; 0 broker jobs; no inference cost | Add an explicit 25-hour production-controller ceiling for this retained execution and preserve `failed` supervisor status after its final snapshot. Retry without changing the frozen pipeline. |
 
 ## Next attempt
 
-Attempt 1 will use:
+Attempt 2 will use:
 
 - a node-local live native SQLite database restored from an immutable retained
   snapshot;
@@ -34,6 +35,8 @@ Attempt 1 will use:
   writes, recovery reconciliation, selective final retries, and target-aware
   production stopping;
 - the unchanged local-bwrap broker and initial concurrency 16;
+- an explicit 25-hour controller ceiling, which exceeds the retained native
+  24-hour wall budget plus its ten-minute shutdown grace;
 - a short genuine-throughput observation window before any 24/32 concurrency
   test.
 

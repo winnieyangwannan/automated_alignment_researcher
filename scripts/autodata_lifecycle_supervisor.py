@@ -563,7 +563,12 @@ def _table_names(connection: sqlite3.Connection) -> set[str]:
     }
 
 
-def next_subject(state: Path, control_file: Path) -> Subject | None:
+def next_subject(
+    state: Path,
+    control_file: Path,
+    *,
+    production_timeout_seconds: int = PRODUCTION_TIMEOUT_SECONDS,
+) -> Subject | None:
     """Return the next explicitly registered subject ready for stepping."""
     registrations = [
         entry
@@ -633,13 +638,17 @@ def next_subject(state: Path, control_file: Path) -> Subject | None:
             spec = json.loads(str(row["executionJson"]))
             production = spec.get("mode") == "production"
             timeout = (
-                PRODUCTION_TIMEOUT_SECONDS
+                production_timeout_seconds
                 if production
                 else META_TIMEOUT_SECONDS
             )
             native_wall = int(row["maxWallSeconds"])
             if native_wall + NATIVE_WALL_GRACE_SECONDS > timeout:
-                label = "8-hour production" if production else "2-hour meta"
+                label = (
+                    f"{timeout}-second production"
+                    if production
+                    else "2-hour meta"
+                )
                 raise RuntimeError(
                     f"execution {subject_id} native wall budget plus grace exceeds "
                     f"the {label} controller ceiling"
@@ -805,10 +814,14 @@ class Supervisor:
         self._write_status(state="starting")
         while not self.stop_requested:
             try:
-                subject = next_subject(self.args.state, self.args.control_file)
+                subject = next_subject(
+                    self.args.state,
+                    self.args.control_file,
+                    production_timeout_seconds=self.args.production_timeout_seconds,
+                )
             except Exception as error:
-                self._write_status(state="failed", error=str(error))
                 self._snapshot("supervisor-configuration-failure")
+                self._write_status(state="failed", error=str(error))
                 return 2
             if subject is None:
                 self._write_status(state="idle")
@@ -876,6 +889,11 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_SNAPSHOT_INTERVAL_SECONDS,
     )
     run.add_argument("--error-backoff-seconds", type=float, default=10.0)
+    run.add_argument(
+        "--production-timeout-seconds",
+        type=int,
+        default=PRODUCTION_TIMEOUT_SECONDS,
+    )
     return parser
 
 
@@ -930,8 +948,12 @@ def main() -> int:
         )
         print(json.dumps(result, sort_keys=True))
         return 0
-    if args.poll_seconds <= 0 or args.snapshot_interval_seconds <= 0:
-        raise SystemExit("poll and snapshot intervals must be positive")
+    if (
+        args.poll_seconds <= 0
+        or args.snapshot_interval_seconds <= 0
+        or args.production_timeout_seconds <= 0
+    ):
+        raise SystemExit("poll, snapshot, and production timeout values must be positive")
     args.log_file.parent.mkdir(parents=True, exist_ok=True)
     with args.log_file.open("a", encoding="utf-8", buffering=1) as log_handle:
         args.log_handle = log_handle

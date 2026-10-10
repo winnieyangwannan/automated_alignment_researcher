@@ -133,7 +133,7 @@ kill -0 "${broker_pid}" 2>/dev/null || { echo "broker is not running" >&2; exit 
   --python "${WRAPPER_PYTHON}" --state "${LOCAL_STATE}" --retained-state "${RETAINED_STATE}" \
   --control-file "${CONTROL_FILE}" --artifacts "${ARTIFACTS}" --workspaces "${WORKSPACES}" \
   --lock-file "${LOCK_FILE}" --status-file "${STATUS_FILE}" --log-file "${SUPERVISOR_LOG}" \
-  --snapshot-interval-seconds 60 &
+  --snapshot-interval-seconds 60 --production-timeout-seconds 90000 &
 supervisor_pid=$!
 
 started=$(date +%s)

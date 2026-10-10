@@ -207,6 +207,43 @@ def test_next_subject_rejects_native_budget_without_controller_grace(
         next_subject(state, control)
 
 
+def test_next_subject_accepts_explicit_long_production_controller_timeout(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state.db"
+    control = tmp_path / "control.json"
+    _state(state)
+    native_wall = 24 * 60 * 60
+    controller_timeout = 25 * 60 * 60
+    with sqlite3.connect(state) as connection:
+        connection.execute(
+            "INSERT INTO executions VALUES (?,?,?,?,?,?)",
+            (
+                "exe_long_production",
+                "active",
+                "final_pending",
+                "2026-01-01",
+                json.dumps({"mode": "production"}),
+                native_wall,
+            ),
+        )
+    register_subject(
+        state,
+        control,
+        kind="execution",
+        subject_id="exe_long_production",
+    )
+
+    subject = next_subject(
+        state,
+        control,
+        production_timeout_seconds=controller_timeout,
+    )
+
+    assert subject is not None
+    assert subject.timeout_seconds == controller_timeout
+
+
 def test_unregistered_active_subject_is_never_selected(tmp_path: Path) -> None:
     state = tmp_path / "state.db"
     _state(state)
