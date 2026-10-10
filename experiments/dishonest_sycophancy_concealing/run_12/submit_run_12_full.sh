@@ -177,7 +177,7 @@ for seed in "${seeds[@]}"; do
         --checkpoint "${BASE_CHECKPOINT}" --endpoints 1 --cluster fair-cw-use2-1 \
         --image docker.io/vllm/vllm-openai:v0.25.1 \
         --partition g3 --account ram --qos g3_ram_high \
-        --coord-qos normal --proxy-qos normal \
+        --coord-qos cpu_x86_lowest --proxy-qos cpu_x86_lowest \
         --gateway-register --lifetime 7d --no-watch
   fi
   "${REPO}/.venv/bin/python" -m aar.autodata_campaign_policy create-base-target \

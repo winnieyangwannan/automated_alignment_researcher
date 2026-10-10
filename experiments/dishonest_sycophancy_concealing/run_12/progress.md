@@ -215,6 +215,14 @@ validated Run 10 mode. The preflight now checks successful structured MCP and
 Bash calls plus a nonempty assistant completion; it no longer treats the exact
 wording of free-form acknowledgment text as infrastructure correctness.
 
+The first post-preflight Gemma deployment exposed a separate scheduling bug:
+the Run 12 launcher explicitly overrode the cluster's validated
+`cpu_x86_lowest` coordinator/proxy QoS with `normal`. Its coordinator job
+`1800796` remained pending with priority 136 and no start estimate. The failed
+canary deployment was archived without ever allocating a GPU. Both initial and
+post-promotion Gemma launch paths now use `cpu_x86_lowest`, matching the live
+Kimi and Gemma Serve API deployments on `fair-cw-use2-1`.
+
 Separately, the reusable runtime profile was corrected from an accidental
 concurrency value of 32 back to the documented production value of eight per
 chain. A fresh canary must pass these gates before the five-chain launch.
