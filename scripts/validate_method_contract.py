@@ -392,6 +392,39 @@ def _autodata_loader_errors(tree: ast.AST) -> list[str]:
             return [
                 "AutoData loader must bind exactly one production execution ID"
             ]
+        if not (
+            isinstance(expected.elts[0], ast.Name)
+            and expected.elts[0].id == "production_execution_id"
+        ):
+            return ["AutoData loader must pass the verified production_execution_id"]
+        execution_bindings: list[ast.AST] = []
+        for candidate in ast.walk(tree):
+            if isinstance(candidate, ast.Assign) and any(
+                isinstance(target, ast.Name)
+                and target.id == "production_execution_id"
+                for target in candidate.targets
+            ):
+                execution_bindings.append(candidate.value)
+            elif (
+                isinstance(candidate, ast.AnnAssign)
+                and isinstance(candidate.target, ast.Name)
+                and candidate.target.id == "production_execution_id"
+                and candidate.value is not None
+            ):
+                execution_bindings.append(candidate.value)
+        if not execution_bindings or any(
+            not any(
+                isinstance(child, ast.Subscript)
+                and isinstance(child.slice, ast.Constant)
+                and child.slice.value == "production_execution_id"
+                for child in ast.walk(binding)
+            )
+            for binding in execution_bindings
+        ):
+            return [
+                "production_execution_id must come directly from the verified "
+                "training handoff; placeholders and run-ID fallbacks are forbidden"
+            ]
         if "judge_rubric" not in keywords:
             return ["AutoData loader must bind the content-addressed judge rubric"]
         objective = keywords.get("training_objective")

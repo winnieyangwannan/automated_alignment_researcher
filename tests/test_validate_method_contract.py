@@ -33,6 +33,7 @@ contract_name = "autodata-training-data-contract.json"
 dataset_key = "dataset"
 execution_key = "production_execution_id"
 receipt_name = "training-consumption.json"
+production_execution_id = handoff["production_execution_id"]
 items = load_autodata_campaign_datasets(
     [production_dataset_path],
     receipt_path=training_consumption_path,
@@ -58,6 +59,7 @@ names = (
     "production_execution_id",
     "training-consumption.json",
 )
+production_execution_id = handoff["production_execution_id"]
 try:
     items = load_autodata_campaign_datasets(
         [production_dataset_path],
@@ -89,6 +91,26 @@ items = load_autodata_campaign_datasets(
             )
         )
         self.assertIn("exactly one production execution ID", empty_execution_ids[0])
+
+        placeholder_execution_id = _autodata_loader_errors(
+            ast.parse(
+                """
+names = ("AAR_CURRENT_RUN_ID", "TEAM_DIR", "training-handoff.json",
+         "autodata-training-data-contract.json", "dataset",
+         "production_execution_id", "training-consumption.json")
+production_execution_id = "production_placeholder"
+items = load_autodata_campaign_datasets(
+    [production_dataset_path],
+    receipt_path=training_consumption_path,
+    required_rows=1000,
+    expected_execution_ids=[production_execution_id],
+    judge_rubric=training_data_contract["judge_rubric"],
+    training_objective="sft",
+)
+"""
+            )
+        )
+        self.assertIn("placeholders", placeholder_execution_id[0])
 
     def test_rejects_observed_target_runtime_failures_before_gpu(self) -> None:
         tree = ast.parse(

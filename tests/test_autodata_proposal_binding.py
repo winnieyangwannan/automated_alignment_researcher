@@ -220,11 +220,13 @@ load_autodata_campaign_datasets(
     )
 
     missing_objective = """
+handoff = {"production_execution_id": "exe_123"}
+production_execution_id = handoff["production_execution_id"]
 load_autodata_campaign_datasets(
     [dataset_path],
     receipt_path=receipt_path,
     required_rows=1000,
-    expected_execution_ids=[execution_id],
+    expected_execution_ids=[production_execution_id],
     judge_rubric=training_data_contract["judge_rubric"],
 )
 """
@@ -256,16 +258,26 @@ names = (
     "production_execution_id",
     "training-consumption.json",
 )
+handoff = {"production_execution_id": "exe_123"}
+production_execution_id = handoff["production_execution_id"]
 load_autodata_campaign_datasets(
     [dataset_path],
     receipt_path=receipt_path,
     required_rows=1000,
-    expected_execution_ids=[execution_id],
+    expected_execution_ids=[production_execution_id],
     judge_rubric=training_data_contract["judge_rubric"],
     training_objective="sft",
 )
 """
     assert server_api_tools._autodata_method_contract_error(valid) is None
+
+    placeholder = valid.replace(
+        'production_execution_id = handoff["production_execution_id"]',
+        'production_execution_id = "production_placeholder"',
+    )
+    assert "placeholders" in (
+        server_api_tools._autodata_method_contract_error(placeholder) or ""
+    )
 
     swallowed = valid.replace(
         "load_autodata_campaign_datasets(",

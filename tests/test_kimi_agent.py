@@ -1287,6 +1287,17 @@ class KimiAgentTest(unittest.TestCase):
                 "editable_root": str(root / "draft"),
                 "outputs": ["summary", "decisions"],
             }
+            draft = root / "draft"
+            draft.mkdir()
+            (draft / "autodata.workspace.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "autodata.workspace/v1",
+                        "name": "compiled-workspace",
+                        "execution_defaults": {"concurrency": 8},
+                    }
+                )
+            )
             with sqlite3.connect(state) as connection:
                 connection.execute(
                     "CREATE TABLE actions("
@@ -1359,6 +1370,9 @@ class KimiAgentTest(unittest.TestCase):
                     self.assertIn("securely leased", action_prompt)
                     self.assertIn(str(result_path), action_prompt)
                     self.assertIn("Confirm the reviewed workspace intent", action_prompt)
+                    self.assertIn("preserve every existing key", action_prompt)
+                    self.assertIn('\\"execution_defaults\\"', action_prompt)
+                    self.assertIn('\\"concurrency\\": 8', action_prompt)
                     self.assertEqual(agent._continuation_tool(output), "Write")
 
                     result_path.write_text(

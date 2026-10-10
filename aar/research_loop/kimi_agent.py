@@ -727,16 +727,22 @@ class KimiAgent:
                     )
                     if not result_path.is_file():
                         action_spec = json.dumps(action.get("spec"), sort_keys=True)[:6000]
+                        editable_context = self._autodata_editable_context(action)
                         return (
                             "The trusted controller has securely leased native AutoData "
                             f"action {action['id']}; do not call action begin, action "
                             "complete, or status. Call the native Write tool exactly "
                             "once now. If the action still requires one scoped allowed "
-                            "file edit, make that edit under editable_root first. "
+                            "file edit, make that edit under editable_root first. Treat "
+                            "the current allowed-file content below as authoritative: "
+                            "preserve every existing key, nested setting, and value type "
+                            "unless the action explicitly requires changing it. Never "
+                            "replace a compiled file with a smaller invented schema. "
                             "Otherwise write a valid JSON object to "
                             f"{result_path} satisfying the requested outputs. Use only "
                             "the action instructions and allowed paths; do not use Bash. "
-                            f"Action specification: {action_spec}"
+                            f"Action specification: {action_spec}. "
+                            f"Current allowed-file content: {editable_context}"
                         )
                     self._autodata_complete_action(action["id"], result_path)
                 status_subject = self._autodata_status_subject(workspace_id)
@@ -1102,6 +1108,48 @@ class KimiAgent:
         )
         lease_path.unlink(missing_ok=True)
         result_path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _autodata_editable_context(action: dict[str, Any]) -> str:
+        """Return bounded, path-safe context for a leased action's editable files."""
+        spec = action.get("spec")
+        if not isinstance(spec, dict):
+            return "{}"
+        root_raw = spec.get("editable_root")
+        allowed = spec.get("allowed_paths")
+        if not isinstance(root_raw, str) or not isinstance(allowed, list):
+            return "{}"
+        try:
+            root = Path(root_raw).resolve(strict=True)
+        except OSError:
+            return "{}"
+        remaining = 20_000
+        context: dict[str, str] = {}
+        for relative_raw in allowed:
+            if remaining <= 0 or not isinstance(relative_raw, str):
+                break
+            relative = Path(relative_raw)
+            if relative.is_absolute() or ".." in relative.parts:
+                continue
+            candidate = root / relative
+            try:
+                resolved = candidate.resolve(strict=True)
+                resolved.relative_to(root)
+            except (OSError, ValueError):
+                context[relative_raw] = "<missing>"
+                continue
+            if candidate.is_symlink() or not resolved.is_file():
+                context[relative_raw] = "<unsafe-or-not-a-file>"
+                continue
+            try:
+                content = resolved.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                context[relative_raw] = "<unreadable>"
+                continue
+            excerpt = content[:remaining]
+            context[relative_raw] = excerpt
+            remaining -= len(excerpt)
+        return json.dumps(context, sort_keys=True)
 
     @classmethod
     def _autodata_native_status(cls, subject_id: str) -> dict[str, Any]:
