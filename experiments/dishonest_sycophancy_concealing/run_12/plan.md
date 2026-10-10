@@ -197,10 +197,11 @@ but it does not replace this automatic-promotion test.
 ### 12. Gate the relaunch with one real bootstrap canary
 
 - Run the production launcher in `bootstrap-canary` mode with one isolated
-  chain, one base target lane, and one evaluator lane.
-- Stop at the earliest retained proof that proposal approval produced a
-  `workspace-bootstrap.json`, registered the same workspace with the native
-  lifecycle supervisor, and reached a real native AutoData action.
+  chain and one base target lane, but no evaluator lane.
+- Complete target-aware meta-optimization and production, then stop only after
+  the native handoff verifies the Canary 2 YAML's 100 accepted rows.
+- Do not submit SFT training, create an adapter, evaluate, or require a
+  score/result pair in this data-generation canary.
 - Preserve the canary attempt and retire its temporary jobs/endpoints before
   launching the canonical five-chain, five-pair run.
 - Keep `full` mode fail-closed on the canonical seeds and pair count so canary

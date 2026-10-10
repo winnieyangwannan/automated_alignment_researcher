@@ -6,10 +6,16 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 RUN12 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_12"
 CANARY = RUN12 / "canary"
+CANARY_1 = CANARY / "canary_1"
+CANARY_2 = CANARY / "canary_2"
+CONFIG = RUN12 / "config"
+LAUNCH = RUN12 / "launch"
+SLURM = RUN12 / "slurm"
+RECOVERY = RUN12 / "recovery"
 
 
 def test_run12_research_canary_is_one_scored_kimi_iteration() -> None:
-    launcher = (CANARY / "submit_research_canary.sh").read_text()
+    launcher = (CANARY / "legacy_submit_research_canary.sh").read_text()
 
     assert "AAR_EXPECTED_BRANCH=autodata" in launcher
     assert "AAR_KIMI_SERVE_DEPLOYMENT=aar_8-kimi26" in launcher
@@ -21,7 +27,7 @@ def test_run12_research_canary_is_one_scored_kimi_iteration() -> None:
 
 
 def test_run12_research_canary_can_continue_with_safe_memory() -> None:
-    launcher = (CANARY / "submit_research_canary.sh").read_text()
+    launcher = (CANARY / "legacy_submit_research_canary.sh").read_text()
 
     assert "AAR_RUN12_RESEARCH_MAX_ITERATIONS:-1" in launcher
     assert "AAR_RUN12_RECOVERED_AGENT_LOG_DIR" in launcher
@@ -29,7 +35,7 @@ def test_run12_research_canary_can_continue_with_safe_memory() -> None:
 
 
 def test_run12_target_binding_accepts_a_newly_promoted_incumbent() -> None:
-    launcher = (CANARY / "submit_target_canary.sh").read_text()
+    launcher = (CANARY_1 / "submit_target_canary.sh").read_text()
 
     assert "AAR_RUN12_INCUMBENT_RUN_ID" in launcher
     assert "AAR_RUN12_ADAPTER_CHECKPOINT" in launcher
@@ -39,9 +45,9 @@ def test_run12_target_binding_accepts_a_newly_promoted_incumbent() -> None:
 
 
 def test_run12_full_chain_rotates_the_training_contract_with_its_target() -> None:
-    launcher = (RUN12 / "submit_run_12_full.sh").read_text()
-    pipeline = (RUN12 / "run_12_full_pipeline.sbatch").read_text()
-    controller = (RUN12 / "run_12_chain_controller.sbatch").read_text()
+    launcher = (LAUNCH / "submit_full.sh").read_text()
+    pipeline = (SLURM / "pipeline.sbatch").read_text()
+    controller = (SLURM / "chain_controller.sbatch").read_text()
     compiler = (ROOT / "aar" / "autodata_run_config.py").read_text()
 
     contract = "autodata-training-data-contract.json"
@@ -52,13 +58,13 @@ def test_run12_full_chain_rotates_the_training_contract_with_its_target() -> Non
     assert "AAR_AUTODATA_TRAINING_DATA_CONTRACT" in compiler
     assert contract in controller
     assert "aar.autodata_run_config compile" in controller
-    assert controller.index("aar.autodata_run_config compile") < controller.index(
+    assert controller.index("aar.autodata_run_config compile") < controller.rindex(
         'job="$(submit_session)"'
     )
 
 
 def test_only_bootstrap_canary_may_reuse_a_verified_base_deployment() -> None:
-    launcher = (RUN12 / "submit_run_12_full.sh").read_text()
+    launcher = (LAUNCH / "submit_full.sh").read_text()
 
     assert "AAR_RUN12_REUSE_BASE_DEPLOYMENT" in launcher
     assert "full mode forbids reusing a canary base deployment" in launcher
@@ -66,9 +72,9 @@ def test_only_bootstrap_canary_may_reuse_a_verified_base_deployment() -> None:
 
 
 def test_run12_artifacts_default_to_checkpoint_storage() -> None:
-    full = (RUN12 / "submit_run_12_full.sh").read_text()
-    target = (CANARY / "submit_target_canary.sh").read_text()
-    run_config = yaml.safe_load((RUN12 / "autodata_run.yaml").read_text())
+    full = (LAUNCH / "submit_full.sh").read_text()
+    target = (CANARY_1 / "submit_target_canary.sh").read_text()
+    run_config = yaml.safe_load((CONFIG / "autodata_run.yaml").read_text())
 
     for launcher in (full, target):
         assert "AAR_RUN12_STORAGE_ROOT" in launcher
@@ -83,9 +89,9 @@ def test_run12_artifacts_default_to_checkpoint_storage() -> None:
 
 
 def test_run12_operational_defaults_flow_from_autodata_yaml() -> None:
-    run_config = yaml.safe_load((RUN12 / "autodata_run.yaml").read_text())
-    launcher = (RUN12 / "submit_run_12_full.sh").read_text()
-    pipeline = (RUN12 / "run_12_full_pipeline.sbatch").read_text()
+    run_config = yaml.safe_load((CONFIG / "autodata_run.yaml").read_text())
+    launcher = (LAUNCH / "submit_full.sh").read_text()
+    pipeline = (SLURM / "pipeline.sbatch").read_text()
     compiler = (ROOT / "aar" / "autodata_run_config.py").read_text()
 
     assert run_config["evaluation"] == {
@@ -96,6 +102,7 @@ def test_run12_operational_defaults_flow_from_autodata_yaml() -> None:
         "backend": "kimi",
         "turn_timeout_seconds": 300,
     }
+    assert run_config["bootstrap_canary"] == {"stop_after": "production"}
     for name in (
         "AAR_RUN_STORAGE_ROOT",
         "AAR_KEEP_CHECKPOINTS",
@@ -112,8 +119,47 @@ def test_run12_operational_defaults_flow_from_autodata_yaml() -> None:
     assert '"${AAR_TRAIN_EXIT_AFTER_SUBMIT:?missing decoupled training policy}" = 1' in pipeline
 
 
+def test_bootstrap_canary_stops_after_verified_production_without_evaluator() -> None:
+    launcher = (LAUNCH / "submit_full.sh").read_text()
+    pipeline = (SLURM / "pipeline.sbatch").read_text()
+    controller = (SLURM / "chain_controller.sbatch").read_text()
+    wrapper = (CANARY_2 / "submit_canary.sh").read_text()
+    full_config = yaml.safe_load((CONFIG / "autodata_run.yaml").read_text())
+    canary_config = yaml.safe_load((CANARY_2 / "autodata_run.yaml").read_text())
+
+    assert 'export AAR_AUTODATA_STOP_AFTER="${configured_canary_stop}"' in launcher
+    assert "full mode must not inherit a canary stop boundary" in pipeline
+    assert "export AAR_START_EVAL_WORKER=0" in pipeline
+    assert 'if [ "${AAR_START_EVAL_WORKER}" = 1 ]; then' in pipeline
+    assert "production-canary-complete.json" in controller
+    assert "production_canary_not_completed" in controller
+    assert 'AAR_RUN12_AUTODATA_RUN_CONFIG="${SCRIPT_DIR}/autodata_run.yaml"' in wrapper
+    assert "full mode requires the canonical Run 12 YAML" in launcher
+    assert full_config["production"]["required_rows"] == 1000
+    assert canary_config["production"] == {
+        "required_rows": 100,
+        "initial_tasks": 125,
+        "maximum_tasks": 200,
+        "minimum_successful_task_fraction": 0.95,
+    }
+    for section in (
+        "deployments",
+        "generation",
+        "meta_optimization",
+        "storage",
+        "evaluation",
+        "agent",
+        "recipe_root",
+        "training_contract",
+    ):
+        assert canary_config[section] == full_config[section]
+    assert (CANARY_1 / "README.md").is_file()
+    assert (CANARY_2 / "README.md").is_file()
+    assert (CANARY_2 / "submit_canary.sh").is_file()
+
+
 def test_run12_deferred_launch_waits_for_a_working_gateway_route() -> None:
-    gate = (RUN12 / "run_12_gateway_deferred_launch.sbatch").read_text()
+    gate = (RECOVERY / "wait_for_gateway.sbatch").read_text()
 
     assert 'STORAGE_ROOT="${AAR_RUN12_STORAGE_ROOT:-/checkpoint/ram/${USER:?}}"' in gate
     assert '"${STORAGE_ROOT}" = "/checkpoint/ram/${USER}"' in gate
@@ -124,15 +170,15 @@ def test_run12_deferred_launch_waits_for_a_working_gateway_route() -> None:
     assert '"${INGRESS}/status"' in gate
     assert '"${INGRESS}/v1/models"' in gate
     assert '"${INGRESS}/v1/chat/completions"' in gate
-    assert "submit_run_12_full.sh" in gate
+    assert "launch/submit_full.sh" in gate
 
 
 def test_run12_uses_separate_kimi_deployments_and_maximum_token_allowances() -> None:
-    launcher = (RUN12 / "submit_run_12_full.sh").read_text()
-    pipeline = (RUN12 / "run_12_full_pipeline.sbatch").read_text()
-    canary_submitter = (CANARY / "submit_target_canary.sh").read_text()
-    canary_job = (CANARY / "target_canary.sbatch").read_text()
-    run_config = yaml.safe_load((RUN12 / "autodata_run.yaml").read_text())
+    launcher = (LAUNCH / "submit_full.sh").read_text()
+    pipeline = (SLURM / "pipeline.sbatch").read_text()
+    canary_submitter = (CANARY_1 / "submit_target_canary.sh").read_text()
+    canary_job = (CANARY_1 / "target_canary.sbatch").read_text()
+    run_config = yaml.safe_load((CONFIG / "autodata_run.yaml").read_text())
     profile = yaml.safe_load(
         (ROOT / "configs/autodata/target_aware_local_v1.yaml").read_text()
     )
@@ -146,7 +192,7 @@ def test_run12_uses_separate_kimi_deployments_and_maximum_token_allowances() -> 
     assert "--coord-qos cpu_x86_lowest --proxy-qos cpu_x86_lowest" in launcher
     assert (
         "--coord-qos cpu_x86_lowest --proxy-qos cpu_x86_lowest"
-        in (RUN12 / "run_12_chain_controller.sbatch").read_text()
+        in (SLURM / "chain_controller.sbatch").read_text()
     )
     assert "KIMI_MODEL_MAX_OUTPUT_SIZE=65536" in launcher
     assert "KIMI_MODEL_MAX_COMPLETION_TOKENS=65536" in launcher

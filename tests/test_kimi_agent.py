@@ -1174,6 +1174,42 @@ class KimiAgentTest(unittest.TestCase):
 
             self.assertEqual(receipt.read_text(), f"run_id={run_id}\njob_id=12345\n")
 
+    def test_production_only_canary_verifies_rows_and_writes_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            team = Path(temp) / "team"
+            run_id = "chain-uid-candidate-1"
+            run_root = team / "autodata" / run_id
+            run_root.mkdir(parents=True)
+            verification = {
+                "schema": "aar.autodata.lifecycle-verification/v1",
+                "run_id": run_id,
+                "available_rows": 1000,
+            }
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "TEAM_DIR": str(team),
+                        "AAR_AUTODATA_STOP_AFTER": "production",
+                        "AAR_AUTODATA_PRODUCTION_ROWS": "1000",
+                    },
+                    clear=False,
+                ),
+                patch(
+                    "aar.infrastructure.autodata_lifecycle.verify_preflight",
+                    return_value=verification,
+                ),
+            ):
+                marker = KimiAgent._complete_autodata_production_canary(run_id)
+
+            value = json.loads(marker.read_text())
+            self.assertEqual(
+                value["schema"], "aar.autodata.production-canary-complete/v1"
+            )
+            self.assertEqual(value["required_accepted_rows"], 1000)
+            self.assertEqual(value["verification"], verification)
+            self.assertFalse((team / ".train_submissions").exists())
+
     def test_autodata_approval_defers_training_until_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

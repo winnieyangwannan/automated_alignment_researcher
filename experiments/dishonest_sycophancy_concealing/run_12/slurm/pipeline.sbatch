@@ -9,7 +9,7 @@
 set -euo pipefail
 umask 077
 
-REPO="${AAR_REPO:?submit through submit_run_12_full.sh}"
+REPO="${AAR_REPO:?submit through run_12/launch/submit_full.sh}"
 ATTEMPT="${AAR_RUN_ATTEMPT_DIR:?missing attempt}"
 EXPECTED_COMMIT="${AAR_BASELINE_GIT_COMMIT:?missing source commit}"
 REUSED_BASELINE="${AAR_REUSED_BASELINE:?missing baseline}"
@@ -107,12 +107,29 @@ source "${AAR_AUTODATA_RUNTIME_ENV}"
   echo "Run 12 compiled configuration is not target-aware" >&2
   exit 2
 }
+if [ "${AAR_RUN12_MODE:-full}" = bootstrap-canary ]; then
+  [ "${AAR_AUTODATA_STOP_AFTER:-}" = production ] || {
+    echo "bootstrap canary is not configured to stop after production" >&2
+    exit 2
+  }
+  # This canary deliberately creates no adapter and performs no evaluation.
+  export AAR_START_EVAL_WORKER=0
+else
+  [ -z "${AAR_AUTODATA_STOP_AFTER:-}" ] || {
+    echo "full mode must not inherit a canary stop boundary" >&2
+    exit 2
+  }
+fi
 
 "${HARNESS_PY}" "${REPO}/scripts/validate_reused_multidimensional_baseline.py" \
   "${REUSED_BASELINE}" --recovered-source-dir "${RECOVERED_SOURCES}" \
   --provenance-output "${ATTEMPT}/metadata/baseline_reuse_provenance.json" >/dev/null
 cp -- "${REUSED_BASELINE}" "${AAR_BASELINE_OVERRIDES}"
-bash "${REPO}/scripts/publish_holdout.sh"
+if [ "${AAR_START_EVAL_WORKER}" = 1 ]; then
+  bash "${REPO}/scripts/publish_holdout.sh"
+else
+  echo "[run12] production-only canary: skipping evaluator holdout publication"
+fi
 
 children="${ATTEMPT}/metadata/children.tsv"
 : > "${children}"
@@ -137,13 +154,16 @@ for seed in "${seeds[@]}"; do
   bash "${REPO}/scripts/launch_team.sh" "${seed}" 1 72 | tee "${launch_log}"
   evaluator="$(awk '/^\[launch\] evaluator 1\/1 -> job [0-9]+$/{print $NF}' "${launch_log}")"
   chain="$(awk -v seed="${seed}" '$0 ~ "^\\[team\\] chain " seed " -> job [0-9]+$"{print $NF}' "${launch_log}")"
+  if [ "${AAR_START_EVAL_WORKER}" = 0 ]; then
+    evaluator="-"
+  fi
   if [ -z "${evaluator}" ] || [ -z "${chain}" ]; then
     echo "missing child jobs for ${seed}" >&2
     exit 1
   fi
   controller="$(sbatch --parsable --dependency="afterany:${chain}" \
     --output="${chain_root}/logs/controller-%j.out" --export=ALL \
-    "${REPO}/experiments/dishonest_sycophancy_concealing/run_12/run_12_chain_controller.sbatch" \
+    "${REPO}/experiments/dishonest_sycophancy_concealing/run_12/slurm/chain_controller.sbatch" \
     "${seed}" "${team_id}" "${chain}")"
   printf '%s\t%s\t%s\t%s\n' "${seed}" "${evaluator}" "${chain}" "${controller}" \
     | tee -a "${children}"

@@ -150,6 +150,45 @@ attempts=1
 export AAR_AUTODATA_TRAINING_DATA_CONTRACT="${current_contract}"
 
 wait_job "${FIRST_JOB}"
+if [ "${AAR_AUTODATA_STOP_AFTER:-}" = production ]; then
+  next_iteration=1
+  while true; do
+    shopt -s nullglob
+    markers=("${TEAM_DIR}"/autodata/*/production-canary-complete.json)
+    shopt -u nullglob
+    if [ "${#markers[@]}" -eq 1 ] && jq -e \
+      --argjson required "${AAR_AUTODATA_PRODUCTION_ROWS:?}" '
+        .schema == "aar.autodata.production-canary-complete/v1"
+        and .stop_after == "production"
+        and .required_accepted_rows == $required
+        and .verification.available_rows >= $required
+        and .verification.run_id == .run_id
+      ' "${markers[0]}" >/dev/null; then
+      cp -- "${markers[0]}" "${CHAIN_ROOT}/metadata/production-canary-complete.json"
+      record_event "complete=production_canary accepted_rows=$(jq -r '.verification.available_rows' "${markers[0]}") attempts=${attempts}"
+      jq -n \
+        --arg chain "${SEED}" \
+        --arg marker "${markers[0]}" \
+        --argjson attempts "${attempts}" \
+        --argjson required "${AAR_AUTODATA_PRODUCTION_ROWS}" \
+        '{schema:"aar.run12.production-canary/v1",chain:$chain,stop_after:"production",required_accepted_rows:$required,attempts:$attempts,marker:$marker}' \
+        > "${CHAIN_ROOT}/metadata/complete.json"
+      exit 0
+    fi
+    if [ "${#markers[@]}" -gt 1 ]; then
+      record_event "fatal=multiple_production_canary_markers count=${#markers[@]}"
+      exit 1
+    fi
+    if [ "${attempts}" -ge "${MAX_ATTEMPTS}" ]; then
+      record_event "fatal=production_canary_not_completed attempts=${attempts}"
+      exit 1
+    fi
+    job="$(submit_session)"
+    attempts=$((attempts + 1))
+    record_event "production_canary_retry=${job} attempts=${attempts}"
+    wait_job "${job}"
+  done
+fi
 pairs="$(pair_count)"
 while [ "${pairs}" -lt "${TARGET_PAIRS}" ]; do
   if [ "${attempts}" -ge "${MAX_ATTEMPTS}" ]; then

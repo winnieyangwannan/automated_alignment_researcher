@@ -353,6 +353,8 @@ def load_run_config(path: Path) -> dict[str, Any]:
     loaded = _load_yaml(path, "AutoData run config")
     if isinstance(loaded, dict) and "generation" not in loaded:
         loaded = {**loaded, "generation": {}}
+    if isinstance(loaded, dict) and "bootstrap_canary" not in loaded:
+        loaded = {**loaded, "bootstrap_canary": {"stop_after": "production"}}
     root = _mapping(
         loaded,
         "AutoData run config",
@@ -361,6 +363,7 @@ def load_run_config(path: Path) -> dict[str, Any]:
             "run_id",
             "chains",
             "target_pairs_per_chain",
+            "bootstrap_canary",
             "deployments",
             "budget",
             "generation",
@@ -380,6 +383,13 @@ def load_run_config(path: Path) -> dict[str, Any]:
     chains = [_identifier(value, "chain") for value in root["chains"]]
     if len(chains) != len(set(chains)):
         raise ValueError("chains must be unique")
+    bootstrap_canary = _mapping(
+        root["bootstrap_canary"],
+        "bootstrap_canary",
+        {"stop_after"},
+    )
+    if bootstrap_canary["stop_after"] != "production":
+        raise ValueError("bootstrap_canary.stop_after must be production")
     deployments = _mapping(
         root["deployments"], "deployments", {"researcher_kimi", "generator_kimi"}
     )
@@ -503,6 +513,7 @@ def load_run_config(path: Path) -> dict[str, Any]:
         "target_pairs_per_chain": _positive_integer(
             root["target_pairs_per_chain"], "target_pairs_per_chain"
         ),
+        "bootstrap_canary": {"stop_after": "production"},
         "deployments": {
             "researcher_kimi": _identifier(
                 deployments["researcher_kimi"], "deployments.researcher_kimi"
@@ -662,6 +673,12 @@ def _runtime_environment(
         "AAR_AUTODATA_PRODUCTION_ROWS": str(production["required_rows"]),
         "AAR_AUTODATA_PRODUCTION_INITIAL_TASKS": str(production["initial_tasks"]),
         "AAR_AUTODATA_PRODUCTION_MAX_TASKS": str(production["maximum_tasks"]),
+        "AAR_AUTODATA_PRODUCTION_MIN_SUCCESS_FRACTION": format(
+            production["minimum_successful_task_fraction"], ".12g"
+        ),
+        "AAR_AUTODATA_BOOTSTRAP_CANARY_STOP_AFTER": run["bootstrap_canary"][
+            "stop_after"
+        ],
         "AAR_AUTODATA_RECIPE_ROOT": str(recipe_root),
         "AAR_RUN_STORAGE_ROOT": storage["root"],
         "AAR_KEEP_CHECKPOINTS": "1" if storage["keep_checkpoints"] else "0",
@@ -845,6 +862,7 @@ def inspect_configs(profile_path: Path, run_path: Path) -> dict[str, Any]:
         "generator_kimi_deployment": run["deployments"]["generator_kimi"],
         "chains": run["chains"],
         "target_pairs_per_chain": run["target_pairs_per_chain"],
+        "bootstrap_canary_stop_after": run["bootstrap_canary"]["stop_after"],
         "target_enabled": profile["target"]["enabled"],
         "generator_url": profile["providers"]["generator"]["url"],
         "generator_host_header": profile["providers"]["generator"]["host_header"],

@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd -- "${SCRIPT_DIR}/../../../.." && pwd)"
+REPO="$(cd -- "${SCRIPT_DIR}/../../../../.." && pwd)"
 ACTION="${1:-preflight}"
 AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pipelines}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"

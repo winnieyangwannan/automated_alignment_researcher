@@ -143,6 +143,19 @@ def _execution_id(value: Any, where: str) -> str:
     return value
 
 
+def _positive_environment_integer(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise ValueError(f"{name} must be a positive integer") from error
+    if value < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
 def _execution(connection: sqlite3.Connection, execution_id: str) -> dict[str, Any]:
     row = connection.execute(
         "SELECT * FROM executions WHERE id=?", (execution_id,)
@@ -501,8 +514,14 @@ def verify_preflight(
             _json_file(production_manifest, "production manifest"),
             "production manifest",
         )
-        if len(production_ids) != REQUIRED_PRODUCTION_TASKS:
-            raise ValueError("production manifest must contain exactly 1250 source tasks")
+        required_source_tasks = _positive_environment_integer(
+            "AAR_AUTODATA_PRODUCTION_INITIAL_TASKS", REQUIRED_PRODUCTION_TASKS
+        )
+        if len(production_ids) != required_source_tasks:
+            raise ValueError(
+                "production manifest source-task count does not match the "
+                "configured initial production budget"
+            )
         meta_ids = set(tuning_ids) | set(validation_ids)
         test_reference = meta_spec.get("test_grounding")
         if test_reference is None:
@@ -531,8 +550,15 @@ def verify_preflight(
         if dataset_ref.get("digest") != _sha256(dataset_path):
             raise ValueError("dataset export digest does not match native finalization evidence")
         items = dataset.get("items")
-        if not isinstance(items, list) or len(items) < REQUIRED_TRAINING_ROWS:
-            raise ValueError("production dataset retained fewer than 1000 accepted rows")
+        required_rows = (
+            int(contract["required_rows"])
+            if contract is not None
+            else REQUIRED_TRAINING_ROWS
+        )
+        if not isinstance(items, list) or len(items) < required_rows:
+            raise ValueError(
+                "production dataset retained fewer than the contracted accepted rows"
+            )
         item_ids: list[str] = []
         for index, item in enumerate(items):
             if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
@@ -559,8 +585,9 @@ def verify_preflight(
         "production_execution_id": production_id,
         "production_manifest_sha256": _sha256(production_manifest),
         "dataset_sha256": _sha256(dataset_path),
-        "source_task_count": REQUIRED_PRODUCTION_TASKS,
+        "source_task_count": required_source_tasks,
         "available_rows": len(items),
+        "required_rows": required_rows,
         "training_objective": (
             contract["training_objective"] if contract is not None else None
         ),
@@ -585,10 +612,13 @@ def verify_consumption(run_id: str) -> dict[str, Any]:
         "training_objective"
     ) != verified["training_objective"]:
         raise ValueError("consumption receipt objective does not match the contract")
-    if value.get("required_rows") != REQUIRED_TRAINING_ROWS or value.get(
+    required_rows = verified["required_rows"]
+    if value.get("required_rows") != required_rows or value.get(
         "row_count"
-    ) != REQUIRED_TRAINING_ROWS:
-        raise ValueError("training consumption receipt must retain exactly 1000 rows")
+    ) != required_rows:
+        raise ValueError(
+            "training consumption receipt must retain exactly the contracted rows"
+        )
     if value.get("schema") == "aar.autodata.native-consumption/v1":
         if value.get("execution_id") != production_id:
             raise ValueError("consumption receipt execution does not match the handoff")
@@ -601,7 +631,11 @@ def verify_consumption(run_id: str) -> dict[str, Any]:
             raise ValueError("campaign consumption dataset digests do not match")
     else:
         raise ValueError("unsupported training consumption receipt schema")
-    return {**verified, "consumption_receipt": str(receipt), "consumed_rows": 1000}
+    return {
+        **verified,
+        "consumption_receipt": str(receipt),
+        "consumed_rows": required_rows,
+    }
 
 
 def create_reuse_handoff(

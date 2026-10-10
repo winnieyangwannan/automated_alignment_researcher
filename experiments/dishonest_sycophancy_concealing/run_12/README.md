@@ -5,7 +5,7 @@ New full launches compile two strict YAML sources:
 - [`configs/autodata/target_aware_local_v1.yaml`](../../../configs/autodata/target_aware_local_v1.yaml)
   defines the reusable target-aware runtime, broker, concurrency, retry, and
   provider/token settings;
-- [`autodata_run.yaml`](autodata_run.yaml) defines Run 12's chains,
+- [`config/autodata_run.yaml`](config/autodata_run.yaml) defines Run 12's chains,
   meta-optimization sizes, production budget, operational storage/evaluation/
   agent policy, and training-data contract.
 
@@ -13,9 +13,13 @@ New full launches compile two strict YAML sources:
 chain's campaign policy, training-data contract, shell runtime environment, and
 resolved configuration snapshot. Unknown YAML keys, target-disabled settings,
 cross-chain bindings, or changes to compiled artifacts fail before generation.
+Canary 2 supplies its separate `canary/canary_2/autodata_run.yaml`, where
+`bootstrap_canary.stop_after: production` and `production.required_rows: 100`
+make the success boundary explicit. The canonical full-run YAML remains at
+1,000 rows. Both modes use the same launcher and production implementation.
 The standalone canary code and configuration are documented under
 [`canary/`](canary/README.md). The one-row infrastructure canary uses
-[`canary/autodata_canary.yaml`](canary/autodata_canary.yaml) with the same
+[`canary/canary_1/autodata_canary.yaml`](canary/canary_1/autodata_canary.yaml) with the same
 reusable profile.
 
 The operational sections use the same contract as Run 10: `storage` selects
@@ -58,6 +62,46 @@ the isolated recipe runtime. A future run may omit `generation` (or use an
 empty mapping) and still compile to five attempts. Run 12 pins the same value
 explicitly so its resolved configuration remains self-describing; narrow smoke
 canaries may intentionally override the default.
+
+## Shell launchers and Slurm jobs
+
+Run 12 separates configuration, submission, scheduled execution, recovery, and
+canaries:
+
+```text
+run_12/
+├── config/autodata_run.yaml
+├── launch/submit_full.sh
+├── slurm/
+│   ├── pipeline.sbatch
+│   └── chain_controller.sbatch
+├── recovery/wait_for_gateway.sbatch
+└── canary/
+    ├── canary_1/
+    └── canary_2/
+```
+
+`slurm/pipeline.sbatch` is the scheduled parent for one attempt: it prepares
+shared inputs and submits the chain jobs. `slurm/chain_controller.sbatch` is
+submitted once per chain and advances that chain across successful iterations,
+including incumbent promotion and target rotation. The gateway waiter is kept
+under `recovery/` because normal launches do not use it.
+
+The suffix is a repository convention, not a different shell language. Both
+file types are Bash, but they run at different layers:
+
+- `launch/submit_full.sh` and the canary `submit_*.sh` files run on the login or
+  controller host. They validate YAML, source identity, secrets, endpoint
+  identity, and retained prerequisites; create an attempt directory; compile
+  immutable per-chain contracts; and submit scheduled work with `sbatch`.
+- `*.sbatch` files are the payloads Slurm runs after allocating the requested
+  CPUs, GPUs, memory, partition, and wall time from their `#SBATCH` directives.
+  They perform the long-running endpoint checks, AutoData/AAR work, chain
+  control, training, or evaluation appropriate to that allocation.
+
+In short, a `.sh` prepares and submits; an `.sbatch` executes on allocated
+cluster resources. The full pipeline `.sbatch` is itself an orchestrator: it
+publishes evaluator-only inputs and submits the chain/controller child jobs.
 
 The mutable strategy's `system_prompt` and `scenario_prompt_prefix` each have a
 262,144-byte static envelope, approximately 65,536 English tokens per
@@ -174,8 +218,8 @@ fast-forwarded to `/storage/home/winnieyangwn/aar-worktrees/autodata`.
    gateway default.
 2. Verify one serving endpoint, direct `/v1/models`, a deterministic generation,
    and gateway routing by deployment ID.
-3. On HPC, run `canary/submit_target_canary.sh preflight`. Wait for success.
-4. Run `canary/submit_target_canary.sh canary <attempt-root>`. Wait for
+3. On HPC, run `canary/canary_1/submit_target_canary.sh preflight`. Wait for success.
+4. Run `canary/canary_1/submit_target_canary.sh canary <attempt-root>`. Wait for
    `canary-report.json`.
 5. Stop the dedicated deployment after evidence is retained.
 
@@ -206,7 +250,7 @@ Attempt metadata, logs, private broker state, and retained evidence live under
 `AAR_RUN12_STORAGE_ROOT` resolves exactly to `/checkpoint/ram/$USER`.
 
 When the shared inference gateway is unavailable, submit
-`run_12_gateway_deferred_launch.sbatch` instead of starting the five chains
+`recovery/wait_for_gateway.sbatch` instead of starting the five chains
 directly. The gate pins the source commit, rechecks the checkpoint-only storage
 root, and waits until the elected gateway leader is healthy,
 `autodata_8-kimi26` is registered, and a real Kimi completion through that exact
@@ -278,13 +322,13 @@ chain's complete run and rotate its verified backend after each promotion.
 
 ## Full five-chain launcher
 
-`submit_run_12_full.sh` launches five Kimi chains (`alpha` through `epsilon`),
+`launch/submit_full.sh` launches five Kimi chains (`alpha` through `epsilon`),
 with five durable sequential score/result pairs per chain. It deliberately uses
 five separate team directories. This prevents the local brokers from sharing a
 retained SQLite ledger or AutoData native state while preserving each chain's
 own memory across its five bounded outer-iteration jobs.
 
-After each durable result, `run_12_chain_controller.sbatch` selects the best
+After each durable result, `slurm/chain_controller.sbatch` selects the best
 valid adapter using the same provenance checks as champion export. The
 evaluator retains its atomic merged checkpoint, so the controller does not pay
 for a duplicate 62 GB merge. A changed incumbent is served under a new

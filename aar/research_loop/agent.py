@@ -239,6 +239,15 @@ def resolve_prompt(template_path: str | Path, output_path: str | Path) -> str:
         paper_search_helper=paper_search_helper,
         autodata=autodata,
         autodata_sha=os.getenv("AAR_AUTODATA_SHA", ""),
+        autodata_production_rows=int(
+            os.getenv("AAR_AUTODATA_PRODUCTION_ROWS", "1000")
+        ),
+        autodata_production_initial_tasks=int(
+            os.getenv("AAR_AUTODATA_PRODUCTION_INITIAL_TASKS", "1250")
+        ),
+        autodata_production_min_success_fraction=float(
+            os.getenv("AAR_AUTODATA_PRODUCTION_MIN_SUCCESS_FRACTION", "0.95")
+        ),
     )
 
     with open(output_path, 'w') as f:
@@ -643,19 +652,32 @@ class AutonomousAgentLoop:
     def _create_agent(self, session_id: str, message_callback=None):
         meta_secure_web = os.getenv("AAR_WEB_MODE", "native_web") == "meta_secure"
         if getattr(self, "backend", "claude") == "kimi":
-            kimi_system_prompt = (
-                "You are running noninteractively. Complete the entire requested "
-                "research iteration using tools now. Never end with a statement of "
-                "future intent such as 'let me' or 'next I will'. The iteration is "
-                "complete only after a real score result is available and "
-                "share_finding succeeds. Follow the resolved research prompt's "
-                "training/evaluation flow exactly; when it says the asynchronous "
-                "training job produces the score, do not call evaluate_model. "
-                "During initial discovery, call get_literature exactly once with an "
-                "empty input to obtain compact summaries; do not request multiple "
-                "dimensions in parallel. If essential, make at most one focused "
-                "literature follow-up after selecting a method direction."
-            )
+            if os.getenv("AAR_AUTODATA_STOP_AFTER", "").strip() == "production":
+                kimi_system_prompt = (
+                    "You are running a production-only AutoData canary "
+                    "noninteractively. Complete the approved target-aware AutoData "
+                    "meta-optimization and production workflow using tools now. The "
+                    "iteration is complete when the verified production handoff "
+                    "contains the configured accepted-row target. Do not submit "
+                    "training, wait for a score, evaluate an adapter, or call "
+                    "share_finding. Never end with a statement of future intent such "
+                    "as 'let me' or 'next I will'. During initial discovery, call "
+                    "get_literature exactly once with an empty input."
+                )
+            else:
+                kimi_system_prompt = (
+                    "You are running noninteractively. Complete the entire requested "
+                    "research iteration using tools now. Never end with a statement of "
+                    "future intent such as 'let me' or 'next I will'. The iteration is "
+                    "complete only after a real score result is available and "
+                    "share_finding succeeds. Follow the resolved research prompt's "
+                    "training/evaluation flow exactly; when it says the asynchronous "
+                    "training job produces the score, do not call evaluate_model. "
+                    "During initial discovery, call get_literature exactly once with an "
+                    "empty input to obtain compact summaries; do not request multiple "
+                    "dimensions in parallel. If essential, make at most one focused "
+                    "literature follow-up after selecting a method direction."
+                )
             if meta_secure_web:
                 kimi_system_prompt += (
                     " Use the repository's bounded arXiv helper for internet research. "

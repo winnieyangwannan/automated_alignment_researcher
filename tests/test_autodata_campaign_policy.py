@@ -16,9 +16,9 @@ class AutoDataCampaignPolicyTest(unittest.TestCase):
     def test_run12_retries_resume_one_approved_outer_iteration(self) -> None:
         root = Path(__file__).resolve().parents[1]
         run12 = root / "experiments/dishonest_sycophancy_concealing/run_12"
-        controller = (run12 / "run_12_chain_controller.sbatch").read_text()
-        pipeline = (run12 / "run_12_full_pipeline.sbatch").read_text()
-        run_config = (run12 / "autodata_run.yaml").read_text()
+        controller = (run12 / "slurm" / "chain_controller.sbatch").read_text()
+        pipeline = (run12 / "slurm" / "pipeline.sbatch").read_text()
+        run_config = (run12 / "config" / "autodata_run.yaml").read_text()
         chain = (root / "scripts/slurm_aar_chain.sh").read_text()
         runtime = (root / "scripts/aar_runtime_env.sh").read_text()
 

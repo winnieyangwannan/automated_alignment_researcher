@@ -354,6 +354,10 @@ def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
 
 def _autodata_loader_errors(tree: ast.AST) -> list[str]:
     """Mirror the native proposal gate for receipt-producing AutoData loads."""
+    try:
+        expected_rows = int(os.getenv("AAR_AUTODATA_PRODUCTION_ROWS", "1000"))
+    except ValueError:
+        return ["AAR_AUTODATA_PRODUCTION_ROWS must be an integer"]
     string_literals = {
         node.value
         for node in ast.walk(tree)
@@ -381,8 +385,11 @@ def _autodata_loader_errors(tree: ast.AST) -> list[str]:
             continue
         keywords = {item.arg: item.value for item in node.keywords if item.arg}
         required = keywords.get("required_rows")
-        if not isinstance(required, ast.Constant) or required.value != 1000:
-            return ["AutoData loader must use literal required_rows=1000"]
+        if not isinstance(required, ast.Constant) or required.value != expected_rows:
+            return [
+                "AutoData loader must use literal "
+                f"required_rows={expected_rows}"
+            ]
         if "receipt_path" not in keywords:
             return ["AutoData loader must write a training consumption receipt"]
         if "expected_execution_ids" not in keywords:

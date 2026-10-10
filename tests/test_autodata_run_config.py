@@ -24,7 +24,14 @@ from aar.autodata_run_config import (
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = ROOT / "configs/autodata/target_aware_local_v1.yaml"
-RUN = ROOT / "experiments/dishonest_sycophancy_concealing/run_12" / "autodata_run.yaml"
+RUN = (
+    ROOT
+    / "experiments/dishonest_sycophancy_concealing/run_12/config/autodata_run.yaml"
+)
+CANARY2_RUN = (
+    ROOT
+    / "experiments/dishonest_sycophancy_concealing/run_12/canary/canary_2/autodata_run.yaml"
+)
 
 
 def _base_binding(tmp_path: Path, *, chain: str = "alpha") -> Path:
@@ -96,6 +103,9 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
     assert "export AAR_AUTODATA_META_MAX_ITERATIONS=3\n" in runtime
     assert "export AAR_AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS=5\n" in runtime
     assert "export AAR_AUTODATA_PRODUCTION_ROWS=1000\n" in runtime
+    assert (
+        "export AAR_AUTODATA_BOOTSTRAP_CANARY_STOP_AFTER=production\n" in runtime
+    )
     assert f"export AAR_RUN_STORAGE_ROOT=/checkpoint/ram/{os.environ['USER']}\n" in runtime
     assert "export AAR_KEEP_CHECKPOINTS=0\n" in runtime
     assert "export AAR_EVAL_MEM=0\n" in runtime
@@ -132,6 +142,28 @@ def test_compiled_config_rejects_artifact_tamper(tmp_path: Path) -> None:
             policy_path,
             output / "autodata-training-data-contract.json",
         )
+
+
+def test_canary2_compiles_independent_100_row_production_contract(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "canary2-compiled"
+    compile_run_config(
+        profile_path=PROFILE,
+        run_path=CANARY2_RUN,
+        target_binding_path=_base_binding(tmp_path),
+        chain="alpha",
+        repo=ROOT,
+        output_dir=output,
+    )
+    contract = json.loads((output / "autodata-training-data-contract.json").read_text())
+    runtime = (output / "autodata-runtime.env").read_text()
+
+    assert contract["required_rows"] == 100
+    assert "export AAR_AUTODATA_PRODUCTION_ROWS=100\n" in runtime
+    assert "export AAR_AUTODATA_PRODUCTION_INITIAL_TASKS=125\n" in runtime
+    assert "export AAR_AUTODATA_PRODUCTION_MAX_TASKS=200\n" in runtime
+    assert "export AAR_AUTODATA_PRODUCTION_MIN_SUCCESS_FRACTION=0.95\n" in runtime
 
 
 def test_compiler_rejects_cross_chain_target_binding(tmp_path: Path) -> None:
@@ -190,6 +222,7 @@ def test_inspect_reports_static_yaml_values() -> None:
         "generator_kimi_deployment": "autodata_8-kimi26",
         "chains": ["alpha", "beta", "gamma", "delta", "epsilon"],
         "target_pairs_per_chain": 5,
+        "bootstrap_canary_stop_after": "production",
         "target_enabled": True,
         "generator_url": "http://fair-cw-use2-1-ingress-slurm-ingress/v1",
         "generator_host_header": "ram-inference-gateway.ingress.",
@@ -220,3 +253,13 @@ def test_run_config_defaults_target_feedback_attempts_to_five(
 
     assert DEFAULT_TARGET_FEEDBACK_MAX_ATTEMPTS == 5
     assert loaded["generation"]["target_feedback_max_attempts"] == 5
+
+
+def test_run_config_rejects_non_production_bootstrap_stop(tmp_path: Path) -> None:
+    config = yaml.safe_load(RUN.read_text())
+    config["bootstrap_canary"]["stop_after"] = "evaluation"
+    path = tmp_path / "invalid-canary.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="stop_after must be production"):
+        load_run_config(path)

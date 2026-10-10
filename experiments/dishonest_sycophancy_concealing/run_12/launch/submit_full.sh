@@ -4,7 +4,8 @@ set -euo pipefail
 umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
+RUN12_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+REPO="$(cd -- "${RUN12_DIR}/../../.." && pwd)"
 AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata-worktrees/aar-optimized-823c594}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
 SECRET_ENV="$(realpath -e -- "${AAR_RUN12_SECRET_ENV:-${REPO}/.env}")"
@@ -15,7 +16,8 @@ SV="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
 REQUIRED_AUTODATA_SHA=823c5948854df14664f3168bc5e6c49a2cecb975
 PROFILE_CONFIG="${AAR_RUN12_AUTODATA_PROFILE_CONFIG:-${REPO}/configs/autodata/target_aware_local_v1.yaml}"
-RUN_CONFIG="${AAR_RUN12_AUTODATA_RUN_CONFIG:-${SCRIPT_DIR}/autodata_run.yaml}"
+CANONICAL_RUN_CONFIG="$(realpath -e -- "${RUN12_DIR}/config/autodata_run.yaml")"
+RUN_CONFIG="$(realpath -e -- "${AAR_RUN12_AUTODATA_RUN_CONFIG:-${CANONICAL_RUN_CONFIG}}")"
 [ -x "${REPO}/.venv/bin/python" ] || { echo "missing AAR runtime" >&2; exit 2; }
 config_json="$(PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_run_config inspect \
   --profile "${PROFILE_CONFIG}" --run "${RUN_CONFIG}")"
@@ -50,6 +52,7 @@ export AAR_KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-/checkpoint/ram/shared/vllm_d
 RUN_MODE="${AAR_RUN12_MODE:-full}"
 configured_seeds="$(jq -r '.chains | join(" ")' <<<"${config_json}")"
 configured_pairs="$(jq -r '.target_pairs_per_chain' <<<"${config_json}")"
+configured_canary_stop="$(jq -r '.bootstrap_canary_stop_after' <<<"${config_json}")"
 SEEDS_RAW="${AAR_RUN12_SEEDS:-${configured_seeds}}"
 TARGET_PAIRS="${AAR_RUN12_TARGET_PAIRS:-${configured_pairs}}"
 REUSE_BASE_DEPLOYMENT="${AAR_RUN12_REUSE_BASE_DEPLOYMENT:-}"
@@ -68,6 +71,10 @@ case "${TARGET_PAIRS}" in ''|*[!0-9]*) echo "target pairs must be an integer" >&
   echo "target pairs must be between 1 and 5" >&2; exit 2;
 }
 if [ "${RUN_MODE}" = full ]; then
+  unset AAR_AUTODATA_STOP_AFTER
+  [ "${RUN_CONFIG}" = "${CANONICAL_RUN_CONFIG}" ] || {
+    echo "full mode requires the canonical Run 12 YAML" >&2; exit 2;
+  }
   [ -z "${REUSE_BASE_DEPLOYMENT}" ] || {
     echo "full mode forbids reusing a canary base deployment" >&2; exit 2;
   }
@@ -75,6 +82,10 @@ if [ "${RUN_MODE}" = full ]; then
     echo "full mode must match the checked-in Run 12 YAML" >&2; exit 2;
   }
 else
+  [ "${configured_canary_stop}" = production ] || {
+    echo "bootstrap-canary YAML must stop after production" >&2; exit 2;
+  }
+  export AAR_AUTODATA_STOP_AFTER="${configured_canary_stop}"
   [ "${#seeds[@]}" -eq 1 ] && [ "${TARGET_PAIRS}" = 1 ] || {
     echo "bootstrap-canary mode requires exactly one seed and one target pair" >&2; exit 2;
   }
@@ -243,11 +254,12 @@ export AAR_RUN12_TARGET_PAIRS="${TARGET_PAIRS}"
 [ "${RUN_MODE}" = full ] || export AAR_RUN12_MAX_CHAIN_ATTEMPTS=2
 
 job="$(sbatch --parsable --output="${attempt}/logs/pipeline-%j.out" --export=ALL \
-  "${SCRIPT_DIR}/run_12_full_pipeline.sbatch")"
+  "${RUN12_DIR}/slurm/pipeline.sbatch")"
 base_reused=false
 [ -z "${REUSE_BASE_DEPLOYMENT}" ] || base_reused=true
-printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nmode=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nresearcher_kimi_deployment=%s\nautodata_kimi_deployment=%s\nautodata_profile=%s\nautodata_concurrency=%s\nautodata_model_request_attempts=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \
+printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nmode=%s\nstop_after=%s\nproduction_required_rows=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nresearcher_kimi_deployment=%s\nautodata_kimi_deployment=%s\nautodata_profile=%s\nautodata_concurrency=%s\nautodata_model_request_attempts=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \
   "${job}" "${attempt}" "${checkpoint_root}" "${commit}" "${RUN_MODE}" \
+  "${AAR_AUTODATA_STOP_AFTER:-score-result}" "${AAR_AUTODATA_PRODUCTION_ROWS}" \
   "${RESEARCHER_DEPLOYMENT}" "${GENERATOR_DEPLOYMENT}" "${AAR_AUTODATA_PROFILE}" \
   "${AAR_AUTODATA_CONCURRENCY}" "${AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS}" \
   "${#seeds[@]}" "${TARGET_PAIRS}" "${SEEDS_RAW}" \

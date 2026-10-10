@@ -386,25 +386,34 @@ class KimiAgent:
                         self._submitted_proposal_in_output(output)
                         and self._proposal_marker_changed_this_session()
                     ) or self._resume_approved_proposal_enabled()
+                    production_canary_complete = False
                     if owns_approved_run:
                         approved_run_id = self._approved_run_id()
                         if approved_run_id is not None and (
                             not self._autodata_enabled()
                             or self._autodata_handoff_ready(approved_run_id)
                         ):
-                            self._ensure_approved_training_submission()
-                            await self._wait_for_training_result()
-                            training_failure = self._current_training_failure()
-                            score_path = self._score_path_for_run(approved_run_id)
-                            if training_failure is not None and not (
-                                score_path is not None and score_path.is_file()
-                            ):
-                                raise RuntimeError(
-                                    "Kimi training failed closed: "
-                                    + json.dumps(
-                                        training_failure, sort_keys=True
-                                    )[:2000]
+                            if self._autodata_stop_after_production():
+                                self._complete_autodata_production_canary(
+                                    approved_run_id
                                 )
+                                production_canary_complete = True
+                            else:
+                                self._ensure_approved_training_submission()
+                                await self._wait_for_training_result()
+                                training_failure = self._current_training_failure()
+                                score_path = self._score_path_for_run(approved_run_id)
+                                if training_failure is not None and not (
+                                    score_path is not None and score_path.is_file()
+                                ):
+                                    raise RuntimeError(
+                                        "Kimi training failed closed: "
+                                        + json.dumps(
+                                            training_failure, sort_keys=True
+                                        )[:2000]
+                                    )
+                    if production_canary_complete:
+                        break
                     if not self.completion_tool or self._completion_tool_used(output):
                         break
                     if continuation_count >= self.max_continuations:
@@ -1708,6 +1717,64 @@ class KimiAgent:
             "yes",
             "on",
         }
+
+    @staticmethod
+    def _autodata_stop_after_production() -> bool:
+        return os.getenv("AAR_AUTODATA_STOP_AFTER", "").strip() == "production"
+
+    @classmethod
+    def _complete_autodata_production_canary(cls, run_id: str) -> Path:
+        """Verify and durably mark a production-only AutoData canary."""
+        if not cls._autodata_stop_after_production():
+            raise RuntimeError("AutoData production-only stop is not active")
+        team_raw = os.getenv("TEAM_DIR", "").strip()
+        if not team_raw:
+            raise RuntimeError("TEAM_DIR is required for the production canary")
+        try:
+            required_rows = int(os.environ["AAR_AUTODATA_PRODUCTION_ROWS"])
+        except (KeyError, ValueError) as error:
+            raise RuntimeError(
+                "AAR_AUTODATA_PRODUCTION_ROWS must be an integer"
+            ) from error
+        from aar.infrastructure.autodata_lifecycle import verify_preflight
+
+        verification = verify_preflight(run_id)
+        if verification.get("available_rows", 0) < required_rows:
+            raise RuntimeError(
+                "verified production handoff did not satisfy the configured row target"
+            )
+        marker = (
+            Path(team_raw)
+            / "autodata"
+            / run_id
+            / "production-canary-complete.json"
+        )
+        payload = {
+            "schema": "aar.autodata.production-canary-complete/v1",
+            "run_id": run_id,
+            "stop_after": "production",
+            "required_accepted_rows": required_rows,
+            "verification": verification,
+        }
+        encoded = json.dumps(payload, indent=2, sort_keys=True)
+        if marker.exists():
+            try:
+                existing = json.loads(marker.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as error:
+                raise RuntimeError(
+                    "existing production-canary marker is unreadable"
+                ) from error
+            if existing != payload:
+                raise RuntimeError(
+                    "existing production-canary marker does not match verification"
+                )
+        else:
+            cls._write_private_text(marker, encoded)
+        print(
+            "[Kimi] verified AutoData production canary: "
+            f"{verification['available_rows']} accepted rows; stopping before training"
+        )
+        return marker
 
     @staticmethod
     def _resume_approved_proposal_enabled() -> bool:

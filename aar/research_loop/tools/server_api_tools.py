@@ -1386,6 +1386,10 @@ def _autodata_method_contract_error(code: str) -> str | None:
         tree = ast.parse(code)
     except SyntaxError as error:
         return f"method is not valid Python: {error}"
+    try:
+        expected_rows = int(os.getenv("AAR_AUTODATA_PRODUCTION_ROWS", "1000"))
+    except ValueError:
+        return "AAR_AUTODATA_PRODUCTION_ROWS must be an integer"
     string_literals = {
         node.value
         for node in ast.walk(tree)
@@ -1411,8 +1415,11 @@ def _autodata_method_contract_error(code: str) -> str | None:
             continue
         keywords = {item.arg: item.value for item in node.keywords if item.arg}
         required = keywords.get("required_rows")
-        if not isinstance(required, ast.Constant) or required.value != 1000:
-            return "AutoData loader must use literal required_rows=1000"
+        if not isinstance(required, ast.Constant) or required.value != expected_rows:
+            return (
+                "AutoData loader must use literal "
+                f"required_rows={expected_rows}"
+            )
         if "receipt_path" not in keywords:
             return "AutoData loader must write a training consumption receipt"
         expected = "expected_execution_ids"

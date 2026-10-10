@@ -390,7 +390,7 @@ and eight-hour production hard ceilings.
 After meta-optimization completes, use native `execution export-winner` to create a
 pristine, digest-bound winner export and never modify it. Copy that export to a
 separate production pipeline root, then build a dedicated production grounding
-manifest there with 1,250 IDs that are disjoint from every tuning, validation, and
+manifest there with {{ autodata_production_initial_tasks }} IDs that are disjoint from every tuning, validation, and
 test ID (the checked-in builder supports `--id-prefix safety-prod`). The production
 execution must use that manifest and production copy of the exported winning
 pipeline, must share the native study with the workspace/meta execution, and must have
@@ -405,8 +405,8 @@ execution must also declare this exact completion policy:
 
 ```json
 "finalization": {
-  "minimum_generated_items": 1000,
-  "minimum_successful_task_fraction": 0.95
+  "minimum_generated_items": {{ autodata_production_rows }},
+  "minimum_successful_task_fraction": {{ autodata_production_min_success_fraction }}
 }
 ```
 
@@ -442,7 +442,7 @@ your method must train on the native `autodata.dataset/v1` export and use its
 `items` as training data through
 `aar.infrastructure.autodata_dataset.load_autodata_campaign_datasets`, passing the
 verified production dataset/execution as one-element lists, with
-`required_rows=1000` and the fixed receipt path
+`required_rows={{ autodata_production_rows }}` and the fixed receipt path
 `$TEAM_DIR/autodata/<run_id>/training-consumption.json`. Merely running AutoData or
 parsing the JSON directly does not satisfy the proposed method.
 
@@ -469,7 +469,7 @@ training_data_contract = json.loads(contract_path.read_text())
 items = load_autodata_campaign_datasets(
     [production_dataset_path],
     receipt_path=training_consumption_path,
-    required_rows=1000,
+    required_rows={{ autodata_production_rows }},
     expected_execution_ids=[production_execution_id],
     judge_rubric=training_data_contract["judge_rubric"],
     training_objective="sft",  # use "dpo" only for prompt/chosen/rejected rows
@@ -483,7 +483,7 @@ snapshot at `$AAR_AUTODATA_RETAINED_STATE` (not the live node-local
 workspace/study ID, completed meta execution ID, exported winner root, completed
 production execution ID, dedicated production manifest, and exported production
 dataset. The submitter independently treats this file as untrusted and verifies the
-complete winner-to-production lineage, exact source IDs, 1,000 accepted rows, and
+complete winner-to-production lineage, exact source IDs, {{ autodata_production_rows }} accepted rows, and
 dataset digest. Training is also rejected unless the method creates the verified
 consumption receipt before its model is submitted.
 

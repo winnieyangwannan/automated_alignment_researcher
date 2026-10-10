@@ -9,7 +9,7 @@
 set -euo pipefail
 umask 077
 
-REPO="${AAR_REPO:?submit through canary/submit_target_canary.sh}"
+REPO="${AAR_REPO:?submit through canary/canary_1/submit_target_canary.sh}"
 ROOT="${AAR_RUN12_ROOT:?missing attempt root}"
 BINDING="${AAR_RUN12_TARGET_BINDING:?missing target binding}"
 

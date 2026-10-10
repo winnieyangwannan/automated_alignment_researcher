@@ -69,7 +69,7 @@ while (( SECONDS < deadline )); do
         "${response}" >/dev/null; then
       echo "[run12-gateway-gate] healthy leader, registered Kimi route, and completion verified"
       export AAR_RUN12_STORAGE_ROOT="${STORAGE_ROOT}"
-      exec bash "${REPO}/experiments/dishonest_sycophancy_concealing/run_12/submit_run_12_full.sh"
+      exec bash "${REPO}/experiments/dishonest_sycophancy_concealing/run_12/launch/submit_full.sh"
     fi
   fi
   if (( polls % 10 == 0 )); then
