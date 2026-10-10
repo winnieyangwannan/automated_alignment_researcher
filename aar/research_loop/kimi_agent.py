@@ -739,6 +739,9 @@ class KimiAgent:
                             "preserve every existing key, nested setting, and value type "
                             "unless the action explicitly requires changing it. Never "
                             "replace a compiled file with a smaller invented schema. "
+                            "When complete reviewed files are already staged and satisfy "
+                            "the action, adopt them unchanged and write the action-result "
+                            "JSON immediately instead of rewriting them. "
                             "Otherwise write a valid JSON object to "
                             f"{result_path} satisfying the requested outputs. Use only "
                             "the action instructions and allowed paths; do not use Bash. "
@@ -1098,6 +1101,9 @@ class KimiAgent:
             raise RuntimeError("trusted AutoData action lease is unavailable") from error
         if len(token) < 20:
             raise RuntimeError("trusted AutoData action lease is invalid")
+        action = cls._autodata_action_record(action_id)
+        if action is not None and action["kind"] == "author_grounding":
+            cls._autodata_repair_incomplete_grounding(action)
         cls._autodata_cli(
             "action",
             "complete",
@@ -1109,6 +1115,106 @@ class KimiAgent:
         )
         lease_path.unlink(missing_ok=True)
         result_path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _autodata_repair_incomplete_grounding(action: dict[str, Any]) -> None:
+        """Restore reviewed grounding when a host edit discarded its task corpus."""
+        spec = action.get("spec")
+        if not isinstance(spec, dict):
+            raise RuntimeError("AutoData grounding action has no specification")
+        root_raw = spec.get("editable_root")
+        allowed = spec.get("allowed_paths")
+        if not isinstance(root_raw, str) or allowed != ["grounding/**"]:
+            raise RuntimeError("AutoData grounding action has an unexpected edit scope")
+        root = Path(root_raw).resolve(strict=True)
+        grounding = root / "grounding"
+        if grounding.is_symlink():
+            raise RuntimeError("AutoData grounding directory must not be a symlink")
+        grounding.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if grounding.resolve(strict=True).parent != root:
+            raise RuntimeError("AutoData grounding directory escaped the editable root")
+        manifest = grounding / "manifest.json"
+        if manifest.is_symlink():
+            raise RuntimeError("AutoData grounding manifest must not be a symlink")
+        partition_counts = [
+            int(os.environ[name])
+            for name in (
+                "AAR_AUTODATA_TUNING_TASKS",
+                "AAR_AUTODATA_VALIDATION_TASKS",
+                "AAR_AUTODATA_TEST_TASKS",
+            )
+        ]
+        if min(partition_counts) < 1:
+            raise RuntimeError("AutoData grounding partitions must all be non-empty")
+        required_count = sum(partition_counts)
+
+        try:
+            current = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            current = None
+        tasks = current.get("tasks") if isinstance(current, dict) else None
+        if (
+            isinstance(current, dict)
+            and current.get("schema") == "autodata.grounding/v1"
+            and isinstance(tasks, list)
+            and len(tasks) == required_count
+            and all(
+                isinstance(task, dict)
+                and isinstance(task.get("id"), str)
+                and task["id"].strip()
+                for task in tasks
+            )
+        ):
+            return
+
+        recipe_raw = os.environ.get("AAR_AUTODATA_RECIPE_ROOT", "").strip()
+        if not recipe_raw:
+            raise RuntimeError("reviewed AutoData recipe root is unavailable")
+        recipe = Path(recipe_raw).resolve(strict=True)
+        builder = recipe / "grounding" / "build_manifest.py"
+        coverage = recipe / "grounding" / "coverage.json"
+        if (
+            builder.is_symlink()
+            or coverage.is_symlink()
+            or not builder.is_file()
+            or not coverage.is_file()
+        ):
+            raise RuntimeError("reviewed AutoData grounding sources are unavailable")
+        shutil.copy2(builder, grounding / "build_manifest.py")
+        shutil.copy2(coverage, grounding / "coverage.json")
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(builder),
+                "--count",
+                str(required_count),
+                "--coverage",
+                str(coverage),
+                "--output",
+                str(manifest),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = completed.stderr[-2000:].strip() or completed.stdout[-2000:].strip()
+            raise RuntimeError(f"reviewed grounding repair failed: {detail}")
+        try:
+            repaired = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise RuntimeError("reviewed grounding repair returned invalid JSON") from error
+        repaired_tasks = repaired.get("tasks") if isinstance(repaired, dict) else None
+        if (
+            not isinstance(repaired, dict)
+            or repaired.get("schema") != "autodata.grounding/v1"
+            or not isinstance(repaired_tasks, list)
+            or len(repaired_tasks) != required_count
+        ):
+            raise RuntimeError("reviewed grounding repair returned an invalid manifest")
 
     @staticmethod
     def _autodata_editable_context(action: dict[str, Any]) -> str:
@@ -1129,7 +1235,8 @@ class KimiAgent:
         for relative_raw in allowed:
             if remaining <= 0 or not isinstance(relative_raw, str):
                 break
-            relative = Path(relative_raw)
+            wildcard = relative_raw.endswith("/**")
+            relative = Path(relative_raw[:-3] if wildcard else relative_raw)
             if relative.is_absolute() or ".." in relative.parts:
                 continue
             candidate = root / relative
@@ -1138,6 +1245,40 @@ class KimiAgent:
                 resolved.relative_to(root)
             except (OSError, ValueError):
                 context[relative_raw] = "<missing>"
+                continue
+            if wildcard and resolved.is_dir() and not candidate.is_symlink():
+                files = sorted(
+                    (
+                        path
+                        for path in resolved.rglob("*")
+                        if path.is_file() and not path.is_symlink()
+                    ),
+                    key=lambda path: (
+                        path.name != "manifest.json",
+                        str(path.relative_to(root)),
+                    ),
+                )[:32]
+                for path in files:
+                    if remaining <= 0:
+                        break
+                    try:
+                        safe = path.resolve(strict=True)
+                        safe.relative_to(root)
+                        content = safe.read_text(encoding="utf-8")
+                    except (OSError, UnicodeError, ValueError):
+                        continue
+                    key = str(safe.relative_to(root))
+                    excerpt = content[: min(12_000, remaining)]
+                    suffix = (
+                        ""
+                        if len(excerpt) == len(content)
+                        else f"\n<TRUNCATED bytes={len(content)} "
+                        f"sha256={hashlib.sha256(content.encode()).hexdigest()}>"
+                    )
+                    context[key] = excerpt + suffix
+                    remaining -= len(excerpt)
+                if not files:
+                    context[relative_raw] = "<empty-directory>"
                 continue
             if candidate.is_symlink() or not resolved.is_file():
                 context[relative_raw] = "<unsafe-or-not-a-file>"

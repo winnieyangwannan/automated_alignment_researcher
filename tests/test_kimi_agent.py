@@ -1416,6 +1416,50 @@ class KimiAgentTest(unittest.TestCase):
                 agent._autodata_prepare_editable_paths(grounding_action)
                 self.assertTrue((draft / "grounding").is_dir())
 
+                recipe = root / "reviewed-recipe"
+                reviewed_grounding = recipe / "grounding"
+                reviewed_grounding.mkdir(parents=True)
+                (reviewed_grounding / "coverage.json").write_text("{}")
+                (reviewed_grounding / "build_manifest.py").write_text(
+                    """import argparse, json
+from pathlib import Path
+p = argparse.ArgumentParser()
+p.add_argument('--count', type=int, required=True)
+p.add_argument('--coverage')
+p.add_argument('--output', type=Path, required=True)
+a = p.parse_args()
+a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'id': f'task-{i}'} for i in range(a.count)]}))
+"""
+                )
+                manifest = draft / "grounding" / "manifest.json"
+                manifest.write_text(
+                    json.dumps(
+                        {
+                            "schema": "autodata.grounding/v1",
+                            "sources": [{"name": "incomplete"}],
+                        }
+                    )
+                )
+                grounding_action["kind"] = "author_grounding"
+                with patch.dict(
+                    os.environ,
+                    {
+                        "AAR_AUTODATA_RECIPE_ROOT": str(recipe),
+                        "AAR_AUTODATA_TUNING_TASKS": "2",
+                        "AAR_AUTODATA_VALIDATION_TASKS": "1",
+                        "AAR_AUTODATA_TEST_TASKS": "1",
+                    },
+                    clear=False,
+                ):
+                    agent._autodata_repair_incomplete_grounding(grounding_action)
+                repaired = json.loads(manifest.read_text())
+                self.assertEqual(len(repaired["tasks"]), 4)
+                editable_context = json.loads(
+                    agent._autodata_editable_context(grounding_action)
+                )
+                self.assertIn("grounding/manifest.json", editable_context)
+                self.assertIn('"tasks"', editable_context["grounding/manifest.json"])
+
                 execution_id = "exe_" + "3" * 32
                 control.write_text(
                     json.dumps(
