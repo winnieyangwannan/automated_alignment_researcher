@@ -8,7 +8,7 @@ ATTEMPT_DIR="${AAR_RUN_ATTEMPT_DIR:-/storage/home/${USER:?}/aar-runs/run9-five-i
 AUTODATA="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER}/autodata-recovery-clones/run9-823c594-speedup}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
 EXECUTION_ID="${AAR_PRODUCTION_EXECUTION_ID:-exe_570e1daeb28c4a7795a2be9fac37fdf9}"
-CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-16}"
+CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-64}"
 MAX_SECONDS="${AAR_SPEEDUP_MAX_SECONDS:-300}"
 ATTEMPT_LABEL="${AAR_SPEEDUP_ATTEMPT_LABEL:-attempt-1-node-local-c16}"
 EXPECTED_AUTODATA_SHA=823c5948854df14664f3168bc5e6c49a2cecb975
@@ -31,7 +31,7 @@ git -C "${REPO}" diff --cached --quiet
 git -C "${AUTODATA}" diff --quiet
 git -C "${AUTODATA}" diff --cached --quiet
 [ -f "${KIMI_PROXY_INFO}" ] || { echo "Kimi proxy contract is missing" >&2; exit 2; }
-case "${CONCURRENCY}" in 16|24|32) ;; *) echo "concurrency must be 16, 24, or 32" >&2; exit 2;; esac
+case "${CONCURRENCY}" in 16|24|32|64) ;; *) echo "concurrency must be 16, 24, 32, or 64" >&2; exit 2;; esac
 case "${MAX_SECONDS}" in ''|*[!0-9]*) echo "max seconds must be a non-negative integer" >&2; exit 2;; esac
 
 aar_sha="$(git -C "${REPO}" rev-parse HEAD)"

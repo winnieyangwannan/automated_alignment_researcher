@@ -44,7 +44,7 @@ BROKER_LOG="${METRICS_DIR}/${ATTEMPT_LABEL}-broker.log"
 SUPERVISOR="${REPO}/scripts/autodata_lifecycle_supervisor.py"
 AUTH_BRIDGE="${REPO}/scripts/loopback_model_auth_bridge.py"
 
-case "${CONCURRENCY}" in 16|24|32) ;; *) echo "unsupported concurrency" >&2; exit 2;; esac
+case "${CONCURRENCY}" in 16|24|32|64) ;; *) echo "unsupported concurrency" >&2; exit 2;; esac
 case "${MAX_SECONDS}" in ''|*[!0-9]*) echo "invalid observation duration" >&2; exit 2;; esac
 [ "$(git -C "${REPO}" rev-parse HEAD)" = "${EXPECTED_AAR_SHA}" ] || { echo "AAR revision changed" >&2; exit 2; }
 [ "$(git -C "${AUTODATA}" rev-parse HEAD)" = "${EXPECTED_AUTODATA_SHA}" ] || { echo "AutoData revision changed" >&2; exit 2; }

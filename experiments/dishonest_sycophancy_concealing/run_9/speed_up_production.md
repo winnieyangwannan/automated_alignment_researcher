@@ -23,10 +23,12 @@ The most important improvements, in impact order, were:
    trusted question-only recipe can run as lightweight sandboxed processes on
    the already allocated CPU node. This removes VM-pool 429s, lease latency,
    OCI preparation, and other per-task gateway failure points.
-4. **Raise measured concurrency from 16 to 24 at both the native execution and
-   broker.** Attempt 5 sustained 23--24 jobs in flight and reached 94.5
-   successful tasks/min during active generation, about 57% above Attempt 3's
-   60.0 tasks/min at concurrency 16. Concurrency 32 was not assumed safe.
+4. **Raise measured concurrency from 16 to 24, then validate 32 and 64.**
+   Attempt 5 sustained 23--24 jobs in flight and reached 94.5 successful
+   tasks/min during active generation, about 57% above Attempt 3's 60.0
+   tasks/min at concurrency 16. Post-completion canaries then validated 64 on
+   the real chain's 8-CPU resource shape at 219.4 completed tasks/min and 137.1
+   accepted rows/min without transport or client failures.
 5. **Give every recovery/chain job a fresh node-local broker ledger.** Native
    AutoData state is the durable authority. Reusing an old transport ledger
    caused HTTP 409 when a retry's repaired routing changed its job
@@ -60,6 +62,11 @@ rows/min.
   median broker-task latency from approximately 37 seconds with Firecracker to
   approximately 9 seconds with Local Bubblewrap, while removing the finite VM
   lease pool as the concurrency limiter.
+- **Sustained concurrency-64 canary:** 256 tasks completed in 70.0 seconds on
+  8 CPUs, or 219.4 tasks/min; 160 rows were accepted, or 137.1 accepted
+  rows/min. This was about 2.1x Attempt 7's active accepted-row rate, with zero
+  transport/client failures. The 62.5% accepted yield requires the existing
+  production over-generation and selective retry headroom.
 
 The end-to-end ratios include the original SQLite stall and therefore represent
 operator wall-clock improvement. The concurrency-16 versus concurrency-24
@@ -79,11 +86,16 @@ A new **Run 9** launched through the committed `submit_run_9.sh` and
   different engine; and
 - durable retained snapshots and cleanup.
 
+Run 9's normal launcher and production-recovery launcher now default to
+concurrency **64**, the highest supported and measured setting. The launchers
+reject values above 64. This default was validated for the question-only
+Kimi-to-Luna recipe on the real chain's 8-CPU node shape.
+
 The following are not universal defaults:
 
-- Run 9's normal launcher still defaults to concurrency **16**. To use the
-  measured faster setting, launch with `AAR_AUTODATA_CONCURRENCY=24`. Keep 16
-  for a different endpoint/node until 24 has passed a capacity canary there.
+- A target-probing recipe adds a separate target-model endpoint to every task.
+  It should pass a target-aware capacity canary before inheriting 64; override
+  `AAR_AUTODATA_CONCURRENCY` downward when that endpoint has lower capacity.
 - The direct bridge requires a valid `AAR_KIMI_PROXY_INFO` for the intended
   deployment. Run 9 supplies its known path automatically; another experiment
   or deployment must supply and verify its own proxy contract.
@@ -96,6 +108,41 @@ The following are not universal defaults:
 - The 25-hour controller ceiling is specific to the retained Run 9 recovery
   launcher. Ordinary fast production should finish well below the standard
   ceiling; unusually long retained executions must set a compatible timeout.
+
+## Post-completion concurrency promotion
+
+These tests used the unchanged `winnieyangwn-kimi26` generator, Luna judge,
+Local Bubblewrap broker, and one model-request attempt. Judge rejection and
+recipe-level model/parse failure were recorded separately from transport or
+client failure.
+
+1. Job `1797215`, concurrency 24, completed all 24 broker tasks in 12.6
+   seconds. The initial client classified five valid `model_or_parse_failure`
+   task results as client failures. This exposed a measurement bug, not a
+   provider failure; the validator was fixed to retain failed task outcomes.
+2. Job `1797243`, concurrency 24, was the clean control: 24/24 tasks, zero
+   client/task failures, 23 accepted rows, 107.3 tasks/min, and 102.8 accepted
+   rows/min.
+3. Job `1797244`, concurrency 32, completed 32/32 tasks with zero client or
+   transport failures: 132.0 tasks/min and 119.6 accepted rows/min. One task
+   result failed and 29 rows were accepted.
+4. Job `1797245`, concurrency 64, completed 64/64 tasks with zero client or
+   transport failures: 237.6 tasks/min and 200.5 accepted rows/min. Eight task
+   results failed and 54 rows were accepted.
+5. Job `1797305`, the first 256-task sustained attempt, stopped after the
+   canary's `$2` campaign reservation ceiling admitted 150 jobs. It also used
+   an unrealistic 256 simultaneous client processes. This was a harness-budget
+   failure, not an endpoint-capacity result. The canary ceiling was raised to
+   `$10` and submissions were bounded to waves of 64.
+6. Job `1797320`, 256 tasks at concurrency 64 on 8 CPUs and 64 GB, completed
+   all broker and client work in 70.0 seconds with no transport failures. It
+   measured 219.4 tasks/min and 137.1 accepted rows/min. Of 256 results, 187
+   reached the judge, 160 were accepted, 27 were judge-rejected, and 69 were
+   generator `model_or_parse_failure` results. Production's 2,000-task ceiling
+   supplies headroom for this measured 62.5% accepted yield.
+
+Decision: promote 64 as the default for Run 9's question-only generation path.
+Keep the explicit upper bound at 64; higher concurrency has not been tested.
 
 ## Measurement contract
 

@@ -53,7 +53,7 @@ evaluator is a separate Slurm allocation and is not a second research chain.
 - Outer research chains: **1**.
 - Sequential successful AAR iterations requested: **5**.
 - Maximum research sessions allowed: **8**, providing room for failed attempts.
-- AutoData broker concurrency inside the active chain: **16 tasks**.
+- AutoData broker concurrency inside a new question-only chain: **64 tasks**.
 - AutoData broker: one campaign-scoped `local-bwrap` broker on the allocated CPU
   Slurm node.
 - AutoData's native execution JSON still names the broker-client adapter
@@ -79,7 +79,9 @@ Job IDs are attempt-specific operational metadata, not reusable configuration.
 - Initial production source tasks: **1,250**.
 - Required retained judge-accepted rows: **1,000**.
 - Production source-task ceiling: **2,000** when additional headroom is needed.
-- Per-execution task concurrency: **16**.
+- Per-execution task concurrency: **64** for the validated question-only
+  Kimi-to-Luna path. Target-probing deployments must pass their own capacity
+  canary and may override this setting downward.
 - Production completion: **1,000 accepted rows** and at least **95% successful
   source-task coverage** after a complete corpus pass.
 - Required AutoData revision for new launches:

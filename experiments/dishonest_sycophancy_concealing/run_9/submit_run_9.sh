@@ -11,7 +11,7 @@ BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata
 KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-/checkpoint/ram/shared/vllm_deployments_v2/winnieyangwn-kimi26/proxy_info.json}"
 AAR_AUTODATA_BROKER_RUNNER="${AAR_AUTODATA_BROKER_RUNNER:-local-bwrap}"
 AAR_AUTODATA_ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-large}"
-AAR_AUTODATA_CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-24}"
+AAR_AUTODATA_CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-64}"
 VLLM_WORKER_SHA256="913c3286e237ed2231c64de200a4bcfc65729292a05c6aa3a88100f8c0248361"
 REUSED_BASELINE="${1:-/checkpoint/ram/aar/${USER}/honesty-sycophancy-concealing-gemma4-31b-v0/baseline_attempts/20261005T083040Z-ab488b75137b-reuse/metadata/gemma4_31b_multidimensional_baseline.json}"
 
@@ -29,6 +29,10 @@ esac
 case "${AAR_AUTODATA_CONCURRENCY}" in
   ''|*[!0-9]*|0) echo "AutoData concurrency must be a positive integer" >&2; exit 2 ;;
 esac
+[ "${AAR_AUTODATA_CONCURRENCY}" -le 64 ] || {
+  echo "AutoData concurrency must not exceed the validated maximum of 64" >&2
+  exit 2
+}
 AUTODATA_GENERATOR_URL="http://fair-cw-use2-1-ingress-slurm-ingress/v1"
 AUTODATA_GENERATOR_HOST_HEADER="ram-inference-gateway.ingress."
 target_setting_names=(

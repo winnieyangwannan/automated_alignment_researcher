@@ -43,7 +43,8 @@ def test_run9_pins_local_bwrap_and_safe_concurrency() -> None:
     assert "ram-inference-gateway.ingress.fair-cw-use2-1.cw.metafb.cloud" not in submitter
     assert "AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE" not in submitter
     assert "AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-large" in submitter
-    assert "AAR_AUTODATA_CONCURRENCY:-24" in submitter
+    assert "AAR_AUTODATA_CONCURRENCY:-64" in submitter
+    assert "validated maximum of 64" in submitter
     assert '"runner": "${AAR_AUTODATA_BROKER_RUNNER}"' in submitter
     assert '"environment": "${AAR_AUTODATA_ENVIRONMENT}"' in submitter
     assert 'export AAR_AUTODATA_BROKER_RUNNER="${AAR_AUTODATA_BROKER_RUNNER:?}"' in pipeline

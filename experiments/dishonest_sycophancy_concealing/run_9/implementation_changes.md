@@ -1015,3 +1015,22 @@ Consequently, a compatible 1,250-row dataset can be reused without another Kimi,
 Gemma, and Luna production pass. A legacy dataset with the wrong rubric, missing
 target provenance, or an SFT/DPO schema mismatch is rejected rather than silently
 relabelled.
+
+### Promote question-only generation concurrency to 64
+
+The Run 9 full launcher and production-recovery launcher now default to
+concurrency 64 and reject values above that tested maximum. A sustained canary
+ran 256 Kimi-to-Luna tasks in four bounded 64-task waves on the same 8-CPU,
+64-GB node shape as the research chain. Every broker/client task completed in
+70.0 seconds with no transport failure, producing 160 accepted rows at 137.1
+accepted rows/min.
+
+The canary records broker completion, task-result failure, judge calls, and
+accepted rows separately. This matters because 69 generator results were
+`model_or_parse_failure` and 27 were judge-rejected: raw broker throughput alone
+would overstate useful production speed. Run 9's 2,000-task ceiling and selective
+retry policy provide headroom for the measured 62.5% accepted yield. A pipeline
+that adds target-model probing must validate that additional endpoint separately
+and may override concurrency downward.
+
+Detailed per-attempt measurements are in `speed_up_production.md`.
