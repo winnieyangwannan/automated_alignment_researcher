@@ -18,6 +18,7 @@ class AutoDataCampaignPolicyTest(unittest.TestCase):
         run12 = root / "experiments/dishonest_sycophancy_concealing/run_12"
         controller = (run12 / "run_12_chain_controller.sbatch").read_text()
         pipeline = (run12 / "run_12_full_pipeline.sbatch").read_text()
+        run_config = (run12 / "autodata_run.yaml").read_text()
         chain = (root / "scripts/slurm_aar_chain.sh").read_text()
         runtime = (root / "scripts/aar_runtime_env.sh").read_text()
 
@@ -33,10 +34,8 @@ class AutoDataCampaignPolicyTest(unittest.TestCase):
         self.assertIn("AAR_AUTODATA_RUNTIME_ENV", pipeline)
         self.assertIn("aar.autodata_run_config compile", controller)
         self.assertNotIn("AAR_RUN12_AUTODATA_CONCURRENCY:-8", pipeline)
-        self.assertIn(
-            '--generator-deployment-id "${AAR_AUTODATA_GENERATOR_DEPLOYMENT}"',
-            controller,
-        )
+        self.assertIn('--run "${AAR_AUTODATA_RUN_CONFIG}"', controller)
+        self.assertIn("generator_kimi: autodata_8-kimi26", run_config)
 
     def test_run13_full_run_uses_claude_and_five_isolated_chains(self) -> None:
         root = Path(__file__).resolve().parents[1]
