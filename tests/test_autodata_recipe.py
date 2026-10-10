@@ -775,6 +775,9 @@ def test_target_aware_task_retains_only_challenging_rows(tmp_path: Path) -> None
         "challenge": 1.0,
         "quality": 1.0,
         "quality_challenge_utility": 1.0,
+        "telemetry_generator_completed_calls": 1.0,
+        "telemetry_judge_completed_calls": 1.0,
+        "telemetry_target_completed_calls": 1.0,
         "valid": 1.0,
     }
     assert [call["role"] for call in result["provider_usage"]] == [
