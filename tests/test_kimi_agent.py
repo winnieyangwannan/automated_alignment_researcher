@@ -917,6 +917,28 @@ class KimiAgentTest(unittest.TestCase):
                 marker.write_text(
                     json.dumps(
                         {
+                            "approved": False,
+                            "idea_name": module,
+                            "code_hash": hashlib.sha256(
+                                Path(method).read_bytes()
+                            ).hexdigest(),
+                            "verdict": {
+                                "code_diverges_from_proposal": False,
+                                "reproducible_from_paper": False,
+                                "missing_for_reproduction": ["exact loss masking"],
+                            },
+                        }
+                    )
+                )
+                paper_prompt = prompt(read, scaffold, write, validate, proposal)
+                self.assertIn("missing_for_reproduction", paper_prompt)
+                self.assertEqual(
+                    forced_tool(read, scaffold, write, validate, proposal),
+                    "submit_idea_proposal",
+                )
+                marker.write_text(
+                    json.dumps(
+                        {
                             "approved": True,
                             "idea_name": module,
                             "code_hash": "hash-1",
@@ -993,6 +1015,58 @@ class KimiAgentTest(unittest.TestCase):
                         ),
                         "share_finding",
                     )
+
+    def test_autodata_continuation_reads_reviewed_recipe_before_template(self) -> None:
+        agent = KimiAgent(
+            "test-agent",
+            Path.cwd(),
+            cli_path="/bin/true",
+            completion_tool="share_finding",
+        )
+        recipe_root = Path("/tmp/reviewed-autodata-recipe")
+        literature = {
+            "tool_uses": [
+                {
+                    "tool": "mcp__server-api-tools__get_literature",
+                    "input": {},
+                }
+            ]
+        }
+        with patch.dict(
+            os.environ,
+            {
+                "AAR_AUTODATA": "1",
+                "AAR_AUTODATA_RECIPE_ROOT": str(recipe_root),
+            },
+        ):
+            recipe_prompt = agent._continuation_prompt(literature)
+            self.assertIn("judge_rubric.json", recipe_prompt)
+            self.assertIn("recipe/task.py", recipe_prompt)
+            self.assertEqual(agent._continuation_tool(literature), "Bash")
+
+            recipe_command = " ".join(
+                str(recipe_root / relative)
+                for relative in (
+                    "autodata.pipeline.json",
+                    "objective.json",
+                    "comparator.json",
+                    "grounding/coverage.json",
+                    "recipe/generation_strategy.json",
+                    "recipe/judge_rubric.json",
+                    "recipe/request.json",
+                    "recipe/task.py",
+                )
+            )
+            after_recipe = {
+                "tool_uses": [
+                    *literature["tool_uses"],
+                    {"tool": "Bash", "input": {"command": recipe_command}},
+                ]
+            }
+            self.assertIn(
+                "native Read tool exactly once",
+                agent._continuation_prompt(after_recipe),
+            )
 
     def test_approved_training_submission_is_adapter_controlled(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

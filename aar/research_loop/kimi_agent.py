@@ -569,6 +569,43 @@ class KimiAgent:
                 "Call the native structured MCP tool get_literature exactly once "
                 "now with an empty input. Do not emit prose or call another tool."
             )
+        recipe_root_raw = os.environ.get("AAR_AUTODATA_RECIPE_ROOT", "").strip()
+        recipe_root = Path(recipe_root_raw).resolve() if recipe_root_raw else None
+        recipe_files = (
+            [
+                recipe_root / "autodata.pipeline.json",
+                recipe_root / "objective.json",
+                recipe_root / "comparator.json",
+                recipe_root / "grounding/coverage.json",
+                recipe_root / "recipe/generation_strategy.json",
+                recipe_root / "recipe/judge_rubric.json",
+                recipe_root / "recipe/request.json",
+                recipe_root / "recipe/task.py",
+            ]
+            if recipe_root is not None
+            else []
+        )
+        recipe_context_seen = not recipe_files or any(
+            name == "Bash"
+            and all(str(path) in input_text for path in recipe_files)
+            for name, input_text in (
+                (
+                    name,
+                    str(inputs[index].get("command", "")),
+                )
+                for index, name in enumerate(names)
+            )
+        )
+        if self._autodata_enabled() and not recipe_context_seen:
+            command = "awk 'FNR == 1 {print \"===== \" FILENAME \" =====\"} {print}' "
+            command += " ".join(shlex.quote(str(path)) for path in recipe_files)
+            return (
+                "Call the native Bash tool exactly once now with command="
+                f"{json.dumps(command)}. This reads the complete reviewed AutoData "
+                "pipeline, objective, comparator, grounding coverage, generation "
+                "strategy, judge rubric, request, and task implementation needed "
+                "for a reproducible proposal. Do not emit prose or call another tool."
+            )
         template_path = (self.workspace / "aar/ideas/TEMPLATE/run.py").resolve()
         idea_name = os.environ.get("IDEA_NAME", "chain")
         chain_id = re.sub(r"[^A-Za-z0-9]+", "_", idea_name).strip("_") or "chain"
@@ -706,6 +743,17 @@ class KimiAgent:
                     "the command, emit prose, or call another tool."
                 )
             if approved is False:
+                if self._proposal_rejection_is_paper_only(method_path):
+                    return (
+                        "Call the native structured MCP tool submit_idea_proposal "
+                        "exactly once now for the same implemented method, revising "
+                        "only the mini-paper fields to incorporate every "
+                        "missing_for_reproduction item from the monitor result. Keep "
+                        "the code unchanged and make its actual loss masking, exact "
+                        "reviewed AutoData recipe/rubric thresholds, generation "
+                        "strategy, and meta-optimization procedure reproducible. Do "
+                        "not emit prose or another tool."
+                    )
                 return (
                     "Call the native Write tool exactly once now with path="
                     f"{json.dumps(str(method_path))} and full replacement content that "
@@ -829,6 +877,31 @@ class KimiAgent:
             return None
         approved = payload.get("approved")
         return approved if isinstance(approved, bool) else None
+
+    @staticmethod
+    def _proposal_rejection_is_paper_only(method_path: Path) -> bool:
+        """Return true when unchanged code needs only a reproducibility rewrite."""
+        scores_dir = os.environ.get("SCORES_DIR", "").strip()
+        idea_uid = os.environ.get("IDEA_UID") or os.environ.get("IDEA_NAME")
+        if not scores_dir or not idea_uid:
+            return False
+        marker = Path(scores_dir) / ".proposals" / f"{idea_uid}.json"
+        try:
+            payload = json.loads(marker.read_text())
+            source_hash = hashlib.sha256(method_path.read_bytes()).hexdigest()
+        except (OSError, json.JSONDecodeError):
+            return False
+        if payload.get("approved") is not False or payload.get("code_hash") != source_hash:
+            return False
+        verdict = payload.get("verdict")
+        if not isinstance(verdict, dict):
+            return False
+        if verdict.get("code_diverges_from_proposal") is not False:
+            return False
+        if verdict.get("reproducible_from_paper") is not False:
+            return False
+        missing = verdict.get("missing_for_reproduction")
+        return isinstance(missing, list) and bool(missing)
 
     @staticmethod
     def _proposal_marker_fingerprint() -> Optional[str]:

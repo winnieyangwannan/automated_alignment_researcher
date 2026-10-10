@@ -245,6 +245,33 @@ Separately, the reusable runtime profile was corrected from an accidental
 concurrency value of 32 back to the documented production value of eight per
 chain. A fresh canary must pass these gates before the five-chain launch.
 
+The next canary at commit `8e9fe2a` proved that the stop sequence works in a
+real research session: structured literature calls began about eight seconds
+after the researcher started, the template was read, a method was written, and
+its local contract was repaired and passed. It also exposed two later fail-closed
+gaps before any AutoData workspace or training job was created:
+
+1. Native proposal approval rejected direct JSON consumption because the local
+   method validator did not yet require
+   `load_autodata_campaign_datasets`. The validator now mirrors the native
+   receipt, execution-ID, rubric, row-count, and objective checks, and Kimi adds
+   that gate automatically whenever AutoData is active.
+2. After the code was repaired, the reproducibility monitor rejected the paper
+   because the agent had not inspected the reviewed recipe and described
+   response-only loss while its code trained the full rendered sequence. The
+   continuation state machine now reads the protected pipeline, objective,
+   comparator, grounding coverage, generation strategy, exact judge rubric,
+   request, and task implementation before method authoring. A rejection whose
+   unchanged code passes policy but whose paper is incomplete now triggers a
+   paper-only resubmission rather than an unnecessary new candidate.
+
+The retained canary jobs were evaluator `1801120`, researcher `1801121`, and
+controller `1801122`. The first proposal was submitted about seven minutes
+after the researcher started. This attempt is diagnostic only and is replaced
+because its already-running researcher cannot inherit the new continuation
+logic. Sixty focused tests pass across the Kimi, method-validator, AutoData
+proposal-binding, plugin, and Run 12 canary suites.
+
 ## Validation
 
 - Devserver focused tests: 23 passed plus 5 parameterized subtests.
