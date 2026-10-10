@@ -13,10 +13,10 @@ experiment:
 
 The canonical operator commands remain in the parent [`README.md`](../README.md).
 
-## Planned resume-readiness canary
+## Planned one-chain lifecycle check
 
 Before the stopped five-chain attempt is resumed, use the bounded lifecycle plan
-in [`resume_readiness/README.md`](resume_readiness/README.md). It requires one
+in [`one_chain_lifecycle_check/README.md`](one_chain_lifecycle_check/README.md). It requires one
 research session, one-step GPU training, the two-item evaluator, and one joined
 score/finding result. The document defines explicit pass and stop criteria; it
 does not launch work by itself.

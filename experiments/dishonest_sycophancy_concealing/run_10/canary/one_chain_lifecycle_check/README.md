@@ -1,4 +1,4 @@
-# Run 10 resume-readiness canary
+# Run 10 one-chain lifecycle check
 
 ## Goal
 
