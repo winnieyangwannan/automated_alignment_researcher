@@ -36,6 +36,7 @@ if [ "${MODE}" = smoke ]; then
   export AAR_START_EVAL_WORKER=0 AAR_EVAL_WORKERS=0
   export AAR_MAX_CONCURRENT_TRAIN_JOBS=1 AAR_METHOD_SMOKE=1
   export AAR_TRAIN_TIME=00:15:00
+  # The lifecycle canary retains its training copy for adapter-reload proof.
   export AAR_KEEP_CHECKPOINTS=1
 elif [ "${MODE}" = canary ]; then
   seeds=canary; iterations="${CANARY_ITERATIONS}"; hours=17

@@ -5,7 +5,7 @@
 #SBATCH --qos=g3_ram_high
 #SBATCH --cpus-per-task=8
 #SBATCH --gpus=2
-#SBATCH --mem=64G
+#SBATCH --mem=0
 #SBATCH --time=12:00:00
 #SBATCH --output=slurm-%x-%j.out
 #

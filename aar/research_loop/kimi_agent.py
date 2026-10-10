@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import shlex
 import shutil
 import subprocess
@@ -223,6 +224,7 @@ class KimiAgent:
         disallowed_tools: Optional[list[str]] = None,
         auto_approve: bool = False,
         force_checkpoint_tools: bool = False,
+        turn_timeout_seconds: Optional[float] = None,
     ) -> None:
         self.name = name
         self.workspace = Path(workspace)
@@ -236,6 +238,17 @@ class KimiAgent:
         self.disallowed_tools = disallowed_tools or []
         self.auto_approve = auto_approve
         self.force_checkpoint_tools = force_checkpoint_tools
+        if turn_timeout_seconds is None:
+            raw_timeout = os.getenv("AAR_KIMI_TURN_TIMEOUT_SECONDS", "3600")
+            try:
+                turn_timeout_seconds = float(raw_timeout)
+            except ValueError as error:
+                raise ValueError(
+                    "AAR_KIMI_TURN_TIMEOUT_SECONDS must be numeric"
+                ) from error
+        if turn_timeout_seconds <= 0:
+            raise ValueError("Kimi turn timeout must be greater than zero")
+        self.turn_timeout_seconds = turn_timeout_seconds
 
     async def execute(self, task: str) -> KimiAgentResult:
         start_time = time.time()
@@ -378,12 +391,15 @@ class KimiAgent:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             limit=10 * 1024 * 1024,
+            start_new_session=True,
         )
         assert process.stdout is not None
         assert process.stderr is not None
         stderr_task = asyncio.create_task(process.stderr.read())
         tool_uses = 0
-        try:
+
+        async def consume_stdout() -> int:
+            nonlocal tool_uses
             async for raw_line in process.stdout:
                 line = raw_line.decode("utf-8", errors="replace").strip()
                 if not line:
@@ -412,19 +428,54 @@ class KimiAgent:
                     print(log_message)
                 if self.message_callback:
                     self.message_callback(message)
-            return_code = await process.wait()
+            return await process.wait()
+
+        try:
+            try:
+                return_code = await asyncio.wait_for(
+                    consume_stdout(), timeout=self.turn_timeout_seconds
+                )
+            except TimeoutError as error:
+                await self._terminate_process_group(process)
+                raise RuntimeError(
+                    "Kimi Code turn exceeded "
+                    f"{self.turn_timeout_seconds:g} seconds; terminated its "
+                    "process group"
+                ) from error
             stderr = (await stderr_task).decode("utf-8", errors="replace").strip()
             if stderr:
                 prior = output.get("stderr")
                 output["stderr"] = f"{prior}\n{stderr}".strip() if prior else stderr
             return return_code, stderr, tool_uses
         except BaseException:
-            if process.returncode is None:
-                process.kill()
-                await process.wait()
+            await self._terminate_process_group(process)
             if not stderr_task.done():
                 stderr_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await stderr_task
             raise
+
+    @staticmethod
+    async def _terminate_process_group(
+        process: asyncio.subprocess.Process,
+    ) -> None:
+        """Terminate the CLI and native-tool descendants from the same turn."""
+
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        if process.returncode is None:
+            try:
+                await asyncio.wait_for(process.wait(), timeout=1)
+            except TimeoutError:
+                pass
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        if process.returncode is None:
+            await process.wait()
 
     def _completion_tool_used(self, output: dict[str, Any]) -> bool:
         expected = self.completion_tool

@@ -1,0 +1,17 @@
+version: 1
+
+# Durable, write-heavy run state belongs on checkpoint storage. {user} is the
+# only supported template and is expanded by scripts/load_aar_run_config.py.
+storage:
+  root: /checkpoint/ram/aar/{user}/run10_kimi
+  keep_checkpoints: false
+
+evaluation:
+  # "max" maps to Slurm --mem=0: all memory available on the allocated node.
+  memory: max
+  max_truncation_rate: 0.20
+
+agent:
+  # This is the AAR research agent (Kimi Code backed by Kimi-K2.6), not AutoData.
+  backend: kimi
+  turn_timeout_seconds: 1800

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,6 +29,42 @@ import run as launcher
 
 
 class KimiAgentTest(unittest.TestCase):
+    def test_turn_timeout_terminates_cli_process_group(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cli = root / "kimi"
+            cli.write_text(
+                f"#!{sys.executable}\n"
+                "import os, subprocess, sys, time\n"
+                "from pathlib import Path\n"
+                "child = subprocess.Popen([sys.executable, '-c', "
+                "'import time; time.sleep(30)'])\n"
+                "Path('turn-pids').write_text(f'{os.getpid()} {child.pid}')\n"
+                "time.sleep(30)\n"
+            )
+            cli.chmod(0o755)
+            result = asyncio.run(
+                KimiAgent(
+                    "test-agent",
+                    root,
+                    cli_path=str(cli),
+                    turn_timeout_seconds=0.2,
+                ).execute("task")
+            )
+            parent_pid, child_pid = map(
+                int, (root / "turn-pids").read_text().split()
+            )
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline and any(
+                Path(f"/proc/{pid}").exists() for pid in (parent_pid, child_pid)
+            ):
+                time.sleep(0.05)
+
+            self.assertFalse(result.success)
+            self.assertIn("turn exceeded", result.error or "")
+            self.assertFalse(Path(f"/proc/{parent_pid}").exists())
+            self.assertFalse(Path(f"/proc/{child_pid}").exists())
+
     def test_only_current_session_proposal_owns_persistent_training_state(self) -> None:
         agent = KimiAgent("test-agent", Path.cwd(), cli_path="/bin/true")
         self.assertFalse(agent._submitted_proposal_in_output({"tool_uses": []}))

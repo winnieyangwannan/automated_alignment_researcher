@@ -41,15 +41,20 @@ case "${GPUS}" in ''|*[!0-9]*) echo "ERROR: AAR_EVAL_GPUS must be an integer" >&
 [ "${GPUS}" -ge 1 ] || { echo "ERROR: AAR_EVAL_GPUS must be at least 1" >&2; exit 2; }
 [ "${GPUS}" -le "${N}" ] || GPUS="${N}"
 [ "${GPUS}" -le "${AAR_EVAL_GPU_CAP:-4}" ] || GPUS="${AAR_EVAL_GPU_CAP:-4}"
+MEMORY="${AAR_EVAL_MEM:-0}"
+if [[ ! "${MEMORY}" =~ ^(0|[1-9][0-9]*[KMGTP]?)$ ]]; then
+  echo "ERROR: AAR_EVAL_MEM must be 0 (all node memory) or a Slurm memory value" >&2
+  exit 2
+fi
 LOG_DIR="${TEAM_DIR:-${AAR_RUNTIME_ROOT}}/logs"
 mkdir -p "${LOG_DIR}"
-echo "[launch] suite '${SUITE}' has ${N} benchmarks -> ${WORKERS} evaluator worker(s), gpu:${GPUS} each"
+echo "[launch] suite '${SUITE}' has ${N} benchmarks -> ${WORKERS} evaluator worker(s), gpu:${GPUS} each, mem:${MEMORY}"
 _TIME_ARGS=()
 [ -z "${AAR_EVAL_TIME:-}" ] || _TIME_ARGS=(--time="${AAR_EVAL_TIME}")
 _JOB_IDS=()
 for ((worker_index=1; worker_index<=WORKERS; worker_index++)); do
   _submission="$(sbatch --account="${AAR_SLURM_ACCOUNT}" --partition="${AAR_SLURM_PARTITION}" \
-    --qos="${AAR_EVAL_QOS}" --nodes=1 --ntasks=1 --gpus="${GPUS}" \
+    --qos="${AAR_EVAL_QOS}" --nodes=1 --ntasks=1 --gpus="${GPUS}" --mem="${MEMORY}" \
     "${_TIME_ARGS[@]}" \
     --output="${LOG_DIR}/aar-eval-${SUITE}-%j.out" --job-name="aar-eval-${SUITE}-w${worker_index}" \
     "${REPO}/scripts/eval_worker.sh" "${SUITE}" "${IDLE}" "${GPUS}")"

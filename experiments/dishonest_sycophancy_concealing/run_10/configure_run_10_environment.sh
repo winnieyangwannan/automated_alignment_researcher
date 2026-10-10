@@ -21,6 +21,10 @@ source "${REPO}/replication/env_multidimensional.sh"
 source "${REPO}/scripts/aar_runtime_env.sh"
 # shellcheck disable=SC1091
 source "${REPO}/scripts/axis_env.sh"
+_RUN10_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+export AAR_RUN_CONFIG="${AAR_RUN_CONFIG:-${_RUN10_SCRIPT_DIR}/run.yaml}"
+eval "$("${HARNESS_PY}" "${REPO}/scripts/load_aar_run_config.py" "${AAR_RUN_CONFIG}")"
+unset _RUN10_SCRIPT_DIR
 [ "${HF_HOME}" = "${ATTEMPT_DIR}/cache/huggingface" ] || {
   echo "attempt-local HF_HOME overridden" >&2
   # shellcheck disable=SC2317  # direct-execution fallback after sourced return
@@ -45,7 +49,7 @@ export AAR_VLLM_MERGE_PY=/storage/home/winnieyangwn/envs/steerability-client/bin
 export AAR_VLLM_CONTAINER_RW_MOUNT="${ATTEMPT_DIR}" AAR_VLLM_EPHEMERAL_MERGED=1
 export AAR_VLLM_EPHEMERAL_MIN_FREE_BYTES=75161927680
 
-export AAR_AGENT_BACKEND=kimi AAR_WEB_MODE=native_web
+export AAR_WEB_MODE=native_web
 export KIMI_CLI_PATH="${AAR_RUN10_KIMI_ROOT:-/storage/home/${USER}/tools/kimi-code-2.1.1}/node_modules/.bin/kimi"
 export PATH="${AAR_RUN10_NODE_ROOT:-/storage/home/${USER}/tools/node-v22.22.0-linux-arm64}/bin:${PATH}"
 export AAR_KIMI_SERVE_DEPLOYMENT="${AAR_KIMI_SERVE_DEPLOYMENT:-steerability_8-kimi26}" AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6

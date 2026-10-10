@@ -47,7 +47,9 @@ export EVAL_TRUNCATION_MIN_COMPLETIONS=20
 # kernels; the GPU smoke records the resulting warm throughput.
 export TORCH_DISABLE_NATIVE_JIT=1
 export AAR_REQUIRE_ADAPTER=1
-export AAR_KEEP_CHECKPOINTS=1
+# Keep only the submitted adapter needed for evaluation/champion selection.
+# Smoke launchers may explicitly opt into retaining the redundant staging copy.
+export AAR_KEEP_CHECKPOINTS="${AAR_KEEP_CHECKPOINTS:-0}"
 export AAR_METHOD_TRAIN_MINUTES=30
 
 export AAR_SLURM_ACCOUNT=ram

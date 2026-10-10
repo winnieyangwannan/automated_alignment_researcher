@@ -18,6 +18,7 @@ EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-multi_kimi}"
 KIMI_DEPLOYMENT="${AAR_KIMI_SERVE_DEPLOYMENT:-steerability_8-kimi26}"
 CANARY_ITERATIONS="${AAR_RUN10_CANARY_ITERATIONS:-1}"
 RECOVERED_AGENT_LOG_DIR="${AAR_RUN10_RECOVERED_AGENT_LOG_DIR:-}"
+export AAR_RUN_CONFIG="${AAR_RUN_CONFIG:-${SCRIPT_DIR}/run.yaml}"
 
 [ "$(git -C "${REPO}" branch --show-current)" = "${EXPECTED_BRANCH}" ] || {
   echo "Run 10 requires branch ${EXPECTED_BRANCH}" >&2
@@ -31,6 +32,7 @@ fi
   echo "launch-critical files are dirty" >&2; exit 2;
 }
 [ -x "${REPO}/.venv/bin/python" ] || { echo "missing worktree-local ARM64 .venv" >&2; exit 2; }
+eval "$("${REPO}/.venv/bin/python" "${REPO}/scripts/load_aar_run_config.py" "${AAR_RUN_CONFIG}")"
 "${REPO}/.venv/bin/python" -c 'import platform; assert platform.machine() == "aarch64"'
 [ -x "${KIMI_ROOT}/node_modules/.bin/kimi" ] || { echo "pinned Kimi runtime is missing" >&2; exit 2; }
 [ "$("${NODE_ROOT}/bin/node" --version)" = v22.22.0 ] || { echo "pinned Node runtime is missing" >&2; exit 2; }
@@ -77,7 +79,7 @@ done
 
 commit="$(git -C "${REPO}" rev-parse HEAD)"
 attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "${REPO}" rev-parse --short=12 HEAD)"
-attempt_parent="${AAR_RUN10_ATTEMPT_PARENT:-/storage/home/${USER}/aar-runs/run10_kimi/${MODE}_attempts}"
+attempt_parent="${AAR_RUN10_ATTEMPT_PARENT:-${AAR_RUN_STORAGE_ROOT:?run config did not set storage.root}/${MODE}_attempts}"
 attempt_dir="${attempt_parent}/${attempt_id}"
 mkdir -p "${attempt_parent}"
 mkdir "${attempt_dir}" "${attempt_dir}/metadata" "${attempt_dir}/logs"
@@ -91,13 +93,14 @@ if [ -n "${RECOVERED_AGENT_LOG_DIR}" ]; then
     "${recovered_agent_log_for_launch}/AGENT_LOG_gemma4_31b_explore_canary.md"
   chmod 600 "${recovered_agent_log_for_launch}/AGENT_LOG_gemma4_31b_explore_canary.md"
 fi
+cp -- "${AAR_RUN_CONFIG}" "${attempt_dir}/metadata/run.yaml"
 [ -z "${CANARY_PROOF}" ] || cp -- "${CANARY_PROOF}" "${attempt_dir}/metadata/canary_passed.json"
 "${SCRIPT_DIR}/snapshot_vllm_runtime.sh" "${attempt_dir}" > "${attempt_dir}/metadata/vllm_runtime_path.txt"
 printf 'export AAR_RUNTIME_ROOT=%q\n' "${attempt_dir}" > "${attempt_dir}/attempt.env"
 
 export PATH="${NODE_ROOT}/bin:${PATH}"
 export KIMI_CLI_PATH="${KIMI_ROOT}/node_modules/.bin/kimi"
-export AAR_AGENT_BACKEND=kimi AAR_WEB_MODE=native_web
+export AAR_WEB_MODE=native_web
 export AAR_EXPECTED_BRANCH="${EXPECTED_BRANCH}"
 export AAR_KIMI_SERVE_DEPLOYMENT="${KIMI_DEPLOYMENT}" AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
 export AAR_KIMI_PROVIDER_TYPE=kimi AAR_KIMI_DISABLE_THINKING=1

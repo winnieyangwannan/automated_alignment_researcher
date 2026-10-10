@@ -104,7 +104,7 @@ def test_run10_canary_keeps_historical_defaults_but_allows_trusted_overrides() -
 
     assert 'EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-multi_kimi}"' in submitter
     assert 'KIMI_DEPLOYMENT="${AAR_KIMI_SERVE_DEPLOYMENT:-steerability_8-kimi26}"' in submitter
-    assert 'AAR_RUN10_ATTEMPT_PARENT:-/storage/home/${USER}/aar-runs/run10_kimi/' in submitter
+    assert 'AAR_RUN10_ATTEMPT_PARENT:-${AAR_RUN_STORAGE_ROOT:' in submitter
     assert 'AAR_EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-multi_kimi}"' in pipeline
     assert 'AAR_KIMI_SERVE_DEPLOYMENT="${AAR_KIMI_SERVE_DEPLOYMENT:-steerability_8-kimi26}"' in pipeline
     assert 'AAR_RUN10_TEAM_ID_PREFIX:-honesty-sycophancy-concealing-' in pipeline
@@ -127,10 +127,16 @@ def test_run10_canary_supports_bounded_recovered_continuation() -> None:
 def test_initial_launch_and_targeted_resume_share_runtime_configuration() -> None:
     pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
     resume = (RUN10 / "resume_run_10.sh").read_text()
+    configuration = (RUN10 / "configure_run_10_environment.sh").read_text()
+    run_config = (RUN10 / "run.yaml").read_text()
     shared = "configure_run_10_environment.sh"
 
     assert shared in pipeline
     assert shared in resume
+    assert "load_aar_run_config.py" in configuration
+    assert "max_truncation_rate: 0.20" in run_config
+    assert "turn_timeout_seconds: 1800" in run_config
+    assert 'AAR_RUN_CONFIG="${ATTEMPT_DIR}/metadata/run.yaml"' in resume
 
 
 def test_targeted_resume_is_budgeted_and_duplicate_safe() -> None:

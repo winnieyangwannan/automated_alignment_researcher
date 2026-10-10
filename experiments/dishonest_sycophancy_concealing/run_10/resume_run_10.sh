@@ -10,6 +10,9 @@ REPO="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
 export MODE=full
 SECRET_ENV="$(realpath -e -- "${AAR_RUN10_SECRET_ENV:-${REPO}/.env}")"
 export AAR_REPO="${REPO}" HARNESS_ENV="${SECRET_ENV}"
+if [ -f "${ATTEMPT_DIR}/metadata/run.yaml" ]; then
+  export AAR_RUN_CONFIG="${ATTEMPT_DIR}/metadata/run.yaml"
+fi
 
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/configure_run_10_environment.sh"

@@ -20,6 +20,12 @@ The endpoint's vLLM chat template enables reasoning by default and ignores Kimi 
 
 Kimi Code may treat a textual statement of future intent as the end of a noninteractive prompt. The Kimi-only adapter therefore resumes the same CLI session until `share_finding` is called, with a bounded maximum of 24 continuation prompts. This does not alter the Claude SDK path.
 
+Each Kimi Code turn has a declarative 1,800-second wall-clock timeout. The CLI
+starts in its own process group; timeout or cancellation terminates that entire
+group, including native Bash descendants. This prevents an accidental broad
+filesystem scan from hanging a research chain indefinitely. This guard belongs
+to the Kimi AAR adapter and does not alter AutoData or the Claude SDK path.
+
 Continuation prompts are single-action checkpoints rather than identical task replays. They advance only after the recorded tool arguments prove the previous action: exact template read, scaffold copy, method write, syntax/phase validation, idea proposal, one training submission, foreground score polling, score read, and finding publication. Each recovery prompt requires exactly one native structured tool call and forbids prose/XML representations of proposed calls. The no-local-GPU workflow consumes the score produced by the asynchronous training/evaluator path and never calls `evaluate_model` redundantly.
 
 For these fail-closed continuation checkpoints only, the Kimi request proxy exposes the single required function and requests `tool_choice="required"`. This prevents Kimi-K2.6 from narrating or inventing Claude/XML syntax instead of selecting the available function, while routing through vLLM's automatic Kimi tool parser. The model still supplies all tool arguments and research content, and normal research turns retain automatic tool choice.
@@ -40,7 +46,15 @@ Kimi MCP text responses are bounded to 16,000 characters. Oversized literature r
 
 ## Monitoring and recovery
 
-The durable attempts live under `/storage/home/winnieyangwn/aar-runs/run10_kimi/`. Monitoring checks Slurm state, `metadata/children.env`, session counts, score/finding pairs, evaluator fail-closed markers, merge manifests, and free space. A failed evaluator may be replaced against the same queue; research-chain history and retained results are never deleted or overwritten.
+New durable attempts live under `/checkpoint/ram/aar/$USER/run10_kimi/`, as
+declared in `run.yaml`; an explicit attempt path still allows recovery of
+the preserved original Run 10 attempt under `/storage/home`. The same YAML
+declares the 20% truncation ceiling, maximum-node evaluator memory, Kimi backend
+and turn timeout, and quota-safe checkpoint policy. Monitoring checks Slurm
+state, `metadata/children.env`, session counts, score/finding pairs, evaluator
+fail-closed markers, merge manifests, and free space. A failed evaluator may be
+replaced against the same queue; research-chain history and retained results are
+never deleted or overwritten.
 
 Every receipt-bound Kimi training submission must eventually have either a score or a structured failure marker. While waiting, the adapter reconciles the receipt against Slurm accounting; terminal states such as `TIMEOUT`, `FAILED`, `OUT_OF_MEMORY`, or `CANCELLED` atomically produce the missing held-out-safe marker when a hard scheduler termination prevented the training shell's exit trap from running.
 

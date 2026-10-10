@@ -8,7 +8,7 @@ Run 10 is the Run 7 five-chain experiment with `Kimi-K2.6` as the research agent
 - Training: decoupled one-GPU jobs submitted by each chain.
 - Evaluation: five independent four-GPU workers using vLLM 0.25.1, language-model-only mode, and atomically merged LoRA checkpoints.
 - Endpoint: `serve_api_v2` deployment `steerability_8-kimi26`, served model `Kimi-K2.6`.
-- Storage: durable attempts at `/storage/home/winnieyangwn/aar-runs/run10_kimi/`; temporary merged checkpoints are node-local and removed after each evaluation.
+- Storage: new durable attempts default to `/checkpoint/ram/aar/$USER/run10_kimi/`; temporary merged checkpoints are node-local and removed after each evaluation. The existing Run 10 attempt remains at its original `/storage/home` path and is never moved implicitly.
 
 Each Kimi session dynamically runs `serve.sh generate-opencode-config steerability_8-kimi26`. Run 10 selects Kimi Code's dedicated `kimi` provider trait so multi-turn Kimi tool history uses its native encoding. A loopback request-policy proxy holds the current endpoint key in the AAR process and gives Kimi Code a non-secret local credential. The proxy adds `chat_template_kwargs.enable_thinking=false`, which is the control this vLLM deployment requires for reliable tool execution; it is enabled only for Run 10. `KIMI_AGENT_MODEL` remains unset because Kimi Code registers the environment-provided model under its own default alias.
 
@@ -22,7 +22,22 @@ Before proposal submission, Run 10 also requires a source-hash-bound method-cont
 
 Failure markers are structured and held-out-safe. Training exceptions publish a sanitized exception type/message, stable error code, exit code, and the corresponding research-side Slurm log path. Evaluator failures publish a safe stage and category without raw evaluator traces or held-out details. The next Kimi session receives the latest unscored failure automatically; successful retry scores suppress stale failure feedback. This behavior is confined to the Kimi adapter, while the marker format remains backward compatible for shared infrastructure and Claude runs.
 
-Run-10 training jobs request 128 GiB of host memory; the shared launcher retains its 64 GiB default for Claude and other runs. Every approved Run-10 submission also writes an atomic run-ID-to-Slurm-ID receipt. Repeating the same submission returns the existing job ID instead of creating a duplicate, and Kimi advances to polling only after that receipt exists.
+Run-10 training jobs request 128 GiB of host memory. Run-10 evaluators request
+Slurm `--mem=0`, meaning all memory available on their allocated node; current
+GB300 nodes advertise 900 GiB. This is also the shared evaluator default for
+future Claude and Kimi runs; a run may explicitly request less through
+`AAR_EVAL_MEM` or its operational YAML. Every approved Run-10 submission also writes an
+atomic run-ID-to-Slurm-ID receipt. Repeating the same submission returns the
+existing job ID instead of creating a duplicate, and Kimi advances to polling
+only after that receipt exists.
+
+Operational policy is declared in `run.yaml`, separately from the
+evaluator-private benchmark suite YAML. It controls the durable storage root,
+checkpoint retention policy, evaluator memory, truncation ceiling, research
+backend, and Kimi turn timeout. The shared loader validates every supported key
+and rejects unknown or malformed values before Slurm submission. Full runs
+prune the redundant `_train` staging copy after an adapter enters the submission
+queue while retaining one evaluated adapter for later champion selection.
 
 The Kimi MCP bridge bounds text responses at 16,000 characters. Large literature lists are reduced at complete-entry boundaries and carry truncation metadata, keeping discovery context directly usable instead of triggering Kimi Code's external tool-result spill file.
 
@@ -81,8 +96,8 @@ After all research-chain jobs have reached a terminal state and their final scor
 
 ```bash
 python scripts/export_aar_champion.py \
-  --attempt-dir /storage/home/winnieyangwn/aar-runs/run10_kimi/full_attempts/<attempt> \
-  --output-dir /storage/home/winnieyangwn/aar-runs/run10_kimi/full_attempts/<attempt>/champion \
+  --attempt-dir /checkpoint/ram/aar/$USER/run10_kimi/full_attempts/<attempt> \
+  --output-dir /checkpoint/ram/aar/$USER/run10_kimi/full_attempts/<attempt>/champion \
   --suite honesty_sycophancy_concealing_uncertainty \
   --inference-backend vllm \
   --require-artifact-type adapter \
