@@ -53,7 +53,9 @@ evaluator is a separate Slurm allocation and is not a second research chain.
 - Outer research chains: **1**.
 - Sequential successful AAR iterations requested: **5**.
 - Maximum research sessions allowed: **8**, providing room for failed attempts.
-- AutoData broker concurrency inside a new question-only chain: **64 tasks**.
+- AutoData broker concurrency: **32 tasks** for the normal target-aware path,
+  with up to three attempts for transient model requests; **64 tasks** for an
+  explicitly target-disabled question-only path.
 - AutoData broker: one campaign-scoped `local-bwrap` broker on the allocated CPU
   Slurm node.
 - AutoData's native execution JSON still names the broker-client adapter
@@ -79,9 +81,9 @@ Job IDs are attempt-specific operational metadata, not reusable configuration.
 - Initial production source tasks: **1,250**.
 - Required retained judge-accepted rows: **1,000**.
 - Production source-task ceiling: **2,000** when additional headroom is needed.
-- Per-execution task concurrency: **64** for the validated question-only
-  Kimi-to-Luna path. Target-probing deployments must pass their own capacity
-  canary and may override this setting downward.
+- Per-execution task concurrency: **32** for the sustained-tested target-aware
+  Kimi-to-Gemma-to-Luna path and **64** for the sustained-tested question-only
+  Kimi-to-Luna path. Explicit overrides remain capped at 64.
 - Production completion: **1,000 accepted rows** and at least **95% successful
   source-task coverage** after a complete corpus pass.
 - Required AutoData revision for new launches:
@@ -100,6 +102,14 @@ grounded scenario
 Every accepted target-aware row records generator, target, and judge usage,
 including the target deployment and checkpoint hash. Raw protected evaluator
 inputs are never visible to AutoData or the research agent.
+
+The target-aware capacity test used the digest-bound Run 13 Gemma checkpoint.
+At concurrency 32 with up to three transient request attempts, all 256 broker
+tasks and all 256 Gemma calls completed, 253 tasks reached Luna, and aggregate
+throughput was 93.4 tasks/min with no client or broker failure. The repeated
+canary scenario produced only two accepted rows because it usually did not
+challenge that checkpoint; this is an infrastructure capacity result, not a
+production acceptance-yield estimate.
 
 ## Active legacy-ablation caveat
 

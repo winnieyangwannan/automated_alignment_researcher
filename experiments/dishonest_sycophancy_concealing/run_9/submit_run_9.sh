@@ -11,7 +11,22 @@ BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata
 KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-/checkpoint/ram/shared/vllm_deployments_v2/winnieyangwn-kimi26/proxy_info.json}"
 AAR_AUTODATA_BROKER_RUNNER="${AAR_AUTODATA_BROKER_RUNNER:-local-bwrap}"
 AAR_AUTODATA_ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-large}"
-AAR_AUTODATA_CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-64}"
+AUTODATA_TARGET_ENABLED="${AUTODATA_TARGET_ENABLED:-1}"
+case "${AUTODATA_TARGET_ENABLED}" in
+  1)
+    target_enabled=1
+    default_autodata_concurrency=32
+    default_model_request_max_attempts=3
+    ;;
+  0)
+    target_enabled=0
+    default_autodata_concurrency=64
+    default_model_request_max_attempts=1
+    ;;
+  *) echo "AUTODATA_TARGET_ENABLED must be 1 or 0" >&2; exit 2 ;;
+esac
+AAR_AUTODATA_CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-${default_autodata_concurrency}}"
+AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS="${AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS:-${default_model_request_max_attempts}}"
 VLLM_WORKER_SHA256="913c3286e237ed2231c64de200a4bcfc65729292a05c6aa3a88100f8c0248361"
 REUSED_BASELINE="${1:-/checkpoint/ram/aar/${USER}/honesty-sycophancy-concealing-gemma4-31b-v0/baseline_attempts/20261005T083040Z-ab488b75137b-reuse/metadata/gemma4_31b_multidimensional_baseline.json}"
 
@@ -33,6 +48,10 @@ esac
   echo "AutoData concurrency must not exceed the validated maximum of 64" >&2
   exit 2
 }
+case "${AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS}" in
+  1|2|3|4|5) ;;
+  *) echo "AutoData model request attempts must be an integer from 1 through 5" >&2; exit 2 ;;
+esac
 AUTODATA_GENERATOR_URL="http://fair-cw-use2-1-ingress-slurm-ingress/v1"
 AUTODATA_GENERATOR_HOST_HEADER="ram-inference-gateway.ingress."
 target_setting_names=(
@@ -41,12 +60,6 @@ target_setting_names=(
   AUTODATA_TARGET_DEPLOYMENT_ID
   AUTODATA_TARGET_CHECKPOINT_HASH
 )
-AUTODATA_TARGET_ENABLED="${AUTODATA_TARGET_ENABLED:-1}"
-case "${AUTODATA_TARGET_ENABLED}" in
-  1) target_enabled=1 ;;
-  0) target_enabled=0 ;;
-  *) echo "AUTODATA_TARGET_ENABLED must be 1 or 0" >&2; exit 2 ;;
-esac
 target_setting_count=0
 for name in "${target_setting_names[@]}"; do
   [ -z "${!name:-}" ] || target_setting_count=$((target_setting_count + 1))
@@ -145,7 +158,7 @@ cat > "${policy}" <<EOF
     "AUTODATA_JUDGE_INPUT_USD_PER_MILLION": "1",
     "AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": "4",
     "AUTODATA_TARGET_ENABLED": "${target_enabled}",
-    "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "1"
+    "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "${AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS}"
   }
 }
 EOF
@@ -237,6 +250,7 @@ export AAR_AUTODATA_APPROVAL_POLICY_VERSION="aar-autodata/run9-v1"
 export AAR_AUTODATA_PROPOSAL_BINDINGS="${proposal_bindings}"
 export AAR_AUTODATA_RESOURCES_READY=1
 export AAR_AUTODATA_BROKER_RUNNER AAR_AUTODATA_ENVIRONMENT AAR_AUTODATA_CONCURRENCY
+export AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS
 export AAR_KIMI_PROXY_INFO="${KIMI_PROXY_INFO}"
 export AAR_VLLM_WORKER_SH="${vllm_worker}"
 
@@ -244,7 +258,7 @@ job_id="$(sbatch --parsable \
   --output="${attempt_dir}/logs/pipeline-%j.out" \
   --export=ALL \
   "${SCRIPT_DIR}/run_9_pipeline.sbatch")"
-printf 'launch_job_id=%s\nattempt_dir=%s\naar_git_commit=%s\nautodata_git_commit=%s\nbroker_runner=%s\nenvironment=%s\nconcurrency=%s\ntarget_aware=%s\nvllm_worker_sha256=%s\n' \
-  "${job_id}" "${attempt_dir}" "${commit}" "${autodata_sha}" "${AAR_AUTODATA_BROKER_RUNNER}" "${AAR_AUTODATA_ENVIRONMENT}" "${AAR_AUTODATA_CONCURRENCY}" "${target_enabled}" "${VLLM_WORKER_SHA256}" \
+printf 'launch_job_id=%s\nattempt_dir=%s\naar_git_commit=%s\nautodata_git_commit=%s\nbroker_runner=%s\nenvironment=%s\nconcurrency=%s\nmodel_request_max_attempts=%s\ntarget_aware=%s\nvllm_worker_sha256=%s\n' \
+  "${job_id}" "${attempt_dir}" "${commit}" "${autodata_sha}" "${AAR_AUTODATA_BROKER_RUNNER}" "${AAR_AUTODATA_ENVIRONMENT}" "${AAR_AUTODATA_CONCURRENCY}" "${AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS}" "${target_enabled}" "${VLLM_WORKER_SHA256}" \
   | tee "${attempt_dir}/metadata/submission.txt"
 unset capability MODEL_API_KEY ANTHROPIC_API_KEY HF_TOKEN

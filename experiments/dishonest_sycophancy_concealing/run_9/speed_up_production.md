@@ -86,16 +86,17 @@ A new **Run 9** launched through the committed `submit_run_9.sh` and
   different engine; and
 - durable retained snapshots and cleanup.
 
-Run 9's normal launcher and production-recovery launcher now default to
-concurrency **64**, the highest supported and measured setting. The launchers
-reject values above 64. This default was validated for the question-only
-Kimi-to-Luna recipe on the real chain's 8-CPU node shape.
+Run 9's normal launcher now selects a measured default from the data path:
+concurrency **32** with up to three transient model-request attempts for the
+normal target-aware Kimi-to-Gemma-to-Luna path, or concurrency **64** with one
+attempt for an explicitly target-disabled Kimi-to-Luna path. The production
+recovery launcher remains question-only and defaults to 64. The launchers
+reject values above 64.
 
 The following are not universal defaults:
 
-- A target-probing recipe adds a separate target-model endpoint to every task.
-  It should pass a target-aware capacity canary before inheriting 64; override
-  `AAR_AUTODATA_CONCURRENCY` downward when that endpoint has lower capacity.
+- An explicit concurrency override remains available for a differently sized
+  target deployment, but it must pass its own target-aware capacity canary.
 - The direct bridge requires a valid `AAR_KIMI_PROXY_INFO` for the intended
   deployment. Run 9 supplies its known path automatically; another experiment
   or deployment must supply and verify its own proxy contract.
@@ -143,6 +144,32 @@ client failure.
 
 Decision: promote 64 as the default for Run 9's question-only generation path.
 Keep the explicit upper bound at 64; higher concurrency has not been tested.
+
+## Target-aware capacity result
+
+Target probing was tested separately through the full Kimi generator → pinned
+Gemma target → Luna judge path. Short one-attempt bursts completed at 85.3,
+91.0, and 158.8 tasks/min for concurrency 24, 32, and 64 respectively, but the
+number of tasks that stopped before Luna rose from 4 to 7 to 20. Allowing up to
+three transient model-request attempts at concurrency 64 recovered most of
+those calls: 61/64 reached Luna and throughput remained 136.1 tasks/min.
+
+The sustained tests determined the stable default:
+
+- Job `1797559`, concurrency 32, 256 tasks, three attempts: all broker/client
+  work completed, all 256 tasks reached Gemma, 253 reached Luna, and throughput
+  was 93.4 tasks/min. There were 20 recipe-level model/parse failures, 30 judge
+  rejections, 204 target-not-challenging results, and two accepted rows.
+- Job `1797527`, concurrency 64, 256 tasks, three attempts: 255 tasks completed,
+  but one local broker upload was reset and remained nonterminal. This 0.4%
+  transport failure is enough to reject 64 as the stability default for
+  target-aware production.
+
+The two accepted rows do not estimate production yield: the capacity harness
+deliberately repeats one scenario, and the pinned Gemma checkpoint usually
+handled it correctly. The test establishes endpoint and transport capacity.
+The resulting launcher default is target-aware concurrency 32 with three
+request attempts; question-only generation retains concurrency 64.
 
 ## Measurement contract
 

@@ -1018,12 +1018,13 @@ relabelled.
 
 ### Promote question-only generation concurrency to 64
 
-The Run 9 full launcher and production-recovery launcher now default to
-concurrency 64 and reject values above that tested maximum. A sustained canary
-ran 256 Kimi-to-Luna tasks in four bounded 64-task waves on the same 8-CPU,
-64-GB node shape as the research chain. Every broker/client task completed in
-70.0 seconds with no transport failure, producing 160 accepted rows at 137.1
-accepted rows/min.
+The Run 9 full launcher uses concurrency 64 when target probing is explicitly
+disabled, and the question-only production-recovery launcher also defaults to
+64. Both reject values above that tested maximum. A sustained canary ran 256
+Kimi-to-Luna tasks in four bounded 64-task waves on the same 8-CPU, 64-GB node
+shape as the research chain. Every broker/client task completed in 70.0 seconds
+with no transport failure, producing 160 accepted rows at 137.1 accepted
+rows/min.
 
 The canary records broker completion, task-result failure, judge calls, and
 accepted rows separately. This matters because 69 generator results were
@@ -1034,3 +1035,20 @@ that adds target-model probing must validate that additional endpoint separately
 and may override concurrency downward.
 
 Detailed per-attempt measurements are in `speed_up_production.md`.
+
+### Give target-aware generation its own stable default
+
+The separate target-probing canary exercised the complete Kimi → digest-bound
+Gemma → Luna path, rather than inferring capacity from question-only tests. A
+sustained concurrency-32 run completed 256/256 broker tasks with 256 Gemma
+calls, 253 Luna calls, no client/broker failures, and 93.4 tasks/min. Three
+request attempts substantially reduced transient failures before the Luna
+stage. A sustained concurrency-64 run suffered one local broker upload reset,
+so its higher burst throughput was not promoted as the stable setting.
+
+`submit_run_9.sh` now chooses concurrency 32 and three request attempts when
+target probing is enabled, which is the normal Run 9 configuration. It retains
+concurrency 64 and one attempt for an explicitly target-disabled question-only
+run. Explicit values are still supported and bounded. This prevents a future
+target-aware launch from accidentally inheriting a capacity setting that was
+validated only for Kimi-to-Luna traffic.
