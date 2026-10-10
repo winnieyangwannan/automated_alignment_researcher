@@ -847,6 +847,19 @@ class KimiAgentTest(unittest.TestCase):
             empty_output = {"tool_uses": []}
             self.assertIn("get_literature", agent._continuation_prompt(empty_output))
             self.assertEqual(agent._continuation_tool(empty_output), "get_literature")
+
+            with patch.object(
+                agent,
+                "_continuation_prompt",
+                return_value=(
+                    "Call the native structured MCP tool review_autodata_action "
+                    "exactly once now with action_id=act_" + "1" * 24
+                ),
+            ):
+                self.assertEqual(
+                    agent._continuation_tool(empty_output),
+                    "review_autodata_action",
+                )
             literature = (
                 "mcp__server-api-tools__get_literature",
                 {},

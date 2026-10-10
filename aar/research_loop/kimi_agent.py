@@ -935,6 +935,8 @@ class KimiAgent:
             return "submit_idea_proposal"
         if "MCP tool get_literature exactly once" in prompt:
             return "get_literature"
+        if "MCP tool review_autodata_action exactly once" in prompt:
+            return "review_autodata_action"
         if "native Read tool exactly once" in prompt:
             return "Read"
         if "native Write tool exactly once" in prompt:
