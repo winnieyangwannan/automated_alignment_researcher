@@ -30,7 +30,7 @@ run_id = os.environ["AAR_CURRENT_RUN_ID"]
 team_dir = os.environ["TEAM_DIR"]
 handoff_name = "training-handoff.json"
 contract_name = "autodata-training-data-contract.json"
-dataset_key = "production_dataset"
+dataset_key = "dataset"
 execution_key = "production_execution_id"
 receipt_name = "training-consumption.json"
 items = load_autodata_campaign_datasets(
@@ -54,7 +54,7 @@ team_dir = os.environ["TEAM_DIR"]
 names = (
     "training-handoff.json",
     "autodata-training-data-contract.json",
-    "production_dataset",
+    "dataset",
     "production_execution_id",
     "training-consumption.json",
 )

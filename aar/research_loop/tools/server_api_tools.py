@@ -1396,7 +1396,7 @@ def _autodata_method_contract_error(code: str) -> str | None:
         "TEAM_DIR",
         "training-handoff.json",
         "autodata-training-data-contract.json",
-        "production_dataset",
+        "dataset",
         "production_execution_id",
         "training-consumption.json",
     }

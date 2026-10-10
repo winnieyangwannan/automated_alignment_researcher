@@ -450,10 +450,22 @@ Load the approved `autodata-training-data-contract.json` and pass its
 content-addressed `judge_rubric` object to the dataset loader. This binds the rows to
 the exact protected rubric bytes rather than trusting a manually copied version label.
 
-Use this exact loader shape so the static approval contract can verify the future
-handoff before the AutoData workspace is legally created:
+Resolve the future verified handoff with this exact pattern. The native handoff's
+dataset key is `"dataset"`; `production_dataset_path` is the local variable passed to
+the loader. Do not substitute the AAR run ID for the native production execution ID,
+invent a placeholder, scan for arbitrary JSONL files, or catch loader failures:
 
 ```python
+run_id = os.environ["AAR_CURRENT_RUN_ID"]
+run_root = Path(os.environ["TEAM_DIR"]) / "autodata" / run_id
+handoff = json.loads((run_root / "training-handoff.json").read_text())
+production_dataset_path = Path(handoff["dataset"])
+production_execution_id = handoff["production_execution_id"]
+training_consumption_path = run_root / "training-consumption.json"
+contract_path = Path(os.environ["AAR_AUTODATA_TRAINING_DATA_CONTRACT"])
+assert contract_path.name == "autodata-training-data-contract.json"
+training_data_contract = json.loads(contract_path.read_text())
+
 items = load_autodata_campaign_datasets(
     [production_dataset_path],
     receipt_path=training_consumption_path,

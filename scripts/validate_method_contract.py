@@ -364,7 +364,7 @@ def _autodata_loader_errors(tree: ast.AST) -> list[str]:
         "TEAM_DIR",
         "training-handoff.json",
         "autodata-training-data-contract.json",
-        "production_dataset",
+        "dataset",
         "production_execution_id",
         "training-consumption.json",
     }

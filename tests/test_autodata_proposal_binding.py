@@ -252,7 +252,7 @@ team_dir = os.environ["TEAM_DIR"]
 names = (
     "training-handoff.json",
     "autodata-training-data-contract.json",
-    "production_dataset",
+    "dataset",
     "production_execution_id",
     "training-consumption.json",
 )
