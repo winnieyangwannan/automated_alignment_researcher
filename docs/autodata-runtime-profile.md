@@ -82,3 +82,7 @@ Run 12 and Run 13 currently require AutoData
 replace that exact pin only after the profile validator confirms it retains
 local Bubblewrap, node-local broker-ledger selection, ensurepip-free bootstrap,
 and selective production finalization.
+
+On FAIR HPC, new Run 9/12/13 launches default to the dedicated detached
+worktree `/storage/home/$USER/autodata-worktrees/aar-optimized-823c594`. This
+avoids advancing an AutoData checkout that an existing run may still be using.
