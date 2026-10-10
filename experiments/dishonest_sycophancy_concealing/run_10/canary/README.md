@@ -12,3 +12,11 @@ experiment:
   the full launcher.
 
 The canonical operator commands remain in the parent [`README.md`](../README.md).
+
+## Planned resume-readiness canary
+
+Before the stopped five-chain attempt is resumed, use the bounded lifecycle plan
+in [`resume_readiness/README.md`](resume_readiness/README.md). It requires one
+research session, one-step GPU training, the two-item evaluator, and one joined
+score/finding result. The document defines explicit pass and stop criteria; it
+does not launch work by itself.
