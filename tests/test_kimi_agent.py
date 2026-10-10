@@ -1504,6 +1504,59 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                     self.assertIn("AUTOMATIC RESUME CONTEXT", resumed)
                     self.assertIn(run_id, resumed)
 
+    def test_pipeline_revision_requires_a_real_mutable_strategy_edit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            draft = root / "draft"
+            recipe = root / "reviewed"
+            for parent in (draft / "recipe", recipe / "recipe"):
+                parent.mkdir(parents=True)
+            baseline = json.dumps(
+                {
+                    "schema": "aar.autodata.generation-strategy/v1",
+                    "name": "baseline",
+                    "system_prompt": "baseline prompt",
+                    "scenario_prompt_prefix": "baseline prefix",
+                    "temperature": 0.2,
+                }
+            )
+            current = draft / "recipe" / "generation_strategy.json"
+            reviewed = recipe / "recipe" / "generation_strategy.json"
+            current.write_text(baseline)
+            reviewed.write_text(baseline)
+            (draft / "autodata.pipeline.json").write_text("{}")
+            action = {
+                "id": "act_pipeline_revision",
+                "kind": "author_pipeline",
+                "spec": {
+                    "editable_root": str(draft),
+                    "allowed_paths": ["**"],
+                    "instructions": "Build the pipeline. Latest feedback: revise it.",
+                },
+            }
+            with patch.dict(
+                os.environ,
+                {
+                    "AAR_AUTODATA_RECIPE_ROOT": str(recipe),
+                    "TEAM_DIR": str(root / "team"),
+                },
+                clear=False,
+            ):
+                KimiAgent._autodata_capture_pipeline_revision_baseline(action)
+                self.assertTrue(
+                    KimiAgent._autodata_pipeline_feedback_requires_edit(action)
+                )
+                context = json.loads(KimiAgent._autodata_editable_context(action))
+                self.assertIn("recipe/generation_strategy.json", context)
+                current.write_text(baseline.replace("baseline prompt", "hard prompt"))
+                self.assertFalse(
+                    KimiAgent._autodata_pipeline_feedback_requires_edit(action)
+                )
+                current.write_text(baseline.replace("baseline prefix", "hard prefix"))
+                self.assertFalse(
+                    KimiAgent._autodata_pipeline_feedback_requires_edit(action)
+                )
+
     def test_standard_mcp_bridge_advertises_existing_tool_objects(self) -> None:
         names = {tool.name for tool in SERVER_TOOLS["server-api-tools"]}
         self.assertIn("evaluate_model", names)

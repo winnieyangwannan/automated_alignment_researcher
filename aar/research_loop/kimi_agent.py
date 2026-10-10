@@ -725,10 +725,38 @@ class KimiAgent:
                     result_path = Path(
                         f"/tmp/aar-autodata-{action['id']}-result.json"
                     )
+                    requires_pipeline_edit = (
+                        self._autodata_pipeline_feedback_requires_edit(action)
+                    )
+                    if result_path.is_file() and requires_pipeline_edit:
+                        # A result that claims a pipeline revision before the sole
+                        # mutable strategy actually changed is not evidence of work.
+                        result_path.unlink()
                     if not result_path.is_file():
                         self._autodata_prepare_editable_paths(action)
                         action_spec = json.dumps(action.get("spec"), sort_keys=True)[:6000]
                         editable_context = self._autodata_editable_context(action)
+                        if requires_pipeline_edit:
+                            strategy_path = (
+                                Path(action["spec"]["editable_root"])
+                                / "recipe"
+                                / "generation_strategy.json"
+                            )
+                            return (
+                                "The trusted controller has securely leased native "
+                                f"AutoData action {action['id']}; do not call action "
+                                "begin, action complete, or status. The native review "
+                                "requires a real pipeline revision, but the mutable "
+                                "generation strategy is still byte-identical to the "
+                                "reviewed baseline. Call the native Write tool exactly "
+                                f"once now with path={json.dumps(str(strategy_path))} "
+                                "and full replacement JSON that preserves the existing "
+                                "schema and keys while addressing the action feedback. "
+                                "Do not write the action-result file yet and do not use "
+                                "Bash. Action specification: "
+                                f"{action_spec}. Current allowed-file content: "
+                                f"{editable_context}"
+                            )
                         return (
                             "The trusted controller has securely leased native AutoData "
                             f"action {action['id']}; do not call action begin, action "
@@ -1058,6 +1086,17 @@ class KimiAgent:
         return root / f"{action_id}.token"
 
     @staticmethod
+    def _autodata_action_snapshot_path(action_id: str) -> Path:
+        team_raw = os.environ.get("TEAM_DIR", "").strip()
+        if not team_raw:
+            raise RuntimeError("TEAM_DIR is required for AutoData action snapshots")
+        safe_action_id = re.sub(r"[^A-Za-z0-9_.-]", "_", action_id)
+        root = Path(team_raw) / "autodata" / "action-snapshots"
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        root.chmod(0o700)
+        return root / f"{safe_action_id}.generation-strategy.sha256"
+
+    @staticmethod
     def _write_private_text(path: Path, value: str) -> None:
         temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
         descriptor = os.open(
@@ -1086,6 +1125,7 @@ class KimiAgent:
             raise RuntimeError("trusted AutoData action begin returned no lease")
         if not isinstance(action, dict) or action.get("id") != action_id:
             raise RuntimeError("trusted AutoData action begin returned the wrong action")
+        cls._autodata_capture_pipeline_revision_baseline(action)
         cls._write_private_text(lease_path, token)
 
     @classmethod
@@ -1117,6 +1157,67 @@ class KimiAgent:
         )
         lease_path.unlink(missing_ok=True)
         result_path.unlink(missing_ok=True)
+
+        if action is not None:
+            cls._autodata_action_snapshot_path(action_id).unlink(missing_ok=True)
+
+    @classmethod
+    def _autodata_capture_pipeline_revision_baseline(
+        cls, action: dict[str, Any]
+    ) -> None:
+        """Persist the pre-action strategy digest across researcher retries."""
+        if not cls._autodata_pipeline_has_feedback(action):
+            return
+        spec = action.get("spec")
+        assert isinstance(spec, dict)
+        root_raw = spec.get("editable_root")
+        if not isinstance(root_raw, str):
+            raise RuntimeError("AutoData pipeline revision has no editable root")
+        strategy = (
+            Path(root_raw).resolve(strict=True)
+            / "recipe"
+            / "generation_strategy.json"
+        )
+        if strategy.is_symlink() or not strategy.is_file():
+            raise RuntimeError("AutoData generation strategy is unavailable")
+        snapshot = cls._autodata_action_snapshot_path(str(action["id"]))
+        if not snapshot.is_file():
+            cls._write_private_text(snapshot, hashlib.sha256(strategy.read_bytes()).hexdigest())
+
+    @staticmethod
+    def _autodata_pipeline_has_feedback(action: dict[str, Any]) -> bool:
+        if action.get("kind") != "author_pipeline":
+            return False
+        spec = action.get("spec")
+        if not isinstance(spec, dict):
+            return False
+        instructions = spec.get("instructions")
+        return isinstance(instructions, str) and "Latest feedback:" in instructions
+
+    @classmethod
+    def _autodata_pipeline_feedback_requires_edit(cls, action: dict[str, Any]) -> bool:
+        """Require a real strategy mutation before accepting revision narration."""
+        if not cls._autodata_pipeline_has_feedback(action):
+            return False
+        spec = action["spec"]
+        root_raw = spec.get("editable_root")
+        action_id = action.get("id")
+        if not isinstance(root_raw, str) or not isinstance(action_id, str):
+            return True
+        try:
+            current = (
+                Path(root_raw).resolve(strict=True)
+                / "recipe"
+                / "generation_strategy.json"
+            )
+            snapshot = cls._autodata_action_snapshot_path(action_id)
+            if current.is_symlink() or snapshot.is_symlink():
+                return True
+            expected = snapshot.read_text(encoding="utf-8").strip()
+            actual = hashlib.sha256(current.read_bytes()).hexdigest()
+            return not expected or actual == expected
+        except OSError:
+            return True
 
     @staticmethod
     def _autodata_repair_incomplete_grounding(action: dict[str, Any]) -> None:
@@ -1237,8 +1338,10 @@ class KimiAgent:
         for relative_raw in allowed:
             if remaining <= 0 or not isinstance(relative_raw, str):
                 break
-            wildcard = relative_raw.endswith("/**")
-            relative = Path(relative_raw[:-3] if wildcard else relative_raw)
+            wildcard = relative_raw == "**" or relative_raw.endswith("/**")
+            relative = Path(".") if relative_raw == "**" else Path(
+                relative_raw[:-3] if wildcard else relative_raw
+            )
             if relative.is_absolute() or ".." in relative.parts:
                 continue
             candidate = root / relative
@@ -1249,14 +1352,26 @@ class KimiAgent:
                 context[relative_raw] = "<missing>"
                 continue
             if wildcard and resolved.is_dir() and not candidate.is_symlink():
+                priority = {
+                    "recipe/generation_strategy.json": 0,
+                    "autodata.pipeline.json": 1,
+                    "objective.json": 2,
+                    "comparator.json": 3,
+                    "recipe/request.json": 4,
+                    "recipe/judge_rubric.json": 5,
+                    "framework.lock.json": 6,
+                    "grounding/manifest.json": 7,
+                }
                 files = sorted(
                     (
                         path
                         for path in resolved.rglob("*")
-                        if path.is_file() and not path.is_symlink()
+                        if path.is_file()
+                        and not path.is_symlink()
+                        and "approval" not in path.relative_to(root).parts
                     ),
                     key=lambda path: (
-                        path.name != "manifest.json",
+                        priority.get(str(path.relative_to(root)), 20),
                         str(path.relative_to(root)),
                     ),
                 )[:32]
@@ -1312,8 +1427,10 @@ class KimiAgent:
         for relative_raw in allowed:
             if not isinstance(relative_raw, str):
                 continue
-            wildcard = relative_raw.endswith("/**")
-            relative = Path(relative_raw[:-3] if wildcard else relative_raw)
+            wildcard = relative_raw == "**" or relative_raw.endswith("/**")
+            relative = Path(".") if relative_raw == "**" else Path(
+                relative_raw[:-3] if wildcard else relative_raw
+            )
             if relative.is_absolute() or ".." in relative.parts:
                 continue
             parent = root / relative if wildcard else (root / relative).parent
