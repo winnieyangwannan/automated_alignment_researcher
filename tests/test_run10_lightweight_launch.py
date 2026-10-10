@@ -1,16 +1,29 @@
 """Contracts for Run 10's bounded one-chain lifecycle check."""
 
+import importlib.util
 import json
-from pathlib import Path
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN10 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_10"
 LIFECYCLE = RUN10 / "canary" / "one_chain_lifecycle_check"
+
+
+def _load_endpoint_verifier():
+    path = RUN10 / "canary" / "verify_kimi_endpoint.py"
+    spec = importlib.util.spec_from_file_location("run10_kimi_verifier", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_run10_uses_responsibility_based_directory_layout() -> None:
@@ -54,6 +67,170 @@ def test_lifecycle_canary_has_a_thin_launcher_and_own_config() -> None:
     assert 'AAR_RUN_CONFIG="${SCRIPT_DIR}/run.yaml"' in launcher
     assert 'exec "${RUN10_DIR}/launch/submit_run_10.sh" smoke' in launcher
     assert "sbatch" not in launcher
+
+
+def test_kimi_preflight_is_bounded_and_reuses_only_matching_fresh_proof(
+    tmp_path: Path,
+) -> None:
+    verifier = _load_endpoint_verifier()
+    identity = {
+        "git_commit": "abc",
+        "deployment": "kimi",
+        "model": "Kimi-K2.6",
+        "base_url": "https://example.invalid/v1",
+        "kimi_cli_sha256": "123",
+        "node_version": "v22.22.0",
+    }
+    now = datetime(2026, 10, 10, tzinfo=UTC)
+    cache = tmp_path / "proof.json"
+    cache.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "status": "passed",
+                "identity": identity,
+                "verified_at_utc": (now - timedelta(hours=1)).isoformat(),
+                "bash_tool_roundtrip": True,
+                "mcp_tool_roundtrip": True,
+                "named_tool_choice_checkpoint": True,
+            }
+        )
+    )
+
+    reused = verifier._reusable_cache(cache, identity, 7200, now=now)
+    assert reused is not None
+    assert reused["cache_reused"] is True
+    assert reused["health_check"] is True
+    assert verifier._reusable_cache(cache, identity, 1800, now=now) is None
+    assert verifier._reusable_cache(
+        cache, {**identity, "git_commit": "changed"}, 7200, now=now
+    ) is None
+
+    source = (RUN10 / "canary" / "verify_kimi_endpoint.py").read_text()
+    submitter = (RUN10 / "launch" / "submit_run_10.sh").read_text()
+    assert "asyncio.wait_for" in source
+    assert 'timeout=args.timeout_seconds' in source
+    assert 'f"{base_url}/models"' in source
+    assert '--timeout-seconds "${AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS:-300}"' in submitter
+    assert '--cache "${preflight_cache}"' in submitter
+
+
+def test_kimi_preflight_health_identity_never_persists_credential(
+    tmp_path: Path, monkeypatch
+) -> None:
+    verifier = _load_endpoint_verifier()
+    serve_root = tmp_path / "serve_api_v2"
+    serve_root.mkdir()
+    (serve_root / "serve.sh").write_text("#!/bin/bash\n")
+    cli = tmp_path / "kimi"
+    cli.write_text("#!/usr/bin/env node\n")
+    monkeypatch.setenv("AAR_KIMI_SERVE_DEPLOYMENT", "deployment")
+    monkeypatch.setenv("AAR_KIMI_EXPECTED_MODEL", "Kimi-K2.6")
+    monkeypatch.setenv("AAR_SERVE_API_V2_ROOT", str(serve_root))
+    monkeypatch.setenv("KIMI_CLI_PATH", str(cli))
+
+    provider = {
+        "provider": {
+            "test": {
+                "options": {
+                    "baseURL": "https://proxy.invalid/v1",
+                    "apiKey": "never-persist-this",
+                },
+                "models": {"Kimi-K2.6": {}},
+            }
+        }
+    }
+
+    def fake_run(command, **_kwargs):
+        if command[-1] == "deployment":
+            return SimpleNamespace(stdout=json.dumps(provider))
+        if command[:2] == ["node", "--version"]:
+            return SimpleNamespace(stdout="v22.22.0\n")
+        if command[-2:] == ["rev-parse", "HEAD"]:
+            return SimpleNamespace(stdout="abc123\n")
+        raise AssertionError(command)
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        @staticmethod
+        def read() -> bytes:
+            return b'{"data":[{"id":"Kimi-K2.6"}]}'
+
+    seen_request = {}
+
+    def fake_urlopen(request, timeout):
+        seen_request["url"] = request.full_url
+        seen_request["authorization"] = request.get_header("Authorization")
+        seen_request["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(verifier.subprocess, "run", fake_run)
+    monkeypatch.setattr(verifier, "urlopen", fake_urlopen)
+    identity = verifier._endpoint_identity(tmp_path)
+
+    assert identity["model"] == "Kimi-K2.6"
+    assert identity["git_commit"] == "abc123"
+    assert "never-persist-this" not in json.dumps(identity)
+    assert seen_request == {
+        "url": "https://proxy.invalid/v1/models",
+        "authorization": "Bearer never-persist-this",
+        "timeout": 20,
+    }
+
+
+def test_kimi_preflight_can_promote_recent_matching_proof(
+    tmp_path: Path,
+) -> None:
+    verifier = _load_endpoint_verifier()
+    identity = {
+        "git_commit": "new-commit",
+        "deployment": "deployment",
+        "model": "Kimi-K2.6",
+        "base_url": "https://proxy.invalid/v1",
+        "kimi_cli_sha256": "123",
+        "node_version": "v22.22.0",
+    }
+    source = tmp_path / "legacy.json"
+    source.write_text(
+        json.dumps(
+            {
+                "status": "passed",
+                "deployment": "deployment",
+                "model": "Kimi-K2.6",
+                "bash_tool_roundtrip": True,
+                "mcp_tool_roundtrip": True,
+                "named_tool_choice_checkpoint": True,
+                "tools": ["Bash", "get_literature"],
+            }
+        )
+    )
+    source_time = datetime.fromtimestamp(source.stat().st_mtime, UTC)
+
+    promoted = verifier._promote_proof(
+        source,
+        identity,
+        3600,
+        now=source_time + timedelta(minutes=5),
+    )
+    assert promoted["proof_promoted"] is True
+    assert promoted["identity"] == identity
+    assert verifier._reusable_cache(source, identity, 3600, now=source_time) is None
+
+    mismatched = json.loads(source.read_text())
+    mismatched["deployment"] = "other"
+    source.write_text(json.dumps(mismatched))
+    with pytest.raises(RuntimeError, match="stale, mismatched, or incomplete"):
+        verifier._promote_proof(
+            source,
+            identity,
+            3600,
+            now=datetime.fromtimestamp(source.stat().st_mtime, UTC),
+        )
 
 
 def test_training_smoke_validates_real_peft_adapter_without_submission() -> None:
@@ -235,7 +412,7 @@ def test_full_mode_requires_per_method_gpu_preflight() -> None:
 
 
 def test_kimi_preflight_records_the_requested_deployment() -> None:
-    verifier = (RUN10 / "verify_kimi_endpoint.py").read_text()
+    verifier = (RUN10 / "canary" / "verify_kimi_endpoint.py").read_text()
 
     assert 'deployment = os.environ.get("AAR_KIMI_SERVE_DEPLOYMENT"' in verifier
     assert 'expected_model = os.environ.get("AAR_KIMI_EXPECTED_MODEL"' in verifier
@@ -246,15 +423,15 @@ def test_kimi_preflight_records_the_requested_deployment() -> None:
     assert 'KIMI_MODEL_MAX_OUTPUT_SIZE' in verifier
     assert 'force_checkpoint_tools=True' in verifier
     assert 'asyncio.wait_for(' in verifier
-    assert 'Kimi MCP round trip exceeded' in verifier
+    assert 'Kimi MCP preflight exceeded' in verifier
 
 
 def test_run10_canary_keeps_historical_defaults_but_allows_trusted_overrides() -> None:
     pipeline = (
-        (RUN10 / "configure_run_10_environment.sh").read_text()
-        + (RUN10 / "run_10_pipeline.sbatch").read_text()
+        (RUN10 / "config" / "configure_run_10_environment.sh").read_text()
+        + (RUN10 / "slurm" / "run_10_pipeline.sbatch").read_text()
     )
-    submitter = (RUN10 / "submit_run_10.sh").read_text()
+    submitter = (RUN10 / "launch" / "submit_run_10.sh").read_text()
 
     assert 'EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-multi_kimi}"' in submitter
     assert 'KIMI_DEPLOYMENT="${AAR_KIMI_SERVE_DEPLOYMENT:-steerability_8-kimi26}"' in submitter
@@ -265,8 +442,8 @@ def test_run10_canary_keeps_historical_defaults_but_allows_trusted_overrides() -
 
 
 def test_run10_canary_supports_bounded_recovered_continuation() -> None:
-    pipeline = (RUN10 / "run_10_pipeline.sbatch").read_text()
-    submitter = (RUN10 / "submit_run_10.sh").read_text()
+    pipeline = (RUN10 / "slurm" / "run_10_pipeline.sbatch").read_text()
+    submitter = (RUN10 / "launch" / "submit_run_10.sh").read_text()
 
     assert 'CANARY_ITERATIONS="${AAR_RUN10_CANARY_ITERATIONS:-1}"' in submitter
     assert 'CANARY_ITERATIONS="${AAR_RUN10_CANARY_ITERATIONS:-1}"' in pipeline

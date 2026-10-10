@@ -71,6 +71,12 @@ def test_lifecycle_config_is_bounded_and_emits_runtime_contract() -> None:
     assert config["evaluation"]["workers"] == 1
     assert config["evaluation"]["gpus_per_worker"] == 1
     assert config["evaluation"]["on_demand"] is True
+    assert config["agent"] == {
+        "backend": "kimi",
+        "turn_timeout_seconds": 1800,
+        "preflight_timeout_seconds": 300,
+        "preflight_cache_ttl_seconds": 21600,
+    }
 
     result = subprocess.run(
         [
@@ -96,6 +102,8 @@ def test_lifecycle_config_is_bounded_and_emits_runtime_contract() -> None:
         "export AAR_EVAL_TIME=01:00:00",
         "export AAR_EVAL_IDLE_SECONDS=120",
         "export AAR_EVAL_ON_DEMAND=1",
+        "export AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS=300",
+        "export AAR_KIMI_PREFLIGHT_CACHE_TTL_SECONDS=21600",
     }
     assert expected <= set(result.stdout.splitlines())
 

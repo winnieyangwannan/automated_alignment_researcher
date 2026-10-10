@@ -33,3 +33,7 @@ evaluation:
 agent:
   backend: kimi
   turn_timeout_seconds: 1800
+  # A changed Kimi stack gets one bounded fresh protocol proof. Matching proofs
+  # are reusable after a fast authenticated endpoint-health check.
+  preflight_timeout_seconds: 300
+  preflight_cache_ttl_seconds: 21600

@@ -1,8 +1,8 @@
 # Run 10 one-chain lifecycle check
 
-- Status: implemented and CPU-validated; not launched
+- Status: active; launch wrapper queued
 - Created: 2026-10-10 21:11 UTC
-- Last updated: 2026-10-10 21:48 UTC
+- Last updated: 2026-10-10 22:11 UTC
 - Time standard: UTC
 
 ## Goal
@@ -89,7 +89,18 @@ experiments/dishonest_sycophancy_concealing/run_10/canary/one_chain_lifecycle_ch
 ```
 
 The wrapper supplies this canary's YAML to the shared Run 10 launcher; it does
-not duplicate Slurm submission logic. No job has been launched yet.
+not duplicate Slurm submission logic.
+
+Before submission, a fast authenticated `/models` request verifies that the
+configured deployment serves the expected Kimi model. A fresh or changed
+Git/runtime/deployment identity must also pass the complete Bash, AAR MCP, and
+named-tool protocol within a five-minute total budget. That proof is cached for
+six hours under the durable run storage root. An unchanged identity reuses the
+proof after the fast health check, so routine launches do not wait on another
+full Kimi conversation. The cache never stores the endpoint credential.
+A recent successful proof from a preserved attempt may be promoted explicitly
+only when its model/deployment match, it is within the same six-hour window,
+and the fast health check passes; promotion is never automatic discovery.
 
 ## Plan
 

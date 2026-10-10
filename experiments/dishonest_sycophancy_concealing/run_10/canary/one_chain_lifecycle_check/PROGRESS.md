@@ -28,6 +28,19 @@ traces, or partial held-out scores here.
   collects a GPU utility and cannot run in the CPU-only dev environment because
   PyTorch is absent; the canonical `tests/` suite is green. Status: ready for
   source synchronization and HPC prelaunch checks; no jobs launched.
+- 2026-10-10 22:10 UTC — The live Kimi preflight passed on source commit
+  `19ade1b9779c4d9b06c5bbaef39c627ebd3d1956`, and the committed launcher
+  submitted wrapper job `1808243` exactly once for attempt
+  `/checkpoint/ram/aar/winnieyangwn/run10_kimi/smoke_attempts/20261010T215650Z-19ade1b9779c`.
+  The wrapper is queued on `g3`; no research or evaluator child exists yet.
+  Decision: continue monitoring without duplicate submission.
+- 2026-10-10 22:11 UTC — Implemented a future-launch optimization on the
+  devserver: every launch keeps a fast authenticated model-health check, while
+  a matching Git/Kimi-runtime/deployment protocol proof can be reused for six
+  hours; a required fresh proof has one five-minute total budget. This source
+  change is intentionally not synchronized while job `1808243` depends on the
+  deployed commit. Decision: validate and commit locally, then synchronize only
+  after the active canary no longer depends on the older checkout.
 
 ## Entry template
 

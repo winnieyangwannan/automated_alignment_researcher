@@ -97,7 +97,16 @@ def load_run_config(path: Path) -> dict[str, str]:
         },
         "evaluation",
     )
-    _reject_unknown(agent, {"backend", "turn_timeout_seconds"}, "agent")
+    _reject_unknown(
+        agent,
+        {
+            "backend",
+            "turn_timeout_seconds",
+            "preflight_timeout_seconds",
+            "preflight_cache_ttl_seconds",
+        },
+        "agent",
+    )
 
     environment: dict[str, str] = {}
     if "root" in storage:
@@ -244,6 +253,22 @@ def load_run_config(path: Path) -> dict[str, str]:
         if not 1 <= timeout <= 86400:
             raise ValueError("agent.turn_timeout_seconds must be between 1 and 86400")
         environment["AAR_KIMI_TURN_TIMEOUT_SECONDS"] = str(timeout)
+    if "preflight_timeout_seconds" in agent:
+        environment["AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS"] = str(
+            _integer(
+                agent["preflight_timeout_seconds"],
+                "agent.preflight_timeout_seconds",
+                maximum=3600,
+            )
+        )
+    if "preflight_cache_ttl_seconds" in agent:
+        environment["AAR_KIMI_PREFLIGHT_CACHE_TTL_SECONDS"] = str(
+            _integer(
+                agent["preflight_cache_ttl_seconds"],
+                "agent.preflight_cache_ttl_seconds",
+                maximum=604800,
+            )
+        )
 
     return environment
 

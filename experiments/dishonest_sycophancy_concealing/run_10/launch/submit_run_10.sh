@@ -123,8 +123,13 @@ if [ "${MODE}" = smoke ]; then
     "${REPO}/scripts/validate_method_contract.py" \
     >> "${attempt_dir}/metadata/cpu_replay_gate.txt"
 fi
+preflight_cache="${AAR_RUN_STORAGE_ROOT:?run config did not set storage.root}/preflight_cache/kimi_mcp_preflight.json"
 "${REPO}/.venv/bin/python" "${RUN10_DIR}/canary/verify_kimi_endpoint.py" \
-  --workspace "${REPO}" --output "${attempt_dir}/metadata/kimi_mcp_preflight.json"
+  --workspace "${REPO}" \
+  --output "${attempt_dir}/metadata/kimi_mcp_preflight.json" \
+  --cache "${preflight_cache}" \
+  --timeout-seconds "${AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS:-300}" \
+  --cache-ttl-seconds "${AAR_KIMI_PREFLIGHT_CACHE_TTL_SECONDS:-21600}"
 
 export AAR_RUNTIME_ROOT="${attempt_dir}" AAR_RUN_ATTEMPT_DIR="${attempt_dir}"
 export AAR_BASELINE_GIT_COMMIT="${commit}" AAR_REUSED_BASELINE="${REUSED_BASELINE}"
