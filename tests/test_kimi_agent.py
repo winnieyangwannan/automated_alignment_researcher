@@ -1219,6 +1219,33 @@ class KimiAgentTest(unittest.TestCase):
 
             self.assertEqual(receipt.read_text(), f"run_id={run_id}\njob_id=12345\n")
 
+    def test_autodata_rejects_proof_created_without_required_loader_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            method = Path(temp) / "run.py"
+            method.write_text("method code\n")
+            proof = method.parent / ".aar-method-contract.json"
+            proof.write_text(
+                json.dumps(
+                    {
+                        "status": "passed",
+                        "source_sha256": hashlib.sha256(method.read_bytes()).hexdigest(),
+                        "requirements": {
+                            "run_dry_run": True,
+                            "require_gemma4_targets": True,
+                            "require_smoke_run": True,
+                            "require_autodata_loader": False,
+                        },
+                        "errors": [],
+                    }
+                )
+            )
+            with patch.dict(os.environ, {"AAR_AUTODATA": "1"}, clear=False):
+                status, errors = KimiAgent._method_contract_status(method)
+
+            self.assertEqual(status, "failed")
+            self.assertIn("require_autodata_loader", errors[0])
+            self.assertIn("without removing flags", errors[0])
+
     def test_autodata_continuation_resumes_approved_run_before_training(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

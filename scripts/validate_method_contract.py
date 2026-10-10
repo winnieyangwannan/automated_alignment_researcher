@@ -596,11 +596,18 @@ def validate(
                                     "dry-run result must contain model_path and method"
                                 )
 
+    requirements = {
+        "run_dry_run": run_dry_run,
+        "require_gemma4_targets": require_gemma4_targets,
+        "require_smoke_run": require_smoke_run,
+        "require_autodata_loader": require_autodata_loader,
+    }
     return {
         "schema_version": 1,
         "status": "passed" if not errors else "failed",
         "method_path": str(method_path),
         "source_sha256": source_hash,
+        "requirements": requirements,
         "errors": errors,
     }
 
@@ -615,6 +622,12 @@ def main() -> None:
     parser.add_argument("--require-autodata-loader", action="store_true")
     args = parser.parse_args()
     proof = args.proof or args.method_path.parent / ".aar-method-contract.json"
+    requirements = {
+        "run_dry_run": args.run_dry_run,
+        "require_gemma4_targets": args.require_gemma4_targets,
+        "require_smoke_run": args.require_smoke_run,
+        "require_autodata_loader": args.require_autodata_loader,
+    }
     try:
         source_hash = hashlib.sha256(args.method_path.read_bytes()).hexdigest()
     except OSError:
@@ -626,6 +639,7 @@ def main() -> None:
                 "status": "running",
                 "method_path": str(args.method_path.resolve()),
                 "source_sha256": source_hash,
+                "requirements": requirements,
                 "errors": [],
             },
             indent=2,
@@ -647,6 +661,7 @@ def main() -> None:
             "status": "failed",
             "method_path": str(args.method_path.resolve()),
             "source_sha256": "",
+            "requirements": requirements,
             "errors": [f"validator failed: {type(error).__name__}: {error}"],
         }
     proof.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")

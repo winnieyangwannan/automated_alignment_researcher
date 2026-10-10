@@ -322,6 +322,15 @@ result = chat_completion(
         self.assertEqual(proof["status"], "passed")
         self.assertEqual(proof["errors"], [])
         self.assertEqual(len(proof["source_sha256"]), 64)
+        self.assertEqual(
+            proof["requirements"],
+            {
+                "run_dry_run": True,
+                "require_gemma4_targets": False,
+                "require_smoke_run": False,
+                "require_autodata_loader": False,
+            },
+        )
 
     def test_rejects_missing_method_config_and_phases(self) -> None:
         result, proof = self._run(

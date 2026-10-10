@@ -916,6 +916,35 @@ class KimiAgent:
         errors = proof.get("errors")
         if status not in {"passed", "failed"} or not isinstance(errors, list):
             return None, []
+        requirements = proof.get("requirements")
+        expected_requirements = {
+            "require_gemma4_targets": os.environ.get(
+                "AAR_REQUIRE_GEMMA4_TARGETS", "0"
+            )
+            == "1",
+            "require_smoke_run": os.environ.get("AAR_REQUIRE_METHOD_SMOKE", "0")
+            == "1",
+            "require_autodata_loader": KimiAgent._autodata_enabled(),
+        }
+        missing = [
+            name
+            for name, required in expected_requirements.items()
+            if required
+            and (
+                not isinstance(requirements, dict)
+                or requirements.get(name) is not True
+            )
+        ]
+        if missing:
+            return (
+                "failed",
+                [
+                    "method-contract proof omitted required validation gate(s): "
+                    + ", ".join(missing)
+                    + "; run the exact trusted validator command without removing "
+                    "flags"
+                ],
+            )
         return status, [str(error) for error in errors]
 
     @staticmethod
