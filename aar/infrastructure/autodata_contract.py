@@ -202,6 +202,7 @@ def validate_generation_inputs(
     execution_manifest: Path,
     contract_path: Path,
     campaign_policy_path: Path,
+    expected_concurrency: int | None = None,
 ) -> dict[str, Any]:
     """Bind one immutable pipeline/execution to the operator's data contract."""
     contract = validate_training_data_contract(
@@ -217,6 +218,13 @@ def validate_generation_inputs(
             "pipeline training-data contract does not match operator policy"
         )
     execution = _load(execution_manifest, "AutoData execution manifest")
+    if (
+        expected_concurrency is not None
+        and execution.get("concurrency") != expected_concurrency
+    ):
+        raise ValueError(
+            "execution concurrency does not match the operator runtime profile"
+        )
     if execution.get("mode") == "production":
         finalization = _object(
             execution.get("finalization"), "production finalization policy"

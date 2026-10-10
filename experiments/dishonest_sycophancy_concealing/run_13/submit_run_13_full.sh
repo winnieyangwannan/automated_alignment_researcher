@@ -14,8 +14,12 @@ RECOVERED_SOURCES="${RECOVERY_BUNDLE}/source_artifacts"
 CANARY_ROOT="$(realpath -e -- "${AAR_RUN13_CANARY_ROOT:-/storage/home/${USER}/aar-runs/run13-adapter-target/20261009T104306Z-6cf11ae65d2b}")"
 SV="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
-REQUIRED_AUTODATA_SHA=34f0a22c89a2a40e605afd43f3a7b11c25003ab7
+REQUIRED_AUTODATA_SHA=823c5948854df14664f3168bc5e6c49a2cecb975
 GENERATOR_DEPLOYMENT=aar_8-kimi26
+export AAR_AUTODATA=1
+export AAR_AUTODATA_PROFILE=target-aware-local-v1
+export AAR_AUTODATA_GENERATOR_DEPLOYMENT="${GENERATOR_DEPLOYMENT}"
+export AAR_KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-/checkpoint/ram/shared/vllm_deployments_v2/${GENERATOR_DEPLOYMENT}/proxy_info.json}"
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "Run 13 requires branch autodata" >&2; exit 2; }
 if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; then
@@ -51,6 +55,9 @@ jq -e '
 export AAR_REPO="${REPO}" HARNESS_ENV="${SECRET_ENV}"
 # shellcheck disable=SC1091
 source "${REPO}/scripts/aar_runtime_env.sh"
+# shellcheck disable=SC1091
+source "${REPO}/scripts/autodata_runtime_profile.sh"
+aar_set_autodata_runtime_profile
 # shellcheck disable=SC1091
 source "${REPO}/replication/env_multidimensional.sh"
 for name in HF_TOKEN MODEL_API_KEY ANTHROPIC_API_KEY; do
@@ -131,6 +138,7 @@ for seed in alpha beta gamma delta epsilon; do
   "${REPO}/.venv/bin/python" -m aar.autodata_campaign_policy create-policy \
     --campaign-id "run13-${seed}" --target-manifest "${chain_root}/bindings/iteration-1.json" \
     --generator-deployment-id "${GENERATOR_DEPLOYMENT}" --max-cost-usd 299 \
+    --runtime-profile "${AAR_AUTODATA_PROFILE}" \
     --output "${chain_root}/metadata/campaign-policy.json"
   "${REPO}/.venv/bin/python" -m aar.infrastructure.autodata_contract \
     --create --campaign-policy "${chain_root}/metadata/campaign-policy.json" \
@@ -175,7 +183,9 @@ export AAR_MONITOR_MODEL_API_KEY="${MODEL_API_KEY}"
 
 job="$(sbatch --parsable --output="${attempt}/logs/pipeline-%j.out" --export=ALL \
   "${SCRIPT_DIR}/run_13_full_pipeline.sbatch")"
-printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nresearch_backend=claude\nresearch_model=claude-opus-4-8\nkimi_generator_deployment=%s\nchains=5\ntarget_pairs_per_chain=5\nbase_deployments=%s\n' \
-  "${job}" "${attempt}" "${checkpoint_root}" "${commit}" "${GENERATOR_DEPLOYMENT}" "${deployments[*]}" \
+printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nresearch_backend=claude\nresearch_model=claude-opus-4-8\nkimi_generator_deployment=%s\nautodata_profile=%s\nautodata_concurrency=%s\nautodata_model_request_attempts=%s\nchains=5\ntarget_pairs_per_chain=5\nbase_deployments=%s\n' \
+  "${job}" "${attempt}" "${checkpoint_root}" "${commit}" "${GENERATOR_DEPLOYMENT}" \
+  "${AAR_AUTODATA_PROFILE}" "${AAR_AUTODATA_CONCURRENCY}" \
+  "${AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS}" "${deployments[*]}" \
   | tee "${attempt}/metadata/submission.txt"
 unset MODEL_API_KEY HF_TOKEN ANTHROPIC_API_KEY

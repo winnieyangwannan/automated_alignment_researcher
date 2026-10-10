@@ -10,6 +10,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from aar.autodata_runtime_profile import (
+    TARGET_AWARE_LOCAL_PROFILE,
+    runtime_profile,
+)
 from aar.autodata_target_binding import load_binding
 
 
@@ -92,7 +96,12 @@ def build_policy(
     target_environment: dict[str, str],
     generator_deployment_id: str,
     max_cost_usd: str,
+    runtime_profile_name: str = TARGET_AWARE_LOCAL_PROFILE,
 ) -> dict[str, Any]:
+    profile = runtime_profile(runtime_profile_name)
+    target_enabled = target_environment.get("AUTODATA_TARGET_ENABLED") == "1"
+    if target_enabled != profile.target_enabled:
+        raise ValueError("target manifest does not match the AutoData runtime profile")
     required = {
         "AUTODATA_GENERATOR_URL": (
             "http://fair-cw-use2-1-ingress-slurm-ingress/v1"
@@ -117,15 +126,17 @@ def build_policy(
         "AUTODATA_TARGET_TIMEOUT": "90",
         "AUTODATA_TARGET_INPUT_USD_PER_MILLION": "0",
         "AUTODATA_TARGET_OUTPUT_USD_PER_MILLION": "0",
-        "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "1",
+        "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": str(
+            profile.model_request_max_attempts
+        ),
         **target_environment,
     }
     return {
         "schema": "autodata.broker-campaign-policy/v1",
         "campaign_id": campaign_id,
         "max_cost_usd": max_cost_usd,
-        "runner": "local-bwrap",
-        "environment": "oci-runner-firecracker-large",
+        "runner": profile.broker_runner,
+        "environment": profile.environment,
         "image": IMAGE,
         "expected_image_id": EXPECTED_IMAGE_ID,
         "max_cpus": 2,
@@ -168,6 +179,9 @@ def main() -> int:
     policy_parser.add_argument("--target-manifest", required=True, type=Path)
     policy_parser.add_argument("--generator-deployment-id", required=True)
     policy_parser.add_argument("--max-cost-usd", default="299")
+    policy_parser.add_argument(
+        "--runtime-profile", default=TARGET_AWARE_LOCAL_PROFILE
+    )
     policy_parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     if args.command == "create-base-target":
@@ -188,6 +202,7 @@ def main() -> int:
         target_environment=target_environment_from_manifest(args.target_manifest),
         generator_deployment_id=args.generator_deployment_id,
         max_cost_usd=args.max_cost_usd,
+        runtime_profile_name=args.runtime_profile,
     )
     atomic_write_json(args.output, policy)
     return 0

@@ -1,5 +1,11 @@
 # Run 13: iteration-scoped Gemma adapter target canary
 
+New full launches use the shared `target-aware-local-v1` AutoData profile
+documented in [the repository guide](../../../docs/autodata-runtime-profile.md):
+local Bubblewrap, concurrency 32, three model-request attempts, node-local
+state, supervised lifecycle, authenticated Kimi routing, selective
+finalization, and digest-verified reuse support.
+
 ## Goal
 
 Prove, with a batch of one, that AutoData in a later AAR iteration can probe

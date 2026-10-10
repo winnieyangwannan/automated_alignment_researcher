@@ -15,11 +15,13 @@ AUTODATA_TARGET_ENABLED="${AUTODATA_TARGET_ENABLED:-1}"
 case "${AUTODATA_TARGET_ENABLED}" in
   1)
     target_enabled=1
+    AAR_AUTODATA_PROFILE=target-aware-local-v1
     default_autodata_concurrency=32
     default_model_request_max_attempts=3
     ;;
   0)
     target_enabled=0
+    AAR_AUTODATA_PROFILE=question-only-local-v1
     default_autodata_concurrency=64
     default_model_request_max_attempts=1
     ;;
@@ -251,6 +253,8 @@ export AAR_AUTODATA_PROPOSAL_BINDINGS="${proposal_bindings}"
 export AAR_AUTODATA_RESOURCES_READY=1
 export AAR_AUTODATA_BROKER_RUNNER AAR_AUTODATA_ENVIRONMENT AAR_AUTODATA_CONCURRENCY
 export AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS
+export AAR_AUTODATA_PROFILE
+export AAR_AUTODATA_GENERATOR_DEPLOYMENT=winnieyangwn-kimi26
 export AAR_KIMI_PROXY_INFO="${KIMI_PROXY_INFO}"
 export AAR_VLLM_WORKER_SH="${vllm_worker}"
 

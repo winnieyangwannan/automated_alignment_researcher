@@ -30,6 +30,12 @@ class AutoDataCampaignPolicyTest(unittest.TestCase):
         self.assertIn("AAR_RESUME_APPROVED_PROPOSAL=1", controller)
         self.assertIn("AAR_IDEA_UID_OVERRIDE:-", chain)
         self.assertIn("AAR_IDEA_UID_OVERRIDE AAR_RESUME_APPROVED_PROPOSAL", runtime)
+        self.assertIn("AAR_AUTODATA_PROFILE=target-aware-local-v1", pipeline)
+        self.assertNotIn("AAR_RUN12_AUTODATA_CONCURRENCY:-8", pipeline)
+        self.assertIn(
+            '--generator-deployment-id "${AAR_AUTODATA_GENERATOR_DEPLOYMENT}"',
+            controller,
+        )
 
     def test_run13_full_run_uses_claude_and_five_isolated_chains(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -54,6 +60,8 @@ class AutoDataCampaignPolicyTest(unittest.TestCase):
         self.assertIn("AAR_RESUME_APPROVED_PROPOSAL=1", controller)
         self.assertIn("AAR_RUN13_CHECKPOINT_ROOT", pipeline)
         self.assertIn("AAR_RUN13_CHECKPOINT_ROOT", controller)
+        self.assertIn("AAR_AUTODATA_PROFILE=target-aware-local-v1", pipeline)
+        self.assertNotIn("AAR_RUN13_AUTODATA_CONCURRENCY:-8", pipeline)
         contract = "autodata-training-data-contract.json"
         self.assertIn(contract, submitter)
         self.assertIn("aar.infrastructure.autodata_contract", submitter)
@@ -132,6 +140,12 @@ class AutoDataCampaignPolicyTest(unittest.TestCase):
             self.assertEqual(
                 policy["required_solve_env"]["AUTODATA_TARGET_MAX_OUTPUT"],
                 "65536",
+            )
+            self.assertEqual(
+                policy["required_solve_env"][
+                    "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS"
+                ],
+                "3",
             )
 
     def test_base_target_rejects_checkpoint_tamper(self) -> None:

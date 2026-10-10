@@ -88,6 +88,7 @@ def test_generation_inputs_bind_contract_policy_pipeline_and_finalization(
         json.dumps(
             {
                 "mode": "production",
+                "concurrency": 32,
                 "finalization": {
                     "minimum_generated_items": 1000,
                     "minimum_successful_task_fraction": 0.95,
@@ -102,6 +103,7 @@ def test_generation_inputs_bind_contract_policy_pipeline_and_finalization(
             execution_manifest=execution,
             contract_path=contract_path,
             campaign_policy_path=policy_path,
+            expected_concurrency=32,
         )["required_rows"]
         == 1000
     )
@@ -115,4 +117,18 @@ def test_generation_inputs_bind_contract_policy_pipeline_and_finalization(
             execution_manifest=execution,
             contract_path=contract_path,
             campaign_policy_path=policy_path,
+            expected_concurrency=32,
+        )
+
+    value = json.loads(execution.read_text())
+    value["finalization"]["minimum_generated_items"] = 1000
+    value["concurrency"] = 8
+    execution.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match="operator runtime profile"):
+        validate_generation_inputs(
+            pipeline_manifest=pipeline,
+            execution_manifest=execution,
+            contract_path=contract_path,
+            campaign_policy_path=policy_path,
+            expected_concurrency=32,
         )

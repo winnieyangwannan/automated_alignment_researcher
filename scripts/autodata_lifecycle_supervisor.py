@@ -422,11 +422,16 @@ def create_or_reuse_execution(
     campaign_policy: Path,
 ) -> dict[str, Any]:
     """Create and register exactly one semantic execution in a study."""
+    expected_concurrency_raw = os.environ.get("AAR_AUTODATA_CONCURRENCY")
+    expected_concurrency = (
+        int(expected_concurrency_raw) if expected_concurrency_raw else None
+    )
     contract = validate_generation_inputs(
         pipeline_manifest=pipeline,
         execution_manifest=execution,
         contract_path=training_data_contract,
         campaign_policy_path=campaign_policy,
+        expected_concurrency=expected_concurrency,
     )
     key = execution_creation_key(
         pipeline, execution, study_id=study_id, workspaces=workspaces

@@ -141,13 +141,19 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   : "${AAR_AUTODATA_CHECKOUT:?missing canonical AutoData checkout}"
   : "${AAR_AUTODATA_PLUGIN_ROOT:?missing pinned AutoData plugin root}"
   : "${AAR_AUTODATA_BROKER_PYTHON:?missing broker Python}"
-  : "${AAR_AUTODATA_BROKER_RUNNER:?missing broker runner}"
   : "${AAR_AUTODATA_MODEL_ENV_FILE:?missing model workload env path}"
   : "${AAR_AUTODATA_CAMPAIGN_POLICY:?missing campaign policy}"
   : "${AAR_AUTODATA_TRAINING_DATA_CONTRACT:?missing training-data contract}"
   : "${AAR_AUTODATA_CAPABILITY:?missing attempt-scoped broker capability}"
   : "${AAR_AUTODATA_APPROVAL_PRIVATE_KEY:?missing delegated approval key}"
   : "${AAR_AUTODATA_APPROVAL_PUBLIC_KEY:?missing delegated approval public key}"
+  # shellcheck disable=SC1091
+  source "${REPO}/scripts/autodata_runtime_profile.sh"
+  aar_apply_autodata_runtime_profile
+  : "${AAR_AUTODATA_BROKER_RUNNER:?missing broker runner}"
+  if [ -n "${AAR_AUTODATA_PROFILE:-}" ]; then
+    echo "[aar] AutoData runtime profile verified (profile=${AAR_AUTODATA_PROFILE}, concurrency=${AAR_AUTODATA_CONCURRENCY}, model_attempts=${AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS}, reuse=${AAR_AUTODATA_REUSE_POLICY})"
+  fi
   export AUTODATA_CACHE_DIR="${AUTODATA_CACHE_DIR:-${AAR_RUNTIME_ROOT}/autodata/plugin-cache}"
   mkdir -p "${AUTODATA_CACHE_DIR}"
   chmod 700 "${AUTODATA_CACHE_DIR}"

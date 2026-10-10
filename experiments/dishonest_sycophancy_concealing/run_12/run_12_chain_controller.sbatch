@@ -211,7 +211,8 @@ while [ "${pairs}" -lt "${TARGET_PAIRS}" ]; do
 
   PYTHONPATH="${REPO}" "${PY}" -m aar.autodata_campaign_policy create-policy \
     --campaign-id "run12-${SEED}" --target-manifest "${current_target}" \
-    --generator-deployment-id "${AAR_KIMI_SERVE_DEPLOYMENT}" \
+    --generator-deployment-id "${AAR_AUTODATA_GENERATOR_DEPLOYMENT}" \
+    --runtime-profile "${AAR_AUTODATA_PROFILE}" \
     --max-cost-usd 299 --output "${current_policy}"
   PYTHONPATH="${REPO}" "${PY}" -m aar.infrastructure.autodata_contract \
     --create --campaign-policy "${current_policy}" --required-rows 1000 \

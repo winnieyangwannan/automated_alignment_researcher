@@ -299,11 +299,11 @@ Notes and scope:
 - The FAIR full-loop launchers are environment-configurable; start with the one-iteration
   smoke in [`LAUNCH.md`](LAUNCH.md). Historical baseline/watcher/dashboard scripts may still
   carry deployment-specific defaults; see [`PORTABILITY.md`](PORTABILITY.md).
-- **Optional Autodata tool:** set `AAR_AUTODATA=1`, `AAR_AUTODATA_URL`, and an immutable
-  `AAR_AUTODATA_SHA`. The AAR then receives generate/status/fetch MCP tools. Generation
-  configuration must be a literal `AUTODATA_SPEC` in the monitor-approved method code; fetched
-  rows and their verified provenance manifest are stored under `$TEAM_DIR/autodata/<run_id>/`.
-  Service credentials and pipeline refs are operator-controlled and never accepted as tool input.
+- **Optional AutoData workflow:** pin `AAR_AUTODATA_SHA` and use the native AutoData plugin,
+  campaign policy, training-data contract, and supervised lifecycle. New target-aware runs should
+  select the shared `target-aware-local-v1` profile instead of copying settings from an experiment;
+  see [AutoData runtime profiles](docs/autodata-runtime-profile.md). Service credentials, target
+  bindings, and pipeline policy remain operator-controlled.
 
 ### Export the run champion
 

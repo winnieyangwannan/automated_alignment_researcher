@@ -21,9 +21,13 @@ esac
 CANARY_ROOT="$(realpath -e -- "${AAR_RUN12_CANARY_ROOT:-${RUN12_STORAGE_ROOT}/aar-runs/run12-adapter-target/20261009T150557Z-68f6178b2ac4}")"
 SV="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
-REQUIRED_AUTODATA_SHA=34f0a22c89a2a40e605afd43f3a7b11c25003ab7
+REQUIRED_AUTODATA_SHA=823c5948854df14664f3168bc5e6c49a2cecb975
 RESEARCHER_DEPLOYMENT=aar_8-kimi26
 GENERATOR_DEPLOYMENT=autodata_8-kimi26
+export AAR_AUTODATA=1
+export AAR_AUTODATA_PROFILE=target-aware-local-v1
+export AAR_AUTODATA_GENERATOR_DEPLOYMENT="${GENERATOR_DEPLOYMENT}"
+export AAR_KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-/checkpoint/ram/shared/vllm_deployments_v2/${GENERATOR_DEPLOYMENT}/proxy_info.json}"
 RUN_MODE="${AAR_RUN12_MODE:-full}"
 SEEDS_RAW="${AAR_RUN12_SEEDS:-alpha beta gamma delta epsilon}"
 TARGET_PAIRS="${AAR_RUN12_TARGET_PAIRS:-5}"
@@ -91,6 +95,9 @@ jq -e '
 export AAR_REPO="${REPO}" HARNESS_ENV="${SECRET_ENV}"
 # shellcheck disable=SC1091
 source "${REPO}/scripts/aar_runtime_env.sh"
+# shellcheck disable=SC1091
+source "${REPO}/scripts/autodata_runtime_profile.sh"
+aar_set_autodata_runtime_profile
 # shellcheck disable=SC1091
 source "${REPO}/replication/env_multidimensional.sh"
 for name in HF_TOKEN MODEL_API_KEY; do [ -n "${!name:-}" ] || { echo "missing ${name}" >&2; exit 2; }; done
@@ -168,6 +175,7 @@ for seed in "${seeds[@]}"; do
   "${REPO}/.venv/bin/python" -m aar.autodata_campaign_policy create-policy \
     --campaign-id "run12-${seed}" --target-manifest "${chain_root}/bindings/iteration-1.json" \
     --generator-deployment-id "${GENERATOR_DEPLOYMENT}" --max-cost-usd 299 \
+    --runtime-profile "${AAR_AUTODATA_PROFILE}" \
     --output "${chain_root}/metadata/campaign-policy.json"
   "${REPO}/.venv/bin/python" -m aar.infrastructure.autodata_contract \
     --create --campaign-policy "${chain_root}/metadata/campaign-policy.json" \
@@ -219,9 +227,11 @@ job="$(sbatch --parsable --output="${attempt}/logs/pipeline-%j.out" --export=ALL
   "${SCRIPT_DIR}/run_12_full_pipeline.sbatch")"
 base_reused=false
 [ -z "${REUSE_BASE_DEPLOYMENT}" ] || base_reused=true
-printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nmode=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nresearcher_kimi_deployment=%s\nautodata_kimi_deployment=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \
+printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nmode=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nresearcher_kimi_deployment=%s\nautodata_kimi_deployment=%s\nautodata_profile=%s\nautodata_concurrency=%s\nautodata_model_request_attempts=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \
   "${job}" "${attempt}" "${checkpoint_root}" "${commit}" "${RUN_MODE}" \
-  "${RESEARCHER_DEPLOYMENT}" "${GENERATOR_DEPLOYMENT}" "${#seeds[@]}" "${TARGET_PAIRS}" "${SEEDS_RAW}" \
+  "${RESEARCHER_DEPLOYMENT}" "${GENERATOR_DEPLOYMENT}" "${AAR_AUTODATA_PROFILE}" \
+  "${AAR_AUTODATA_CONCURRENCY}" "${AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS}" \
+  "${#seeds[@]}" "${TARGET_PAIRS}" "${SEEDS_RAW}" \
   "${deployments[*]}" "${base_reused}" \
   | tee "${attempt}/metadata/submission.txt"
 unset MODEL_API_KEY HF_TOKEN

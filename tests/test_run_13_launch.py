@@ -78,3 +78,17 @@ def test_full_run_checkpoint_recovery_is_duplicate_safe_and_resumes_state() -> N
         "/checkpoint/ram/winnieyangwn/aar-runs/run13-full/"
         "20261009T230106Z-4c7a5b059cf0"
     ) in readme
+
+
+def test_future_full_run_uses_shared_optimized_autodata_profile() -> None:
+    submitter = (RUN / "submit_run_13_full.sh").read_text()
+    pipeline = (RUN / "run_13_full_pipeline.sbatch").read_text()
+    controller = (RUN / "run_13_chain_controller.sbatch").read_text()
+
+    assert "AAR_AUTODATA_PROFILE=target-aware-local-v1" in submitter
+    assert "AAR_AUTODATA_GENERATOR_DEPLOYMENT" in submitter
+    assert "AAR_KIMI_PROXY_INFO" in submitter
+    assert "823c5948854df14664f3168bc5e6c49a2cecb975" in submitter
+    assert "aar_set_autodata_runtime_profile" in pipeline
+    assert "AAR_RUN13_AUTODATA_CONCURRENCY:-8" not in pipeline
+    assert '--runtime-profile "${AAR_AUTODATA_PROFILE}"' in controller

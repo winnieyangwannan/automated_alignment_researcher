@@ -1,5 +1,9 @@
 # AutoData recipes used by AAR
 
+For new AAR launchers, use the shared measured runtime profile described in
+[AutoData runtime profiles](../../docs/autodata-runtime-profile.md). Do not copy
+Run 9/12/13 concurrency, routing, or retry settings into another launcher.
+
 ## Purpose
 
 AAR uses the original AutoData Claude plugin and native AutoData CLI directly.

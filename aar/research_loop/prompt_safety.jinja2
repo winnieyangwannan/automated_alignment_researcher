@@ -287,10 +287,14 @@ variables. Use exactly 64 tuning, 32 hidden validation, and 32 untouched test
 tasks; request 3 through 10 native meta iterations with `min_iterations: 3`
 and `early_stop_patience: 3`. Use the fixed Luna threshold in the recipe. For
 production, retain exactly 1,000 accepted unique rows, begin with 1,250 fresh
-source tasks, and stop unsuccessfully at 1,500 total attempts rather than
+source tasks, and stop at the operator's
+`$AAR_AUTODATA_PRODUCTION_MAX_TASKS` ceiling rather than
 weakening the judge. Preserve the operator-provided environment label
 `$AAR_AUTODATA_ENVIRONMENT` and concurrency `$AAR_AUTODATA_CONCURRENCY`; never
 use the environment label to infer or change the broker's physical runner.
+When `$AAR_AUTODATA_PROFILE` is set, it is an operator-owned, fail-closed
+runtime contract. Do not change its broker, concurrency, model-request retry,
+lifecycle, routing, or reuse settings in either meta or production execution.
 
 The campaign policy at `$AAR_AUTODATA_CAMPAIGN_POLICY` is the source of truth for
 the executor. Copy its complete `required_solve_env` mapping into
@@ -470,7 +474,8 @@ python3 -m aar.infrastructure.autodata_lifecycle create-reuse-handoff \
   --training-data-contract "$AAR_AUTODATA_TRAINING_DATA_CONTRACT"
 ```
 
-Reuse succeeds only when native lineage still verifies, the dataset/manifest/state
+Reuse succeeds only when `$AAR_AUTODATA_REUSE_POLICY` is `digest-verified`,
+native lineage still verifies, the dataset/manifest/state
 digests match, every row satisfies the same SFT/DPO, rubric, and model-provenance
 contract, and the source state is an operator-trusted
 `$AAR_AUTODATA_REUSE_STATE`. Never copy or edit the exported dataset to make it fit.
