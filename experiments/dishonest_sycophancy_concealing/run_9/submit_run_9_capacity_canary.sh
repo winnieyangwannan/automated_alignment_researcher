@@ -9,15 +9,38 @@ AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pip
 SECRET_ENV="${AAR_RUN9_SECRET_ENV:-/storage/home/${USER}/aar-worktrees/autodata/.env}"
 FIRECRACKER_TOKEN="${AAR_RUN9_FIRECRACKER_TOKEN:-/storage/home/${USER}/aar-worktrees/autodata/.sandoq-firecracker-token}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
-RUNNER="${AAR_AUTODATA_BROKER_RUNNER:-local-bwrap}"
-ENVIRONMENT="${1:-oci-runner-firecracker-medium}"
-CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-64}"
-TASK_COUNT="${AAR_AUTODATA_CANARY_TASK_COUNT:-${CONCURRENCY}}"
-MODEL_REQUEST_MAX_ATTEMPTS="${AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS:-1}"
 GENERATOR_DEPLOYMENT="${AAR_AUTODATA_GENERATOR_DEPLOYMENT:-winnieyangwn-kimi26}"
 KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-/checkpoint/ram/shared/vllm_deployments_v2/winnieyangwn-kimi26/proxy_info.json}"
 TARGET_BINDING_SOURCE="${AAR_AUTODATA_TARGET_BINDING:-}"
+CAPACITY_PROFILE="${AAR_AUTODATA_CAPACITY_PROFILE:-}"
 SLURM_DEPENDENCY="${AAR_SLURM_DEPENDENCY:-}"
+
+if [ -n "${TARGET_BINDING_SOURCE}" ] && [ -z "${CAPACITY_PROFILE}" ]; then
+  CAPACITY_PROFILE="${SCRIPT_DIR}/target_aware_capacity.yaml"
+fi
+if [ -n "${CAPACITY_PROFILE}" ]; then
+  [ -f "${CAPACITY_PROFILE}" ] || { echo "capacity profile is missing: ${CAPACITY_PROFILE}" >&2; exit 2; }
+  mapfile -t profile_values < <(
+    PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" \
+      -m aar.autodata_capacity_profile values --profile "${CAPACITY_PROFILE}"
+  )
+  [ "${#profile_values[@]}" -eq 5 ] || { echo "capacity profile returned incomplete launch values" >&2; exit 2; }
+  RUNNER="${profile_values[0]}"
+  ENVIRONMENT="${profile_values[1]}"
+  CONCURRENCY="${profile_values[2]}"
+  TASK_COUNT="${profile_values[3]}"
+  MODEL_REQUEST_MAX_ATTEMPTS="${profile_values[4]}"
+  [ -z "${1:-}" ] || [ "${1}" = "${ENVIRONMENT}" ] || {
+    echo "positional environment conflicts with YAML capacity profile" >&2
+    exit 2
+  }
+else
+  RUNNER="${AAR_AUTODATA_BROKER_RUNNER:-local-bwrap}"
+  ENVIRONMENT="${1:-oci-runner-firecracker-medium}"
+  CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-64}"
+  TASK_COUNT="${AAR_AUTODATA_CANARY_TASK_COUNT:-${CONCURRENCY}}"
+  MODEL_REQUEST_MAX_ATTEMPTS="${AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS:-1}"
+fi
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "canary requires branch autodata" >&2; exit 2; }
 git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || { echo "tracked AAR worktree is dirty" >&2; exit 2; }
@@ -98,7 +121,19 @@ fi
 chmod 600 "${model_env}" "${capability_file}"
 
 policy="${root}/policy.json"
-cat > "${policy}" <<EOF
+if [ -n "${CAPACITY_PROFILE}" ]; then
+  [ -n "${target_binding}" ] || { echo "target-aware capacity profile requires a target binding" >&2; exit 2; }
+  PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" \
+    -m aar.autodata_capacity_profile render-policy \
+    --profile "${CAPACITY_PROFILE}" \
+    --campaign-id "run9-${RUNNER}-capacity-canary" \
+    --generator-url "${GENERATOR_URL}" \
+    --generator-host-header "${GENERATOR_HOST_HEADER}" \
+    --generator-deployment-id "${GENERATOR_DEPLOYMENT}" \
+    --target-binding "${target_binding}" \
+    --output "${policy}"
+else
+  cat > "${policy}" <<EOF
 {
   "schema": "autodata.broker-campaign-policy/v1",
   "campaign_id": "run9-${RUNNER}-capacity-canary",
@@ -130,9 +165,9 @@ cat > "${policy}" <<EOF
   }
 }
 EOF
-if [ -n "${target_binding}" ]; then
-  PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" - \
-    "${target_binding}" "${policy}" <<'PY'
+  if [ -n "${target_binding}" ]; then
+    PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" - \
+      "${target_binding}" "${policy}" <<'PY'
 import json
 import pathlib
 import sys
@@ -155,6 +190,7 @@ policy["required_solve_env"].update(
 path.write_text(json.dumps(policy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 path.chmod(0o600)
 PY
+  fi
 fi
 
 export AAR_RUN9_CANARY_ROOT="${root}"
@@ -174,13 +210,14 @@ export AAR_AUTODATA_MODEL_ENV_FILE="${model_env}"
 export AAR_AUTODATA_CAMPAIGN_POLICY="${policy}"
 export AAR_KIMI_PROXY_INFO="${kimi_proxy_info}"
 export AAR_AUTODATA_TARGET_BINDING="${target_binding}"
+export AAR_AUTODATA_CAPACITY_PROFILE="${CAPACITY_PROFILE}"
 
 sbatch_args=(--parsable --output="${root}/slurm-%j.out" --export=ALL)
 if [ -n "${SLURM_DEPENDENCY}" ]; then
   sbatch_args+=(--dependency="${SLURM_DEPENDENCY}")
 fi
 job_id="$(sbatch "${sbatch_args[@]}" "${SCRIPT_DIR}/run_9_capacity_canary.sbatch")"
-printf 'job_id=%s\nroot=%s\nbroker_runner=%s\nenvironment=%s\nconcurrency=%s\ntask_count=%s\nmodel_request_max_attempts=%s\ngenerator_deployment_id=%s\ntarget_aware=%s\naar_git_commit=%s\nautodata_git_commit=%s\n' \
-  "${job_id}" "${root}" "${RUNNER}" "${ENVIRONMENT}" "${CONCURRENCY}" "${TASK_COUNT}" "${MODEL_REQUEST_MAX_ATTEMPTS}" "${GENERATOR_DEPLOYMENT}" "$([ -n "${target_binding}" ] && printf true || printf false)" "$(git -C "${REPO}" rev-parse HEAD)" "$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)" \
+printf 'job_id=%s\nroot=%s\nbroker_runner=%s\nenvironment=%s\nconcurrency=%s\ntask_count=%s\nmodel_request_max_attempts=%s\ngenerator_deployment_id=%s\ncapacity_profile=%s\ntarget_aware=%s\naar_git_commit=%s\nautodata_git_commit=%s\n' \
+  "${job_id}" "${root}" "${RUNNER}" "${ENVIRONMENT}" "${CONCURRENCY}" "${TASK_COUNT}" "${MODEL_REQUEST_MAX_ATTEMPTS}" "${GENERATOR_DEPLOYMENT}" "${CAPACITY_PROFILE}" "$([ -n "${target_binding}" ] && printf true || printf false)" "$(git -C "${REPO}" rev-parse HEAD)" "$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)" \
   | tee "${root}/submission.txt"
 unset MODEL_API_KEY

@@ -1,0 +1,38 @@
+schema: aar.autodata.capacity-profile/v1
+name: target-aware-local-c32-v1
+target_enabled: true
+broker:
+  runner: local-bwrap
+  environment: oci-runner-firecracker-large
+  image: docker.io/library/python@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
+  expected_image_id: df18428df8a0f9189c84e7424d214b4c50092af1f9dca5842a00c41c39bda316
+  max_cpus: 2
+  max_memory_mb: 2048
+load:
+  concurrency: 32
+  task_count: 32
+  model_request_max_attempts: 3
+  max_cost_usd: "10"
+providers:
+  generator:
+    model: Kimi-K2.6
+    max_input_tokens: 4096
+    max_output_tokens: 768
+    timeout_seconds: 90
+    input_usd_per_million: "1"
+    output_usd_per_million: "4"
+  judge:
+    url: https://api.meta.ai/v1/responses
+    model: gpt-5-6-luna
+    max_input_tokens: 4096
+    max_output_tokens: 512
+    timeout_seconds: 90
+    input_usd_per_million: "1"
+    output_usd_per_million: "4"
+  target:
+    model: gemma-4-31B-it
+    max_input_tokens: 8192
+    max_output_tokens: 512
+    timeout_seconds: 90
+    input_usd_per_million: "0"
+    output_usd_per_million: "0"

@@ -86,6 +86,9 @@ def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
     assert 'export AAR_AUTODATA_GENERATOR_DEPLOYMENT="${GENERATOR_DEPLOYMENT}"' in submitter
     assert '"AUTODATA_GENERATOR_DEPLOYMENT_ID": "${GENERATOR_DEPLOYMENT}"' in submitter
     assert "generator_deployment_id=%s" in submitter
+    assert "target_aware_capacity.yaml" in submitter
+    assert "aar.autodata_capacity_profile render-policy" in submitter
+    assert '--capacity-profile "${CAPACITY_PROFILE}"' in canary
     assert 'export AAR_AUTODATA_TARGET_BINDING="${target_binding}"' in submitter
     assert "binding.solve_environment()" in submitter
     assert 'for index in $(seq 1 "${TASK_COUNT}")' in canary

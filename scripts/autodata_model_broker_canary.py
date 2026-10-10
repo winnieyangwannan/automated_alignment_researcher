@@ -22,6 +22,10 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
+from aar.autodata_capacity_profile import (
+    apply_profile_to_args,
+    load_capacity_profile,
+)
 from aar.autodata_target_binding import TargetBinding, load_binding
 
 
@@ -107,6 +111,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--broker-auth-token-file", type=Path, required=True)
     parser.add_argument("--recipe-root", type=Path, default=DEFAULT_RECIPE_ROOT)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--capacity-profile", type=Path)
     parser.add_argument(
         "--target-binding",
         type=Path,
@@ -330,6 +335,18 @@ def _task_input(*, target_aware: bool = False) -> dict[str, Any]:
 def _model_environment(
     args: argparse.Namespace, target_binding: TargetBinding | None = None
 ) -> dict[str, str]:
+    if args.capacity_profile is not None:
+        profile = load_capacity_profile(args.capacity_profile)
+        return profile.solve_environment(
+            generator_url=args.generator_url,
+            generator_host_header=args.generator_host_header,
+            generator_deployment_id=args.generator_deployment_id,
+            target_environment=(
+                target_binding.solve_environment()
+                if target_binding is not None
+                else None
+            ),
+        )
     environment = {
         # The legacy connectivity smoke stays target-disabled. Supplying a
         # trusted binding below replaces this with the fail-closed Run 12
@@ -608,6 +625,12 @@ def _walk_keys(value: Any) -> list[str]:
 
 
 def run(args: argparse.Namespace, *, runtime: _Runtime | None = None) -> dict[str, Any]:
+    args = apply_profile_to_args(args)
+    capacity_profile = (
+        load_capacity_profile(args.capacity_profile)
+        if args.capacity_profile is not None
+        else None
+    )
     runtime = runtime or _load_runtime()
     token = _read_owned_token(args.broker_auth_token_file)
     target_binding = (
@@ -657,7 +680,12 @@ def run(args: argparse.Namespace, *, runtime: _Runtime | None = None) -> dict[st
                     "sha256": identity.sha256,
                     "size_bytes": identity.size,
                 },
-                "resources": {"cpus": 2, "memory_mb": 2048},
+                "resources": {
+                    "cpus": capacity_profile.max_cpus if capacity_profile else 2,
+                    "memory_mb": (
+                        capacity_profile.max_memory_mb if capacity_profile else 2048
+                    ),
+                },
                 "solve": {
                     "argv": rendered_argv,
                     "env": _model_environment(args, target_binding),

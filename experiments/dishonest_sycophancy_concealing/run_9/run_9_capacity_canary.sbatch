@@ -22,6 +22,7 @@ BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:?missing broker Python}"
 CAPABILITY_FILE="${AAR_AUTODATA_CAPABILITY_FILE:?missing capability file}"
 KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:?missing Kimi proxy contract}"
 TARGET_BINDING="${AAR_AUTODATA_TARGET_BINDING:-}"
+CAPACITY_PROFILE="${AAR_AUTODATA_CAPACITY_PROFILE:-}"
 
 port=$(( 10000 + (${SLURM_JOB_ID:?} % 40000) ))
 broker_url="http://127.0.0.1:${port}"
@@ -139,6 +140,15 @@ if [ -n "${TARGET_BINDING}" ]; then
     --target-canary-id-prefix run9-target-capacity-canary
   )
 fi
+profile_args=()
+legacy_model_args=(
+  --generator-max-output-tokens 768
+  --model-request-max-attempts "${MODEL_REQUEST_MAX_ATTEMPTS}"
+)
+if [ -n "${CAPACITY_PROFILE}" ]; then
+  profile_args=(--capacity-profile "${CAPACITY_PROFILE}")
+  legacy_model_args=()
+fi
 load_started_ns="$(date +%s%N)"
 for index in $(seq 1 "${TASK_COUNT}"); do
   PYTHONPATH="${AUTODATA}/src:${REPO}" "${REPO}/.venv/bin/python" \
@@ -151,8 +161,8 @@ for index in $(seq 1 "${TASK_COUNT}"); do
     --generator-url "${generator_url}" \
     --generator-host-header "" \
     --generator-deployment-id "${GENERATOR_DEPLOYMENT}" \
-    --generator-max-output-tokens 768 \
-    --model-request-max-attempts "${MODEL_REQUEST_MAX_ATTEMPTS}" \
+    "${profile_args[@]}" \
+    "${legacy_model_args[@]}" \
     --allow-judge-rejection \
     "${target_args[@]}" \
     --timeout-seconds 1800 \
