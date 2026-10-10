@@ -94,6 +94,11 @@ if [ ! -x "${BROKER_PYTHON}" ]; then
   exit 2
 fi
 [ "$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)" = "${REQUIRED_AUTODATA_SHA}" ] || { echo "wrong AutoData revision" >&2; exit 2; }
+AAR_AUTODATA=1 \
+  AAR_AUTODATA_PLUGIN_ROOT="${AUTODATA_CHECKOUT}/plugin/autodata" \
+  AAR_AUTODATA_SHA="${REQUIRED_AUTODATA_SHA}" \
+  PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -c \
+  'from aar.research_loop.autodata_plugin import resolve_autodata_plugin; assert resolve_autodata_plugin() is not None'
 for proof in preflight.json canary-report.json target-binding.json; do
   [ -s "${CANARY_ROOT}/${proof}" ] || { echo "missing Run 12 canary proof ${proof}" >&2; exit 2; }
 done

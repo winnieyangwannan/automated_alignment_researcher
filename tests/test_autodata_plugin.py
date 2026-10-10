@@ -71,6 +71,47 @@ class AutoDataPluginTest(unittest.TestCase):
                 resolved.sdk_config(), {"type": "local", "path": str(plugin.resolve())}
             )
 
+    def test_resolves_clean_pinned_detached_plugin(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            plugin, sha = self._checkout(Path(temporary))
+            subprocess.run(
+                ["git", "-C", str(plugin.parent.parent), "checkout", "--detach", sha],
+                check=True,
+                capture_output=True,
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "AAR_AUTODATA": "1",
+                    "AAR_AUTODATA_PLUGIN_ROOT": str(plugin),
+                    "AAR_AUTODATA_SHA": sha,
+                },
+                clear=True,
+            ):
+                resolved = resolve_autodata_plugin()
+
+            self.assertIsNotNone(resolved)
+
+    def test_rejects_named_feature_branch_at_pinned_sha(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            plugin, sha = self._checkout(Path(temporary))
+            subprocess.run(
+                ["git", "-C", str(plugin.parent.parent), "switch", "-c", "feature"],
+                check=True,
+                capture_output=True,
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "AAR_AUTODATA": "1",
+                    "AAR_AUTODATA_PLUGIN_ROOT": str(plugin),
+                    "AAR_AUTODATA_SHA": sha,
+                },
+                clear=True,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "main or detached"):
+                    resolve_autodata_plugin()
+
     def test_rejects_sha_mismatch_and_dirty_plugin(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             plugin, sha = self._checkout(Path(temporary))

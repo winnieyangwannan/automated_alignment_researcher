@@ -223,6 +223,15 @@ canary deployment was archived without ever allocating a GPU. Both initial and
 post-promotion Gemma launch paths now use `cpu_x86_lowest`, matching the live
 Kimi and Gemma Serve API deployments on `fair-cw-use2-1`.
 
+The first real researcher process then failed before starting Kimi because the
+plugin resolver required the AutoData checkout to report branch `main`, while
+the launcher intentionally uses a detached, clean checkout at reviewed commit
+`823c5948854df14664f3168bc5e6c49a2cecb975`. The resolver now accepts either
+`main` or detached HEAD only after the full expected SHA and clean plugin tree
+have been verified; named feature branches remain rejected even at the same
+commit. The top-level launcher now executes this resolver preflight before any
+new Gemma deployment.
+
 Separately, the reusable runtime profile was corrected from an accidental
 concurrency value of 32 back to the documented production value of eight per
 chain. A fresh canary must pass these gates before the five-chain launch.

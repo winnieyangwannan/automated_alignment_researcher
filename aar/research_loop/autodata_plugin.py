@@ -115,8 +115,6 @@ def resolve_autodata_plugin() -> AutoDataPlugin | None:
         dirty = _git(checkout, "status", "--porcelain", "--", "plugin/autodata")
     except (OSError, subprocess.CalledProcessError) as error:
         raise RuntimeError("AutoData plugin checkout is not a readable Git checkout") from error
-    if branch != "main":
-        raise RuntimeError(f"AutoData plugin checkout must be on main, found {branch!r}")
     if dirty:
         raise RuntimeError("AutoData plugin directory has uncommitted changes")
 
@@ -126,6 +124,15 @@ def resolve_autodata_plugin() -> AutoDataPlugin | None:
     if git_sha != expected_sha:
         raise RuntimeError(
             f"AutoData plugin SHA mismatch: expected {expected_sha}, found {git_sha}"
+        )
+    # Production execution checkouts are deliberately detached at the exact
+    # reviewed commit. Accept main for an ordinary operator checkout or a
+    # detached HEAD whose full SHA matched above; reject every named feature
+    # branch even when it currently points at the same commit.
+    if branch not in {"", "main"}:
+        raise RuntimeError(
+            "AutoData plugin checkout must be on main or detached at the pinned "
+            f"SHA, found {branch!r}"
         )
 
     return AutoDataPlugin(root=root, checkout=checkout, git_sha=git_sha)

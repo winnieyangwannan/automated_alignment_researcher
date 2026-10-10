@@ -141,6 +141,7 @@ def test_run12_uses_separate_kimi_deployments_and_maximum_token_allowances() -> 
     assert "researcher_kimi_deployment" in launcher
     assert "generator_kimi_deployment" in launcher
     assert 'AAR_KIMI_SERVE_DEPLOYMENT="${RESEARCHER_DEPLOYMENT}"' in launcher
+    assert "resolve_autodata_plugin" in launcher
     assert "--coord-qos cpu_x86_lowest --proxy-qos cpu_x86_lowest" in launcher
     assert (
         "--coord-qos cpu_x86_lowest --proxy-qos cpu_x86_lowest"
