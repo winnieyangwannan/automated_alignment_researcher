@@ -117,7 +117,7 @@ done
 # The operator-side integrity monitor is part of the chain parent, not the
 # Claude research subprocess.  It gets a purpose-specific credential instead
 # of the general MODEL_API_KEY inherited by older launchers.
-AAR_RESEARCH_CHAIN_ENV_ALLOWLIST+=(AAR_MONITOR_ANTHROPIC_API_KEY)
+AAR_RESEARCH_CHAIN_ENV_ALLOWLIST+=(AAR_MONITOR_ANTHROPIC_API_KEY AAR_KIMI_PROXY_INFO)
 declare -A _AAR_WAS_SET=()
 for _aar_name in "${_AAR_PRESERVE[@]}"; do
   if [[ -v "${_aar_name}" ]]; then

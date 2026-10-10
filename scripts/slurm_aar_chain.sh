@@ -94,6 +94,7 @@ PY="${HARNESS_PY}"
 [ -x "${PY}" ] || { echo "[aar] ERROR: Python is not executable: ${PY}" >&2; exit 2; }
 
 _autodata_broker_pid=''
+_autodata_bridge_pid=''
 _autodata_broker_database=''
 _autodata_broker_database_retained=''
 _autodata_supervisor_pid=''
@@ -130,6 +131,10 @@ cleanup_autodata_broker() {
     wait "${_autodata_broker_pid}" 2>/dev/null || true
   fi
   snapshot_autodata_broker_database || true
+  if [ -n "${_autodata_bridge_pid}" ] && kill -0 "${_autodata_bridge_pid}" 2>/dev/null; then
+    kill "${_autodata_bridge_pid}" 2>/dev/null || true
+    wait "${_autodata_bridge_pid}" 2>/dev/null || true
+  fi
 }
 trap cleanup_autodata_broker EXIT
 if [ "${AAR_AUTODATA:-0}" = 1 ]; then
@@ -169,11 +174,10 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   mkdir -p "${_autodata_broker_database_root}"
   chmod 700 "${_autodata_broker_database_root}"
   _autodata_broker_database="${_autodata_broker_database_root}/broker.db"
-  _autodata_broker_database_retained="${_autodata_root}/broker.db"
-  if [ -f "${_autodata_broker_database_retained}" ]; then
-    cp -- "${_autodata_broker_database_retained}" "${_autodata_broker_database}"
-    chmod 600 "${_autodata_broker_database}"
-  fi
+  _autodata_broker_archive="${_autodata_root}/attempt-ledgers"
+  mkdir -p "${_autodata_broker_archive}"
+  chmod 700 "${_autodata_broker_archive}"
+  _autodata_broker_database_retained="${_autodata_broker_archive}/${SLURM_JOB_ID:-$$}.db"
   _autodata_native_state_retained="${TEAM_DIR}/autodata/native/state.db"
   export AAR_AUTODATA_RETAINED_STATE="${_autodata_native_state_retained}"
   if [ "${AAR_AUTODATA_LIFECYCLE_SUPERVISED:-0}" = 1 ]; then
@@ -203,6 +207,52 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   chmod 600 "${_autodata_capability_file}"
   _autodata_port=$(( 10000 + (${SLURM_JOB_ID:-8791} % 40000) ))
   export AAR_AUTODATA_BROKER_URL="http://127.0.0.1:${_autodata_port}"
+  if [ -n "${AAR_KIMI_PROXY_INFO:-}" ]; then
+    [ -f "${AAR_KIMI_PROXY_INFO}" ] || {
+      echo "[aar] ERROR: missing Kimi proxy contract: ${AAR_KIMI_PROXY_INFO}" >&2
+      exit 2
+    }
+    _autodata_bridge_port=$(( 50000 + (${SLURM_JOB_ID:-8791} % 15000) ))
+    _autodata_runtime="${TEAM_DIR}/autodata/runtime/${SLURM_JOB_ID:-$$}"
+    mkdir -p "${_autodata_runtime}"
+    chmod 700 "${TEAM_DIR}/autodata/runtime" "${_autodata_runtime}"
+    _autodata_repaired_policy="${_autodata_runtime}/campaign-policy.json"
+    "${PY}" - "${AAR_AUTODATA_CAMPAIGN_POLICY}" "${_autodata_repaired_policy}" "${_autodata_bridge_port}" <<'PY'
+import json
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1])
+destination = pathlib.Path(sys.argv[2])
+port = int(sys.argv[3])
+policy = json.loads(source.read_text(encoding="utf-8"))
+environment = policy["required_solve_env"]
+environment["AUTODATA_GENERATOR_URL"] = f"http://127.0.0.1:{port}/v1"
+environment["AUTODATA_GENERATOR_HOST_HEADER"] = ""
+destination.write_text(json.dumps(policy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+destination.chmod(0o600)
+PY
+    export AAR_AUTODATA_CAMPAIGN_POLICY="${_autodata_repaired_policy}"
+    "${PY}" "${REPO}/scripts/loopback_model_auth_bridge.py" \
+      --proxy-info "${AAR_KIMI_PROXY_INFO}" --port "${_autodata_bridge_port}" \
+      >"${TEAM_DIR}/logs/autodata-kimi-auth-bridge-${SLURM_JOB_ID:-$$}.log" 2>&1 &
+    _autodata_bridge_pid=$!
+    for _autodata_probe in $(seq 1 30); do
+      if "${PY}" -c 'import sys,urllib.request; urllib.request.urlopen(f"http://127.0.0.1:{sys.argv[1]}/healthz",timeout=2).read()' "${_autodata_bridge_port}" 2>/dev/null; then
+        break
+      fi
+      kill -0 "${_autodata_bridge_pid}" 2>/dev/null || {
+        echo "[aar] ERROR: Kimi auth bridge exited during startup" >&2
+        exit 2
+      }
+      sleep 1
+    done
+    kill -0 "${_autodata_bridge_pid}" 2>/dev/null || {
+      echo "[aar] ERROR: Kimi auth bridge is not running" >&2
+      exit 2
+    }
+    echo "[aar] direct Kimi bridge ready (policy=job-local)"
+  fi
   _autodata_broker_args=(
     --runner "${AAR_AUTODATA_BROKER_RUNNER}"
     --root "${_autodata_root}"

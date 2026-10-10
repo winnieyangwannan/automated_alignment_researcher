@@ -176,6 +176,8 @@ def test_run9_keeps_the_hot_broker_database_on_node_local_storage() -> None:
     assert '${SLURM_TMPDIR:-/tmp}/aar-autodata-broker-' in chain
     assert '--database "${_autodata_broker_database}"' in chain
     assert 'snapshot_autodata_broker_database' in chain
+    assert '_autodata_broker_archive="${_autodata_root}/attempt-ledgers"' in chain
+    assert 'cp -- "${_autodata_broker_database_retained}" "${_autodata_broker_database}"' not in chain
     assert "wal_checkpoint(TRUNCATE)" in chain
     assert '${SLURM_TMPDIR:-/tmp}/aar-run9-canary-broker-' in canary
     assert '--database "${broker_database}"' in canary
@@ -192,6 +194,23 @@ def test_run9_production_recovery_uses_an_attempt_local_broker_ledger() -> None:
     assert '"${LOCAL_BROKER}" "${BROKER_ATTEMPT_RETAINED}"' in recovery
     assert 'cp -- "${BROKER_RETAINED}" "${LOCAL_BROKER}"' not in recovery
     assert '[[ "${supervisor_state}" = Z* ]]' in recovery
+
+
+def test_run9_chain_can_route_kimi_through_the_authenticated_loopback_bridge() -> None:
+    chain = (ROOT / "scripts" / "slurm_aar_chain.sh").read_text()
+    runtime = (ROOT / "scripts" / "aar_runtime_env.sh").read_text()
+    submitter = (RUN9 / "submit_run_9.sh").read_text()
+    agent = (ROOT / "aar" / "research_loop" / "agent.py").read_text()
+
+    assert 'if [ -n "${AAR_KIMI_PROXY_INFO:-}" ]; then' in chain
+    assert 'scripts/loopback_model_auth_bridge.py' in chain
+    assert 'environment["AUTODATA_GENERATOR_URL"] = f"http://127.0.0.1:{port}/v1"' in chain
+    assert 'environment["AUTODATA_GENERATOR_HOST_HEADER"] = ""' in chain
+    assert 'export AAR_AUTODATA_CAMPAIGN_POLICY="${_autodata_repaired_policy}"' in chain
+    assert 'kill "${_autodata_bridge_pid}"' in chain
+    assert "AAR_KIMI_PROXY_INFO" in runtime
+    assert 'export AAR_KIMI_PROXY_INFO="${KIMI_PROXY_INFO}"' in submitter
+    assert '"AAR_KIMI_PROXY_INFO"' in agent
 
 
 def test_run9_uses_one_supervised_node_local_autodata_lifecycle() -> None:

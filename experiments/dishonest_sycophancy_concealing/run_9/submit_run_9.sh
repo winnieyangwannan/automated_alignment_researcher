@@ -8,6 +8,7 @@ source "${SCRIPT_DIR}/autodata_version.env"
 AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pipelines}"
 SECRET_ENV="${AAR_RUN9_SECRET_ENV:-/storage/home/${USER}/aar-worktrees/autodata/.env}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
+KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-/checkpoint/ram/shared/vllm_deployments_v2/winnieyangwn-kimi26/proxy_info.json}"
 AAR_AUTODATA_BROKER_RUNNER="${AAR_AUTODATA_BROKER_RUNNER:-local-bwrap}"
 AAR_AUTODATA_ENVIRONMENT="${AAR_AUTODATA_ENVIRONMENT:-oci-runner-firecracker-large}"
 AAR_AUTODATA_CONCURRENCY="${AAR_AUTODATA_CONCURRENCY:-16}"
@@ -66,7 +67,7 @@ elif [ "${target_setting_count}" != 0 ]; then
   exit 2
 fi
 
-for required in "${SECRET_ENV}" "${REUSED_BASELINE}" "${SCRIPT_DIR}/snapshot_vllm_runtime.sh"; do
+for required in "${SECRET_ENV}" "${REUSED_BASELINE}" "${SCRIPT_DIR}/snapshot_vllm_runtime.sh" "${KIMI_PROXY_INFO}"; do
   [ -f "${required}" ] || { echo "missing required input: ${required}" >&2; exit 2; }
 done
 [ "$(stat -c %a "${SECRET_ENV}")" = 600 ] || { echo "secret env must be mode 600" >&2; exit 2; }
@@ -232,6 +233,7 @@ export AAR_AUTODATA_APPROVAL_POLICY_VERSION="aar-autodata/run9-v1"
 export AAR_AUTODATA_PROPOSAL_BINDINGS="${proposal_bindings}"
 export AAR_AUTODATA_RESOURCES_READY=1
 export AAR_AUTODATA_BROKER_RUNNER AAR_AUTODATA_ENVIRONMENT AAR_AUTODATA_CONCURRENCY
+export AAR_KIMI_PROXY_INFO="${KIMI_PROXY_INFO}"
 export AAR_VLLM_WORKER_SH="${vllm_worker}"
 
 job_id="$(sbatch --parsable \
