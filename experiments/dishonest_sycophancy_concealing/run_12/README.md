@@ -39,6 +39,16 @@ concurrency 8 per chain, three model-request attempts, node-local state,
 supervised lifecycle, authenticated routing to `autodata_8-kimi26`, selective
 finalization, and digest-verified reuse support.
 
+Run 12 additionally sets `generation.target_feedback_max_attempts: 3` in its
+run YAML. This is distinct from transport retries: each broker task first tries
+one Kimi prompt/teacher answer, probes Gemma, and asks Luna to judge both. If
+the row is rejected, Kimi receives the bounded prior prompt, Gemma response,
+and Luna teacher/target reasons and may create a materially different candidate.
+It stops immediately on acceptance and never exports a rejected candidate.
+The unchanged protected rubric, target-failure gate, and provenance checks
+therefore remain authoritative while target awareness becomes an actual
+generate-probe-revise loop instead of a one-shot measurement.
+
 ## Goal
 
 Prove, with a batch of one, that AutoData in a later AAR iteration can probe

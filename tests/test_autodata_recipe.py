@@ -651,6 +651,140 @@ def test_target_aware_task_retains_only_challenging_rows(tmp_path: Path) -> None
     assert metadata["expected_target_failure_mode"] == "sycophancy"
 
 
+def test_target_aware_task_retries_with_bounded_rejection_feedback(
+    tmp_path: Path,
+) -> None:
+    task = _load_module(
+        "aar_autodata_recipe_task_target_retry", RECIPE / "recipe" / "task.py"
+    )
+    input_path = tmp_path / "input.json"
+    output_path = tmp_path / "result.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "id": "target-aware-retry",
+                    "seed": 7,
+                    "payload": {
+                        "domain": "science explanation",
+                        "behavior_pattern": "pressure to agree",
+                        "primary_axis": "sycophancy_resistance",
+                    },
+                }
+            }
+        )
+    )
+    target = {
+        "response": "I disagree with the unsupported claim.",
+        "model": "gemma-test",
+        "deployment_id": "target-test",
+        "checkpoint_hash": "sha256:" + "a" * 64,
+    }
+    rejected_behavior = {
+        "challenging": False,
+        "score": 0,
+        "failure_modes": [],
+        "expected_failure_mode": "sycophancy",
+        "reason": "The target resisted the pressure.",
+    }
+    accepted_behavior = {
+        "challenging": True,
+        "score": 2,
+        "failure_modes": ["sycophancy"],
+        "expected_failure_mode": "sycophancy",
+        "reason": "The target agreed under pressure.",
+    }
+    common = {
+        "teacher_accepted": True,
+        "score": 1.0,
+        "primary_axis": "sycophancy_resistance",
+        "primary_dimension": "sycophancy_resistance",
+        "dimension_roles": {"sycophancy_resistance": "primary"},
+        "dimensions": {},
+        "reason": "teacher is sound",
+        "rubric_version": "run9-axis-conditioned-v3",
+        "rubric_sha256": "sha256:" + "c" * 64,
+    }
+    with (
+        patch.dict(
+            os.environ,
+            {"AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS": "2"},
+            clear=False,
+        ),
+        patch.object(
+            task,
+            "_generate",
+            side_effect=[
+                (
+                    {"prompt": "easy prompt", "response": "first teacher"},
+                    {"role": "generator", "attempt": 1},
+                ),
+                (
+                    {"prompt": "hard prompt", "response": "second teacher"},
+                    {"role": "generator", "attempt": 2},
+                ),
+            ],
+        ) as generate,
+        patch.object(task, "_target_config", return_value={"configured": "yes"}),
+        patch.object(
+            task,
+            "_probe_target",
+            side_effect=[
+                (target, {"role": "target", "attempt": 1}),
+                (target, {"role": "target", "attempt": 2}),
+            ],
+        ),
+        patch.object(
+            task,
+            "_judge",
+            side_effect=[
+                (
+                    {
+                        **common,
+                        "accept": False,
+                        "target_behavior": rejected_behavior,
+                    },
+                    {"role": "judge", "attempt": 1},
+                ),
+                (
+                    {
+                        **common,
+                        "accept": True,
+                        "target_behavior": accepted_behavior,
+                    },
+                    {"role": "judge", "attempt": 2},
+                ),
+            ],
+        ),
+        patch.object(
+            sys,
+            "argv",
+            ["task.py", "--input", str(input_path), "--output", str(output_path)],
+        ),
+    ):
+        assert task.main() == 0
+
+    result = json.loads(output_path.read_text())
+    assert result["metrics"]["valid"] == 1.0
+    assert result["generated_items"][0]["prompt"] == "hard prompt"
+    metadata = result["generated_items"][0]["metadata"]
+    assert metadata["generation_attempt"] == 2
+    assert metadata["generation_attempts_executed"] == 2
+    assert metadata["generation_attempts_maximum"] == 2
+    assert [entry["role"] for entry in result["provider_usage"]] == [
+        "generator",
+        "target",
+        "judge",
+        "generator",
+        "target",
+        "judge",
+    ]
+    retry_feedback = generate.call_args_list[1].kwargs["feedback"]
+    assert retry_feedback["previous_prompt"] == "easy prompt"
+    assert retry_feedback["target_response"] == target["response"]
+    assert retry_feedback["target_judge_reason"] == rejected_behavior["reason"]
+
+
 def test_comparator_maximizes_balanced_quality_and_challenge() -> None:
     task = _load_module(
         "aar_autodata_recipe_task_balanced_utility", RECIPE / "recipe" / "task.py"

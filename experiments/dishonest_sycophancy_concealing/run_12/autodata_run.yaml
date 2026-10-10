@@ -12,6 +12,10 @@ deployments:
   generator_kimi: autodata_8-kimi26
 budget:
   max_cost_usd: "299"
+generation:
+  # Retry only rejected candidates. Each retry receives bounded Gemma/Luna
+  # feedback and must generate a materially different prompt/teacher answer.
+  target_feedback_max_attempts: 3
 meta_optimization:
   maximum_iterations: 3
   minimum_iterations: 3

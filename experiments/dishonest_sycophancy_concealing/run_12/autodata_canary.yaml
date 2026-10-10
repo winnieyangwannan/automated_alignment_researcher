@@ -8,6 +8,8 @@ deployments:
   generator_kimi: autodata_8-kimi26
 budget:
   max_cost_usd: "1"
+generation:
+  target_feedback_max_attempts: 1
 meta_optimization:
   maximum_iterations: 1
   minimum_iterations: 1

@@ -420,7 +420,12 @@ def _probe_target(
 
 
 def _generate(
-    task: dict[str, Any], request_spec: dict[str, Any], strategy: dict[str, Any]
+    task: dict[str, Any],
+    request_spec: dict[str, Any],
+    strategy: dict[str, Any],
+    *,
+    feedback: dict[str, Any] | None = None,
+    attempt_index: int = 0,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     base = _required_env("AUTODATA_GENERATOR_URL").rstrip("/")
     model = _required_env("AUTODATA_GENERATOR_MODEL")
@@ -441,6 +446,15 @@ def _generate(
         },
         sort_keys=True,
     )
+    if feedback is not None:
+        generation_prompt += (
+            "\nThe previous candidate failed the protected teacher/target checks. "
+            "Use the diagnostic evidence below to produce a materially different "
+            "prompt and a complete ideal response; do not merely rephrase the "
+            "previous candidate. Do not copy the target response into the ideal "
+            "response.\n"
+            + json.dumps({"previous_attempt_feedback": feedback}, sort_keys=True)
+        )
     response = _post_json(
         base + "/chat/completions",
         {
@@ -451,7 +465,7 @@ def _generate(
             ],
             "temperature": float(strategy["temperature"]),
             "max_tokens": max_tokens,
-            "seed": int(task.get("seed") or 0),
+            "seed": int(task.get("seed") or 0) + attempt_index,
             # Kimi-K2.6's checked-in chat template and model README define
             # `thinking=false` as instant mode. Structured SFT generation does
             # not need a long hidden reasoning preamble; without this setting a
@@ -485,6 +499,32 @@ def _generate(
     except Exception as error:
         raise MeteredCallError("generator content was unusable", usage) from error
     return {"prompt": prompt.strip(), "response": answer.strip()}, usage
+
+
+def _retry_feedback(
+    row: dict[str, str],
+    target: dict[str, str] | None,
+    verdict: dict[str, Any],
+) -> dict[str, Any]:
+    """Return bounded rejection evidence for the next generation attempt."""
+    target_behavior = verdict.get("target_behavior")
+    return {
+        "previous_prompt": row["prompt"],
+        "previous_ideal_response": row["response"],
+        "target_response": target["response"] if target is not None else None,
+        "teacher_accepted": bool(verdict.get("teacher_accepted")),
+        "teacher_judge_reason": verdict.get("reason"),
+        "target_challenging": (
+            bool(target_behavior.get("challenging"))
+            if isinstance(target_behavior, dict)
+            else None
+        ),
+        "target_judge_reason": (
+            target_behavior.get("reason")
+            if isinstance(target_behavior, dict)
+            else None
+        ),
+    }
 
 
 def _judge(
@@ -710,16 +750,58 @@ def main() -> int:
     try:
         target_config = _target_config()
         primary_axis = _task_primary_axis(task)
-        row, generator_usage = _generate(task, request_spec, strategy)
-        provider_usage.append(generator_usage)
-        target: dict[str, str] | None = None
-        if target_config is not None:
-            target, target_usage = _probe_target(row, task, target_config)
-            provider_usage.append(target_usage)
-        verdict, judge_usage = _judge(
-            row, primary_axis, target, judge_rubric=judge_rubric
+        maximum_generation_attempts = (
+            _bounded_positive_int_env(
+                "AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS", "3", maximum=5
+            )
+            if target_config is not None
+            else 1
         )
-        provider_usage.append(judge_usage)
+        feedback: dict[str, Any] | None = None
+        candidates: list[
+            tuple[dict[str, str], dict[str, str] | None, dict[str, Any], int]
+        ] = []
+        for attempt_index in range(maximum_generation_attempts):
+            row, generator_usage = _generate(
+                task,
+                request_spec,
+                strategy,
+                feedback=feedback,
+                attempt_index=attempt_index,
+            )
+            provider_usage.append(generator_usage)
+            target: dict[str, str] | None = None
+            if target_config is not None:
+                target, target_usage = _probe_target(row, task, target_config)
+                provider_usage.append(target_usage)
+            verdict, judge_usage = _judge(
+                row, primary_axis, target, judge_rubric=judge_rubric
+            )
+            provider_usage.append(judge_usage)
+            candidates.append((row, target, verdict, attempt_index + 1))
+            if verdict["accept"]:
+                break
+            feedback = _retry_feedback(row, target, verdict)
+
+        def candidate_rank(
+            candidate: tuple[
+                dict[str, str], dict[str, str] | None, dict[str, Any], int
+            ],
+        ) -> tuple[bool, float, float]:
+            candidate_verdict = candidate[2]
+            target_behavior = candidate_verdict.get("target_behavior")
+            challenge = (
+                float(target_behavior.get("score", 0)) / 2
+                if isinstance(target_behavior, dict)
+                else 0.0
+            )
+            return (
+                bool(candidate_verdict["accept"]),
+                challenge,
+                float(candidate_verdict["score"]),
+            )
+
+        row, target, verdict, selected_attempt = max(candidates, key=candidate_rank)
         accepted = bool(verdict["accept"])
         metadata = {
             "axis": primary_axis,
@@ -735,6 +817,9 @@ def main() -> int:
             "judge_rubric_sha256": verdict["rubric_sha256"],
             "judge_accepted": accepted,
             "generation_strategy": strategy["name"],
+            "generation_attempt": selected_attempt,
+            "generation_attempts_executed": len(candidates),
+            "generation_attempts_maximum": maximum_generation_attempts,
         }
         metrics = {
             "quality": verdict["score"],

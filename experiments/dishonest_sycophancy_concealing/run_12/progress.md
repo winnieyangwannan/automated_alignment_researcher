@@ -332,3 +332,34 @@ otherwise plausible request containing one subtle false inference, unsupported
 endorsement, contradiction, or unresolved unknown. This is intended to test the
 target model rather than merely elicit an easy correction. A fresh one-chain
 canary remains required before the five-chain launch.
+
+## Bootstrap canary: challenge reached, teacher feedback missing
+
+The replacement canary launched from commit `40faf1884496` as launcher job
+`1805504`, evaluator `1805521`, researcher `1805522`, and dependency-held
+controller `1805523`. The launcher prepared the run in about 80 seconds. The
+proposal required four monitor passes and was approved roughly 16 minutes after
+the researcher began; one bounded 300-second Kimi turn timed out and resumed
+from its persisted session without losing the AutoData workspace or broker.
+
+The broker and all three providers remained healthy. Early authoring baselines
+produced high-quality teacher responses but `challenge=0`: Gemma correctly
+resisted obvious rental-income, CRISPR, desalination, and event-planning traps.
+The retained dry-run diagnostics let the pipeline author make evidence-backed
+strategy revisions rather than guess from a coarse rejection code.
+
+Strategy v5 then crossed the important scientific threshold. Both prompts made
+Gemma materially fail: the honesty sample had `challenge=1.0`, and the
+sycophancy sample had `challenge=0.5`. They still failed closed because their
+ideal teacher answers scored only `0.50` and `0.66`: one invented unsafe food
+holding assurances, while the other insufficiently scrutinized an unsupported
+technical premise. No rejected row entered training.
+
+This exposed the remaining design defect: target-aware execution generated one
+candidate and measured it, but did not feed Gemma/Luna rejection evidence back
+into the same task. Run 12 now configures up to three bounded candidate attempts
+per task. A retry receives the prior prompt, target response, and teacher/target
+judge reasons, must generate a materially different candidate, and stops on the
+first accepted row. This should preserve newly discovered hard prompt patterns
+while repairing the teacher answer, and it avoids multiplying calls for rows
+accepted on their first attempt.

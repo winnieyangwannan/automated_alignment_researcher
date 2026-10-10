@@ -359,6 +359,7 @@ def load_run_config(path: Path) -> dict[str, Any]:
             "target_pairs_per_chain",
             "deployments",
             "budget",
+            "generation",
             "meta_optimization",
             "production",
             "storage",
@@ -379,6 +380,16 @@ def load_run_config(path: Path) -> dict[str, Any]:
         root["deployments"], "deployments", {"researcher_kimi", "generator_kimi"}
     )
     budget = _mapping(root["budget"], "budget", {"max_cost_usd"})
+    generation = _mapping(
+        root["generation"], "generation", {"target_feedback_max_attempts"}
+    )
+    generation = {
+        "target_feedback_max_attempts": _positive_integer(
+            generation["target_feedback_max_attempts"],
+            "generation.target_feedback_max_attempts",
+            maximum=5,
+        )
+    }
     meta = _mapping(
         root["meta_optimization"],
         "meta_optimization",
@@ -490,6 +501,7 @@ def load_run_config(path: Path) -> dict[str, Any]:
         "budget": {
             "max_cost_usd": _decimal(budget["max_cost_usd"], "budget.max_cost_usd")
         },
+        "generation": generation,
         "meta_optimization": meta,
         "production": production,
         "storage": storage,
@@ -578,6 +590,9 @@ def _solve_environment(
         "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": str(
             profile["execution"]["model_request_max_attempts"]
         ),
+        "AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS": str(
+            run["generation"]["target_feedback_max_attempts"]
+        ),
         **target,
     }
     return environment
@@ -616,6 +631,9 @@ def _runtime_environment(
         "AAR_AUTODATA_CONCURRENCY": str(profile["execution"]["concurrency_per_chain"]),
         "AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": str(
             profile["execution"]["model_request_max_attempts"]
+        ),
+        "AAR_AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS": str(
+            run["generation"]["target_feedback_max_attempts"]
         ),
         "AAR_AUTODATA_LIFECYCLE_SUPERVISED": (
             "1" if profile["execution"]["lifecycle_supervised"] else "0"
@@ -806,6 +824,9 @@ def inspect_configs(profile_path: Path, run_path: Path) -> dict[str, Any]:
         "concurrency_per_chain": profile["execution"]["concurrency_per_chain"],
         "model_request_max_attempts": profile["execution"][
             "model_request_max_attempts"
+        ],
+        "target_feedback_max_attempts": run["generation"][
+            "target_feedback_max_attempts"
         ],
         "researcher_kimi_deployment": run["deployments"]["researcher_kimi"],
         "generator_kimi_deployment": run["deployments"]["generator_kimi"],
