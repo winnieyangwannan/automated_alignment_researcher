@@ -716,7 +716,7 @@ class KimiAgent:
                     )
                 if action is not None:
                     if action["status"] == "pending":
-                        self._autodata_begin_action(action["id"])
+                        self._autodata_begin_action(action)
                         action = self._autodata_action_record(action["id"])
                     if action is None or action["status"] != "in_progress":
                         raise RuntimeError(
@@ -1115,16 +1115,21 @@ class KimiAgent:
             temporary.unlink(missing_ok=True)
 
     @classmethod
-    def _autodata_begin_action(cls, action_id: str) -> None:
+    def _autodata_begin_action(cls, action: dict[str, Any]) -> None:
+        action_id = action.get("id")
+        if not isinstance(action_id, str):
+            raise RuntimeError("trusted AutoData action has no identifier")
         lease_path = cls._autodata_action_lease_path(action_id)
         lease_path.unlink(missing_ok=True)
         payload = cls._autodata_cli("action", "begin", action_id)
         token = payload.get("lease_token")
-        action = payload.get("action")
+        leased_action = payload.get("action")
         if not isinstance(token, str) or len(token) < 20:
             raise RuntimeError("trusted AutoData action begin returned no lease")
-        if not isinstance(action, dict) or action.get("id") != action_id:
+        if not isinstance(leased_action, dict) or leased_action.get("id") != action_id:
             raise RuntimeError("trusted AutoData action begin returned the wrong action")
+        # The begin response may intentionally be compact.  Capture from the
+        # complete pre-begin SQLite record supplied by the trusted caller.
         cls._autodata_capture_pipeline_revision_baseline(action)
         cls._write_private_text(lease_path, token)
 
@@ -1192,7 +1197,18 @@ class KimiAgent:
         if not isinstance(spec, dict):
             return False
         instructions = spec.get("instructions")
-        return isinstance(instructions, str) and "Latest feedback:" in instructions
+        scope = spec.get("scope")
+        revision = scope.get("revision") if isinstance(scope, dict) else None
+        # Revision 3 is the first pipeline-authoring action; its "Latest
+        # feedback" is the approved grounding review and does not require a
+        # strategy mutation.  A later pipeline action is a concrete rework
+        # request after the native dry-run/baseline review.
+        return (
+            isinstance(instructions, str)
+            and "Latest feedback:" in instructions
+            and isinstance(revision, int)
+            and revision > 3
+        )
 
     @classmethod
     def _autodata_pipeline_feedback_requires_edit(cls, action: dict[str, Any]) -> bool:

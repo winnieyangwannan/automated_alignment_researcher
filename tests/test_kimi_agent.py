@@ -1532,6 +1532,7 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                     "editable_root": str(draft),
                     "allowed_paths": ["**"],
                     "instructions": "Build the pipeline. Latest feedback: revise it.",
+                    "scope": {"kind": "workspace", "revision": 6},
                 },
             }
             with patch.dict(
@@ -1552,7 +1553,55 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                 self.assertFalse(
                     KimiAgent._autodata_pipeline_feedback_requires_edit(action)
                 )
+                action["spec"]["scope"]["revision"] = 3
+                current.write_text(baseline)
+                self.assertFalse(
+                    KimiAgent._autodata_pipeline_feedback_requires_edit(action)
+                )
                 current.write_text(baseline.replace("baseline prefix", "hard prefix"))
+                self.assertFalse(
+                    KimiAgent._autodata_pipeline_feedback_requires_edit(action)
+                )
+
+    def test_action_begin_snapshots_full_record_when_api_response_is_compact(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            strategy = root / "draft" / "recipe" / "generation_strategy.json"
+            strategy.parent.mkdir(parents=True)
+            strategy.write_text('{"temperature":0.2}')
+            action = {
+                "id": "act_compact_response",
+                "kind": "author_pipeline",
+                "status": "pending",
+                "spec": {
+                    "editable_root": str(root / "draft"),
+                    "instructions": "Build it. Latest feedback: revise it.",
+                    "scope": {"kind": "workspace", "revision": 6},
+                },
+            }
+            with (
+                patch.dict(os.environ, {"TEAM_DIR": str(root / "team")}),
+                patch.object(
+                    KimiAgent,
+                    "_autodata_cli",
+                    return_value={
+                        "lease_token": "x" * 32,
+                        "action": {"id": action["id"], "status": "in_progress"},
+                    },
+                ),
+            ):
+                KimiAgent._autodata_begin_action(action)
+                snapshot = KimiAgent._autodata_action_snapshot_path(action["id"])
+                self.assertEqual(
+                    snapshot.read_text().strip(),
+                    hashlib.sha256(strategy.read_bytes()).hexdigest(),
+                )
+                self.assertTrue(
+                    KimiAgent._autodata_pipeline_feedback_requires_edit(action)
+                )
+                strategy.write_text('{"temperature":0.3}')
                 self.assertFalse(
                     KimiAgent._autodata_pipeline_feedback_requires_edit(action)
                 )
