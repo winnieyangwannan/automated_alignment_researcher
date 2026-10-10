@@ -39,8 +39,8 @@ else
 fi
 for required in "${SECRET_ENV}" "${KIMI_PROXY_INFO}"; do
   [ -f "${required}" ] || { echo "missing required input: ${required}" >&2; exit 2; }
-  [ "$(stat -c %a "${required}")" = 600 ] || { echo "secret input must be mode 600: ${required}" >&2; exit 2; }
 done
+[ "$(stat -c %a "${SECRET_ENV}")" = 600 ] || { echo "secret env must be mode 600" >&2; exit 2; }
 if [ "${RUNNER}" = sandoq-firecracker ]; then
   [ -f "${FIRECRACKER_TOKEN}" ] || { echo "missing Firecracker token" >&2; exit 2; }
   [ "$(stat -c %a "${FIRECRACKER_TOKEN}")" = 600 ] || { echo "Firecracker token must be mode 600" >&2; exit 2; }
@@ -59,6 +59,8 @@ model_env="${root}/secrets/model-api.env"
 printf 'MODEL_API_KEY=%s\n' "${MODEL_API_KEY}" > "${model_env}"
 capability_file="${root}/secrets/capability"
 "${BROKER_PYTHON}" -c 'import secrets; print(secrets.token_hex(32))' > "${capability_file}"
+kimi_proxy_info="${root}/secrets/kimi-proxy-info.json"
+install -m 600 "${KIMI_PROXY_INFO}" "${kimi_proxy_info}"
 chmod 600 "${model_env}" "${capability_file}"
 
 policy="${root}/policy.json"
@@ -107,7 +109,7 @@ export AAR_AUTODATA_CAPABILITY_FILE="${capability_file}"
 export AAR_AUTODATA_EXECSIDECAR_TOKEN_FILE="${FIRECRACKER_TOKEN}"
 export AAR_AUTODATA_MODEL_ENV_FILE="${model_env}"
 export AAR_AUTODATA_CAMPAIGN_POLICY="${policy}"
-export AAR_KIMI_PROXY_INFO="${KIMI_PROXY_INFO}"
+export AAR_KIMI_PROXY_INFO="${kimi_proxy_info}"
 
 job_id="$(sbatch --parsable --output="${root}/slurm-%j.out" --export=ALL "${SCRIPT_DIR}/run_9_capacity_canary.sbatch")"
 printf 'job_id=%s\nroot=%s\nbroker_runner=%s\nenvironment=%s\nconcurrency=%s\naar_git_commit=%s\nautodata_git_commit=%s\n' \
