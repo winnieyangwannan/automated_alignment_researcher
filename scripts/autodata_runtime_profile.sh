@@ -39,6 +39,12 @@ aar_set_autodata_runtime_profile() {
       target-aware-local-v1)
         export AAR_AUTODATA_BROKER_RUNNER=local-bwrap
         export AAR_AUTODATA_ENVIRONMENT=oci-runner-firecracker-large
+        export AAR_AUTODATA_CONCURRENCY=8
+        export AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS=3
+        ;;
+      target-aware-local-c32-v1)
+        export AAR_AUTODATA_BROKER_RUNNER=local-bwrap
+        export AAR_AUTODATA_ENVIRONMENT=oci-runner-firecracker-large
         export AAR_AUTODATA_CONCURRENCY=32
         export AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS=3
         ;;

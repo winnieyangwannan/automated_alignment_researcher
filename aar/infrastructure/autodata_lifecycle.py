@@ -14,6 +14,7 @@ import os
 import re
 import sqlite3
 import stat
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -178,6 +179,216 @@ def _event(
     result = dict(rows[0])
     result["payload"] = _object(json.loads(str(result["payloadJson"])), kind)
     return result
+
+
+def _timestamp(raw: Any, where: str) -> datetime:
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError(f"{where} must be a native SQLite timestamp")
+    try:
+        parsed = datetime.fromisoformat(raw.strip().replace(" ", "T"))
+    except ValueError as error:
+        raise ValueError(f"{where} must be a native SQLite timestamp") from error
+    return parsed.replace(tzinfo=parsed.tzinfo or timezone.utc).astimezone(timezone.utc)
+
+
+def _span(start: Any, end: Any, where: str) -> dict[str, Any]:
+    started = _timestamp(start, f"{where}.started_at")
+    finished = _timestamp(end, f"{where}.finished_at")
+    elapsed = (finished - started).total_seconds()
+    if elapsed < 0:
+        raise ValueError(f"{where} has a negative native duration")
+    return {
+        "started_at": started.isoformat().replace("+00:00", "Z"),
+        "finished_at": finished.isoformat().replace("+00:00", "Z"),
+        "duration_seconds": elapsed,
+    }
+
+
+def _scope_timing(
+    connection: sqlite3.Connection,
+    *,
+    scope_kind: str,
+    scope_id: str,
+    table: str,
+    label: str,
+) -> dict[str, Any]:
+    if table not in {"workspaces", "executions"}:
+        raise ValueError("unsupported native timing scope")
+    row = connection.execute(
+        f"SELECT createdAt,updatedAt FROM {table} WHERE id=?", (scope_id,)
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"native {scope_kind} {scope_id} was not found for timing")
+    result = {
+        "scope_kind": scope_kind,
+        "scope_id": scope_id,
+        **_span(row[0], row[1], label),
+    }
+
+    actions = []
+    for action in connection.execute(
+        "SELECT id,kind,status,createdAt,updatedAt FROM actions "
+        "WHERE scopeKind=? AND scopeId=? ORDER BY createdAt,id",
+        (scope_kind, scope_id),
+    ).fetchall():
+        actions.append(
+            {
+                "action_id": str(action[0]),
+                "kind": str(action[1]),
+                "status": str(action[2]),
+                **_span(action[3], action[4], f"{label}.action"),
+            }
+        )
+    result["actions"] = actions
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for attempt in connection.execute(
+        "SELECT phase,createdAt,updatedAt,outcome,metricsJson,error FROM task_attempts "
+        "WHERE scopeKind=? AND scopeId=? ORDER BY createdAt,id",
+        (scope_kind, scope_id),
+    ).fetchall():
+        phase = str(attempt[0])
+        grouped.setdefault(phase, []).append(
+            {
+                "start": _timestamp(attempt[1], f"{label}.{phase}.createdAt"),
+                "end": _timestamp(attempt[2], f"{label}.{phase}.updatedAt"),
+                "outcome": str(attempt[3] or "unknown"),
+                "metrics": (
+                    _object(json.loads(str(attempt[4])), "task attempt metrics")
+                    if attempt[4] is not None
+                    else {}
+                ),
+                "error": str(attempt[5] or "").lower(),
+            }
+        )
+    task_phases = []
+    for phase, attempts in grouped.items():
+        started = min(value["start"] for value in attempts)
+        finished = max(value["end"] for value in attempts)
+        durations = sorted(
+            (value["end"] - value["start"]).total_seconds() for value in attempts
+        )
+        wall_seconds = (finished - started).total_seconds()
+        outcomes: dict[str, int] = {}
+        for value in attempts:
+            outcome = value["outcome"]
+            outcomes[outcome] = outcomes.get(outcome, 0) + 1
+        accepted = sum(
+            1 for value in attempts if float(value["metrics"].get("valid", 0.0)) >= 1.0
+        )
+        error_texts = [value["error"] for value in attempts if value["error"]]
+
+        def metric_total(key: str) -> float:
+            return sum(
+                float(value["metrics"].get(key, 0.0)) for value in attempts
+            )
+
+        task_phases.append(
+            {
+                "phase": phase,
+                "task_attempts": len(attempts),
+                "outcomes": dict(sorted(outcomes.items())),
+                "accepted_rows": accepted,
+                "started_at": started.isoformat().replace("+00:00", "Z"),
+                "finished_at": finished.isoformat().replace("+00:00", "Z"),
+                "wall_seconds": wall_seconds,
+                "summed_task_seconds": sum(durations),
+                "minimum_task_seconds": durations[0],
+                "median_task_seconds": durations[(len(durations) - 1) // 2],
+                "p95_task_seconds": durations[(95 * len(durations) - 1) // 100],
+                "maximum_task_seconds": durations[-1],
+                "tasks_per_minute": (
+                    60.0 * len(attempts) / wall_seconds if wall_seconds else None
+                ),
+                "accepted_rows_per_minute": (
+                    60.0 * accepted / wall_seconds if wall_seconds else None
+                ),
+                "provider_completed_calls": {
+                    role: metric_total(f"telemetry_{role}_completed_calls")
+                    for role in ("generator", "target", "judge")
+                },
+                "request_signals": {
+                    role: {
+                        "attempts": metric_total(
+                            f"telemetry_{role}_request_attempts"
+                        ),
+                        "failures": metric_total(
+                            f"telemetry_{role}_request_failures"
+                        ),
+                        "http_429_or_rate_limit": metric_total(
+                            f"telemetry_{role}_http_429_or_rate_limit"
+                        ),
+                        "timeouts": metric_total(f"telemetry_{role}_timeouts"),
+                        "connection_resets": metric_total(
+                            f"telemetry_{role}_connection_resets"
+                        ),
+                    }
+                    for role in ("generator", "target", "judge")
+                },
+                "error_signals": {
+                    "http_429_or_rate_limit": sum(
+                        "429" in error or "rate limit" in error
+                        for error in error_texts
+                    ),
+                    "timeout": sum("timeout" in error for error in error_texts),
+                    "connection_reset": sum(
+                        "reset" in error for error in error_texts
+                    ),
+                    "other": sum(
+                        not any(
+                            token in error
+                            for token in ("429", "rate limit", "timeout", "reset")
+                        )
+                        for error in error_texts
+                    ),
+                },
+            }
+        )
+    result["task_phases"] = task_phases
+    return result
+
+
+def _lifecycle_timing(
+    connection: sqlite3.Connection,
+    *,
+    run_id: str,
+    workspace_id: str,
+    meta_id: str,
+    production_id: str,
+) -> dict[str, Any]:
+    workspace = _scope_timing(
+        connection,
+        scope_kind="workspace",
+        scope_id=workspace_id,
+        table="workspaces",
+        label="workspace_authoring",
+    )
+    meta = _scope_timing(
+        connection,
+        scope_kind="execution",
+        scope_id=meta_id,
+        table="executions",
+        label="meta_optimization",
+    )
+    production = _scope_timing(
+        connection,
+        scope_kind="execution",
+        scope_id=production_id,
+        table="executions",
+        label="production_generation",
+    )
+    return {
+        "schema": "aar.autodata.lifecycle-timing/v1",
+        "run_id": run_id,
+        "workspace_authoring": workspace,
+        "meta_optimization": meta,
+        "production_generation": production,
+        "end_to_end": _span(
+            workspace["started_at"],
+            production["finished_at"],
+            "end_to_end",
+        ),
+    }
 
 
 def _study(connection: sqlite3.Connection, subject_kind: str, subject_id: str) -> str:
@@ -571,6 +782,13 @@ def verify_preflight(
             raise ValueError("production dataset contains duplicate accepted row ids")
         if contract is not None:
             validate_dataset_items(items, contract)
+        timing = _lifecycle_timing(
+            connection,
+            run_id=run_id,
+            workspace_id=workspace_id,
+            meta_id=meta_id,
+            production_id=production_id,
+        )
     finally:
         connection.close()
 
@@ -591,6 +809,7 @@ def verify_preflight(
         "training_objective": (
             contract["training_objective"] if contract is not None else None
         ),
+        "timing": timing,
     }
 
 

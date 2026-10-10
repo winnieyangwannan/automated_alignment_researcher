@@ -366,6 +366,7 @@ def load_run_config(path: Path) -> dict[str, Any]:
             "bootstrap_canary",
             "deployments",
             "budget",
+            "authoring",
             "generation",
             "meta_optimization",
             "production",
@@ -394,6 +395,16 @@ def load_run_config(path: Path) -> dict[str, Any]:
         root["deployments"], "deployments", {"researcher_kimi", "generator_kimi"}
     )
     budget = _mapping(root["budget"], "budget", {"max_cost_usd"})
+    authoring = _mapping(
+        root["authoring"], "authoring", {"max_wall_seconds"}
+    )
+    authoring = {
+        "max_wall_seconds": _positive_integer(
+            authoring["max_wall_seconds"],
+            "authoring.max_wall_seconds",
+            maximum=86_400,
+        )
+    }
     generation = root["generation"]
     if not isinstance(generation, dict):
         raise ValueError("generation must be a mapping")
@@ -437,7 +448,6 @@ def load_run_config(path: Path) -> dict[str, Any]:
         {
             "required_rows",
             "initial_tasks",
-            "maximum_tasks",
             "minimum_successful_task_fraction",
         },
     )
@@ -448,22 +458,13 @@ def load_run_config(path: Path) -> dict[str, Any]:
         "initial_tasks": _positive_integer(
             production["initial_tasks"], "production.initial_tasks"
         ),
-        "maximum_tasks": _positive_integer(
-            production["maximum_tasks"], "production.maximum_tasks"
-        ),
         "minimum_successful_task_fraction": _fraction(
             production["minimum_successful_task_fraction"],
             "production.minimum_successful_task_fraction",
         ),
     }
-    if not (
-        production["required_rows"]
-        <= production["initial_tasks"]
-        <= production["maximum_tasks"]
-    ):
-        raise ValueError(
-            "production task counts must cover required rows monotonically"
-        )
+    if production["required_rows"] > production["initial_tasks"]:
+        raise ValueError("production source tasks must cover required rows")
     storage = _mapping(
         root["storage"], "storage", {"root", "keep_checkpoints"}
     )
@@ -525,6 +526,7 @@ def load_run_config(path: Path) -> dict[str, Any]:
         "budget": {
             "max_cost_usd": _decimal(budget["max_cost_usd"], "budget.max_cost_usd")
         },
+        "authoring": authoring,
         "generation": generation,
         "meta_optimization": meta,
         "production": production,
@@ -650,6 +652,9 @@ def _runtime_environment(
             output_dir / "autodata-training-data-contract.json"
         ),
         "AAR_AUTODATA_GENERATOR_DEPLOYMENT": run["deployments"]["generator_kimi"],
+        "AAR_AUTODATA_AUTHORING_MAX_WALL_SECONDS": str(
+            run["authoring"]["max_wall_seconds"]
+        ),
         "AAR_AUTODATA_BROKER_RUNNER": profile["broker"]["runner"],
         "AAR_AUTODATA_ENVIRONMENT": profile["broker"]["environment"],
         "AAR_AUTODATA_CONCURRENCY": str(profile["execution"]["concurrency_per_chain"]),
@@ -672,7 +677,6 @@ def _runtime_environment(
         "AAR_AUTODATA_TEST_TASKS": str(meta["test_tasks"]),
         "AAR_AUTODATA_PRODUCTION_ROWS": str(production["required_rows"]),
         "AAR_AUTODATA_PRODUCTION_INITIAL_TASKS": str(production["initial_tasks"]),
-        "AAR_AUTODATA_PRODUCTION_MAX_TASKS": str(production["maximum_tasks"]),
         "AAR_AUTODATA_PRODUCTION_MIN_SUCCESS_FRACTION": format(
             production["minimum_successful_task_fraction"], ".12g"
         ),
@@ -858,6 +862,7 @@ def inspect_configs(profile_path: Path, run_path: Path) -> dict[str, Any]:
         "target_feedback_max_attempts": run["generation"][
             "target_feedback_max_attempts"
         ],
+        "authoring_max_wall_seconds": run["authoring"]["max_wall_seconds"],
         "researcher_kimi_deployment": run["deployments"]["researcher_kimi"],
         "generator_kimi_deployment": run["deployments"]["generator_kimi"],
         "chains": run["chains"],

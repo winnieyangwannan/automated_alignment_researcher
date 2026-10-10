@@ -1743,6 +1743,20 @@ class KimiAgent:
             raise RuntimeError(
                 "verified production handoff did not satisfy the configured row target"
             )
+        timing = verification.get("timing")
+        if not isinstance(timing, dict) or timing.get("schema") != (
+            "aar.autodata.lifecycle-timing/v1"
+        ):
+            raise RuntimeError("verified production handoff has no lifecycle timing")
+        timing_path = (
+            Path(team_raw)
+            / "autodata"
+            / run_id
+            / "autodata-lifecycle-timing.json"
+        )
+        cls._write_private_text(
+            timing_path, json.dumps(timing, indent=2, sort_keys=True)
+        )
         marker = (
             Path(team_raw)
             / "autodata"
@@ -1755,6 +1769,7 @@ class KimiAgent:
             "stop_after": "production",
             "required_accepted_rows": required_rows,
             "verification": verification,
+            "timing_report": str(timing_path),
         }
         encoded = json.dumps(payload, indent=2, sort_keys=True)
         if marker.exists():

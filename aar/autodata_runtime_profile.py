@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 
 TARGET_AWARE_LOCAL_PROFILE = "target-aware-local-v1"
+TARGET_AWARE_LOCAL_C32_PROFILE = "target-aware-local-c32-v1"
 QUESTION_ONLY_LOCAL_PROFILE = "question-only-local-v1"
 
 
@@ -28,6 +29,14 @@ class AutoDataRuntimeProfile:
 _PROFILES = {
     TARGET_AWARE_LOCAL_PROFILE: AutoDataRuntimeProfile(
         name=TARGET_AWARE_LOCAL_PROFILE,
+        target_enabled=True,
+        broker_runner="local-bwrap",
+        environment="oci-runner-firecracker-large",
+        concurrency=8,
+        model_request_max_attempts=3,
+    ),
+    TARGET_AWARE_LOCAL_C32_PROFILE: AutoDataRuntimeProfile(
+        name=TARGET_AWARE_LOCAL_C32_PROFILE,
         target_enabled=True,
         broker_runner="local-bwrap",
         environment="oci-runner-firecracker-large",

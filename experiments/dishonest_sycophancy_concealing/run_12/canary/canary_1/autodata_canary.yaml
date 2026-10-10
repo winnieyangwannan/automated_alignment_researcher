@@ -8,6 +8,8 @@ deployments:
   generator_kimi: autodata_8-kimi26
 budget:
   max_cost_usd: "1"
+authoring:
+  max_wall_seconds: 1800
 generation:
   target_feedback_max_attempts: 1
 meta_optimization:
@@ -20,7 +22,6 @@ meta_optimization:
 production:
   required_rows: 1
   initial_tasks: 1
-  maximum_tasks: 1
   minimum_successful_task_fraction: 1.0
 storage:
   root: /checkpoint/ram/{user}
@@ -30,7 +31,7 @@ evaluation:
   max_truncation_rate: 0.20
 agent:
   backend: kimi
-  turn_timeout_seconds: 300
+  turn_timeout_seconds: 1800
 recipe_root: aar/autodata_recipes/dishonest_sycophancy_concealing
 training_contract:
   objective: sft

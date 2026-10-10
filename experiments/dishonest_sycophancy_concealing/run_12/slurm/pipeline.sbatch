@@ -100,7 +100,7 @@ source "${AAR_AUTODATA_RUNTIME_ENV}"
 [ "${AAR_AGENT_BACKEND:?missing research backend}" = kimi ] || {
   echo "Run 12 requires the Kimi research backend" >&2; exit 2;
 }
-[ "${AAR_KIMI_TURN_TIMEOUT_SECONDS:?missing Kimi turn timeout}" = 300 ] || {
+[ "${AAR_KIMI_TURN_TIMEOUT_SECONDS:?missing Kimi turn timeout}" = 1800 ] || {
   echo "Run 12 Kimi turn timeout drifted" >&2; exit 2;
 }
 [ "${AAR_AUTODATA_TARGET_REQUIRED:-0}" = 1 ] || {

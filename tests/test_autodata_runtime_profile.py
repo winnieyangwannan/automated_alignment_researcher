@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from aar.autodata_runtime_profile import (
+    TARGET_AWARE_LOCAL_C32_PROFILE,
     TARGET_AWARE_LOCAL_PROFILE,
     runtime_profile,
     validate_campaign_policy,
@@ -51,7 +52,7 @@ def test_target_aware_profile_has_measured_defaults() -> None:
     profile = runtime_profile(TARGET_AWARE_LOCAL_PROFILE)
 
     assert profile.broker_runner == "local-bwrap"
-    assert profile.concurrency == 32
+    assert profile.concurrency == 8
     assert profile.model_request_max_attempts == 3
     assert profile.lifecycle_supervised is True
     assert profile.reuse_policy == "digest-verified"
@@ -81,7 +82,7 @@ def test_runtime_validation_requires_optimized_checkout_and_proxy(
         generator_deployment_id="kimi-generation",
     )
 
-    assert result["concurrency"] == 32
+    assert result["concurrency"] == 8
     (checkout / "schemas/autodata.execution.v1.schema.json").write_text(
         json.dumps({"properties": {}})
     )
@@ -114,4 +115,27 @@ printf '%s %s %s %s %s\n' "$AAR_AUTODATA_BROKER_RUNNER" \
         ["bash", "-c", command], check=True, capture_output=True, text=True
     )
 
-    assert completed.stdout.strip() == "local-bwrap 32 3 1 digest-verified"
+    assert completed.stdout.strip() == "local-bwrap 8 3 1 digest-verified"
+
+
+def test_c32_profile_is_an_explicit_load_canary_profile(tmp_path: Path) -> None:
+    profile = runtime_profile(TARGET_AWARE_LOCAL_C32_PROFILE)
+
+    assert profile.concurrency == 32
+    proxy = tmp_path / "proxy_info.json"
+    proxy.write_text("{}\n")
+    script = ROOT / "scripts/autodata_runtime_profile.sh"
+    command = f'''
+set -euo pipefail
+export AAR_AUTODATA=1
+export AAR_AUTODATA_PROFILE=target-aware-local-c32-v1
+export AAR_KIMI_PROXY_INFO="{proxy}"
+source "{script}"
+aar_set_autodata_runtime_profile
+printf '%s\n' "$AAR_AUTODATA_CONCURRENCY"
+'''
+    completed = subprocess.run(
+        ["bash", "-c", command], check=True, capture_output=True, text=True
+    )
+
+    assert completed.stdout.strip() == "32"

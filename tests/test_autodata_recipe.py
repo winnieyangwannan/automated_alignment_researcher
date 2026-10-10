@@ -120,6 +120,35 @@ def test_target_feedback_runtime_default_is_five() -> None:
     assert task._DEFAULT_TARGET_FEEDBACK_MAX_ATTEMPTS == 5
 
 
+def test_model_request_telemetry_retains_transient_rate_limits() -> None:
+    task = _load_module(
+        "aar_autodata_recipe_task_telemetry", RECIPE / "recipe" / "task.py"
+    )
+    task._reset_request_telemetry()
+    rate_limit = task.urllib.error.HTTPError(
+        "https://generator.invalid", 429, "rate limited", {}, None
+    )
+    with (
+        patch.dict(os.environ, {"AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "2"}),
+        patch.object(task.urllib.request, "urlopen", side_effect=rate_limit),
+        patch.object(task.time, "sleep"),
+        pytest.raises(RuntimeError, match="2 bounded attempts"),
+    ):
+        task._post_json(
+            "https://generator.invalid",
+            {},
+            role="generator",
+            headers={},
+            timeout=1,
+        )
+
+    assert task._REQUEST_TELEMETRY == {
+        "telemetry_generator_request_attempts": 2,
+        "telemetry_generator_request_failures": 2,
+        "telemetry_generator_http_429_or_rate_limit": 2,
+    }
+
+
 @pytest.mark.parametrize("field", ["system_prompt", "scenario_prompt_prefix"])
 def test_generation_strategy_text_allows_maximum_kimi_output_envelope(
     tmp_path: Path, field: str
@@ -1066,3 +1095,9 @@ def test_aar_prompt_defines_outer_loop_freedom_and_approval_roles() -> None:
     assert "load_autodata_campaign_datasets" in prompt
     assert "consuming the verified native AutoData production\nexport is mandatory" in prompt
     assert "does not permit replacing or\nbypassing the required AutoData campaign" in prompt
+    assert "all 1,000 verified" not in prompt
+    assert "exactly 1,000 accepted" not in prompt
+    assert "1,250 fresh" not in prompt
+    assert "regenerate 1,250" not in prompt
+    assert "{{ autodata_production_rows }} accepted unique rows" in prompt
+    assert "{{ autodata_production_initial_tasks }} fresh source tasks" in prompt

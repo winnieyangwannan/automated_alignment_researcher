@@ -1184,6 +1184,10 @@ class KimiAgentTest(unittest.TestCase):
                 "schema": "aar.autodata.lifecycle-verification/v1",
                 "run_id": run_id,
                 "available_rows": 1000,
+                "timing": {
+                    "schema": "aar.autodata.lifecycle-timing/v1",
+                    "run_id": run_id,
+                },
             }
             with (
                 patch.dict(
@@ -1208,6 +1212,9 @@ class KimiAgentTest(unittest.TestCase):
             )
             self.assertEqual(value["required_accepted_rows"], 1000)
             self.assertEqual(value["verification"], verification)
+            timing_path = run_root / "autodata-lifecycle-timing.json"
+            self.assertEqual(value["timing_report"], str(timing_path))
+            self.assertEqual(json.loads(timing_path.read_text()), verification["timing"])
             self.assertFalse((team / ".train_submissions").exists())
 
     def test_autodata_approval_defers_training_until_handoff(self) -> None:

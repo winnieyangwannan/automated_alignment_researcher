@@ -110,7 +110,8 @@ def _fixture(tmp_path: Path) -> tuple[str, Path, Path]:
             """
             CREATE TABLE executions (
               id TEXT PRIMARY KEY, executionJson TEXT, pipelineRoot TEXT,
-              status TEXT, phase TEXT, winnerCandidateId TEXT, maxIterations INTEGER
+              status TEXT, phase TEXT, winnerCandidateId TEXT, maxIterations INTEGER,
+              createdAt TEXT, updatedAt TEXT
             );
             CREATE TABLE events (
               id INTEGER PRIMARY KEY AUTOINCREMENT, scopeKind TEXT, scopeId TEXT,
@@ -121,6 +122,18 @@ def _fixture(tmp_path: Path) -> tuple[str, Path, Path]:
             );
             CREATE TABLE study_members (
               studyId TEXT, subjectKind TEXT, subjectId TEXT
+            );
+            CREATE TABLE workspaces (
+              id TEXT PRIMARY KEY, createdAt TEXT, updatedAt TEXT
+            );
+            CREATE TABLE actions (
+              id TEXT PRIMARY KEY, scopeKind TEXT, scopeId TEXT, kind TEXT,
+              status TEXT, createdAt TEXT, updatedAt TEXT
+            );
+            CREATE TABLE task_attempts (
+              id TEXT PRIMARY KEY, scopeKind TEXT, scopeId TEXT, phase TEXT,
+              createdAt TEXT, updatedAt TEXT, outcome TEXT, metricsJson TEXT,
+              error TEXT
             );
             """
         )
@@ -153,8 +166,18 @@ def _fixture(tmp_path: Path) -> tuple[str, Path, Path]:
             "budget": {"max_iterations": 0},
         }
         connection.execute(
-            "INSERT INTO executions VALUES (?,?,?,?,?,?,?)",
-            (meta_id, json.dumps(meta_spec), str(winner), "completed", "completed", "cand_meta", 3),
+            "INSERT INTO executions VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                meta_id,
+                json.dumps(meta_spec),
+                str(winner),
+                "completed",
+                "completed",
+                "cand_meta",
+                3,
+                "2026-10-10 00:10:00",
+                "2026-10-10 01:10:00",
+            ),
         )
         connection.execute(
             "INSERT INTO candidates VALUES (?,?,?)", ("cand_meta", meta_id, str(winner))
@@ -185,7 +208,7 @@ def _fixture(tmp_path: Path) -> tuple[str, Path, Path]:
             ),
         )
         connection.execute(
-            "INSERT INTO executions VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO executions VALUES (?,?,?,?,?,?,?,?,?)",
             (
                 production_id,
                 json.dumps(production_spec),
@@ -194,6 +217,8 @@ def _fixture(tmp_path: Path) -> tuple[str, Path, Path]:
                 "completed",
                 "cand_prod",
                 0,
+                "2026-10-10 01:10:00",
+                "2026-10-10 02:10:00",
             ),
         )
         connection.execute(
@@ -221,6 +246,79 @@ def _fixture(tmp_path: Path) -> tuple[str, Path, Path]:
                         "dataset": {"digest": _digest(dataset)},
                     }
                 ),
+            ),
+        )
+        workspace_id = "ws_" + "3" * 32
+        connection.execute(
+            "INSERT INTO workspaces VALUES (?,?,?)",
+            (
+                workspace_id,
+                "2026-10-10 00:00:00",
+                "2026-10-10 00:10:00",
+            ),
+        )
+        connection.execute(
+            "INSERT INTO actions VALUES (?,?,?,?,?,?,?)",
+            (
+                "act_author_pipeline",
+                "workspace",
+                workspace_id,
+                "author_pipeline",
+                "completed",
+                "2026-10-10 00:02:00",
+                "2026-10-10 00:04:00",
+            ),
+        )
+        connection.execute(
+            "INSERT INTO task_attempts VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                "attempt_authoring",
+                "workspace",
+                workspace_id,
+                "authoring-dry-run",
+                "2026-10-10 00:04:00",
+                "2026-10-10 00:06:00",
+                "succeeded",
+                '{"valid":1.0}',
+                None,
+            ),
+        )
+        connection.execute(
+            "INSERT INTO task_attempts VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                "attempt_meta",
+                "execution",
+                meta_id,
+                "baseline-visible",
+                "2026-10-10 00:10:00",
+                "2026-10-10 00:20:00",
+                "succeeded",
+                json.dumps(
+                    {
+                        "valid": 1.0,
+                        "telemetry_generator_completed_calls": 1.0,
+                        "telemetry_target_completed_calls": 1.0,
+                        "telemetry_judge_completed_calls": 1.0,
+                        "telemetry_generator_request_attempts": 2.0,
+                        "telemetry_generator_request_failures": 1.0,
+                        "telemetry_generator_http_429_or_rate_limit": 1.0,
+                    }
+                ),
+                None,
+            ),
+        )
+        connection.execute(
+            "INSERT INTO task_attempts VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                "attempt_production",
+                "execution",
+                production_id,
+                "final-full-corpus",
+                "2026-10-10 01:10:00",
+                "2026-10-10 02:00:00",
+                "succeeded",
+                '{"valid":1.0}',
+                None,
             ),
         )
 
@@ -253,6 +351,39 @@ def test_preflight_verifies_native_meta_winner_and_production(tmp_path: Path) ->
         result = verify_preflight(run_id)
     assert result["source_task_count"] == 1250
     assert result["available_rows"] == 1000
+    assert result["timing"]["workspace_authoring"]["duration_seconds"] == 600
+    assert result["timing"]["meta_optimization"]["duration_seconds"] == 3600
+    assert result["timing"]["production_generation"]["duration_seconds"] == 3600
+    assert result["timing"]["end_to_end"]["duration_seconds"] == 7800
+    assert result["timing"]["workspace_authoring"]["actions"][0]["kind"] == (
+        "author_pipeline"
+    )
+    meta_phase = result["timing"]["meta_optimization"]["task_phases"][0]
+    assert meta_phase["phase"] == "baseline-visible"
+    assert meta_phase["task_attempts"] == 1
+    assert meta_phase["accepted_rows"] == 1
+    assert meta_phase["outcomes"] == {"succeeded": 1}
+    assert meta_phase["wall_seconds"] == 600.0
+    assert meta_phase["p95_task_seconds"] == 600.0
+    assert meta_phase["tasks_per_minute"] == pytest.approx(0.1)
+    assert meta_phase["provider_completed_calls"] == {
+        "generator": 1.0,
+        "target": 1.0,
+        "judge": 1.0,
+    }
+    assert meta_phase["request_signals"]["generator"] == {
+        "attempts": 2.0,
+        "failures": 1.0,
+        "http_429_or_rate_limit": 1.0,
+        "timeouts": 0.0,
+        "connection_resets": 0.0,
+    }
+    assert meta_phase["error_signals"] == {
+        "http_429_or_rate_limit": 0,
+        "timeout": 0,
+        "connection_reset": 0,
+        "other": 0,
+    }
 
 
 def test_digest_verified_cross_run_dataset_reuse(tmp_path: Path) -> None:

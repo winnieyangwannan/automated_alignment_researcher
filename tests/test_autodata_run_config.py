@@ -24,6 +24,7 @@ from aar.autodata_run_config import (
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = ROOT / "configs/autodata/target_aware_local_v1.yaml"
+CANARY2_PROFILE = ROOT / "configs/autodata/target_aware_local_c32_v1.yaml"
 RUN = (
     ROOT
     / "experiments/dishonest_sycophancy_concealing/run_12/config/autodata_run.yaml"
@@ -102,6 +103,7 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
     assert "export AAR_AUTODATA_CONCURRENCY=8\n" in runtime
     assert "export AAR_AUTODATA_META_MAX_ITERATIONS=3\n" in runtime
     assert "export AAR_AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS=5\n" in runtime
+    assert "export AAR_AUTODATA_AUTHORING_MAX_WALL_SECONDS=1800\n" in runtime
     assert "export AAR_AUTODATA_PRODUCTION_ROWS=1000\n" in runtime
     assert (
         "export AAR_AUTODATA_BOOTSTRAP_CANARY_STOP_AFTER=production\n" in runtime
@@ -112,7 +114,7 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
     assert "export EVAL_MAX_TRUNCATION_RATE=0.2\n" in runtime
     assert "export AAR_EXPECTED_MAX_TRUNCATION_RATE=0.2\n" in runtime
     assert "export AAR_AGENT_BACKEND=kimi\n" in runtime
-    assert "export AAR_KIMI_TURN_TIMEOUT_SECONDS=300\n" in runtime
+    assert "export AAR_KIMI_TURN_TIMEOUT_SECONDS=1800\n" in runtime
     validated = validate_compiled_config(
         output / "resolved-config.yaml",
         output / "campaign-policy.json",
@@ -149,7 +151,7 @@ def test_canary2_compiles_independent_100_row_production_contract(
 ) -> None:
     output = tmp_path / "canary2-compiled"
     compile_run_config(
-        profile_path=PROFILE,
+        profile_path=CANARY2_PROFILE,
         run_path=CANARY2_RUN,
         target_binding_path=_base_binding(tmp_path),
         chain="alpha",
@@ -160,9 +162,11 @@ def test_canary2_compiles_independent_100_row_production_contract(
     runtime = (output / "autodata-runtime.env").read_text()
 
     assert contract["required_rows"] == 100
+    assert "export AAR_AUTODATA_PROFILE=target-aware-local-c32-v1\n" in runtime
+    assert "export AAR_AUTODATA_CONCURRENCY=32\n" in runtime
     assert "export AAR_AUTODATA_PRODUCTION_ROWS=100\n" in runtime
     assert "export AAR_AUTODATA_PRODUCTION_INITIAL_TASKS=125\n" in runtime
-    assert "export AAR_AUTODATA_PRODUCTION_MAX_TASKS=200\n" in runtime
+    assert "AAR_AUTODATA_PRODUCTION_MAX_TASKS" not in runtime
     assert "export AAR_AUTODATA_PRODUCTION_MIN_SUCCESS_FRACTION=0.95\n" in runtime
 
 
@@ -197,6 +201,7 @@ def test_profile_requires_all_target_aware_gates(tmp_path: Path) -> None:
         ("evaluation", "max_truncation_rate", 1.1, "between zero and one"),
         ("agent", "backend", "autodata", "must be claude or kimi"),
         ("agent", "turn_timeout_seconds", 0, "positive integer"),
+        ("authoring", "max_wall_seconds", 0, "positive integer"),
     ],
 )
 def test_run_config_rejects_invalid_operational_policy(
@@ -218,6 +223,7 @@ def test_inspect_reports_static_yaml_values() -> None:
         "concurrency_per_chain": 8,
         "model_request_max_attempts": 3,
         "target_feedback_max_attempts": 5,
+        "authoring_max_wall_seconds": 1800,
         "researcher_kimi_deployment": "aar_8-kimi26",
         "generator_kimi_deployment": "autodata_8-kimi26",
         "chains": ["alpha", "beta", "gamma", "delta", "epsilon"],
@@ -233,7 +239,7 @@ def test_inspect_reports_static_yaml_values() -> None:
         "evaluation_memory": "0",
         "max_truncation_rate": 0.2,
         "agent_backend": "kimi",
-        "turn_timeout_seconds": 300,
+        "turn_timeout_seconds": 1800,
     }
 
 

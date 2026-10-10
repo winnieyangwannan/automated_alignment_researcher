@@ -116,6 +116,7 @@ args.output.write_text(json.dumps({"schema": "autodata.grounding/v1", "tasks": l
         "AAR_AUTODATA_BROKER_URL": "http://127.0.0.1:12345",
         "AAR_AUTODATA_CAPABILITY": "secret-value-not-written",
         "AAR_AUTODATA_CONCURRENCY": "8",
+        "AAR_AUTODATA_AUTHORING_MAX_WALL_SECONDS": "1800",
         "AAR_AUTODATA_APPROVAL_PUBLIC_KEY": str(public),
         "AAR_AUTODATA_APPROVAL_PUBLIC_KEY_SHA256": (
             "sha256:" + hashlib.sha256(public.read_bytes()).hexdigest()
@@ -180,6 +181,7 @@ def test_bootstrap_creates_registers_and_resumes_one_workspace(tmp_path: Path) -
     assert executor["broker_auth_secret_ref"] == "AAR_AUTODATA_CAPABILITY"
     assert "secret-value-not-written" not in json.dumps(brief)
     assert brief["execution_defaults"]["concurrency"] == 8
+    assert brief["authoring_budget"]["max_wall_seconds"] == 1800
     draft = root / "draft"
     assert (draft / "autodata.pipeline.json").is_file()
     assert (draft / "recipe" / "task.py").is_file()

@@ -116,7 +116,7 @@ The authoring workspace allows 32 native revisions. Native AutoData counts the
 strategy edit, its dry run, and its approval as separate revisions; the earlier
 limit of 20 could accept a final edit and then reject the dry run needed to
 evaluate it. The larger bound remains constrained by 32 task attempts and a
-6,300-second wall clock, so it permits review of the last edit without making
+1,800-second wall clock, so it permits review of the last edit without making
 authoring unbounded.
 
 ## Goal

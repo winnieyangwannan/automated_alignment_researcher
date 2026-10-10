@@ -198,6 +198,22 @@ def _prepare_brief(run_root: Path) -> tuple[Path, str]:
     )
     executor = _executor(policy)
     brief["authoring_executor"] = executor
+    authoring_budget = brief.get("authoring_budget")
+    if not isinstance(authoring_budget, dict):
+        raise RuntimeError("reviewed workspace brief has invalid authoring_budget")
+    try:
+        authoring_max_wall_seconds = int(
+            os.environ["AAR_AUTODATA_AUTHORING_MAX_WALL_SECONDS"]
+        )
+    except (KeyError, ValueError) as error:
+        raise RuntimeError(
+            "AAR_AUTODATA_AUTHORING_MAX_WALL_SECONDS must be a positive integer"
+        ) from error
+    if authoring_max_wall_seconds < 1:
+        raise RuntimeError(
+            "AAR_AUTODATA_AUTHORING_MAX_WALL_SECONDS must be a positive integer"
+        )
+    authoring_budget["max_wall_seconds"] = authoring_max_wall_seconds
     defaults = brief.get("execution_defaults")
     if not isinstance(defaults, dict):
         raise RuntimeError("reviewed workspace brief has invalid execution_defaults")

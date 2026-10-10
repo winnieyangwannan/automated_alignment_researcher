@@ -16,6 +16,10 @@ deployments:
   generator_kimi: autodata_8-kimi26
 budget:
   max_cost_usd: "299"
+authoring:
+  # Entire native workspace lifecycle: grounding/pipeline actions, approvals,
+  # checks, and the two model-backed dry-run tasks.
+  max_wall_seconds: 1800
 generation:
   # Retry only rejected candidates. Each retry receives bounded Gemma/Luna
   # feedback and must generate a materially different prompt/teacher answer.
@@ -33,7 +37,6 @@ meta_optimization:
 production:
   required_rows: 1000
   initial_tasks: 1250
-  maximum_tasks: 2000
   minimum_successful_task_fraction: 0.95
 storage:
   # Run 12 keeps its established aar-runs/ and aar-checkpoints/ layout below
@@ -48,8 +51,8 @@ evaluation:
 agent:
   backend: kimi
   # A timed-out CLI turn is terminated and resumed from its persisted session.
-  # Five minutes bounds endpoint/tool degeneration without shrinking token limits.
-  turn_timeout_seconds: 300
+  # This bounds one Kimi Code process, not the full AutoData lifecycle.
+  turn_timeout_seconds: 1800
 recipe_root: aar/autodata_recipes/dishonest_sycophancy_concealing
 training_contract:
   objective: sft

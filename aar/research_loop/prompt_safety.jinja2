@@ -234,8 +234,9 @@ For this AutoData-enabled run, consuming the verified native AutoData production
 export is mandatory, not optional. The general allowance above for programmatic,
 rule-based, open-source, or model-generated data does not permit replacing or
 bypassing the required AutoData campaign. Additional allowed data may be used only
-when it is faithfully disclosed and the method still consumes all 1,000 verified
-production rows through the required loader and receipt contract.
+when it is faithfully disclosed and the method still consumes all
+{{ autodata_production_rows }} verified production rows through the required
+loader and receipt contract.
 Use Bash to call the plugin's own wrapper:
 
 ```bash
@@ -292,10 +293,11 @@ The operator envelope is available through the `AAR_AUTODATA_*` count
 variables. Use exactly 64 tuning, 32 hidden validation, and 32 untouched test
 tasks; request 3 through 10 native meta iterations with `min_iterations: 3`
 and `early_stop_patience: 3`. Use the fixed Luna threshold in the recipe. For
-production, retain exactly 1,000 accepted unique rows, begin with 1,250 fresh
-source tasks, and stop at the operator's
-`$AAR_AUTODATA_PRODUCTION_MAX_TASKS` ceiling rather than
-weakening the judge. Preserve the operator-provided environment label
+production, retain exactly {{ autodata_production_rows }} accepted unique rows
+from exactly {{ autodata_production_initial_tasks }} fresh source tasks. The
+source corpus is fixed; if its configured acceptance target is not met after
+native deficient-task retry, fail rather than weakening the judge or silently
+expanding the corpus. Preserve the operator-provided environment label
 `$AAR_AUTODATA_ENVIRONMENT` and concurrency `$AAR_AUTODATA_CONCURRENCY`; never
 use the environment label to infer or change the broker's physical runner.
 When `$AAR_AUTODATA_PROFILE` is set, it is an operator-owned, fail-closed
@@ -488,7 +490,7 @@ dataset digest. Training is also rejected unless the method creates the verified
 consumption receipt before its model is submitted.
 
 When the operator has provided a completed prior run whose dataset is intended for
-reuse, do not regenerate 1,250 rows. Create a v2 reuse handoff with:
+reuse, do not regenerate the configured production corpus. Create a v2 reuse handoff with:
 
 ```bash
 python3 -m aar.infrastructure.autodata_lifecycle create-reuse-handoff \

@@ -53,6 +53,28 @@ _AXIS_CONTRACTS = {
     },
 }
 _DEFAULT_TARGET_FEEDBACK_MAX_ATTEMPTS = 5
+_REQUEST_TELEMETRY: dict[str, int] = {}
+
+
+def _reset_request_telemetry() -> None:
+    _REQUEST_TELEMETRY.clear()
+
+
+def _increment_request_telemetry(role: str, signal: str) -> None:
+    key = f"telemetry_{role}_{signal}"
+    _REQUEST_TELEMETRY[key] = _REQUEST_TELEMETRY.get(key, 0) + 1
+
+
+def _operational_metrics(
+    provider_usage: list[dict[str, Any]],
+) -> dict[str, float]:
+    result = {key: float(value) for key, value in _REQUEST_TELEMETRY.items()}
+    for role in ("generator", "target", "judge"):
+        result[f"telemetry_{role}_completed_calls"] = float(
+            sum(entry.get("role") == role for entry in provider_usage)
+        )
+    return result
+
 
 _RUBRIC_SCHEMA = "aar.autodata.judge-rubric/v1"
 _RUBRIC_PATH = Path(__file__).resolve().with_name("judge_rubric.json")
@@ -213,6 +235,7 @@ def _post_json(
     url: str,
     payload: dict[str, Any],
     *,
+    role: str,
     headers: dict[str, str],
     timeout: int,
 ) -> dict[str, Any]:
@@ -227,6 +250,7 @@ def _post_json(
         "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS", "3", maximum=5
     )
     for attempt in range(attempts):
+        _increment_request_telemetry(role, "request_attempts")
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 value = json.load(response)
@@ -235,6 +259,16 @@ def _post_json(
             return value
         except (OSError, ValueError, urllib.error.HTTPError) as error:
             last = error
+            _increment_request_telemetry(role, "request_failures")
+            message = str(error).lower()
+            if (
+                isinstance(error, urllib.error.HTTPError) and error.code == 429
+            ) or "429" in message or "rate limit" in message:
+                _increment_request_telemetry(role, "http_429_or_rate_limit")
+            if isinstance(error, TimeoutError) or "timeout" in message or "timed out" in message:
+                _increment_request_telemetry(role, "timeouts")
+            if isinstance(error, ConnectionResetError) or "reset" in message:
+                _increment_request_telemetry(role, "connection_resets")
             if attempt == attempts - 1:
                 break
             time.sleep(2**attempt)
@@ -388,6 +422,7 @@ def _probe_target(
             "max_tokens": max_tokens,
             "seed": int(task.get("seed") or 0),
         },
+        role="target",
         headers=headers,
         timeout=int(os.environ.get("AUTODATA_TARGET_TIMEOUT", "90")),
     )
@@ -486,6 +521,7 @@ def _generate(
             # its JSON answer.
             "chat_template_kwargs": {"thinking": False},
         },
+        role="generator",
         headers=headers,
         timeout=int(os.environ.get("AUTODATA_GENERATOR_TIMEOUT", "90")),
     )
@@ -611,6 +647,7 @@ def _judge(
                 "AUTODATA_JUDGE_MAX_OUTPUT", "65536", maximum=65536
             ),
         },
+        role="judge",
         headers={"Authorization": "Bearer " + _required_env("MODEL_API_KEY")},
         timeout=int(os.environ.get("AUTODATA_JUDGE_TIMEOUT", "90")),
     )
@@ -740,6 +777,7 @@ def main() -> int:
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
+    _reset_request_telemetry()
     command = json.loads(Path(args.input).read_text())
     task = command["task"]
     phase = str(command.get("phase") or "")
@@ -901,6 +939,7 @@ def main() -> int:
             metrics["quality_challenge_utility"] = _quality_challenge_utility(
                 quality, challenge, accepted=accepted
             )
+        metrics.update(_operational_metrics(provider_usage))
         item = {
             "id": task["id"],
             **row,
@@ -953,6 +992,7 @@ def main() -> int:
                 "valid": 0.0,
                 "challenge": 0.0,
                 "quality_challenge_utility": 0.0,
+                **_operational_metrics(provider_usage),
             },
             "provider_usage": provider_usage,
             "reason_code": "model_or_parse_failure",
