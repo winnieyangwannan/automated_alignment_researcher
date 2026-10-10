@@ -65,7 +65,7 @@ destination = pathlib.Path(sys.argv[2])
 policy = json.loads(source.read_text(encoding="utf-8"))
 environment = policy["required_solve_env"]
 environment["AUTODATA_GENERATOR_URL"] = sys.argv[3]
-environment["AUTODATA_GENERATOR_HOST_HEADER"] = ""
+environment.pop("AUTODATA_GENERATOR_HOST_HEADER", None)
 destination.write_text(
     json.dumps(policy, indent=2, sort_keys=True) + "\n", encoding="utf-8"
 )
