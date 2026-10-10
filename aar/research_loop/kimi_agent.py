@@ -11,6 +11,7 @@ import re
 import signal
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -701,17 +702,53 @@ class KimiAgent:
         ):
             workspace_id = self._autodata_workspace_id(approved_run_id)
             if workspace_id is not None:
+                begun_action = self._latest_begun_autodata_action(names, inputs)
+                if begun_action is not None:
+                    action_id, _begin_index = begun_action
+                    action = self._autodata_action_record(action_id)
+                    if action is not None and action.get("status") == "in_progress":
+                        result_path = Path(
+                            f"/tmp/aar-autodata-{action_id}-result.json"
+                        )
+                        if not result_path.is_file():
+                            action_spec = json.dumps(
+                                action.get("spec"), sort_keys=True
+                            )[:6000]
+                            return (
+                                f"Resume the already leased native AutoData action "
+                                f"{action_id}; do not call action begin or status again. "
+                                "Call the native Write tool exactly once now. If the "
+                                "action still requires one scoped allowed file edit, "
+                                "make that edit under editable_root first. Otherwise "
+                                f"write a valid JSON object to {result_path} satisfying "
+                                "the action's requested outputs. Use only the action "
+                                "instructions and allowed paths, and do not use Bash. "
+                                "Action specification: "
+                                f"{action_spec}"
+                            )
+                        return (
+                            f"Resume the already leased native AutoData action "
+                            f"{action_id}. Its result file exists at {result_path}. "
+                            "Call the native Bash tool exactly once now to run the "
+                            "plugin wrapper's `action complete` for this action with "
+                            "the exact lease token returned by its prior `action begin` "
+                            f"and `--result {result_path}`. Do not print or alter the "
+                            "lease token, do not begin the action again, and do not call "
+                            "another tool."
+                        )
+                status_subject = self._autodata_status_subject(workspace_id)
                 status_command = (
                     'python3 "${AAR_AUTODATA_PLUGIN_ROOT}/scripts/autodata.py" '
                     '--state "$AAR_AUTODATA_STATE" '
                     '--artifacts "$AAR_AUTODATA_ARTIFACTS" '
                     '--workspaces "$AAR_AUTODATA_WORKSPACES" '
-                    f"status {shlex.quote(workspace_id)}"
+                    f"status {shlex.quote(status_subject)}"
                 )
                 return (
                     f"The proposal is approved with run_id={approved_run_id}, and "
                     "trusted orchestration already created and registered native "
-                    f"AutoData workspace_id={workspace_id}. Do not load a skill, "
+                    f"AutoData workspace_id={workspace_id}. The current supervised "
+                    f"status subject is {status_subject}. Do not load a skill, "
                     "create/fork/register a workspace, edit the approved method, or "
                     "submit another proposal. Call the native Bash tool exactly once "
                     f"now with command={json.dumps(status_command)}. After status "
@@ -901,6 +938,77 @@ class KimiAgent:
         if "native Bash tool exactly once" in prompt:
             return "Bash"
         return None
+
+    @staticmethod
+    def _latest_begun_autodata_action(
+        names: list[str], inputs: list[dict[str, Any]]
+    ) -> tuple[str, int] | None:
+        begun: list[tuple[str, int]] = []
+        for index, name in enumerate(names):
+            if name != "Bash":
+                continue
+            command = str(inputs[index].get("command", ""))
+            match = re.search(r"\baction\s+begin\s+(act_[0-9a-f]{24})\b", command)
+            if match:
+                begun.append((match.group(1), index))
+        return begun[-1] if begun else None
+
+    @staticmethod
+    def _autodata_action_record(action_id: str) -> dict[str, Any] | None:
+        """Read non-secret action state needed to resume a leased host action."""
+        if not re.fullmatch(r"act_[0-9a-f]{24}", action_id):
+            return None
+        state_raw = os.environ.get("AAR_AUTODATA_STATE", "").strip()
+        if not state_raw:
+            return None
+        state = Path(state_raw)
+        if state.is_symlink() or not state.is_file():
+            return None
+        try:
+            with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
+                row = connection.execute(
+                    "SELECT kind,status,specJson FROM actions WHERE id=?",
+                    (action_id,),
+                ).fetchone()
+        except sqlite3.Error:
+            return None
+        if row is None:
+            return None
+        try:
+            spec = json.loads(str(row[2]))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(spec, dict):
+            return None
+        return {"kind": str(row[0]), "status": str(row[1]), "spec": spec}
+
+    @staticmethod
+    def _autodata_status_subject(workspace_id: str) -> str:
+        """Return the newest supervised native subject, falling back to workspace."""
+        control_raw = os.environ.get("AAR_AUTODATA_SUPERVISOR_CONTROL", "").strip()
+        if not control_raw:
+            return workspace_id
+        try:
+            control = json.loads(Path(control_raw).read_text())
+        except (OSError, json.JSONDecodeError):
+            return workspace_id
+        subjects = control.get("subjects") if isinstance(control, dict) else None
+        if not isinstance(subjects, list):
+            return workspace_id
+        for entry in reversed(subjects):
+            if not isinstance(entry, dict) or entry.get("status") != "registered":
+                continue
+            subject_id = entry.get("subject_id")
+            kind = entry.get("kind")
+            if not isinstance(subject_id, str):
+                continue
+            if kind == "workspace" and re.fullmatch(r"ws_[0-9a-f]{32}", subject_id):
+                return subject_id
+            if kind == "execution" and re.fullmatch(
+                r"exe_[0-9a-f]{32}", subject_id
+            ):
+                return subject_id
+        return workspace_id
 
     @staticmethod
     def _method_contract_status(method_path: Path) -> tuple[Optional[str], list[str]]:

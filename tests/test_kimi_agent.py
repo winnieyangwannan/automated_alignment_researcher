@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -1276,6 +1277,26 @@ class KimiAgentTest(unittest.TestCase):
                     }
                 ]
             }
+            state = root / "state.db"
+            action_id = "act_" + "2" * 24
+            action_spec = {
+                "id": action_id,
+                "kind": "clarify_design",
+                "instructions": "Confirm the reviewed workspace intent.",
+                "allowed_paths": ["autodata.workspace.json"],
+                "editable_root": str(root / "draft"),
+                "outputs": ["summary", "decisions"],
+            }
+            with sqlite3.connect(state) as connection:
+                connection.execute(
+                    "CREATE TABLE actions(id TEXT,kind TEXT,status TEXT,specJson TEXT)"
+                )
+                connection.execute(
+                    "INSERT INTO actions VALUES(?,?,?,?)",
+                    (action_id, "clarify_design", "in_progress", json.dumps(action_spec)),
+                )
+            control = root / "lifecycle-control.json"
+            control.write_text(json.dumps({"schema": "test", "subjects": []}))
             with patch.dict(
                 os.environ,
                 {
@@ -1285,6 +1306,8 @@ class KimiAgentTest(unittest.TestCase):
                     "IDEA_UID": "chain-uid",
                     "SCORES_DIR": str(root),
                     "TEAM_DIR": str(root / "team"),
+                    "AAR_AUTODATA_STATE": str(state),
+                    "AAR_AUTODATA_SUPERVISOR_CONTROL": str(control),
                 },
                 clear=False,
             ):
@@ -1319,6 +1342,62 @@ class KimiAgentTest(unittest.TestCase):
                     "Never embed action-result JSON in Bash", bootstrapped_prompt
                 )
                 self.assertEqual(agent._continuation_tool(output), "Bash")
+
+                leased_output = {
+                    "tool_uses": [
+                        *output["tool_uses"],
+                        {
+                            "tool": "Bash",
+                            "input": {
+                                "command": (
+                                    "python autodata.py action begin " + action_id
+                                )
+                            },
+                        },
+                    ]
+                }
+                result_path = Path(f"/tmp/aar-autodata-{action_id}-result.json")
+                result_path.unlink(missing_ok=True)
+                try:
+                    action_prompt = agent._continuation_prompt(leased_output)
+                    self.assertIn("already leased", action_prompt)
+                    self.assertIn(str(result_path), action_prompt)
+                    self.assertIn("Confirm the reviewed workspace intent", action_prompt)
+                    self.assertEqual(agent._continuation_tool(leased_output), "Write")
+
+                    result_path.write_text(
+                        json.dumps({"summary": "confirmed", "decisions": []})
+                    )
+                    completion_prompt = agent._continuation_prompt(leased_output)
+                    self.assertIn("action complete", completion_prompt)
+                    self.assertIn("exact lease token", completion_prompt)
+                    self.assertEqual(agent._continuation_tool(leased_output), "Bash")
+                finally:
+                    result_path.unlink(missing_ok=True)
+
+                execution_id = "exe_" + "3" * 32
+                control.write_text(
+                    json.dumps(
+                        {
+                            "schema": "test",
+                            "subjects": [
+                                {
+                                    "kind": "workspace",
+                                    "subject_id": workspace_id,
+                                    "status": "completed",
+                                },
+                                {
+                                    "kind": "execution",
+                                    "subject_id": execution_id,
+                                    "status": "registered",
+                                },
+                            ],
+                        }
+                    )
+                )
+                self.assertEqual(
+                    agent._autodata_status_subject(workspace_id), execution_id
+                )
 
                 with patch.dict(
                     os.environ, {"AAR_RESUME_APPROVED_PROPOSAL": "1"}, clear=False
