@@ -78,6 +78,8 @@ def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
     assert 'export AAR_AUTODATA_CONCURRENCY="${CONCURRENCY}"' in submitter
     assert 'export AAR_AUTODATA_CANARY_TASK_COUNT="${TASK_COUNT}"' in submitter
     assert 'for index in $(seq 1 "${TASK_COUNT}")' in canary
+    assert 'if [ "${#pids[@]}" -eq "${CONCURRENCY}" ]' in canary
+    assert '"max_cost_usd": "10"' in submitter
     assert 'KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-' in submitter
     assert 'install -m 600 "${KIMI_PROXY_INFO}" "${kimi_proxy_info}"' in submitter
     assert 'sbatch_args+=(--dependency="${SLURM_DEPENDENCY}")' in submitter

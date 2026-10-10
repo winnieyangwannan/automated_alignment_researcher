@@ -128,6 +128,7 @@ kill -0 "${broker_pid}" 2>/dev/null || { echo "broker is not running" >&2; exit 
 [ "${ready}" = 1 ] || { echo "broker health probe timed out" >&2; exit 2; }
 
 pids=()
+failed=0
 load_started_ns="$(date +%s%N)"
 for index in $(seq 1 "${TASK_COUNT}"); do
   PYTHONPATH="${AUTODATA}/src:${REPO}" "${REPO}/.venv/bin/python" \
@@ -145,9 +146,16 @@ for index in $(seq 1 "${TASK_COUNT}"); do
     --timeout-seconds 1800 \
     > "${ROOT}/canary-${index}.log" 2>&1 &
   pids+=("$!")
+  if [ "${#pids[@]}" -eq "${CONCURRENCY}" ]; then
+    for pid in "${pids[@]}"; do
+      if ! wait "${pid}"; then
+        failed=$((failed + 1))
+      fi
+    done
+    pids=()
+  fi
 done
 
-failed=0
 for pid in "${pids[@]}"; do
   if ! wait "${pid}"; then
     failed=$((failed + 1))

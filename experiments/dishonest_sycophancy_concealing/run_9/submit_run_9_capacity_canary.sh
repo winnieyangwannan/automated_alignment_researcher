@@ -81,7 +81,7 @@ cat > "${policy}" <<EOF
 {
   "schema": "autodata.broker-campaign-policy/v1",
   "campaign_id": "run9-${RUNNER}-capacity-canary",
-  "max_cost_usd": "2",
+  "max_cost_usd": "10",
   "runner": "${RUNNER}",
   "environment": "${ENVIRONMENT}",
   "image": "docker.io/library/python@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f",
