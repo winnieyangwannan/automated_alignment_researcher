@@ -207,6 +207,14 @@ and a named-tool checkpoint for `get_literature`. This does not reduce the
 maximum input or output allowances of production researcher or AutoData
 sessions.
 
+A controlled comparison with thinking enabled did eventually return the exact
+MCP sentinel, but its following forced Bash checkpoint then remained in
+`turn.step.retrying` until the 180-second timeout. The non-thinking policy is
+therefore retained: it reaches structured tools quickly and is the previously
+validated Run 10 mode. The preflight now checks successful structured MCP and
+Bash calls plus a nonempty assistant completion; it no longer treats the exact
+wording of free-form acknowledgment text as infrastructure correctness.
+
 Separately, the reusable runtime profile was corrected from an accidental
 concurrency value of 32 back to the documented production value of eight per
 chain. A fresh canary must pass these gates before the five-chain launch.

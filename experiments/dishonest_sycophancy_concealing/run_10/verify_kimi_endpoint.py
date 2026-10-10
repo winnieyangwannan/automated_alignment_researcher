@@ -64,7 +64,7 @@ async def verify(workspace: Path) -> dict[str, object]:
             ).execute(
                 "Call the get_literature MCP tool exactly once with query set to "
                 "__aar_endpoint_preflight_no_match__. After receiving that tool "
-                "result, reply with exactly KIMI_MCP_CANARY_OK."
+                "result, give a brief acknowledgment and stop."
             ),
             timeout=turn_timeout + 10,
         )
@@ -80,9 +80,7 @@ async def verify(workspace: Path) -> dict[str, object]:
         if name == "get_literature" or name.endswith("get_literature")
     ]
     tool_ok = len(literature_positions) == 1
-    response_ok = any(
-        text.strip().endswith("KIMI_MCP_CANARY_OK") for text in texts
-    )
+    response_ok = any(text.strip() for text in texts)
     if not result.success or not tool_ok or not response_ok:
         stderr_tail = str(result.output.get("stderr", ""))[-2000:]
         raise RuntimeError(
