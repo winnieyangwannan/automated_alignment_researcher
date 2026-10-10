@@ -215,3 +215,55 @@ attempt.
 - A focused regression assertion protects this instruction.
 - This is a pre-relaunch fail-fast correction; no external endpoint or cluster
   resource is blocking the next attempt.
+
+<a id="run12-canary2-attempt-5f1861e"></a>
+
+### ⏳ 16:53–16:58 PT — RUNNING: fresh post-fix attempt submitted
+
+- Source commit: `5f1861ebebc897d22e9fcfb7dee4073ebb2f19d4`.
+- Attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261010T235309Z-5f1861ebebc8`.
+- Checkpoint root:
+  `/checkpoint/ram/winnieyangwn/aar-checkpoints/run12-bootstrap-canary/20261010T235309Z-5f1861ebebc8`.
+- Endpoint, MCP, source, configuration, reused-base identity, and real-completion
+  preflights passed.
+- Wrapper `1808967`: `COMPLETED` in 22 seconds.
+- Research chain `1808973`: submitted and awaiting CPU scheduler admission.
+- Controller `1808974`: submitted and correctly waiting on the chain dependency.
+- Evaluator: not launched, as required by Canary 2.
+- Resolved workload: one chain, target-aware Local Bubblewrap at concurrency 32,
+  1,250 source tasks, 1,000 required accepted rows, and stop after one real
+  training step.
+
+#### Lifecycle snapshot
+
+```text
+✓ Endpoint and MCP preflight
+✓ Launch configuration and target binding
+✓ Reused Gemma-base identity and completion check
+✓ Wrapper/bootstrap submission
+⏳ CPU research-chain scheduler admission
+○ Research session and method authoring
+○ Proposal review and approval
+○ AutoData workspace registration and authoring
+○ Meta-optimization
+○ Production
+○ Training smoke
+```
+
+At 16:58 PT, AutoData task results and accepted rows remained zero because the
+research-chain job had not started. There was no rate-limit or model-service
+error; the only wait was ordinary Slurm CPU admission with reason `(None)`.
+
+### ⏳ 16:58 PT — RUNNING: research and method authoring
+
+- Research chain `1808973` started on `g3-151-155` at 16:58:42 PT.
+- The pinned AutoData plugin, direct Kimi bridge, Local Bubblewrap broker at
+  concurrency 32, node-local state database, and observe-only supervisor all
+  initialized successfully.
+- Research session 0 started; controller `1808974` remains correctly
+  dependency-pending.
+- Current stage: AAR research and method authoring.
+- AutoData task results: 0. Accepted rows: 0. Rate-limit or service errors: 0.
+- Next critical gate: exercise the repaired first AutoData workspace-authoring
+  action.
