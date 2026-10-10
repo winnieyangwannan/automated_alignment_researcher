@@ -229,6 +229,7 @@ policy = json.loads(source.read_text(encoding="utf-8"))
 environment = policy["required_solve_env"]
 environment["AUTODATA_GENERATOR_URL"] = f"http://127.0.0.1:{port}/v1"
 environment["AUTODATA_GENERATOR_HOST_HEADER"] = ""
+environment.setdefault("AUTODATA_TARGET_ENABLED", "0")
 destination.write_text(json.dumps(policy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 destination.chmod(0o600)
 PY
