@@ -84,6 +84,8 @@ def test_run9_capacity_canary_uses_requested_real_model_backed_jobs() -> None:
     assert 'environment.pop("AUTODATA_GENERATOR_HOST_HEADER", None)' in canary
     assert "--allow-judge-rejection" in canary
     assert '"accepted_rows_per_minute"' in canary
+    assert '"task_result_failed_count"' in canary
+    assert '"judge_call_count"' in canary
     assert "--export=ALL" in submitter
 
 

@@ -382,7 +382,8 @@ def _validate_task_result(
     )
     if value.get("task_id") != task_id:
         raise RuntimeError("model-backed canary returned the wrong task identity")
-    if value.get("outcome") != "succeeded":
+    outcome = value.get("outcome")
+    if outcome != "succeeded" and (require_accepted or outcome != "failed"):
         raise RuntimeError("model-backed canary task did not succeed")
     items = value.get("generated_items")
     expected_item_counts = (
@@ -414,7 +415,10 @@ def _validate_task_result(
     expected = [("generator", GENERATOR_MODEL)]
     if target_binding is not None:
         expected.append(("target", target_binding.endpoint["model"]))
-    expected.append(("judge", JUDGE_MODEL))
+    if outcome == "succeeded" or (
+        not require_accepted and isinstance(usage, list) and len(usage) > len(expected)
+    ):
+        expected.append(("judge", JUDGE_MODEL))
     if not isinstance(usage, list) or len(usage) != len(expected):
         count_name = {2: "two", 3: "three"}.get(len(expected), str(len(expected)))
         raise RuntimeError(

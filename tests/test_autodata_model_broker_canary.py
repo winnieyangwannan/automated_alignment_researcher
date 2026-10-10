@@ -285,6 +285,21 @@ class ModelBrokerCanaryTest(unittest.TestCase):
         )
         self.assertEqual([call["role"] for call in usage], ["generator", "judge"])
 
+        failed = json.loads(json.dumps(_FakeBrokerClient.result))
+        failed["outcome"] = "failed"
+        failed["generated_items"] = []
+        failed["metrics"]["quality"] = 0.0
+        failed["metrics"]["valid"] = 0.0
+        failed["reason_code"] = "model_or_parse_failure"
+        failed["provider_usage"] = failed["provider_usage"][:1]
+        usage = self.module._validate_task_result(
+            failed,
+            contract.schema,
+            rates=rates,
+            require_accepted=False,
+        )
+        self.assertEqual([call["role"] for call in usage], ["generator"])
+
         invalid = json.loads(json.dumps(_FakeBrokerClient.result))
         invalid["metrics"]["valid"] = 0.0
         with self.assertRaisesRegex(RuntimeError, "not valid"):

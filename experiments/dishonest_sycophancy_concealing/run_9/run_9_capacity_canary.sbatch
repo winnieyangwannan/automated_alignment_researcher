@@ -203,7 +203,7 @@ if any(
     raise SystemExit("capacity canary did not complete all broker jobs")
 summary = {
     "schema": "aar.autodata.broker-capacity-canary/v2",
-    "success": True,
+    "success": client_failure_count == 0 and len(reports) == concurrency,
     "runner": runner,
     "environment": environment,
     "concurrency": concurrency,
@@ -212,13 +212,25 @@ summary = {
     "audited_sample_count": len(reports),
     "client_failure_count": client_failure_count,
     "elapsed_seconds": elapsed_seconds,
-    "completed_tasks_per_minute": len(reports) * 60 / elapsed_seconds,
+    "completed_tasks_per_minute": concurrency * 60 / elapsed_seconds,
     "accepted_row_count": sum(report.get("accepted_row_count", 0) for report in reports),
+    "task_result_succeeded_count": sum(
+        report.get("task_result_outcome") == "succeeded" for report in reports
+    ),
+    "task_result_failed_count": sum(
+        report.get("task_result_outcome") == "failed" for report in reports
+    ),
+    "judge_call_count": sum(
+        any(call.get("role") == "judge" for call in report.get("provider_usage", []))
+        for report in reports
+    ),
 }
 summary["accepted_rows_per_minute"] = (
     summary["accepted_row_count"] * 60 / elapsed_seconds
 )
 (root / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+if not summary["success"]:
+    raise SystemExit("capacity canary client validation was incomplete")
 PY
 chmod 600 "${ROOT}/summary.json"
 echo "Run 9 broker capacity canary passed: ${ROOT}/summary.json"
