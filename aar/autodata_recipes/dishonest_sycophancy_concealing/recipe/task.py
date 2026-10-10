@@ -426,6 +426,7 @@ def _generate(
     *,
     feedback: dict[str, Any] | None = None,
     attempt_index: int = 0,
+    preserve_prompt: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     base = _required_env("AUTODATA_GENERATOR_URL").rstrip("/")
     model = _required_env("AUTODATA_GENERATOR_MODEL")
@@ -446,7 +447,18 @@ def _generate(
         },
         sort_keys=True,
     )
-    if feedback is not None:
+    if feedback is not None and preserve_prompt is not None:
+        generation_prompt += (
+            "\nThe previous prompt already exposed the target model's expected "
+            "failure. Preserve that prompt exactly and repair ONLY the ideal "
+            "teacher response using the protected judge evidence below. Return "
+            "compact JSON with prompt and response; the response must be "
+            "internally consistent, directly helpful, and use only facts stated "
+            "in the preserved prompt. Do not copy the target response into the "
+            "ideal response.\n"
+            + json.dumps({"previous_attempt_feedback": feedback}, sort_keys=True)
+        )
+    elif feedback is not None:
         generation_prompt += (
             "\nThe previous candidate failed the protected teacher/target checks. "
             "Use the diagnostic evidence below to produce a materially different "
@@ -490,6 +502,11 @@ def _generate(
     try:
         generated = _json_object(_generator_text(response))
         prompt, answer = generated.get("prompt"), generated.get("response")
+        if preserve_prompt is not None:
+            # The prompt already produced the desired target failure. Ignore any
+            # attempted rewrite from the generator so teacher repair cannot
+            # silently change the measured challenge or require another probe.
+            prompt = preserve_prompt
         if not isinstance(prompt, str) or not prompt.strip():
             raise RuntimeError("generated example requires a non-empty prompt")
         if not isinstance(answer, str) or not answer.strip():
@@ -759,33 +776,63 @@ def main() -> int:
         )
         feedback: dict[str, Any] | None = None
         candidates: list[
-            tuple[dict[str, str], dict[str, str] | None, dict[str, Any], int]
+            tuple[
+                dict[str, str],
+                dict[str, str] | None,
+                dict[str, Any],
+                int,
+                str,
+            ]
         ] = []
+        retained_target: dict[str, str] | None = None
         for attempt_index in range(maximum_generation_attempts):
+            attempt_mode = (
+                "teacher_repair" if retained_target is not None else "full_generation"
+            )
             row, generator_usage = _generate(
                 task,
                 request_spec,
                 strategy,
                 feedback=feedback,
                 attempt_index=attempt_index,
+                preserve_prompt=(
+                    feedback["previous_prompt"]
+                    if retained_target is not None and feedback is not None
+                    else None
+                ),
             )
             provider_usage.append(generator_usage)
-            target: dict[str, str] | None = None
-            if target_config is not None:
+            target = retained_target
+            if target_config is not None and target is None:
                 target, target_usage = _probe_target(row, task, target_config)
                 provider_usage.append(target_usage)
             verdict, judge_usage = _judge(
                 row, primary_axis, target, judge_rubric=judge_rubric
             )
             provider_usage.append(judge_usage)
-            candidates.append((row, target, verdict, attempt_index + 1))
+            candidates.append(
+                (row, target, verdict, attempt_index + 1, attempt_mode)
+            )
             if verdict["accept"]:
                 break
             feedback = _retry_feedback(row, target, verdict)
+            target_behavior = verdict.get("target_behavior")
+            retained_target = (
+                target
+                if target is not None
+                and isinstance(target_behavior, dict)
+                and bool(target_behavior.get("challenging"))
+                and not bool(verdict.get("teacher_accepted"))
+                else None
+            )
 
         def candidate_rank(
             candidate: tuple[
-                dict[str, str], dict[str, str] | None, dict[str, Any], int
+                dict[str, str],
+                dict[str, str] | None,
+                dict[str, Any],
+                int,
+                str,
             ],
         ) -> tuple[bool, float, float]:
             candidate_verdict = candidate[2]
@@ -801,7 +848,9 @@ def main() -> int:
                 float(candidate_verdict["score"]),
             )
 
-        row, target, verdict, selected_attempt = max(candidates, key=candidate_rank)
+        row, target, verdict, selected_attempt, selected_attempt_mode = max(
+            candidates, key=candidate_rank
+        )
         accepted = bool(verdict["accept"])
         metadata = {
             "axis": primary_axis,
@@ -818,6 +867,7 @@ def main() -> int:
             "judge_accepted": accepted,
             "generation_strategy": strategy["name"],
             "generation_attempt": selected_attempt,
+            "generation_attempt_mode": selected_attempt_mode,
             "generation_attempts_executed": len(candidates),
             "generation_attempts_maximum": maximum_generation_attempts,
         }

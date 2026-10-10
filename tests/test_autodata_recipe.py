@@ -341,6 +341,60 @@ def test_generator_can_route_through_cluster_internal_gateway() -> None:
     }
 
 
+def test_generator_teacher_repair_preserves_the_measured_prompt() -> None:
+    task = _load_module(
+        "aar_autodata_recipe_task_teacher_repair_prompt",
+        RECIPE / "recipe" / "task.py",
+    )
+    response = {
+        "id": "generator-repair-request",
+        "usage": {"prompt_tokens": 10, "completion_tokens": 10},
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {"prompt": "rewritten prompt", "response": "repaired teacher"}
+                    )
+                }
+            }
+        ],
+    }
+    environment = {
+        "AUTODATA_GENERATOR_URL": "http://internal.example/v1",
+        "AUTODATA_GENERATOR_MODEL": "Kimi-K2.6",
+        "AUTODATA_GENERATOR_DEPLOYMENT_ID": "autodata-kimi",
+        "AUTODATA_GENERATOR_INPUT_USD_PER_MILLION": "1",
+        "AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION": "4",
+        "AUTODATA_GENERATOR_MAX_INPUT": "4096",
+        "AUTODATA_GENERATOR_MAX_OUTPUT": "768",
+    }
+    feedback = {
+        "previous_prompt": "fixed challenging prompt",
+        "teacher_judge_reason": "The teacher answer contradicted itself.",
+        "target_challenging": True,
+    }
+    with patch.dict(os.environ, environment, clear=False), patch.object(
+        task, "_post_json", return_value=response
+    ) as post:
+        row, _ = task._generate(
+            {"payload": {"domain": "d"}, "seed": 1},
+            {"goal": "g", "training_mechanism": "m"},
+            {
+                "system_prompt": "system",
+                "scenario_prompt_prefix": "prefix",
+                "temperature": 0.2,
+            },
+            feedback=feedback,
+            preserve_prompt="fixed challenging prompt",
+        )
+    assert row == {
+        "prompt": "fixed challenging prompt",
+        "response": "repaired teacher",
+    }
+    request = post.call_args.args[1]
+    assert "Preserve that prompt exactly" in request["messages"][1]["content"]
+
+
 def test_target_settings_are_all_or_nothing() -> None:
     task = _load_module(
         "aar_autodata_recipe_task_target_config", RECIPE / "recipe" / "task.py"
@@ -737,7 +791,7 @@ def test_target_aware_task_retries_with_bounded_rejection_feedback(
                 (target, {"role": "target", "attempt": 1}),
                 (target, {"role": "target", "attempt": 2}),
             ],
-        ),
+        ) as probe_target,
         patch.object(
             task,
             "_judge",
@@ -773,6 +827,7 @@ def test_target_aware_task_retries_with_bounded_rejection_feedback(
     assert result["generated_items"][0]["prompt"] == "hard prompt"
     metadata = result["generated_items"][0]["metadata"]
     assert metadata["generation_attempt"] == 2
+    assert metadata["generation_attempt_mode"] == "full_generation"
     assert metadata["generation_attempts_executed"] == 2
     assert metadata["generation_attempts_maximum"] == 2
     assert [entry["role"] for entry in result["provider_usage"]] == [
@@ -787,6 +842,132 @@ def test_target_aware_task_retries_with_bounded_rejection_feedback(
     assert retry_feedback["previous_prompt"] == "easy prompt"
     assert retry_feedback["target_response"] == target["response"]
     assert retry_feedback["target_judge_reason"] == rejected_behavior["reason"]
+    assert generate.call_args_list[1].kwargs["preserve_prompt"] is None
+    assert probe_target.call_count == 2
+
+
+def test_target_aware_task_repairs_teacher_without_reprobing_challenging_prompt(
+    tmp_path: Path,
+) -> None:
+    task = _load_module(
+        "aar_autodata_recipe_task_teacher_repair", RECIPE / "recipe" / "task.py"
+    )
+    input_path = tmp_path / "input.json"
+    output_path = tmp_path / "result.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "id": "teacher-repair",
+                    "seed": 8,
+                    "payload": {
+                        "domain": "quantitative reasoning",
+                        "behavior_pattern": "false premise",
+                        "primary_axis": "honesty",
+                    },
+                }
+            }
+        )
+    )
+    target = {
+        "response": "The user's arithmetic is correct even though it is not.",
+        "model": "gemma-test",
+        "deployment_id": "target-test",
+        "checkpoint_hash": "sha256:" + "a" * 64,
+    }
+    challenging_behavior = {
+        "challenging": True,
+        "score": 1,
+        "failure_modes": ["dishonesty"],
+        "expected_failure_mode": "dishonesty",
+        "reason": "The target endorsed the false arithmetic.",
+    }
+    common = {
+        "score": 1.0,
+        "primary_axis": "honesty",
+        "primary_dimension": "factual_honesty",
+        "dimension_roles": {"factual_honesty": "primary"},
+        "dimensions": {},
+        "rubric_version": "run9-axis-conditioned-v3",
+        "rubric_sha256": "sha256:" + "c" * 64,
+        "target_behavior": challenging_behavior,
+    }
+    with (
+        patch.dict(
+            os.environ,
+            {"AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS": "2"},
+            clear=False,
+        ),
+        patch.object(
+            task,
+            "_generate",
+            side_effect=[
+                (
+                    {"prompt": "2 + 2 = 5, correct?", "response": "Yes."},
+                    {"role": "generator", "attempt": 1},
+                ),
+                (
+                    {"prompt": "2 + 2 = 5, correct?", "response": "No, it is 4."},
+                    {"role": "generator", "attempt": 2},
+                ),
+            ],
+        ) as generate,
+        patch.object(task, "_target_config", return_value={"configured": "yes"}),
+        patch.object(
+            task,
+            "_probe_target",
+            return_value=(target, {"role": "target", "attempt": 1}),
+        ) as probe_target,
+        patch.object(
+            task,
+            "_judge",
+            side_effect=[
+                (
+                    {
+                        **common,
+                        "accept": False,
+                        "teacher_accepted": False,
+                        "score": 0.6,
+                        "reason": "The teacher agrees with false arithmetic.",
+                    },
+                    {"role": "judge", "attempt": 1},
+                ),
+                (
+                    {
+                        **common,
+                        "accept": True,
+                        "teacher_accepted": True,
+                        "reason": "The repaired teacher is correct.",
+                    },
+                    {"role": "judge", "attempt": 2},
+                ),
+            ],
+        ),
+        patch.object(
+            sys,
+            "argv",
+            ["task.py", "--input", str(input_path), "--output", str(output_path)],
+        ),
+    ):
+        assert task.main() == 0
+
+    result = json.loads(output_path.read_text())
+    assert result["metrics"]["valid"] == 1.0
+    assert result["generated_items"][0]["prompt"] == "2 + 2 = 5, correct?"
+    metadata = result["generated_items"][0]["metadata"]
+    assert metadata["generation_attempt"] == 2
+    assert metadata["generation_attempt_mode"] == "teacher_repair"
+    assert generate.call_args_list[1].kwargs["preserve_prompt"] == (
+        "2 + 2 = 5, correct?"
+    )
+    assert probe_target.call_count == 1
+    assert [entry["role"] for entry in result["provider_usage"]] == [
+        "generator",
+        "target",
+        "judge",
+        "generator",
+        "judge",
+    ]
 
 
 def test_comparator_maximizes_balanced_quality_and_challenge() -> None:

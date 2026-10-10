@@ -360,9 +360,10 @@ candidate and measured it, but did not feed Gemma/Luna rejection evidence back
 into the same task. Run 12 now configures up to three bounded candidate attempts
 per task. A retry receives the prior prompt, target response, and teacher/target
 judge reasons, must generate a materially different candidate, and stops on the
-first accepted row. This should preserve newly discovered hard prompt patterns
-while repairing the teacher answer, and it avoids multiplying calls for rows
-accepted on their first attempt.
+first accepted row. This was the first bounded feedback implementation; the
+subsequent canary showed that generic regeneration did not guarantee that a
+newly discovered hard prompt was preserved, motivating the failure-specific
+repair described below.
 
 The old canary's final v6 edit was never evaluated. AutoData had advanced the
 workspace to revision 20 while writing it, then every supervisor pass failed
@@ -376,3 +377,38 @@ The evidence-backed v6 strategy is now the reviewed starting strategy for the
 next canary. It combines the hard prompt patterns that reached target challenge
 `1.0`/`0.5` with strict teacher constraints against invented parameters and
 sycophantic praise, while retaining the recipe's general safety exclusions.
+
+## Bootstrap canary: bounded retries validated and specialized
+
+The next canary launched from commit `348bdceffdb8df7940cd6fcbc9c5df987eabdc31`
+as launcher `1806313`, evaluator `1806352`, researcher `1806353`, and
+dependency-held controller `1806354`. The proposal and workspace bootstrap took
+about 16.5 minutes. Grounding remained balanced across the three axes and was
+approved without infrastructure errors.
+
+The initial v6 baseline exercised all three configured model attempts for each
+of two samples. This validated the bounded feedback mechanism end to end: each
+task made three Kimi, three Gemma, and three Luna calls. The two tasks completed
+in about two minutes, and the broker, dedicated AutoData Kimi route, target
+Gemma route, and Luna judge all remained healthy. Neither item passed: the
+honesty teacher invented a defect in a reasonable approximation, while Gemma
+resisted the sycophancy prompt.
+
+Two subsequent strategy checks failed immediately because the researcher made
+`scenario_prompt_prefix` longer than the recipe's 2,000-byte bound. These were
+static contract failures, not model-serving or Bubblewrap failures. The
+simplified v9 strategy passed the same check. Its honesty and sycophancy dry-run
+tasks completed in 42 and 34 seconds respectively. The honesty prompt finally
+challenged Gemma (`challenge=0.5`), but its teacher contradicted itself and
+scored `quality=0.66`. The sycophancy teacher scored `quality=1.0`, but Gemma
+again resisted (`challenge=0`). The monitor correctly requested revision, and
+no rejected row entered training.
+
+That evidence exposed a remaining inefficiency in generic retries: every
+failure regenerated both the prompt and teacher answer. The recipe now uses
+failure-specific retries. A non-challenging prompt is regenerated and reprobed.
+When a prompt already challenges Gemma but the teacher fails, the measured
+prompt and Gemma response are retained, only the teacher is repaired, and the
+judge is rerun. This preserves scarce hard prompts, avoids an unnecessary Gemma
+call, and directly addresses the v9 honesty failure. Each row records whether
+its selected attempt was `full_generation` or `teacher_repair`.

@@ -42,11 +42,14 @@ finalization, and digest-verified reuse support.
 Run 12 additionally sets `generation.target_feedback_max_attempts: 3` in its
 run YAML. This is distinct from transport retries: each broker task first tries
 one Kimi prompt/teacher answer, probes Gemma, and asks Luna to judge both. If
-the row is rejected, Kimi receives the bounded prior prompt, Gemma response,
-and Luna teacher/target reasons and may create a materially different candidate.
-It stops immediately on acceptance and never exports a rejected candidate.
-The unchanged protected rubric, target-failure gate, and provenance checks
-therefore remain authoritative while target awareness becomes an actual
+the target was not challenged, Kimi receives the bounded prior prompt, Gemma
+response, and Luna teacher/target reasons and creates a materially different
+candidate. If the prompt did challenge Gemma but its teacher answer failed,
+the prompt and measured Gemma response are preserved while Kimi repairs only
+the teacher answer; Gemma is not needlessly probed again. The task stops
+immediately on acceptance and never exports a rejected candidate. The unchanged
+protected rubric, target-failure gate, and provenance checks therefore remain
+authoritative while target awareness becomes a failure-specific
 generate-probe-revise loop instead of a one-shot measurement.
 
 The authoring workspace allows 32 native revisions. Native AutoData counts the
