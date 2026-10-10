@@ -29,32 +29,6 @@ import run as launcher
 
 
 class KimiAgentTest(unittest.TestCase):
-    def test_auto_approve_uses_kimi_noninteractive_cli_mode(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            cli = root / "kimi"
-            cli.write_text(
-                f"#!{sys.executable}\n"
-                "import json, sys\n"
-                "from pathlib import Path\n"
-                "Path('kimi-argv.json').write_text(json.dumps(sys.argv[1:]))\n"
-                "print(json.dumps({'role': 'assistant', 'content': 'done'}))\n"
-            )
-            cli.chmod(0o755)
-
-            result = asyncio.run(
-                KimiAgent(
-                    "test-agent",
-                    root,
-                    cli_path=str(cli),
-                    auto_approve=True,
-                ).execute("task")
-            )
-
-            self.assertTrue(result.success, result.error)
-            argv = json.loads((root / "kimi-argv.json").read_text())
-            self.assertIn("--auto", argv)
-
     def test_turn_timeout_terminates_cli_process_group(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -565,7 +539,7 @@ class KimiAgentTest(unittest.TestCase):
             self.assertTrue(result.success, result.error)
             observed = json.loads(capture.read_text())
             self.assertIn("--agent-file", observed["argv"])
-            self.assertIn("--auto", observed["argv"])
+            self.assertNotIn("--auto", observed["argv"])
             self.assertIn(
                 'defaultPermissionMode = "auto"', observed["config"]
             )

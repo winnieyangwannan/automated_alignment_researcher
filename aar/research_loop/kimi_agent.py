@@ -296,13 +296,6 @@ class KimiAgent:
             with self._request_policy_proxy(env) as tool_choice_controller:
                 while True:
                     command = [executable]
-                    # Kimi Code 2.1.1 exposes noninteractive approval as a CLI
-                    # mode.  The overlay preference written below is retained
-                    # for compatibility, but is not sufficient on its own: a
-                    # headless process can otherwise stop at its first native
-                    # Bash action waiting for an approval prompt.
-                    if self.auto_approve:
-                        command.append("--auto")
                     if self.model:
                         command.extend(["--model", self.model])
                     if continuation_count:

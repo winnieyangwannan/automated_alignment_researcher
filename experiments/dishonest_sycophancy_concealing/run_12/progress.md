@@ -186,17 +186,20 @@ times sixteen.
 
 The first clean bootstrap-canary attempt failed closed before creating a Gemma
 endpoint or submitting evaluator, researcher, or controller jobs. Kimi Code
-2.1.1 reached its first native Bash action but then waited until the bounded
-180-second MCP preflight killed its process group. The AAR adapter requested
-automatic approval in its overlay configuration but did not pass Kimi's
-documented command-line `--auto` mode.
+2.1.1 reached its first native Bash action but then remained inside the bounded
+MCP round trip until the 180-second preflight killed its process group.
 
-The adapter now maps `auto_approve=True` to `--auto` on every initial and
-continuation invocation, with a regression test that records the actual child
-process arguments. The reusable runtime profile was also corrected from an
-accidental concurrency value of 32 back to the documented production value of
-eight per chain. A fresh canary must pass these gates before the five-chain
-launch.
+An attempted recovery mapped `auto_approve=True` to Kimi's documented `--auto`
+flag. The next canary immediately rejected that combination because Kimi 2.1.1
+does not allow `--auto` with noninteractive `--prompt` mode. Inspection of the
+pinned CLI implementation then established that prompt mode already forces the
+agent permission service to `auto`; the CLI flag was reverted rather than
+weakening or skipping the MCP preflight. The remaining investigation therefore
+focuses on the post-tool model/MCP round trip and its timeout, not approval.
+
+Separately, the reusable runtime profile was corrected from an accidental
+concurrency value of 32 back to the documented production value of eight per
+chain. A fresh canary must pass these gates before the five-chain launch.
 
 ## Validation
 
