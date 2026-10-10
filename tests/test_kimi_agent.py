@@ -620,6 +620,7 @@ class KimiAgentTest(unittest.TestCase):
                     json={
                         "model": "Kimi-K2.6",
                         "chat_template_kwargs": {"other": "preserved"},
+                        "stop": "END",
                     },
                     timeout=5,
                 )
@@ -637,6 +638,10 @@ class KimiAgentTest(unittest.TestCase):
         self.assertEqual(
             observed["payload"]["chat_template_kwargs"],
             {"other": "preserved", "enable_thinking": False},
+        )
+        self.assertEqual(
+            observed["payload"]["stop"],
+            ["END", "!!!!!!!!!!!!!!!!"],
         )
 
     def test_opt_in_proxy_forces_one_named_checkpoint_tool(self) -> None:
@@ -798,12 +803,20 @@ class KimiAgentTest(unittest.TestCase):
                 completion_tool="share_finding",
             )
 
+            empty_output = {"tool_uses": []}
+            self.assertIn("get_literature", agent._continuation_prompt(empty_output))
+            self.assertEqual(agent._continuation_tool(empty_output), "get_literature")
+            literature = (
+                "mcp__server-api-tools__get_literature",
+                {},
+            )
+
             def prompt(*uses: tuple[str, dict[str, str]]) -> str:
                 return agent._continuation_prompt(
                     {
                         "tool_uses": [
                             {"tool": tool, "input": tool_input}
-                            for tool, tool_input in uses
+                            for tool, tool_input in (literature, *uses)
                         ]
                     }
                 )
@@ -813,7 +826,7 @@ class KimiAgentTest(unittest.TestCase):
                     {
                         "tool_uses": [
                             {"tool": tool, "input": tool_input}
-                            for tool, tool_input in uses
+                            for tool, tool_input in (literature, *uses)
                         ]
                     }
                 )

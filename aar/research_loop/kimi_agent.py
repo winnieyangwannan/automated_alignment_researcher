@@ -26,6 +26,9 @@ from urllib.parse import urlsplit
 import requests
 
 
+_DEGENERATE_OUTPUT_STOP = "!!!!!!!!!!!!!!!!"
+
+
 @dataclass
 class KimiTextBlock:
     text: str
@@ -98,6 +101,22 @@ def _policy_proxy_handler(
                         if not isinstance(template_options, dict):
                             raise ValueError("chat_template_kwargs must be an object")
                         template_options["enable_thinking"] = False
+                        # Kimi-K2.6 can enter an unbounded `The!!!!...` loop in
+                        # non-thinking mode. Preserve the configured maximum
+                        # output allowance for legitimate responses while
+                        # terminating only this observed degenerate sequence.
+                        stop = payload.get("stop")
+                        if stop is None:
+                            payload["stop"] = [_DEGENERATE_OUTPUT_STOP]
+                        elif isinstance(stop, str):
+                            payload["stop"] = [stop, _DEGENERATE_OUTPUT_STOP]
+                        elif isinstance(stop, list) and all(
+                            isinstance(item, str) for item in stop
+                        ):
+                            if _DEGENERATE_OUTPUT_STOP not in stop:
+                                payload["stop"] = [*stop, _DEGENERATE_OUTPUT_STOP]
+                        else:
+                            raise ValueError("stop must be a string or string array")
                     requested_tool = tool_choice_controller.consume(
                         payload.get("tools")
                     )
@@ -545,6 +564,11 @@ class KimiAgent:
         uses = output["tool_uses"]
         names = [self._tool_name(item) for item in uses]
         inputs = [item.get("input") or {} for item in uses]
+        if "get_literature" not in names:
+            return (
+                "Call the native structured MCP tool get_literature exactly once "
+                "now with an empty input. Do not emit prose or call another tool."
+            )
         template_path = (self.workspace / "aar/ideas/TEMPLATE/run.py").resolve()
         idea_name = os.environ.get("IDEA_NAME", "chain")
         chain_id = re.sub(r"[^A-Za-z0-9]+", "_", idea_name).strip("_") or "chain"
@@ -764,6 +788,8 @@ class KimiAgent:
             return "share_finding"
         if "MCP tool submit_idea_proposal exactly once" in prompt:
             return "submit_idea_proposal"
+        if "MCP tool get_literature exactly once" in prompt:
+            return "get_literature"
         if "native Read tool exactly once" in prompt:
             return "Read"
         if "native Write tool exactly once" in prompt:

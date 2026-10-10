@@ -232,6 +232,15 @@ have been verified; named feature branches remain rejected even at the same
 commit. The top-level launcher now executes this resolver preflight before any
 new Gemma deployment.
 
+After that recovery, the first production Kimi request again generated at
+about 87 tokens/second for more than four minutes without emitting a tool. The
+65,536-token maximum is retained for legitimate research/code output, but the
+non-thinking request proxy now adds a stop sequence for the observed
+`The!!!!...` degeneration (16 consecutive exclamation marks). The Kimi
+continuation state machine also requires the initial `get_literature` call
+before advancing to template inspection, so stopping a degenerate first answer
+cannot silently skip research grounding.
+
 Separately, the reusable runtime profile was corrected from an accidental
 concurrency value of 32 back to the documented production value of eight per
 chain. A fresh canary must pass these gates before the five-chain launch.
