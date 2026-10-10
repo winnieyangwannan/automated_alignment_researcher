@@ -184,7 +184,7 @@ def test_inspect_reports_static_yaml_values() -> None:
         "profile_name": "target-aware-local-v1",
         "concurrency_per_chain": 8,
         "model_request_max_attempts": 3,
-        "target_feedback_max_attempts": 3,
+        "target_feedback_max_attempts": 5,
         "researcher_kimi_deployment": "aar_8-kimi26",
         "generator_kimi_deployment": "autodata_8-kimi26",
         "chains": ["alpha", "beta", "gamma", "delta", "epsilon"],
