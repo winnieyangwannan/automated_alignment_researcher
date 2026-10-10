@@ -34,7 +34,8 @@
     "recipe/judge_rubric.json",
     "recipe/task.py",
     "recipe/check.py",
-    "recipe/request.json"
+    "recipe/request.json",
+    "training-data-contract.json"
   ],
   "checks": [
     {

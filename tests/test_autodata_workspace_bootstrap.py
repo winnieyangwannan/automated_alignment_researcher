@@ -53,6 +53,31 @@ def _environment(tmp_path: Path) -> dict[str, str]:
             }
         )
     )
+    for name in (
+        "autodata.pipeline.json",
+        "framework.lock.json",
+        "objective.json",
+        "comparator.json",
+    ):
+        (recipe / name).write_text(json.dumps({"name": name}))
+    for name in ("grounding", "recipe", "schemas"):
+        (recipe / name).mkdir()
+    (recipe / "grounding" / "coverage.json").write_text("{}")
+    (recipe / "grounding" / "build_manifest.py").write_text(
+        """import argparse, json
+from pathlib import Path
+parser = argparse.ArgumentParser()
+parser.add_argument("--count", type=int, required=True)
+parser.add_argument("--coverage")
+parser.add_argument("--output", type=Path, required=True)
+args = parser.parse_args()
+args.output.write_text(json.dumps({"schema": "autodata.grounding/v1", "tasks": list(range(args.count))}))
+"""
+    )
+    (recipe / "recipe" / "task.py").write_text("# reviewed task\n")
+    (recipe / "schemas" / "result.json").write_text("{}")
+    contract = tmp_path / "training-contract.json"
+    contract.write_text(json.dumps({"schema": "test-contract"}))
     policy = tmp_path / "policy.json"
     policy.write_text(
         json.dumps(
@@ -84,6 +109,10 @@ def _environment(tmp_path: Path) -> dict[str, str]:
             team / "autodata" / "native" / "control.json"
         ),
         "AAR_AUTODATA_CAMPAIGN_POLICY": str(policy),
+        "AAR_AUTODATA_TRAINING_DATA_CONTRACT": str(contract),
+        "AAR_AUTODATA_TUNING_TASKS": "64",
+        "AAR_AUTODATA_VALIDATION_TASKS": "32",
+        "AAR_AUTODATA_TEST_TASKS": "32",
         "AAR_AUTODATA_BROKER_URL": "http://127.0.0.1:12345",
         "AAR_AUTODATA_CAPABILITY": "secret-value-not-written",
         "AAR_AUTODATA_CONCURRENCY": "8",
@@ -151,6 +180,12 @@ def test_bootstrap_creates_registers_and_resumes_one_workspace(tmp_path: Path) -
     assert executor["broker_auth_secret_ref"] == "AAR_AUTODATA_CAPABILITY"
     assert "secret-value-not-written" not in json.dumps(brief)
     assert brief["execution_defaults"]["concurrency"] == 8
+    draft = root / "draft"
+    assert (draft / "autodata.pipeline.json").is_file()
+    assert (draft / "recipe" / "task.py").is_file()
+    assert (draft / "training-data-contract.json").is_file()
+    grounding = json.loads((draft / "grounding" / "manifest.json").read_text())
+    assert len(grounding["tasks"]) == 128
 
 
 @pytest.mark.parametrize("backend", ["kimi", "claude"])

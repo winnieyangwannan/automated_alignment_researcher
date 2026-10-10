@@ -233,6 +233,75 @@ def _prepare_brief(run_root: Path) -> tuple[Path, str]:
     return destination, recipe_digest
 
 
+def _stage_reviewed_recipe(run_root: Path) -> None:
+    """Seed the writable draft from the operator-reviewed recipe deterministically."""
+    recipe = _required_path("AAR_AUTODATA_RECIPE_ROOT", directory=True)
+    draft = run_root / "draft"
+    for name in (
+        "autodata.pipeline.json",
+        "framework.lock.json",
+        "objective.json",
+        "comparator.json",
+    ):
+        source = recipe / name
+        if source.is_symlink() or not source.is_file():
+            raise RuntimeError(f"reviewed AutoData recipe is missing {name}")
+        shutil.copy2(source, draft / name)
+    for name in ("grounding", "recipe", "schemas"):
+        source = recipe / name
+        if source.is_symlink() or not source.is_dir():
+            raise RuntimeError(f"reviewed AutoData recipe is missing {name}/")
+        shutil.copytree(
+            source,
+            draft / name,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+
+    tuning = int(os.environ["AAR_AUTODATA_TUNING_TASKS"])
+    validation = int(os.environ["AAR_AUTODATA_VALIDATION_TASKS"])
+    test = int(os.environ["AAR_AUTODATA_TEST_TASKS"])
+    task_count = tuning + validation + test
+    if min(tuning, validation, test) < 1:
+        raise RuntimeError("AutoData meta partitions must all be non-empty")
+    builder = draft / "grounding" / "build_manifest.py"
+    coverage = draft / "grounding" / "coverage.json"
+    manifest = draft / "grounding" / "manifest.json"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(builder),
+            "--count",
+            str(task_count),
+            "--coverage",
+            str(coverage),
+            "--output",
+            str(manifest),
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr[-2000:].strip() or completed.stdout[-2000:].strip()
+        raise RuntimeError(f"reviewed grounding build failed: {detail}")
+    generated = _json_object(manifest, "generated reviewed grounding manifest")
+    tasks = generated.get("tasks")
+    if generated.get("schema") != "autodata.grounding/v1" or not isinstance(
+        tasks, list
+    ):
+        raise RuntimeError("generated reviewed grounding manifest has invalid schema")
+    if len(tasks) != task_count:
+        raise RuntimeError(
+            "generated reviewed grounding manifest has an unexpected task count"
+        )
+    contract = _required_path("AAR_AUTODATA_TRAINING_DATA_CONTRACT")
+    shutil.copy2(contract, draft / "training-data-contract.json")
+
+
 def ensure_workspace(
     *, run_id: str, idea_name: str, code_hash: str
 ) -> dict[str, Any]:
@@ -281,6 +350,7 @@ def ensure_workspace(
             return {**existing, "idempotent": True}
 
         brief, brief_digest = _prepare_brief(run_root)
+        _stage_reviewed_recipe(run_root)
         key_payload = {
             "schema": BOOTSTRAP_SCHEMA,
             "run_id": run_id,
