@@ -23,7 +23,16 @@ def test_run12_research_canary_is_one_scored_kimi_iteration() -> None:
     assert "AAR_KEEP_CHECKPOINTS=1" in launcher
     assert "/checkpoint/ram/${USER:?}/aar-runs/" in launcher
     assert "run12-adapter-target/research_canary_attempts" in launcher
-    assert 'submit_run_10.sh" canary' in launcher
+    assert 'run_10/launch/submit_run_10.sh" canary' in launcher
+
+
+def test_run12_launcher_uses_current_run10_helper_layout() -> None:
+    launcher = (LAUNCH / "submit_full.sh").read_text()
+
+    assert "run_10/runtime/snapshot_vllm_runtime.sh" in launcher
+    assert "run_10/canary/verify_kimi_endpoint.py" in launcher
+    assert "run_10/snapshot_vllm_runtime.sh" not in launcher
+    assert "run_10/verify_kimi_endpoint.py" not in launcher
 
 
 def test_run12_research_canary_can_continue_with_safe_memory() -> None:

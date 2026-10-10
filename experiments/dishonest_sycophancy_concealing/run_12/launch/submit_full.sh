@@ -159,7 +159,7 @@ mkdir -p "${attempt}/"{metadata,logs,secrets,chains,runtime}
 mkdir -p "${checkpoint_root}/chains"
 chmod 700 "${attempt}" "${attempt}/"{metadata,logs,secrets,chains}
 chmod 700 "${checkpoint_root}" "${checkpoint_root}/chains"
-"${REPO}/experiments/dishonest_sycophancy_concealing/run_10/snapshot_vllm_runtime.sh" "${attempt}" \
+"${REPO}/experiments/dishonest_sycophancy_concealing/run_10/runtime/snapshot_vllm_runtime.sh" "${attempt}" \
   > "${attempt}/metadata/vllm_runtime_path.txt"
 
 model_env="${attempt}/secrets/model-api.env"
@@ -180,7 +180,7 @@ export AAR_SERVE_API_V2_ROOT="${SV}" KIMI_MODEL_CAPABILITIES=tool_use
 export KIMI_MODEL_MAX_OUTPUT_SIZE=65536 KIMI_MODEL_MAX_COMPLETION_TOKENS=65536
 export AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS=180
 unset KIMI_AGENT_MODEL
-timeout 420 "${REPO}/.venv/bin/python" "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/verify_kimi_endpoint.py" \
+timeout 420 "${REPO}/.venv/bin/python" "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/canary/verify_kimi_endpoint.py" \
   --workspace "${REPO}" --output "${attempt}/metadata/kimi_mcp_preflight.json"
 
 suffix="$(printf '%s' "${attempt_id}" | sha256sum | cut -c1-8)"

@@ -18,4 +18,4 @@ if [ -n "${AAR_RUN12_RECOVERED_AGENT_LOG_DIR:-}" ]; then
   export AAR_RUN10_RECOVERED_AGENT_LOG_DIR="${AAR_RUN12_RECOVERED_AGENT_LOG_DIR}"
 fi
 
-exec "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/submit_run_10.sh" canary
+exec "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/launch/submit_run_10.sh" canary
