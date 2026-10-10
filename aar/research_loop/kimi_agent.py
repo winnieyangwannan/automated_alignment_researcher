@@ -726,6 +726,7 @@ class KimiAgent:
                         f"/tmp/aar-autodata-{action['id']}-result.json"
                     )
                     if not result_path.is_file():
+                        self._autodata_prepare_editable_paths(action)
                         action_spec = json.dumps(action.get("spec"), sort_keys=True)[:6000]
                         editable_context = self._autodata_editable_context(action)
                         return (
@@ -1150,6 +1151,35 @@ class KimiAgent:
             context[relative_raw] = excerpt
             remaining -= len(excerpt)
         return json.dumps(context, sort_keys=True)
+
+    @staticmethod
+    def _autodata_prepare_editable_paths(action: dict[str, Any]) -> None:
+        """Create only allowed parent directories needed by structured Write."""
+        spec = action.get("spec")
+        if not isinstance(spec, dict):
+            return
+        root_raw = spec.get("editable_root")
+        allowed = spec.get("allowed_paths")
+        if not isinstance(root_raw, str) or not isinstance(allowed, list):
+            return
+        try:
+            root = Path(root_raw).resolve(strict=True)
+        except OSError:
+            return
+        for relative_raw in allowed:
+            if not isinstance(relative_raw, str):
+                continue
+            wildcard = relative_raw.endswith("/**")
+            relative = Path(relative_raw[:-3] if wildcard else relative_raw)
+            if relative.is_absolute() or ".." in relative.parts:
+                continue
+            parent = root / relative if wildcard else (root / relative).parent
+            try:
+                resolved = parent.resolve(strict=False)
+                resolved.relative_to(root)
+            except (OSError, ValueError):
+                continue
+            parent.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     @classmethod
     def _autodata_native_status(cls, subject_id: str) -> dict[str, Any]:

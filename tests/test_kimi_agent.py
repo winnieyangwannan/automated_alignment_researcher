@@ -1407,6 +1407,15 @@ class KimiAgentTest(unittest.TestCase):
                     lease_path.unlink(missing_ok=True)
                     result_path.unlink(missing_ok=True)
 
+                grounding_action = {
+                    "spec": {
+                        "editable_root": str(draft),
+                        "allowed_paths": ["grounding/**"],
+                    }
+                }
+                agent._autodata_prepare_editable_paths(grounding_action)
+                self.assertTrue((draft / "grounding").is_dir())
+
                 execution_id = "exe_" + "3" * 32
                 control.write_text(
                     json.dumps(
