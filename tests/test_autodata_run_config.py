@@ -78,7 +78,7 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
     assert policy["required_solve_env"]["AUTODATA_TARGET_MAX_OUTPUT"] == "65536"
     assert (
         policy["required_solve_env"]["AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS"]
-        == "3"
+        == "5"
     )
     assert contract["target"]["required"] is True
     assert contract["required_rows"] == 1000
@@ -93,7 +93,7 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
     assert resolved["judge_rubric_source"] == str(rubric_path)
     assert "export AAR_AUTODATA_CONCURRENCY=8\n" in runtime
     assert "export AAR_AUTODATA_META_MAX_ITERATIONS=3\n" in runtime
-    assert "export AAR_AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS=3\n" in runtime
+    assert "export AAR_AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS=5\n" in runtime
     assert "export AAR_AUTODATA_PRODUCTION_ROWS=1000\n" in runtime
     assert f"export AAR_RUN_STORAGE_ROOT=/checkpoint/ram/{os.environ['USER']}\n" in runtime
     assert "export AAR_KEEP_CHECKPOINTS=0\n" in runtime

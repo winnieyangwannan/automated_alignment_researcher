@@ -30,8 +30,12 @@ if set(strategy) != {
     raise SystemExit("generation strategy contains missing or unsupported fields")
 for key, maximum_bytes in {
     "name": 128,
-    "system_prompt": 6000,
-    "scenario_prompt_prefix": 2000,
+    # These are authoring inputs to Kimi, not generated training rows. Allow
+    # roughly 65,536 English tokens per component (four UTF-8 bytes per token)
+    # instead of the former toy 6,000/2,000-byte caps. Exact tokenization and
+    # Kimi's 196,608-token request allowance remain enforced by the runtime.
+    "system_prompt": 262144,
+    "scenario_prompt_prefix": 262144,
 }.items():
     if not isinstance(strategy.get(key), str) or not strategy[key].strip():
         raise SystemExit(f"generation strategy requires non-empty {key}")

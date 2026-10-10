@@ -15,7 +15,10 @@ budget:
 generation:
   # Retry only rejected candidates. Each retry receives bounded Gemma/Luna
   # feedback and must generate a materially different prompt/teacher answer.
-  target_feedback_max_attempts: 3
+  # Five attempts leave room to repair a teacher answer when a scarce hard
+  # prompt is first discovered on attempt three. Teacher-only repair reuses the
+  # measured target response and does not make another Gemma call.
+  target_feedback_max_attempts: 5
 meta_optimization:
   maximum_iterations: 3
   minimum_iterations: 3

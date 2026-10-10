@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -110,6 +111,49 @@ def test_checked_in_recipe_configuration_passes_local_check() -> None:
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize("field", ["system_prompt", "scenario_prompt_prefix"])
+def test_generation_strategy_text_allows_maximum_kimi_output_envelope(
+    tmp_path: Path, field: str
+) -> None:
+    recipe = tmp_path / "recipe"
+    shutil.copytree(RECIPE, recipe)
+    strategy_path = recipe / "recipe" / "generation_strategy.json"
+    strategy = json.loads(strategy_path.read_text())
+    strategy[field] = "x" * 262144
+    strategy_path.write_text(json.dumps(strategy))
+
+    completed = subprocess.run(
+        [sys.executable, str(recipe / "recipe" / "check.py")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize("field", ["system_prompt", "scenario_prompt_prefix"])
+def test_generation_strategy_text_rejects_more_than_maximum_kimi_output_envelope(
+    tmp_path: Path, field: str
+) -> None:
+    recipe = tmp_path / "recipe"
+    shutil.copytree(RECIPE, recipe)
+    strategy_path = recipe / "recipe" / "generation_strategy.json"
+    strategy = json.loads(strategy_path.read_text())
+    strategy[field] = "x" * 262145
+    strategy_path.write_text(json.dumps(strategy))
+
+    completed = subprocess.run(
+        [sys.executable, str(recipe / "recipe" / "check.py")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert f"generation strategy {field} exceeds 262144 bytes" in completed.stderr
 
 
 def test_judge_rejected_row_is_not_exportable_training_data(tmp_path: Path) -> None:

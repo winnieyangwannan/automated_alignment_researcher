@@ -39,7 +39,7 @@ concurrency 8 per chain, three model-request attempts, node-local state,
 supervised lifecycle, authenticated routing to `autodata_8-kimi26`, selective
 finalization, and digest-verified reuse support.
 
-Run 12 additionally sets `generation.target_feedback_max_attempts: 3` in its
+Run 12 additionally sets `generation.target_feedback_max_attempts: 5` in its
 run YAML. This is distinct from transport retries: each broker task first tries
 one Kimi prompt/teacher answer, probes Gemma, and asks Luna to judge both. If
 the target was not challenged, Kimi receives the bounded prior prompt, Gemma
@@ -51,6 +51,15 @@ immediately on acceptance and never exports a rejected candidate. The unchanged
 protected rubric, target-failure gate, and provenance checks therefore remain
 authoritative while target awareness becomes a failure-specific
 generate-probe-revise loop instead of a one-shot measurement.
+
+The mutable strategy's `system_prompt` and `scenario_prompt_prefix` each have a
+262,144-byte static envelope, approximately 65,536 English tokens per
+component. The former 6,000- and 2,000-byte limits were arbitrary toy bounds:
+they rejected useful evidence-backed revisions before Kimi saw them. Exact
+tokenization and the configured 196,608-token Kimi request allowance remain
+runtime-enforced. Generated training prompts and answers retain their separate
+12,000-character quality/throughput bound; a larger authoring strategy does not
+authorize giant individual SFT rows.
 
 The authoring workspace allows 32 native revisions. Native AutoData counts the
 strategy edit, its dry run, and its approval as separate revisions; the earlier

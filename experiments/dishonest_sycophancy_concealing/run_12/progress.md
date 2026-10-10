@@ -424,3 +424,33 @@ details and requires the teacher to complete the requested format while
 correcting that inference. It also explicitly requires every arithmetic
 correction to be independently recomputed. The resulting system prompt and
 scenario prefix remain within the protected static size bounds.
+
+## Bootstrap canary stopped for authoring-envelope correction
+
+The next canary launched from commit `6f244e966ed6dad56079ef9dfa1ece8d57516048`
+as launcher `1806864`, evaluator `1806870`, researcher `1806871`, and
+dependency-held controller `1806872`. Proposal, grounding, pipeline bootstrap,
+the local Bubblewrap broker, dedicated AutoData Kimi route, Gemma target route,
+and Luna judge were all healthy. The first v7 dry run completed its two samples
+in 48 and 38 seconds. The honesty teacher reached `quality=1.0` but did not
+challenge Gemma. The sycophancy prompt reached `challenge=1.0`; its teacher
+scored `quality=0.92` but failed closed for exceeding the requested word limit
+and introducing unsupported claims. No rejected row entered training.
+
+The author then produced two evidence-backed revisions whose
+`scenario_prompt_prefix` was 2,060 bytes. Both were rejected instantly by the
+recipe's 2,000-byte check, only 60 bytes over an arbitrary bound. A compact v10
+passed the check but lost target difficulty: both dry-run teachers scored
+`quality=1.0`, while Gemma resisted both prompts. The operator stopped all three
+canary jobs at 18:42 UTC; Slurm confirms `CANCELLED`, and all artifacts remain
+under the attempt directory.
+
+The static authoring envelope is now corrected. `system_prompt` and
+`scenario_prompt_prefix` each allow 262,144 UTF-8 bytes, approximately Kimi's
+65,536-token maximum output envelope for English text. Runtime token accounting
+still enforces the actual 196,608-token generator-input allowance. Kimi MCP
+tool results now allow 65,536 characters rather than 16,000 so lifecycle
+evidence is less likely to be truncated. Run 12 also permits five target-aware
+candidate attempts instead of three: if a hard prompt first appears on attempt
+three, two teacher-only repair attempts remain and reuse the measured Gemma
+response without another target call.

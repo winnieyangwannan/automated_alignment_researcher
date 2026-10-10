@@ -152,6 +152,7 @@ def test_run12_uses_separate_kimi_deployments_and_maximum_token_allowances() -> 
     assert "KIMI_MODEL_MAX_CONTEXT_SIZE=262144" in pipeline
     assert "KIMI_MODEL_MAX_OUTPUT_SIZE=65536" in pipeline
     assert "KIMI_MODEL_MAX_COMPLETION_TOKENS=65536" in pipeline
+    assert "AAR_KIMI_MCP_MAX_TEXT_CHARS=65536" in pipeline
     assert profile["providers"]["generator"]["max_input_tokens"] == 196608
     assert profile["providers"]["generator"]["max_output_tokens"] == 65536
     assert profile["providers"]["judge"]["max_input_tokens"] == 1000000
