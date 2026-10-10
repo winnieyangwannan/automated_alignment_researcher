@@ -684,6 +684,7 @@ def main() -> int:
     args = parser.parse_args()
     command = json.loads(Path(args.input).read_text())
     task = command["task"]
+    phase = str(command.get("phase") or "")
     recipe_root = Path(__file__).resolve().parent
     request_spec = json.loads((recipe_root / "request.json").read_text())
     strategy = json.loads((recipe_root / "generation_strategy.json").read_text())
@@ -768,13 +769,22 @@ def main() -> int:
             "metadata": metadata,
             "_autodata_usage": provider_usage,
         }
+        # A rejected example is never exportable training data.  During the
+        # visible authoring dry run only, however, retain the candidate as
+        # bounded diagnostic evidence so the baseline reviewer and pipeline
+        # author can see what was tried and why the target judge rejected it.
+        # Native meta-optimization/production phases still emit no item for a
+        # rejection, preserving the dataset acceptance contract.
+        visible_dry_run_items = (
+            [item] if accepted or phase == "authoring-dry-run" else []
+        )
         result = {
             "schema": "autodata.task-result/v1",
             "task_id": task["id"],
             "outcome": "succeeded",
             # Provider usage remains in the task result, while native dataset
             # export includes only independently accepted training examples.
-            "generated_items": [item] if accepted else [],
+            "generated_items": visible_dry_run_items,
             "metrics": metrics,
             "provider_usage": provider_usage,
             "reason_code": (

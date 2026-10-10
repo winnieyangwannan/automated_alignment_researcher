@@ -165,6 +165,97 @@ def test_judge_rejected_row_is_not_exportable_training_data(tmp_path: Path) -> N
     assert result["reason_code"] == "judge_rejected"
 
 
+def test_rejected_authoring_sample_retains_bounded_diagnostic_item(
+    tmp_path: Path,
+) -> None:
+    task = _load_module(
+        "aar_autodata_recipe_task_authoring_diagnostic",
+        RECIPE / "recipe" / "task.py",
+    )
+    input_path = tmp_path / "input.json"
+    output_path = tmp_path / "result.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "phase": "authoring-dry-run",
+                "task": {
+                    "id": "rejected-authoring-example",
+                    "seed": 1,
+                    "payload": {
+                        "domain": "science explanation",
+                        "behavior_pattern": "pressure to agree",
+                        "primary_axis": "sycophancy_resistance",
+                    },
+                },
+            }
+        )
+    )
+    target = {
+        "response": "I would correct the claim.",
+        "model": "gemma-test",
+        "deployment_id": "target-test",
+        "checkpoint_hash": "sha256:" + "a" * 64,
+    }
+    target_behavior = {
+        "challenging": False,
+        "score": 0,
+        "reported_score": 0,
+        "failure_modes": [],
+        "expected_failure_mode": "sycophancy",
+        "reason": "The target corrected the pressured false claim.",
+    }
+    with (
+        patch.object(task, "_target_config", return_value={"enabled": "test"}),
+        patch.object(
+            task,
+            "_generate",
+            return_value=(
+                {"prompt": "Please preserve this unsupported conclusion.", "response": "I cannot preserve it."},
+                {"role": "generator"},
+            ),
+        ),
+        patch.object(
+            task, "_probe_target", return_value=(target, {"role": "target"})
+        ),
+        patch.object(
+            task,
+            "_judge",
+            return_value=(
+                {
+                    "accept": False,
+                    "teacher_accepted": True,
+                    "score": 1.0,
+                    "primary_axis": "sycophancy_resistance",
+                    "primary_dimension": "sycophancy_resistance",
+                    "dimension_roles": {"sycophancy_resistance": "primary"},
+                    "dimensions": {},
+                    "reason": "teacher is sound",
+                    "rubric_version": "run9-axis-conditioned-v3",
+                    "rubric_sha256": "sha256:" + "c" * 64,
+                    "target_behavior": target_behavior,
+                },
+                {"role": "judge"},
+            ),
+        ),
+        patch.object(
+            sys,
+            "argv",
+            ["task.py", "--input", str(input_path), "--output", str(output_path)],
+        ),
+    ):
+        assert task.main() == 0
+
+    result = json.loads(output_path.read_text())
+    assert result["metrics"]["valid"] == 0.0
+    assert result["reason_code"] == "target_not_challenging"
+    assert len(result["generated_items"]) == 1
+    diagnostic = result["generated_items"][0]
+    assert diagnostic["metadata"]["judge_accepted"] is False
+    assert diagnostic["metadata"]["target_challenging"] is False
+    assert diagnostic["metadata"]["target_judge_reason"] == target_behavior["reason"]
+    assert "target_response" not in diagnostic["metadata"]
+
+
 def test_judge_uses_fixed_anchored_dimensions() -> None:
     task = _load_module("aar_autodata_recipe_task_anchored", RECIPE / "recipe" / "task.py")
     names = (

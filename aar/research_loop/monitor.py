@@ -239,7 +239,13 @@ provenance, and avoids evaluation/held-out sources or close imitation.
 For approve_baseline, approve only if the native dry-run results succeeded, the
 generator and independent judge roles are credible, the mutable surface is
 narrow, and protected scientific/infrastructure controls cannot be edited by
-the researcher.
+the researcher. A Model API Luna judge is intentionally external to the
+generator and target-model runtimes and is an acceptable independent judge;
+do not require it to run inside the workspace. A rejected authoring dry-run may
+retain its candidate only as visible diagnostic evidence when its metadata
+explicitly says judge_accepted=false. Such evidence is not accepted training
+data: use its prompt and target_judge_reason to give specific revision feedback,
+and approve the baseline only when every dry-run sample has valid=1.
 
 Native review package:
 <autodata_review>
