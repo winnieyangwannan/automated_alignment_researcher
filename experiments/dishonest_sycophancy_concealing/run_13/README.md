@@ -202,3 +202,19 @@ publish a lower limit for that route. This prevents the small historical
 4,096/8,192-token input and 768/512-token output budgets from rejecting or
 truncating structured calls. Existing signed campaign policies remain
 immutable; the larger ceilings take effect only in a fresh attempt.
+
+## Retained full-run artifacts
+
+The stopped five-chain launch attempt
+`20261009T230106Z-4c7a5b059cf0` is retained on FAIR HPC at:
+
+```text
+/checkpoint/ram/winnieyangwn/aar-runs/run13-full/20261009T230106Z-4c7a5b059cf0
+```
+
+This checkpoint directory is the canonical retained location for the run's
+logs, manifests, chain workspaces, AutoData artifacts, methods, submissions,
+and evaluator outputs. The transferred output was removed from its original
+`/storage/home/winnieyangwn/aar-runs/run13-full/` location after verification
+to reclaim home-storage quota. Attempt-local secrets and transient runtime
+state are not copied into the retained artifact directory.
