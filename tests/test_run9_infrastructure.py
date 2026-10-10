@@ -183,6 +183,17 @@ def test_run9_keeps_the_hot_broker_database_on_node_local_storage() -> None:
     assert "wal_checkpoint(TRUNCATE)" in canary
 
 
+def test_run9_production_recovery_uses_an_attempt_local_broker_ledger() -> None:
+    recovery = (RUN9 / "run_9_production_recovery.sbatch").read_text()
+
+    assert 'LOCAL_BROKER="${LOCAL_ROOT}/broker/broker.db"' in recovery
+    assert 'BROKER_ARCHIVE_DIR="${BROKER_ROOT}/attempt-ledgers"' in recovery
+    assert 'BROKER_ATTEMPT_RETAINED="${BROKER_ARCHIVE_DIR}/${ATTEMPT_LABEL}.db"' in recovery
+    assert '"${LOCAL_BROKER}" "${BROKER_ATTEMPT_RETAINED}"' in recovery
+    assert 'cp -- "${BROKER_RETAINED}" "${LOCAL_BROKER}"' not in recovery
+    assert '[[ "${supervisor_state}" = Z* ]]' in recovery
+
+
 def test_run9_uses_one_supervised_node_local_autodata_lifecycle() -> None:
     chain = (ROOT / "scripts" / "slurm_aar_chain.sh").read_text()
     submit_train = (ROOT / "scripts" / "submit_train_job.sh").read_text()

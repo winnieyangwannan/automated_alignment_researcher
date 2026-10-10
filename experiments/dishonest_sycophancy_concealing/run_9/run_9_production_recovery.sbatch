@@ -32,7 +32,8 @@ CONTROL_FILE="${NATIVE_DIR}/production-recovery-control.json"
 STATUS_FILE="${NATIVE_DIR}/production-recovery-status.json"
 LOCK_FILE="${NATIVE_DIR}/production-recovery.lock"
 BROKER_ROOT="${TEAM_DIR}/autodata/broker"
-BROKER_RETAINED="${BROKER_ROOT}/broker.db"
+BROKER_ARCHIVE_DIR="${BROKER_ROOT}/attempt-ledgers"
+BROKER_ATTEMPT_RETAINED="${BROKER_ARCHIVE_DIR}/${ATTEMPT_LABEL}.db"
 CAPABILITY_FILE="${BROKER_ROOT}/capability"
 MODEL_ENV="${ATTEMPT_DIR}/secrets/model-api.env"
 CAMPAIGN_POLICY_SOURCE="${ATTEMPT_DIR}/metadata/autodata-campaign-policy.json"
@@ -52,8 +53,8 @@ for required in "${RETAINED_STATE}" "${CAPABILITY_FILE}" "${MODEL_ENV}" "${CAMPA
   [ -e "${required}" ] || { echo "missing recovery input: ${required}" >&2; exit 2; }
 done
 
-mkdir -p "${METRICS_DIR}" "${ARTIFACTS}" "${WORKSPACES}"
-chmod 700 "${METRICS_DIR}" "${ARTIFACTS}" "${WORKSPACES}"
+mkdir -p "${METRICS_DIR}" "${ARTIFACTS}" "${WORKSPACES}" "${BROKER_ARCHIVE_DIR}"
+chmod 700 "${METRICS_DIR}" "${ARTIFACTS}" "${WORKSPACES}" "${BROKER_ARCHIVE_DIR}"
 LOCAL_ROOT="${SLURM_TMPDIR:-/tmp}/run9-production-${SLURM_JOB_ID}"
 LOCAL_STATE="${LOCAL_ROOT}/native/state.db"
 LOCAL_BROKER="${LOCAL_ROOT}/broker/broker.db"
@@ -157,10 +158,10 @@ record = {
 receipt_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 receipt_path.chmod(0o600)
 PY
-if [ -f "${BROKER_RETAINED}" ]; then
-  cp -- "${BROKER_RETAINED}" "${LOCAL_BROKER}"
-  chmod 600 "${LOCAL_BROKER}"
-fi
+# Broker idempotency is scoped to one recovery attempt.  Native AutoData state
+# is the durable authority for completed tasks.  Reusing a transport ledger
+# across attempts can turn an intentional routing repair into HTTP 409 when an
+# old idempotency key names a different broker job specification.
 
 export AAR_AUTODATA_STATE="${LOCAL_STATE}"
 export AAR_AUTODATA_RETAINED_STATE="${RETAINED_STATE}"
@@ -177,7 +178,7 @@ supervisor_pid=''
 bridge_pid=''
 snapshot_broker() {
   [ -f "${LOCAL_BROKER}" ] || return 0
-  "${BROKER_PYTHON}" -c 'import os,pathlib,sqlite3,sys; source=pathlib.Path(sys.argv[1]); retained=pathlib.Path(sys.argv[2]); temporary=retained.with_name(retained.name+".tmp."+str(os.getpid())); source_db=sqlite3.connect("file:"+str(source)+"?mode=ro",uri=True); destination_db=sqlite3.connect(temporary); source_db.backup(destination_db); destination_db.close(); source_db.close(); check=sqlite3.connect("file:"+str(temporary)+"?mode=ro",uri=True); assert check.execute("PRAGMA quick_check").fetchall()==[("ok",)]; check.close(); temporary.chmod(0o600); os.replace(temporary,retained)' "${LOCAL_BROKER}" "${BROKER_RETAINED}"
+  "${BROKER_PYTHON}" -c 'import os,pathlib,sqlite3,sys; source=pathlib.Path(sys.argv[1]); retained=pathlib.Path(sys.argv[2]); temporary=retained.with_name(retained.name+".tmp."+str(os.getpid())); source_db=sqlite3.connect("file:"+str(source)+"?mode=ro",uri=True); destination_db=sqlite3.connect(temporary); source_db.backup(destination_db); destination_db.close(); source_db.close(); check=sqlite3.connect("file:"+str(temporary)+"?mode=ro",uri=True); assert check.execute("PRAGMA quick_check").fetchall()==[("ok",)]; check.close(); temporary.chmod(0o600); os.replace(temporary,retained)' "${LOCAL_BROKER}" "${BROKER_ATTEMPT_RETAINED}"
 }
 cleanup() {
   status=$?
@@ -234,7 +235,17 @@ kill -0 "${broker_pid}" 2>/dev/null || { echo "broker is not running" >&2; exit 
 supervisor_pid=$!
 
 started=$(date +%s)
-while kill -0 "${supervisor_pid}" 2>/dev/null; do
+supervisor_exit=0
+while true; do
+  supervisor_state="$(ps -o stat= -p "${supervisor_pid}" 2>/dev/null | tr -d '[:space:]' || true)"
+  if [ -z "${supervisor_state}" ] || [[ "${supervisor_state}" = Z* ]]; then
+    set +e
+    wait "${supervisor_pid}"
+    supervisor_exit=$?
+    set -e
+    supervisor_pid=''
+    break
+  fi
   now=$(date +%s)
   metric="$("${REPO}/.venv/bin/python" -c '
 import json,pathlib,sqlite3,sys
@@ -259,7 +270,6 @@ print(json.dumps({"attempt":label,"elapsed_seconds":int(elapsed),"status":row[0]
   sleep 10
 done
 
-if ! kill -0 "${supervisor_pid}" 2>/dev/null; then
-  wait "${supervisor_pid}"
-  supervisor_pid=''
+if [ "${supervisor_exit}" -ne 0 ]; then
+  exit "${supervisor_exit}"
 fi
