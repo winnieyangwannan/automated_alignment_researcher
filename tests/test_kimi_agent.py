@@ -565,7 +565,7 @@ class KimiAgentTest(unittest.TestCase):
             self.assertTrue(result.success, result.error)
             observed = json.loads(capture.read_text())
             self.assertIn("--agent-file", observed["argv"])
-            self.assertNotIn("--auto", observed["argv"])
+            self.assertIn("--auto", observed["argv"])
             self.assertIn(
                 'defaultPermissionMode = "auto"', observed["config"]
             )

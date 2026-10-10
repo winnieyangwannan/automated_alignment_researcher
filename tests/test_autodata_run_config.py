@@ -87,7 +87,7 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
         "sha256": "sha256:" + hashlib.sha256(rubric_path.read_bytes()).hexdigest(),
     }
     assert resolved["judge_rubric_source"] == str(rubric_path)
-    assert "export AAR_AUTODATA_CONCURRENCY=32\n" in runtime
+    assert "export AAR_AUTODATA_CONCURRENCY=8\n" in runtime
     assert "export AAR_AUTODATA_META_MAX_ITERATIONS=3\n" in runtime
     assert "export AAR_AUTODATA_PRODUCTION_ROWS=1000\n" in runtime
     assert f"export AAR_RUN_STORAGE_ROOT=/checkpoint/ram/{os.environ['USER']}\n" in runtime
