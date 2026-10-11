@@ -48,6 +48,7 @@ def test_sandbox_can_bind_relocated_run_artifacts_read_write() -> None:
     runtime = RUNTIME_ENV.read_text()
 
     assert 'artifact_root="${AAR_RUNTIME_ARTIFACT_ROOT:-}"' in source
+    assert '[ -n "${root}" ] || return 0' in source
     assert 'bind_visible_dir "${artifact_root}" rw' in source
     assert '"${artifact_root:+${artifact_root}/eval/holdout}"' in source
     assert 'artifact_team_eval_private="${resolved_team_dir}/_eval_private"' in source

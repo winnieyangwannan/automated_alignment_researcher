@@ -111,3 +111,41 @@ launching the one-chain gate.
 
 Commit and synchronize this exact source, then present the complete role
 mapping for explicit confirmation before submitting the one-chain job.
+
+<a id="run16-event-one-chain-startup-failure"></a>
+
+### 🔴 03:37 PT — FAIL / STOP: first one-chain attempt stopped before research
+
+> [!WARNING]
+> Pipeline job `1814269` and research-chain job `1814308` are terminal
+> `FAILED`. No Claude research session, training job, evaluator job, or score
+> was produced. The failed attempt remains retained at
+> `/checkpoint/ram/aar/winnieyangwn/run16_native_generation/canary_attempts/20261011T103159Z-ed9053944475`.
+
+- The pipeline published exactly two `verbalized_ece` lifecycle items and
+  submitted the one research chain.
+- The chain stopped during startup before the research-process marker.
+- The pipeline then failed closed because the terminal chain had no matching
+  training receipt.
+
+#### 🐛 Root cause
+
+The Claude mount-namespace helper's `add_hidden_mountpoint` function used a
+bare `return` when a writable run root was outside the hidden home tree. The
+preceding test was false, so Bash propagated status 1; `set -e` terminated the
+wrapper silently before `bwrap` started.
+
+<a id="run16-event-sandbox-return-fix"></a>
+
+### 🛠️ 03:46 PT — FIX: sandbox helper accepts external run roots
+
+- Changed the no-mountpoint branch to `return 0` explicitly.
+- Added a regression assertion to the sandbox contract tests.
+- The next launch must use a fresh attempt directory and must pass the
+  compute-node sandbox and real-Claude-launcher probes before research starts.
+
+#### ⏭️ Next step
+
+Validate, commit, synchronize the focused fix, then rerun the one-chain
+lifecycle check. Do not advance to the five-chain topology gate until the new
+attempt retains the required lifecycle proof.

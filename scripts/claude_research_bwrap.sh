@@ -109,7 +109,10 @@ add_hidden_mountpoint() {
         ;;
     esac
   done
-  [ -n "${root}" ] || return
+  # A source outside the hidden home needs no mountpoint recreation.  Return
+  # success explicitly: a bare `return` would inherit the failed test status
+  # and, under `set -e`, terminate the sandbox wrapper before bwrap starts.
+  [ -n "${root}" ] || return 0
   relative="${destination#"${root}"/}"
   current="${root}"
   IFS=/ read -r -a components <<< "${relative}"
