@@ -28,6 +28,7 @@ RESOLVED_SCHEMA = "aar.autodata.resolved-run-config/v1"
 DEFAULT_TARGET_FEEDBACK_MAX_ATTEMPTS = 5
 DEFAULT_JUDGE_FORMAT_MAX_ATTEMPTS = 2
 JUDGE_STRUCTURED_OUTPUT_MODES = {"prompt_json"}
+GENERATOR_PROTOCOLS = {"openai_chat_completions", "model_api_responses"}
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 
 
@@ -210,7 +211,12 @@ def _load_yaml(path: Path, label: str) -> dict[str, Any]:
 
 
 def _provider(
-    value: Any, label: str, *, route: bool, host_header: bool = False
+    value: Any,
+    label: str,
+    *,
+    route: bool,
+    host_header: bool = False,
+    generator: bool = False,
 ) -> dict[str, Any]:
     expected = {
         "model",
@@ -224,7 +230,12 @@ def _provider(
         expected.add("url")
     if host_header:
         expected.add("host_header")
-    data = _mapping(value, label, expected)
+    data = _mapping_with_optional(
+        value,
+        label,
+        expected,
+        {"protocol"} if generator else set(),
+    )
     result: dict[str, Any] = {
         "model": _text(data["model"], f"{label}.model"),
         "max_input_tokens": _positive_integer(
@@ -252,6 +263,21 @@ def _provider(
         result["host_header"] = _text(
             data["host_header"], f"{label}.host_header", allow_empty=True
         )
+    if generator:
+        protocol = _identifier(
+            data.get("protocol", "openai_chat_completions"),
+            f"{label}.protocol",
+        )
+        if protocol not in GENERATOR_PROTOCOLS:
+            raise ValueError(f"{label}.protocol is not supported")
+        if protocol == "model_api_responses":
+            if result.get("url") != "https://api.meta.ai/v1/responses":
+                raise ValueError(
+                    "Model API generator must use the pinned Responses endpoint"
+                )
+            if result.get("host_header"):
+                raise ValueError("Model API generator must not override Host")
+        result["protocol"] = protocol
     return result
 
 
@@ -362,6 +388,7 @@ def load_runtime_profile(path: Path) -> dict[str, Any]:
                 "providers.generator",
                 route=True,
                 host_header=True,
+                generator=True,
             ),
             "judge": _provider(providers["judge"], "providers.judge", route=True),
             "target": _provider(providers["target"], "providers.target", route=False),
@@ -418,9 +445,18 @@ def load_run_config(path: Path) -> dict[str, Any]:
         raise ValueError(
             "bootstrap_canary.stop_after must be production or training_smoke"
         )
-    deployments = _mapping(
-        root["deployments"], "deployments", {"researcher_kimi", "generator_kimi"}
-    )
+    deployments_value = root["deployments"]
+    if not isinstance(deployments_value, dict):
+        raise ValueError("deployments must be a mapping")
+    if set(deployments_value) == {"researcher_kimi", "generator_kimi"}:
+        deployments = {
+            "researcher": deployments_value["researcher_kimi"],
+            "generator": deployments_value["generator_kimi"],
+        }
+    else:
+        deployments = _mapping(
+            deployments_value, "deployments", {"researcher", "generator"}
+        )
     budget = _mapping(root["budget"], "budget", {"max_cost_usd"})
     authoring = _mapping(root["authoring"], "authoring", {"max_wall_seconds"})
     authoring = {
@@ -558,11 +594,16 @@ def load_run_config(path: Path) -> dict[str, Any]:
             "evaluation.max_truncation_rate",
         ),
     }
-    agent = _mapping(root["agent"], "agent", {"backend", "turn_timeout_seconds"})
+    agent = _mapping_with_optional(
+        root["agent"],
+        "agent",
+        {"backend", "turn_timeout_seconds"},
+        {"model", "effort"},
+    )
     backend = _text(agent["backend"], "agent.backend")
     if backend not in {"claude", "kimi"}:
         raise ValueError("agent.backend must be claude or kimi")
-    agent = {
+    normalized_agent = {
         "backend": backend,
         "turn_timeout_seconds": _positive_integer(
             agent["turn_timeout_seconds"],
@@ -570,6 +611,16 @@ def load_run_config(path: Path) -> dict[str, Any]:
             maximum=86_400,
         ),
     }
+    if "model" in agent:
+        normalized_agent["model"] = _identifier(agent["model"], "agent.model")
+    if "effort" in agent:
+        effort = _identifier(agent["effort"], "agent.effort")
+        if effort not in {"low", "medium", "high", "max"}:
+            raise ValueError("agent.effort must be low, medium, high, or max")
+        normalized_agent["effort"] = effort
+    if backend == "claude" and normalized_agent.get("model") is None:
+        raise ValueError("Claude agent configuration requires agent.model")
+    agent = normalized_agent
     training = _mapping(
         root["training_contract"],
         "training_contract",
@@ -590,11 +641,11 @@ def load_run_config(path: Path) -> dict[str, Any]:
         ),
         "bootstrap_canary": {"stop_after": bootstrap_canary["stop_after"]},
         "deployments": {
-            "researcher_kimi": _identifier(
-                deployments["researcher_kimi"], "deployments.researcher_kimi"
+            "researcher": _identifier(
+                deployments["researcher"], "deployments.researcher"
             ),
-            "generator_kimi": _identifier(
-                deployments["generator_kimi"], "deployments.generator_kimi"
+            "generator": _identifier(
+                deployments["generator"], "deployments.generator"
             ),
         },
         "budget": {
@@ -711,8 +762,9 @@ def _solve_environment(
     environment = {
         "AUTODATA_GENERATOR_URL": generator["url"],
         "AUTODATA_GENERATOR_HOST_HEADER": generator["host_header"],
+        "AUTODATA_GENERATOR_PROTOCOL": generator["protocol"],
         "AUTODATA_GENERATOR_MODEL": generator["model"],
-        "AUTODATA_GENERATOR_DEPLOYMENT_ID": run["deployments"]["generator_kimi"],
+        "AUTODATA_GENERATOR_DEPLOYMENT_ID": run["deployments"]["generator"],
         "AUTODATA_GENERATOR_MAX_INPUT": str(generator["max_input_tokens"]),
         "AUTODATA_GENERATOR_MAX_OUTPUT": str(generator["max_output_tokens"]),
         "AUTODATA_GENERATOR_TIMEOUT": str(generator["timeout_seconds"]),
@@ -778,7 +830,7 @@ def _runtime_environment(
         "AAR_AUTODATA_TRAINING_DATA_CONTRACT": str(
             output_dir / "autodata-training-data-contract.json"
         ),
-        "AAR_AUTODATA_GENERATOR_DEPLOYMENT": run["deployments"]["generator_kimi"],
+        "AAR_AUTODATA_GENERATOR_DEPLOYMENT": run["deployments"]["generator"],
         "AAR_AUTODATA_AUTHORING_MAX_WALL_SECONDS": str(
             run["authoring"]["max_wall_seconds"]
         ),
@@ -826,8 +878,16 @@ def _runtime_environment(
             evaluation["max_truncation_rate"], ".12g"
         ),
         "AAR_AGENT_BACKEND": agent["backend"],
-        "AAR_KIMI_TURN_TIMEOUT_SECONDS": str(agent["turn_timeout_seconds"]),
+        "AAR_AGENT_TURN_TIMEOUT_SECONDS": str(agent["turn_timeout_seconds"]),
     }
+    if agent["backend"] == "kimi":
+        environment["AAR_KIMI_TURN_TIMEOUT_SECONDS"] = str(
+            agent["turn_timeout_seconds"]
+        )
+    if "model" in agent:
+        environment["AAR_AGENT_MODEL"] = agent["model"]
+    if "effort" in agent:
+        environment["AAR_EFFORT"] = agent["effort"]
     stage_timing = run.get("stage_timing")
     if stage_timing is None:
         environment["AAR_AUTODATA_STAGE_TIMEOUT_POLICY"] = "enforce"
@@ -985,7 +1045,7 @@ def validate_compiled_config(
         raise ValueError("compiled campaign is no longer target-aware")
     if (
         environment.get("AUTODATA_GENERATOR_DEPLOYMENT_ID")
-        != run["deployments"]["generator_kimi"]
+        != run["deployments"]["generator"]
     ):
         raise ValueError("compiled generator deployment changed")
     if policy.get("runner") != profile["broker"]["runner"]:
@@ -1010,14 +1070,19 @@ def inspect_configs(profile_path: Path, run_path: Path) -> dict[str, Any]:
             "judge_structured_output_mode"
         ],
         "authoring_max_wall_seconds": run["authoring"]["max_wall_seconds"],
-        "researcher_kimi_deployment": run["deployments"]["researcher_kimi"],
-        "generator_kimi_deployment": run["deployments"]["generator_kimi"],
+        "researcher_deployment": run["deployments"]["researcher"],
+        "generator_deployment": run["deployments"]["generator"],
+        # Compatibility aliases for the existing Run 12 launcher and retained
+        # operator tooling. New run packages must use the provider-neutral keys.
+        "researcher_kimi_deployment": run["deployments"]["researcher"],
+        "generator_kimi_deployment": run["deployments"]["generator"],
         "chains": run["chains"],
         "target_pairs_per_chain": run["target_pairs_per_chain"],
         "bootstrap_canary_stop_after": run["bootstrap_canary"]["stop_after"],
         "target_enabled": profile["target"]["enabled"],
         "generator_url": profile["providers"]["generator"]["url"],
         "generator_host_header": profile["providers"]["generator"]["host_header"],
+        "generator_protocol": profile["providers"]["generator"]["protocol"],
         "generator_model": profile["providers"]["generator"]["model"],
         "judge_model": profile["providers"]["judge"]["model"],
         "target_model": profile["providers"]["target"]["model"],
@@ -1027,6 +1092,8 @@ def inspect_configs(profile_path: Path, run_path: Path) -> dict[str, Any]:
         "evaluation_memory": run["evaluation"]["memory"],
         "max_truncation_rate": run["evaluation"]["max_truncation_rate"],
         "agent_backend": run["agent"]["backend"],
+        "agent_model": run["agent"].get("model"),
+        "agent_effort": run["agent"].get("effort"),
         "turn_timeout_seconds": run["agent"]["turn_timeout_seconds"],
     }
 

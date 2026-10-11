@@ -10,6 +10,7 @@ set -euo pipefail
 umask 077
 
 REPO="${AAR_REPO:?missing repository}"
+EXPERIMENT_RUN_ID="${AAR_EXPERIMENT_RUN_ID:-run12}"
 # Reapply the trusted runtime selection before the controller captures PY; the
 # controller is long-lived and resubmits research jobs after the launcher exits.
 # shellcheck disable=SC1091
@@ -19,7 +20,7 @@ SEED="${1:?missing chain seed}"
 TEAM_ID="${2:?missing team id}"
 FIRST_JOB="${3:?missing first chain job}"
 CHAIN_ROOT="${ATTEMPT}/chains/${SEED}"
-CHECKPOINT_ROOT="${AAR_RUN12_CHECKPOINT_ROOT:?missing checkpoint artifact root}"
+CHECKPOINT_ROOT="${AAR_AUTODATA_CHECKPOINT_ROOT:-${AAR_RUN12_CHECKPOINT_ROOT:?missing checkpoint artifact root}}"
 TEAM_DIR="${ATTEMPT}/aar_teams/${TEAM_ID}"
 BASE_CHECKPOINT="${TARGET_MODEL_PATH:?missing fixed Gemma base}"
 SV="${AAR_SERVE_API_V2_ROOT:?missing serve_api_v2 root}"
@@ -35,7 +36,7 @@ TARGET_PAIRS="${AAR_RUN12_TARGET_PAIRS:-5}"
 # shellcheck disable=SC1090
 source "${AAR_AUTODATA_RUNTIME_ENV}"
 [ "${AAR_AUTODATA_TARGET_REQUIRED:-0}" = 1 ] || {
-  echo "Run 12 controller requires target-aware AutoData" >&2
+  echo "${EXPERIMENT_RUN_ID} controller requires target-aware AutoData" >&2
   exit 2
 }
 
@@ -51,7 +52,7 @@ mkdir -p "${SUBMISSION_INTENTS}"
 chmod 700 "${SUBMISSION_INTENTS}"
 exec 8>"${CHAIN_ROOT}/metadata/controller.lock"
 flock -n 8 || {
-  echo "another Run 12 controller owns chain ${SEED}" >&2
+  echo "another ${EXPERIMENT_RUN_ID} controller owns chain ${SEED}" >&2
   exit 2
 }
 
@@ -191,7 +192,11 @@ submit_session() {
   # shellcheck disable=SC1091
   source "${REPO}/scripts/aar_runtime_env.sh"
   local attempt_number="$1" names=() name csv job intent key comment status match
-  export AAR_IDEA_UID_OVERRIDE="run12-${SEED}-iteration-${next_iteration}"
+  if [ "${EXPERIMENT_RUN_ID}" = run12 ]; then
+    export AAR_IDEA_UID_OVERRIDE="run12-${SEED}-iteration-${next_iteration}"
+  else
+    export AAR_IDEA_UID_OVERRIDE="${EXPERIMENT_RUN_ID}-${SEED}-iteration-${next_iteration}"
+  fi
   export AAR_RESUME_APPROVED_PROPOSAL=1
   for name in "${AAR_RESEARCH_CHAIN_ENV_ALLOWLIST[@]}"; do
     [[ -v "${name}" ]] && names+=("${name}")
@@ -199,7 +204,7 @@ submit_session() {
   csv="$(IFS=,; printf '%s' "${names[*]}")"
   intent="${SUBMISSION_INTENTS}/attempt-${attempt_number}.json"
   key="${TEAM_ID}:${SEED}:${attempt_number}:${next_iteration}"
-  comment="aar-run12:${TEAM_ID}:${SEED}:${attempt_number}"
+  comment="aar-${EXPERIMENT_RUN_ID}:${TEAM_ID}:${SEED}:${attempt_number}"
   PYTHONPATH="${REPO}" "${PY}" -m aar.slurm_session_recovery \
     prepare --path "${intent}" --key "${key}" --comment "${comment}" >/dev/null
   status="$(PYTHONPATH="${REPO}" "${PY}" -m aar.slurm_session_recovery \
@@ -230,7 +235,7 @@ submit_session() {
     transition --path "${intent}" --status submitting >/dev/null
   if ! job="$(sbatch --parsable --account=ram --partition=g3 --qos=g3_ram_high \
     --time="${AAR_CHAIN_MAX_HOURS:-72}:30:00" \
-    --job-name="aar-run12-${SEED}" \
+    --job-name="aar-${EXPERIMENT_RUN_ID}-${SEED}" \
     --comment="${comment}" \
     --output="${TEAM_DIR}/logs/%x_%j.out" --export="${csv}" \
     "${REPO}/scripts/slurm_aar_chain.sh" "explore-${SEED}" \
@@ -291,11 +296,12 @@ if [ "${AAR_AUTODATA_STOP_AFTER:-}" = production ]; then
       cp -- "${markers[0]}" "${CHAIN_ROOT}/metadata/production-canary-complete.json"
       record_event "complete=production_canary accepted_rows=$(jq -r '.verification.available_rows' "${markers[0]}") attempts=${attempts}"
       jq -n \
+        --arg schema "aar.${EXPERIMENT_RUN_ID}.production-canary/v1" \
         --arg chain "${SEED}" \
         --arg marker "${markers[0]}" \
         --argjson attempts "${attempts}" \
         --argjson required "${AAR_AUTODATA_PRODUCTION_ROWS}" \
-        '{schema:"aar.run12.production-canary/v1",chain:$chain,stop_after:"production",required_accepted_rows:$required,attempts:$attempts,marker:$marker}' \
+        '{schema:$schema,chain:$chain,stop_after:"production",required_accepted_rows:$required,attempts:$attempts,marker:$marker}' \
         > "${CHAIN_ROOT}/metadata/complete.json"
       exit 0
     fi
@@ -333,11 +339,12 @@ if [ "${AAR_AUTODATA_STOP_AFTER:-}" = training_smoke ]; then
       cp -- "${markers[0]}" "${CHAIN_ROOT}/metadata/training-smoke-canary-complete.json"
       record_event "complete=training_smoke_canary accepted_rows=$(jq -r '.verification.available_rows' "${markers[0]}") consumed_rows=$(jq -r '.training.consumed_rows' "${markers[0]}") attempts=${attempts}"
       jq -n \
+        --arg schema "aar.${EXPERIMENT_RUN_ID}.training-smoke-canary/v1" \
         --arg chain "${SEED}" \
         --arg marker "${markers[0]}" \
         --argjson attempts "${attempts}" \
         --argjson required "${AAR_AUTODATA_PRODUCTION_ROWS}" \
-        '{schema:"aar.run12.training-smoke-canary/v1",chain:$chain,stop_after:"training_smoke",required_accepted_rows:$required,optimizer_steps:1,attempts:$attempts,marker:$marker}' \
+        '{schema:$schema,chain:$chain,stop_after:"training_smoke",required_accepted_rows:$required,optimizer_steps:1,attempts:$attempts,marker:$marker}' \
         > "${CHAIN_ROOT}/metadata/complete.json"
       exit 0
     fi
@@ -388,7 +395,7 @@ while [ "${pairs}" -lt "${TARGET_PAIRS}" ]; do
     merged="$(jq -r '.merged_checkpoint' "${selected}")"
     adapter="$(jq -r '.adapter_checkpoint' "${selected}")"
     short_hash="$(sha256sum "${adapter}/adapter_model.safetensors" | cut -c1-10)"
-    new_deployment="winnieyangwn-r12-${SEED}-i${next_iteration}-${short_hash}"
+    new_deployment="winnieyangwn-${EXPERIMENT_RUN_ID}-${SEED}-i${next_iteration}-${short_hash}"
     record_event "promotion=${run_id} iteration=${next_iteration} deployment=${new_deployment}"
     deploy_checkpoint "${new_deployment}" "${merged}"
     binding="${CHAIN_ROOT}/bindings/iteration-${next_iteration}.json"

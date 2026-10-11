@@ -10,6 +10,7 @@ set -euo pipefail
 umask 077
 
 REPO="${AAR_REPO:?submit through run_12/launch/submit_full.sh}"
+EXPERIMENT_RUN_ID="${AAR_EXPERIMENT_RUN_ID:-run12}"
 ATTEMPT="${AAR_RUN_ATTEMPT_DIR:?missing attempt}"
 EXPECTED_COMMIT="${AAR_BASELINE_GIT_COMMIT:?missing source commit}"
 SOURCE_SNAPSHOT="${AAR_SOURCE_SNAPSHOT:?missing immutable source snapshot}"
@@ -108,17 +109,8 @@ export AAR_VLLM_MERGE_PY=/storage/home/winnieyangwn/envs/steerability-client/bin
 export AAR_VLLM_CONTAINER_RW_MOUNT="${ATTEMPT}" AAR_VLLM_EPHEMERAL_MERGED=0
 export AAR_VLLM_EPHEMERAL_MIN_FREE_BYTES=75161927680
 
-export AAR_WEB_MODE=native_web
-export KIMI_CLI_PATH=/storage/home/${USER}/tools/kimi-code-2.1.1/node_modules/.bin/kimi
 export PATH=/storage/home/${USER}/tools/node-v22.22.0-linux-arm64/bin:"${PATH}"
-export AAR_KIMI_SERVE_DEPLOYMENT=aar_8-kimi26 AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
-export AAR_KIMI_PROVIDER_TYPE=kimi AAR_KIMI_DISABLE_THINKING=1
 export AAR_SERVE_API_V2_ROOT=/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2
-export KIMI_MODEL_MAX_CONTEXT_SIZE=262144 KIMI_MODEL_MAX_OUTPUT_SIZE=65536
-export KIMI_MODEL_MAX_COMPLETION_TOKENS=65536 KIMI_MODEL_CAPABILITIES=tool_use
-export KIMI_MODEL_REASONING_KEY=reasoning_content AAR_KIMI_MCP_MAX_TEXT_CHARS=65536
-export AAR_KIMI_SCORE_WAIT_SECONDS=21600
-unset KIMI_AGENT_MODEL
 
 export AAR_REQUIRE_METHOD_CONTRACT=1 AAR_REQUIRE_GEMMA4_TARGETS=1 AAR_REQUIRE_METHOD_SMOKE=1
 export AAR_WRITE_TRAIN_FAILURE_MARKER=1 AAR_TRAIN_MEM=128G AAR_REQUIRE_TRAIN_RECEIPT=1
@@ -129,7 +121,7 @@ export AAR_FUNCTIONAL_SMOKE=1 AAR_MULTIDIM_SCORING_CONFIRMED=1
 export AAR_START_EVAL_WORKER=1 AAR_EVAL_WORKERS=1 AAR_EVAL_GPUS=4 AAR_EVAL_GPU_CAP=4
 export AAR_EVAL_TIME=7-00:00:00 AAR_EVAL_IDLE_SECONDS=604200
 export AAR_CHAIN_MAX_HOURS=72 AAR_CHAIN_SANITIZE_ENV=1 AAR_RUNTIME_ENV_DISABLE_FILE=1
-export AAR_RESEARCH_ENV_ISOLATION=0 AAR_HIDE_EVAL_CONFIG=1
+export AAR_HIDE_EVAL_CONFIG=1
 
 export AAR_AUTODATA=1
 : "${AAR_AUTODATA_RUNTIME_ENV:?missing compiled AutoData runtime environment}"
@@ -150,12 +142,33 @@ source "${AAR_AUTODATA_RUNTIME_ENV}"
 [ "${EVAL_MAX_TRUNCATION_RATE:?missing truncation ceiling}" = 0.2 ] || {
   echo "Run 12 truncation ceiling drifted" >&2; exit 2;
 }
-[ "${AAR_AGENT_BACKEND:?missing research backend}" = kimi ] || {
-  echo "Run 12 requires the Kimi research backend" >&2; exit 2;
+[ "${AAR_AGENT_TURN_TIMEOUT_SECONDS:?missing agent turn timeout}" = 1800 ] || {
+  echo "AutoData researcher turn timeout drifted" >&2; exit 2;
 }
-[ "${AAR_KIMI_TURN_TIMEOUT_SECONDS:?missing Kimi turn timeout}" = 1800 ] || {
-  echo "Run 12 Kimi turn timeout drifted" >&2; exit 2;
-}
+case "${AAR_AGENT_BACKEND:?missing research backend}" in
+  kimi)
+    export AAR_WEB_MODE=native_web AAR_RESEARCH_ENV_ISOLATION=0
+    export KIMI_CLI_PATH=/storage/home/${USER}/tools/kimi-code-2.1.1/node_modules/.bin/kimi
+    export AAR_KIMI_SERVE_DEPLOYMENT=aar_8-kimi26 AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
+    export AAR_KIMI_PROVIDER_TYPE=kimi AAR_KIMI_DISABLE_THINKING=1
+    export KIMI_MODEL_MAX_CONTEXT_SIZE=262144 KIMI_MODEL_MAX_OUTPUT_SIZE=65536
+    export KIMI_MODEL_MAX_COMPLETION_TOKENS=65536 KIMI_MODEL_CAPABILITIES=tool_use
+    export KIMI_MODEL_REASONING_KEY=reasoning_content AAR_KIMI_MCP_MAX_TEXT_CHARS=65536
+    export AAR_KIMI_SCORE_WAIT_SECONDS=21600
+    unset KIMI_AGENT_MODEL AAR_AGENT_MODEL AAR_EFFORT
+    ;;
+  claude)
+    [ "${AAR_AGENT_MODEL:?missing Claude model}" = claude-opus-4-8 ] || {
+      echo "Run 17 requires Claude Opus 4.8" >&2; exit 2;
+    }
+    [ "${AAR_EFFORT:?missing Claude effort}" = max ] || {
+      echo "Run 17 requires maximum Claude effort" >&2; exit 2;
+    }
+    export AAR_WEB_MODE=meta_secure AAR_RESEARCH_ENV_ISOLATION=1
+    unset AAR_KIMI_PROXY_INFO
+    ;;
+  *) echo "unsupported AutoData researcher backend" >&2; exit 2;;
+esac
 [ "${AAR_AUTODATA_TARGET_REQUIRED:-0}" = 1 ] || {
   echo "Run 12 compiled configuration is not target-aware" >&2
   exit 2
@@ -192,16 +205,21 @@ cp -- "${REUSED_BASELINE}" "${AAR_BASELINE_OVERRIDES}"
 if [ "${AAR_START_EVAL_WORKER}" = 1 ]; then
   bash "${REPO}/scripts/publish_holdout.sh"
 else
-  echo "[run12] bounded canary: skipping evaluator holdout publication"
+  echo "[${EXPERIMENT_RUN_ID}] bounded canary: skipping evaluator holdout publication"
 fi
 
 children="${ATTEMPT}/metadata/children.tsv"
 : > "${children}"
 for seed in "${seeds[@]}"; do
   chain_root="${ATTEMPT}/chains/${seed}"
-  team_id="run12-gemma4-31b-kimi26-${seed}-${SLURM_JOB_ID}"
+  agent_tag="${AAR_AGENT_BACKEND}"
+  team_id="${EXPERIMENT_RUN_ID}-gemma4-31b-${agent_tag}-${seed}-${SLURM_JOB_ID}"
   export AAR_TEAM_ID="${team_id}"
-  export AAR_IDEA_UID_OVERRIDE="run12-${seed}-iteration-1"
+  if [ "${EXPERIMENT_RUN_ID}" = run12 ]; then
+    export AAR_IDEA_UID_OVERRIDE="run12-${seed}-iteration-1"
+  else
+    export AAR_IDEA_UID_OVERRIDE="${EXPERIMENT_RUN_ID}-${seed}-iteration-1"
+  fi
   export AAR_RESUME_APPROVED_PROPOSAL=0
   export AAR_AUTODATA_RUNTIME_ENV="${chain_root}/metadata/autodata-runtime.env"
   # shellcheck disable=SC1090
@@ -211,7 +229,7 @@ for seed in "${seeds[@]}"; do
     exit 2
   }
   export AAR_AUTODATA_PROPOSAL_BINDINGS="${chain_root}/secrets/proposal-bindings.json"
-  export AAR_VLLM_MERGED_ROOT="${AAR_RUN12_CHECKPOINT_ROOT:?}/chains/${seed}/merged_candidates"
+  export AAR_VLLM_MERGED_ROOT="${AAR_AUTODATA_CHECKPOINT_ROOT:?}/chains/${seed}/merged_candidates"
   AAR_AUTODATA_CAPABILITY="$(<"${chain_root}/secrets/capability")"
   export AAR_AUTODATA_CAPABILITY
   launch_log="${chain_root}/logs/initial-launch.txt"
@@ -226,6 +244,7 @@ for seed in "${seeds[@]}"; do
     exit 1
   fi
   controller="$(sbatch --parsable --dependency="afterany:${chain}" \
+    --job-name="${EXPERIMENT_RUN_ID}-chain-controller" \
     --output="${chain_root}/logs/controller-%j.out" --export=ALL \
     "${REPO}/experiments/dishonest_sycophancy_concealing/run_12/slurm/chain_controller.sbatch" \
     "${seed}" "${team_id}" "${chain}")"
@@ -234,7 +253,9 @@ for seed in "${seeds[@]}"; do
 done
 
 [ "$(wc -l < "${children}")" -eq "${CHAIN_COUNT}" ] || { echo "did not launch all configured chains" >&2; exit 1; }
-printf 'research_backend=kimi\nresearch_model=Kimi-K2.6\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\n' \
+printf 'experiment_run_id=%s\nresearch_backend=%s\nresearch_model=%s\nresearch_effort=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\n' \
+  "${EXPERIMENT_RUN_ID}" "${AAR_AGENT_BACKEND}" \
+  "${AAR_AGENT_MODEL:-Kimi-K2.6}" "${AAR_EFFORT:-default}" \
   "${CHAIN_COUNT}" "${TARGET_PAIRS}" "${SEEDS_RAW}" \
   > "${ATTEMPT}/metadata/full-launch.env"
-echo "[run12] ${CHAIN_COUNT} isolated Kimi chain(s) launched; controllers will rotate each chain target after every durable iteration"
+echo "[${EXPERIMENT_RUN_ID}] ${CHAIN_COUNT} isolated ${AAR_AGENT_BACKEND} chain(s) launched; controllers will rotate each chain target after every durable iteration"

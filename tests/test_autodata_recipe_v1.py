@@ -176,6 +176,70 @@ def test_v1_generator_usage_binds_runtime_deployment(monkeypatch) -> None:
     assert usage["deployment_id"] == "autodata_8-kimi26"
 
 
+def test_v1_generator_uses_model_api_responses_contract(monkeypatch) -> None:
+    task = _load_module(
+        "aar_autodata_recipe_v1_model_api_generator",
+        RECIPE / "recipe" / "task.py",
+    )
+    environment = {
+        "AUTODATA_GENERATOR_PROTOCOL": "model_api_responses",
+        "AUTODATA_GENERATOR_URL": "https://api.meta.ai/v1/responses",
+        "AUTODATA_GENERATOR_MODEL": "claude-4-8-opus",
+        "AUTODATA_GENERATOR_DEPLOYMENT_ID": "meta-model-api-claude-4-8-opus",
+        "AUTODATA_GENERATOR_INPUT_USD_PER_MILLION": "1",
+        "AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION": "4",
+        "AUTODATA_GENERATOR_MAX_INPUT": "196608",
+        "AUTODATA_GENERATOR_MAX_OUTPUT": "65536",
+        "MODEL_API_KEY": "test-only-secret",
+    }
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    observed = {}
+
+    def fake_post_json(url, payload, **kwargs):
+        observed.update(url=url, payload=payload, kwargs=kwargs)
+        return {
+            "id": "model-api-generator-request",
+            "usage": {"input_tokens": 10, "output_tokens": 10},
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": json.dumps(
+                                {"prompt": "prompt", "response": "response"}
+                            ),
+                        }
+                    ],
+                }
+            ],
+        }
+
+    monkeypatch.setattr(task, "_post_json", fake_post_json)
+    _, usage = task._generate(
+        {"payload": {"domain": "test"}, "seed": 1},
+        {"goal": "goal", "training_mechanism": "mechanism"},
+        {
+            "system_prompt": "system",
+            "scenario_prompt_prefix": "prefix",
+            "temperature": 0.2,
+        },
+    )
+
+    assert observed["url"] == "https://api.meta.ai/v1/responses"
+    assert observed["payload"]["model"] == "claude-4-8-opus"
+    assert observed["payload"]["max_output_tokens"] == 65536
+    assert observed["payload"]["input"].startswith("SYSTEM:\nsystem\n\nUSER:")
+    assert "messages" not in observed["payload"]
+    assert "chat_template_kwargs" not in observed["payload"]
+    assert observed["kwargs"]["headers"] == {
+        "Authorization": "Bearer test-only-secret"
+    }
+    assert usage["model"] == "claude-4-8-opus"
+    assert usage["deployment_id"] == "meta-model-api-claude-4-8-opus"
+
+
 def test_v1_task_fails_fast_on_incomplete_provider_provenance(monkeypatch) -> None:
     task = _load_module(
         "aar_autodata_recipe_v1_provenance_validation",

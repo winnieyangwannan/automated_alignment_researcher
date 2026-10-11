@@ -4,6 +4,8 @@ umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd -- "${SCRIPT_DIR}/../../../../.." && pwd)"
+EXPERIMENT_RUN_ID="${AAR_EXPERIMENT_RUN_ID:-run12}"
+case "${EXPERIMENT_RUN_ID}" in run12|run17) ;; *) echo "unsupported run ID" >&2; exit 2;; esac
 ACTION="${1:-preflight}"
 AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pipelines}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
@@ -40,7 +42,7 @@ TARGET_MODEL="$(jq -r '.target_model' <<<"${config_json}")"
 GENERATOR_URL="$(jq -r '.generator_url' <<<"${config_json}")"
 GENERATOR_HOST_HEADER="$(jq -r '.generator_host_header' <<<"${config_json}")"
 GENERATOR_MODEL="$(jq -r '.generator_model' <<<"${config_json}")"
-GENERATOR_DEPLOYMENT_ID="$(jq -r '.generator_kimi_deployment' <<<"${config_json}")"
+GENERATOR_DEPLOYMENT_ID="$(jq -r '.generator_deployment' <<<"${config_json}")"
 RUN12_STORAGE_ROOT="${AAR_RUN12_STORAGE_ROOT:-$(jq -r '.storage_root' <<<"${config_json}")}"
 mkdir -p "${RUN12_STORAGE_ROOT}/aar-runs"
 RUN12_STORAGE_ROOT="$(realpath -e -- "${RUN12_STORAGE_ROOT}")"
@@ -49,18 +51,20 @@ case "${RUN12_STORAGE_ROOT}" in
   *) echo "Run 12 storage root must be /checkpoint/ram/${USER}" >&2; exit 2 ;;
 esac
 AGENT_BACKEND="$(jq -r '.agent_backend' <<<"${config_json}")"
-[ "${AGENT_BACKEND}" = kimi ] || { echo "Run 12 requires agent.backend=kimi" >&2; exit 2; }
+case "${AGENT_BACKEND}" in kimi|claude) ;; *) echo "unsupported agent backend" >&2; exit 2;; esac
 export AAR_RUN_STORAGE_ROOT="${RUN12_STORAGE_ROOT}"
 export AAR_KEEP_CHECKPOINTS="$(jq -r 'if .keep_checkpoints then "1" else "0" end' <<<"${config_json}")"
 export AAR_EVAL_MEM="$(jq -r '.evaluation_memory' <<<"${config_json}")"
 export EVAL_MAX_TRUNCATION_RATE="$(jq -r '.max_truncation_rate' <<<"${config_json}")"
 export AAR_EXPECTED_MAX_TRUNCATION_RATE="${EVAL_MAX_TRUNCATION_RATE}"
 export AAR_AGENT_BACKEND="${AGENT_BACKEND}"
-export AAR_KIMI_TURN_TIMEOUT_SECONDS="$(jq -r '.turn_timeout_seconds' <<<"${config_json}")"
+export AAR_AGENT_TURN_TIMEOUT_SECONDS="$(jq -r '.turn_timeout_seconds' <<<"${config_json}")"
+[ "${AGENT_BACKEND}" != kimi ] || export AAR_KIMI_TURN_TIMEOUT_SECONDS="${AAR_AGENT_TURN_TIMEOUT_SECONDS}"
+export AAR_EXPERIMENT_RUN_ID="${EXPERIMENT_RUN_ID}"
 
 if [ "${ACTION}" = preflight ]; then
   attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "${REPO}" rev-parse --short=12 HEAD)"
-  root="${RUN12_STORAGE_ROOT}/aar-runs/run12-adapter-target/${attempt_id}"
+  root="${RUN12_STORAGE_ROOT}/aar-runs/${EXPERIMENT_RUN_ID}-adapter-target/${attempt_id}"
   mkdir -p "${root}/secrets"
   chmod 700 "${root}" "${root}/secrets"
   binding="${root}/target-binding.json"
@@ -85,7 +89,8 @@ if [ "${ACTION}" = preflight ]; then
       --output "${binding}"
   fi
   export AAR_REPO="${REPO}" AAR_RUN12_ROOT="${root}" AAR_RUN12_TARGET_BINDING="${binding}"
-  job_id="$(sbatch --parsable --output="${root}/preflight-%j.out" --export=ALL "${SCRIPT_DIR}/endpoint_preflight.sbatch")"
+  job_id="$(sbatch --parsable --job-name="${EXPERIMENT_RUN_ID}-target-preflight" \
+    --output="${root}/preflight-%j.out" --export=ALL "${SCRIPT_DIR}/endpoint_preflight.sbatch")"
   printf 'phase=preflight\njob_id=%s\nroot=%s\naar_git_commit=%s\ntarget_deployment_id=%s\n' \
     "${job_id}" "${root}" "$(git -C "${REPO}" rev-parse HEAD)" "${TARGET_DEPLOYMENT_ID}" \
     | tee "${root}/submission.txt"
@@ -98,8 +103,8 @@ if [ "${ACTION}" != canary ] || [ "$#" -ne 2 ]; then
 fi
 root="$(cd -- "${2}" && pwd)"
 case "${root}" in
-  /checkpoint/ram/"${USER}"/aar-runs/run12-adapter-target/*) ;;
-  *) echo "attempt root is outside the Run 12 artifact directory" >&2; exit 2 ;;
+  /checkpoint/ram/"${USER}"/aar-runs/"${EXPERIMENT_RUN_ID}"-adapter-target/*) ;;
+  *) echo "attempt root is outside the ${EXPERIMENT_RUN_ID} artifact directory" >&2; exit 2 ;;
 esac
 binding="${root}/target-binding.json"
 [ -f "${root}/preflight.json" ] || { echo "endpoint preflight has not passed" >&2; exit 2; }
@@ -134,7 +139,8 @@ export AAR_AUTODATA_CAMPAIGN_POLICY="${policy}"
 export AAR_RUN12_GENERATOR_URL="${GENERATOR_URL}"
 export AAR_RUN12_GENERATOR_HOST_HEADER="${GENERATOR_HOST_HEADER}"
 export AAR_RUN12_GENERATOR_DEPLOYMENT_ID="${GENERATOR_DEPLOYMENT_ID}"
-job_id="$(sbatch --parsable --output="${root}/canary-%j.out" --export=ALL "${SCRIPT_DIR}/target_canary.sbatch")"
+job_id="$(sbatch --parsable --job-name="${EXPERIMENT_RUN_ID}-target-canary" \
+  --output="${root}/canary-%j.out" --export=ALL "${SCRIPT_DIR}/target_canary.sbatch")"
 printf 'phase=canary\njob_id=%s\naar_git_commit=%s\ngenerator_model=%s\ngenerator_deployment_id=%s\n' \
   "${job_id}" "$(git -C "${REPO}" rev-parse HEAD)" "${GENERATOR_MODEL}" \
   "${GENERATOR_DEPLOYMENT_ID}" | tee -a "${root}/submission.txt"

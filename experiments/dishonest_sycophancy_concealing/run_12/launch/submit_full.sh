@@ -1,5 +1,5 @@
 #!/bin/bash
-# Launch five independent Kimi AAR chains with trusted per-iteration targets.
+# Launch source-pinned AutoData AAR chains with trusted per-iteration targets.
 set -euo pipefail
 umask 077
 
@@ -9,6 +9,11 @@ umask 077
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 RUN12_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
 REPO="$(cd -- "${RUN12_DIR}/../../.." && pwd -P)"
+EXPERIMENT_RUN_ID="${AAR_EXPERIMENT_RUN_ID:-run12}"
+case "${EXPERIMENT_RUN_ID}" in
+  run12|run17) ;;
+  *) echo "unsupported AutoData experiment run ID: ${EXPERIMENT_RUN_ID}" >&2; exit 2 ;;
+esac
 AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata-worktrees/judge-repair-28a9c22}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
 SECRET_ENV="$(realpath -e -- "${AAR_RUN12_SECRET_ENV:-${REPO}/.env}")"
@@ -50,25 +55,35 @@ case "${RUN12_STORAGE_ROOT}" in
   *) echo "Run 12 storage root must be /checkpoint/ram/${USER}" >&2; exit 2 ;;
 esac
 CANARY_ROOT="$(realpath -e -- "${AAR_RUN12_CANARY_ROOT:-${RUN12_STORAGE_ROOT}/aar-runs/run12-adapter-target/20261009T150557Z-68f6178b2ac4}")"
-RESEARCHER_DEPLOYMENT="$(jq -r '.researcher_kimi_deployment' <<<"${config_json}")"
-GENERATOR_DEPLOYMENT="$(jq -r '.generator_kimi_deployment' <<<"${config_json}")"
+RESEARCHER_DEPLOYMENT="$(jq -r '.researcher_deployment' <<<"${config_json}")"
+GENERATOR_DEPLOYMENT="$(jq -r '.generator_deployment' <<<"${config_json}")"
 GENERATOR_MODEL="$(jq -r '.generator_model' <<<"${config_json}")"
+GENERATOR_PROTOCOL="$(jq -r '.generator_protocol' <<<"${config_json}")"
 JUDGE_MODEL="$(jq -r '.judge_model' <<<"${config_json}")"
 AGENT_BACKEND="$(jq -r '.agent_backend' <<<"${config_json}")"
-[ "${AGENT_BACKEND}" = kimi ] || { echo "Run 12 requires agent.backend=kimi" >&2; exit 2; }
+AGENT_MODEL="$(jq -r '.agent_model // empty' <<<"${config_json}")"
+AGENT_EFFORT="$(jq -r '.agent_effort // empty' <<<"${config_json}")"
+case "${AGENT_BACKEND}" in kimi|claude) ;; *) echo "unsupported agent backend" >&2; exit 2;; esac
 export AAR_RUN_STORAGE_ROOT="${RUN12_STORAGE_ROOT}"
 export AAR_KEEP_CHECKPOINTS="$(jq -r 'if .keep_checkpoints then "1" else "0" end' <<<"${config_json}")"
 export AAR_EVAL_MEM="$(jq -r '.evaluation_memory' <<<"${config_json}")"
 export EVAL_MAX_TRUNCATION_RATE="$(jq -r '.max_truncation_rate' <<<"${config_json}")"
 export AAR_EXPECTED_MAX_TRUNCATION_RATE="${EVAL_MAX_TRUNCATION_RATE}"
 export AAR_AGENT_BACKEND="${AGENT_BACKEND}"
-export AAR_KIMI_TURN_TIMEOUT_SECONDS="$(jq -r '.turn_timeout_seconds' <<<"${config_json}")"
+export AAR_AGENT_TURN_TIMEOUT_SECONDS="$(jq -r '.turn_timeout_seconds' <<<"${config_json}")"
+[ "${AGENT_BACKEND}" != kimi ] || export AAR_KIMI_TURN_TIMEOUT_SECONDS="${AAR_AGENT_TURN_TIMEOUT_SECONDS}"
+[ -z "${AGENT_MODEL}" ] || export AAR_AGENT_MODEL="${AGENT_MODEL}"
+[ -z "${AGENT_EFFORT}" ] || export AAR_EFFORT="${AGENT_EFFORT}"
 export AAR_AUTODATA=1
 export AAR_AUTODATA_PROFILE="$(jq -r '.profile_name' <<<"${config_json}")"
 export AAR_AUTODATA_PROFILE_CONFIG="$(realpath -e -- "${PROFILE_CONFIG}")"
 export AAR_AUTODATA_RUN_CONFIG="$(realpath -e -- "${RUN_CONFIG}")"
 export AAR_AUTODATA_GENERATOR_DEPLOYMENT="${GENERATOR_DEPLOYMENT}"
-export AAR_KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-/checkpoint/ram/shared/vllm_deployments_v2/${GENERATOR_DEPLOYMENT}/proxy_info.json}"
+if [ "${GENERATOR_PROTOCOL}" = openai_chat_completions ]; then
+  export AAR_KIMI_PROXY_INFO="${AAR_KIMI_PROXY_INFO:-/checkpoint/ram/shared/vllm_deployments_v2/${GENERATOR_DEPLOYMENT}/proxy_info.json}"
+else
+  unset AAR_KIMI_PROXY_INFO
+fi
 RUN_MODE="${AAR_RUN12_MODE:-full}"
 configured_seeds="$(jq -r '.chains | join(" ")' <<<"${config_json}")"
 configured_pairs="$(jq -r '.target_pairs_per_chain' <<<"${config_json}")"
@@ -91,6 +106,9 @@ case "${TARGET_PAIRS}" in ''|*[!0-9]*) echo "target pairs must be an integer" >&
   echo "target pairs must be between 1 and 5" >&2; exit 2;
 }
 if [ "${RUN_MODE}" = full ]; then
+  [ "${EXPERIMENT_RUN_ID}" = run12 ] || {
+    echo "the shared engine permits full mode only for Run 12" >&2; exit 2;
+  }
   unset AAR_AUTODATA_STOP_AFTER
   [ "${RUN_CONFIG}" = "${CANONICAL_RUN_CONFIG}" ] || {
     echo "full mode requires the canonical Run 12 YAML" >&2; exit 2;
@@ -158,11 +176,14 @@ source "${REPO}/scripts/aar_runtime_env.sh"
 # shellcheck disable=SC1091
 source "${REPO}/replication/env_multidimensional.sh"
 for name in HF_TOKEN MODEL_API_KEY; do [ -n "${!name:-}" ] || { echo "missing ${name}" >&2; exit 2; }; done
+if [ "${GENERATOR_PROTOCOL}" != openai_chat_completions ]; then
+  unset AAR_KIMI_PROXY_INFO
+fi
 
 commit="${SUBMITTED_COMMIT}"
 attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-${commit:0:12}"
-run_namespace="run12-full"
-[ "${RUN_MODE}" = full ] || run_namespace="run12-bootstrap-canary"
+run_namespace="${EXPERIMENT_RUN_ID}-full"
+[ "${RUN_MODE}" = full ] || run_namespace="${EXPERIMENT_RUN_ID}-bootstrap-canary"
 attempt="${RUN12_STORAGE_ROOT}/aar-runs/${run_namespace}/${attempt_id}"
 checkpoint_root="${RUN12_STORAGE_ROOT}/aar-checkpoints/${run_namespace}/${attempt_id}"
 mkdir -p "${attempt}/"{metadata,logs,secrets,chains,runtime}
@@ -252,16 +273,52 @@ chmod 600 "${model_env}" "${approval_private}" "${approval_public}"
 approval_digest="sha256:$(sha256sum "${approval_public}" | awk '{print $1}')"
 
 export PATH=/storage/home/${USER}/tools/node-v22.22.0-linux-arm64/bin:"${PATH}"
-export KIMI_CLI_PATH=/storage/home/${USER}/tools/kimi-code-2.1.1/node_modules/.bin/kimi
-export AAR_WEB_MODE=native_web
-export AAR_KIMI_SERVE_DEPLOYMENT="${RESEARCHER_DEPLOYMENT}" AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
-export AAR_KIMI_PROVIDER_TYPE=kimi AAR_KIMI_DISABLE_THINKING=1
-export AAR_SERVE_API_V2_ROOT="${SV}" KIMI_MODEL_CAPABILITIES=tool_use
-export KIMI_MODEL_MAX_OUTPUT_SIZE=65536 KIMI_MODEL_MAX_COMPLETION_TOKENS=65536
-export AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS=180
-unset KIMI_AGENT_MODEL
-PYTHONPATH="${SOURCE_REPO}" timeout 420 "${SHARED_HARNESS_PY}" "${SOURCE_REPO}/experiments/dishonest_sycophancy_concealing/run_10/canary/verify_kimi_endpoint.py" \
-  --workspace "${SOURCE_REPO}" --output "${attempt}/metadata/kimi_mcp_preflight.json"
+export AAR_SERVE_API_V2_ROOT="${SV}"
+case "${AGENT_BACKEND}" in
+  kimi)
+    export KIMI_CLI_PATH=/storage/home/${USER}/tools/kimi-code-2.1.1/node_modules/.bin/kimi
+    export AAR_WEB_MODE=native_web
+    export AAR_KIMI_SERVE_DEPLOYMENT="${RESEARCHER_DEPLOYMENT}" AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
+    export AAR_KIMI_PROVIDER_TYPE=kimi AAR_KIMI_DISABLE_THINKING=1
+    export KIMI_MODEL_CAPABILITIES=tool_use
+    export KIMI_MODEL_MAX_OUTPUT_SIZE=65536 KIMI_MODEL_MAX_COMPLETION_TOKENS=65536
+    export AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS=180
+    unset KIMI_AGENT_MODEL
+    PYTHONPATH="${SOURCE_REPO}" timeout 420 "${SHARED_HARNESS_PY}" "${SOURCE_REPO}/experiments/dishonest_sycophancy_concealing/run_10/canary/verify_kimi_endpoint.py" \
+      --workspace "${SOURCE_REPO}" --output "${attempt}/metadata/kimi_mcp_preflight.json"
+    ;;
+  claude)
+    [ "${AGENT_MODEL}" = claude-opus-4-8 ] || { echo "Run 17 requires Claude Opus 4.8" >&2; exit 2; }
+    [ "${AGENT_EFFORT}" = max ] || { echo "Run 17 requires maximum Claude effort" >&2; exit 2; }
+    export AAR_WEB_MODE=meta_secure AAR_RESEARCH_ENV_ISOLATION=1
+    CLAUDE_CLI_PATH="${CLAUDE_CLI_PATH:-$(command -v claude || true)}"
+    export CLAUDE_CLI_PATH
+    [ -x "${CLAUDE_CLI_PATH}" ] || { echo "Claude CLI is missing" >&2; exit 2; }
+    "${CLAUDE_CLI_PATH}" --help 2>&1 | grep -q -- --secure-internet-mode || {
+      echo "Claude CLI lacks secure-internet mode" >&2; exit 2;
+    }
+    [ -x "${SOURCE_REPO}/scripts/aar-paper-search" ] || {
+      echo "bounded paper-search helper is missing" >&2; exit 2;
+    }
+    "${SHARED_HARNESS_PY}" - "${attempt}/metadata/claude_research_preflight.json" "${CLAUDE_CLI_PATH}" <<'PY'
+import json
+import pathlib
+import sys
+
+pathlib.Path(sys.argv[1]).write_text(json.dumps({
+    "schema": "aar.claude-research-preflight/v1",
+    "status": "passed",
+    "research_backend": "claude",
+    "research_model": "claude-opus-4-8",
+    "research_effort": "max",
+    "claude_cli_path": sys.argv[2],
+    "claude_cli_executable": True,
+    "secure_internet_mode": True,
+    "bounded_paper_search": True,
+}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+    ;;
+esac
 
 suffix="$(printf '%s' "${attempt_id}" | sha256sum | cut -c1-8)"
 deployments=()
@@ -274,7 +331,7 @@ for seed in "${seeds[@]}"; do
   printf '{"schema":"aar.autodata.proposal-bindings/v1","proposals":{},"workspaces":{}}\n' \
     > "${chain_root}/secrets/proposal-bindings.json"
   chmod 600 "${chain_root}/secrets/"*
-  deployment="${REUSE_BASE_DEPLOYMENT:-winnieyangwn-r12-${seed}-i1-${suffix}}"
+  deployment="${REUSE_BASE_DEPLOYMENT:-winnieyangwn-${EXPERIMENT_RUN_ID}-${seed}-i1-${suffix}}"
   deployments+=("${deployment}")
   if [ -z "${REUSE_BASE_DEPLOYMENT}" ]; then
     env -u SSL_CERT_FILE -u NODE_EXTRA_CA_CERTS \
@@ -330,6 +387,8 @@ export AAR_BENCHMARK_DOCS="${SOURCE_REPO}/benchmark_docs"
 export BENCHMARK_DOCS_DIR="${SOURCE_REPO}/benchmark_docs"
 export AAR_RUN_ATTEMPT_DIR="${attempt}" AAR_RUNTIME_ROOT="${attempt}"
 export AAR_RUN12_CHECKPOINT_ROOT="${checkpoint_root}"
+export AAR_AUTODATA_CHECKPOINT_ROOT="${checkpoint_root}"
+export AAR_EXPERIMENT_RUN_ID="${EXPERIMENT_RUN_ID}"
 export AAR_BASELINE_GIT_COMMIT="${commit}" AAR_REUSED_BASELINE="${SNAPSHOT_REUSED_BASELINE}"
 export AAR_RECOVERED_BASELINE_SOURCES="${SNAPSHOT_RECOVERED_SOURCES}"
 export AAR_AUTODATA_CHECKOUT="${SOURCE_AUTODATA}"
@@ -343,7 +402,7 @@ export AAR_AUTODATA_APPROVAL_PRIVATE_KEY="${approval_private}"
 export AAR_AUTODATA_APPROVAL_PUBLIC_KEY="${approval_public}"
 export AAR_AUTODATA_APPROVAL_PUBLIC_KEY_SHA256="${approval_digest}"
 export AAR_AUTODATA_APPROVAL_ACTOR=aar-integrity-monitor
-export AAR_AUTODATA_APPROVAL_POLICY_VERSION=aar-autodata/run12-full-v1
+export AAR_AUTODATA_APPROVAL_POLICY_VERSION="aar-autodata/${EXPERIMENT_RUN_ID}-v1"
 export AAR_AUTODATA_RESOURCES_READY=1
 export AAR_MONITOR_MODEL_API_KEY="${MODEL_API_KEY}"
 export AAR_RUN12_MODE="${RUN_MODE}"
@@ -352,19 +411,27 @@ export AAR_RUN12_CHAIN_COUNT="${#seeds[@]}"
 export AAR_RUN12_TARGET_PAIRS="${TARGET_PAIRS}"
 [ "${RUN_MODE}" = full ] || export AAR_RUN12_MAX_CHAIN_ATTEMPTS=2
 
-job="$(sbatch --parsable --output="${attempt}/logs/pipeline-%j.out" --export=ALL \
+job="$(sbatch --parsable --job-name="${EXPERIMENT_RUN_ID}-autodata-launch" \
+  --output="${attempt}/logs/pipeline-%j.out" --export=ALL \
   "${SOURCE_REPO}/experiments/dishonest_sycophancy_concealing/run_12/slurm/pipeline.sbatch")"
 base_reused=false
 [ -z "${REUSE_BASE_DEPLOYMENT}" ] || base_reused=true
 source_snapshots_sha256="sha256:$(sha256sum "${attempt}/metadata/source-snapshots.json" | awk '{print $1}')"
-printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nsource_snapshot_root=%s\nautodata_commit=%s\nautodata_snapshot_root=%s\nsource_snapshots_sha256=%s\nmode=%s\nstop_after=%s\nproduction_required_rows=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nresearcher_kimi_deployment=%s\nautodata_kimi_deployment=%s\nautodata_profile=%s\nautodata_concurrency=%s\nautodata_model_request_attempts=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \
+printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nsource_snapshot_root=%s\nautodata_commit=%s\nautodata_snapshot_root=%s\nsource_snapshots_sha256=%s\nexperiment_run_id=%s\nmode=%s\nstop_after=%s\nproduction_required_rows=%s\nresearch_backend=%s\nresearch_model=%s\nresearch_effort=%s\nresearcher_deployment=%s\nautodata_generator_model=%s\nautodata_generator_protocol=%s\nautodata_generator_deployment=%s\nautodata_profile=%s\nautodata_concurrency=%s\nautodata_model_request_attempts=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \
   "${job}" "${attempt}" "${checkpoint_root}" "${commit}" \
   "${SOURCE_REPO}" "${REQUIRED_AUTODATA_SHA}" "${SOURCE_AUTODATA}" \
-  "${source_snapshots_sha256}" "${RUN_MODE}" \
+  "${source_snapshots_sha256}" "${EXPERIMENT_RUN_ID}" "${RUN_MODE}" \
   "${AAR_AUTODATA_STOP_AFTER:-score-result}" "${AAR_AUTODATA_PRODUCTION_ROWS}" \
-  "${RESEARCHER_DEPLOYMENT}" "${GENERATOR_DEPLOYMENT}" "${AAR_AUTODATA_PROFILE}" \
+  "${AGENT_BACKEND}" "${AGENT_MODEL:-Kimi-K2.6}" "${AGENT_EFFORT:-default}" \
+  "${RESEARCHER_DEPLOYMENT}" "${GENERATOR_MODEL}" "${GENERATOR_PROTOCOL}" \
+  "${GENERATOR_DEPLOYMENT}" "${AAR_AUTODATA_PROFILE}" \
   "${AAR_AUTODATA_CONCURRENCY}" "${AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS}" \
   "${#seeds[@]}" "${TARGET_PAIRS}" "${SEEDS_RAW}" \
   "${deployments[*]}" "${base_reused}" \
   | tee "${attempt}/metadata/submission.txt"
+if [ "${EXPERIMENT_RUN_ID}" = run12 ]; then
+  printf 'researcher_kimi_deployment=%s\ngenerator_kimi_deployment=%s\n' \
+    "${RESEARCHER_DEPLOYMENT}" "${GENERATOR_DEPLOYMENT}" \
+    >> "${attempt}/metadata/submission.txt"
+fi
 unset MODEL_API_KEY HF_TOKEN

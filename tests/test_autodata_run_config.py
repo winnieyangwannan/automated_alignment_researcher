@@ -26,12 +26,19 @@ from aar.autodata_run_config import (
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = ROOT / "configs/autodata/target_aware_local_v1.yaml"
 CANARY2_PROFILE = ROOT / "configs/autodata/target_aware_local_c32_v1.yaml"
+RUN17_PROFILE = (
+    ROOT / "configs/autodata/target_aware_model_api_claude_opus_4_8_c32_v1.yaml"
+)
 RUN = (
     ROOT / "experiments/dishonest_sycophancy_concealing/run_12/config/autodata_run.yaml"
 )
 CANARY2_RUN = (
     ROOT
     / "experiments/dishonest_sycophancy_concealing/run_12/canary/canary_2/trial_2/autodata_run.yaml"
+)
+RUN17 = (
+    ROOT
+    / "experiments/dishonest_sycophancy_concealing/run_17/config/run.yaml"
 )
 
 
@@ -79,6 +86,10 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
     assert policy["runner"] == "local-bwrap"
     assert policy["required_solve_env"]["AUTODATA_TARGET_ENABLED"] == "1"
     assert (
+        policy["required_solve_env"]["AUTODATA_GENERATOR_PROTOCOL"]
+        == "openai_chat_completions"
+    )
+    assert (
         policy["required_solve_env"]["AUTODATA_GENERATOR_DEPLOYMENT_ID"]
         == "autodata_8-kimi26"
     )
@@ -119,6 +130,7 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
     assert "export EVAL_MAX_TRUNCATION_RATE=0.2\n" in runtime
     assert "export AAR_EXPECTED_MAX_TRUNCATION_RATE=0.2\n" in runtime
     assert "export AAR_AGENT_BACKEND=kimi\n" in runtime
+    assert "export AAR_AGENT_TURN_TIMEOUT_SECONDS=1800\n" in runtime
     assert "export AAR_KIMI_TURN_TIMEOUT_SECONDS=1800\n" in runtime
     validated = validate_compiled_config(
         output / "resolved-config.yaml",
@@ -205,6 +217,54 @@ def test_canary2_run_yaml_selects_and_enforces_its_shared_profile() -> None:
         )
 
 
+def test_run17_compiles_claude_researcher_and_model_api_generator(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "run17-compiled"
+    resolved = compile_run_config(
+        profile_path=RUN17_PROFILE,
+        run_path=RUN17,
+        target_binding_path=_base_binding(tmp_path),
+        chain="alpha",
+        repo=ROOT,
+        output_dir=output,
+    )
+    policy = json.loads((output / "campaign-policy.json").read_text())
+    environment = policy["required_solve_env"]
+    runtime = (output / "autodata-runtime.env").read_text()
+
+    assert resolved["run"]["deployments"] == {
+        "researcher": "meta-claude-cli-opus-4-8",
+        "generator": "meta-model-api-claude-4-8-opus",
+    }
+    assert environment["AUTODATA_GENERATOR_PROTOCOL"] == "model_api_responses"
+    assert environment["AUTODATA_GENERATOR_URL"] == (
+        "https://api.meta.ai/v1/responses"
+    )
+    assert environment["AUTODATA_GENERATOR_HOST_HEADER"] == ""
+    assert environment["AUTODATA_GENERATOR_MODEL"] == "claude-4-8-opus"
+    assert environment["AUTODATA_GENERATOR_DEPLOYMENT_ID"] == (
+        "meta-model-api-claude-4-8-opus"
+    )
+    assert "export AAR_AGENT_BACKEND=claude\n" in runtime
+    assert "export AAR_AGENT_MODEL=claude-opus-4-8\n" in runtime
+    assert "export AAR_EFFORT=max\n" in runtime
+    assert "export AAR_AGENT_TURN_TIMEOUT_SECONDS=1800\n" in runtime
+    assert "AAR_KIMI_TURN_TIMEOUT_SECONDS" not in runtime
+
+
+def test_model_api_generator_profile_rejects_non_responses_endpoint(
+    tmp_path: Path,
+) -> None:
+    profile = yaml.safe_load(RUN17_PROFILE.read_text())
+    profile["providers"]["generator"]["url"] = "https://api.meta.ai/v1"
+    path = tmp_path / "invalid-model-api-profile.yaml"
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="pinned Responses endpoint"):
+        load_runtime_profile(path)
+
+
 def test_compiler_rejects_cross_chain_target_binding(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="binding chain"):
         compile_run_config(
@@ -261,6 +321,8 @@ def test_inspect_reports_static_yaml_values() -> None:
         "judge_format_max_attempts": 2,
         "judge_structured_output_mode": "prompt_json",
         "authoring_max_wall_seconds": 1800,
+        "researcher_deployment": "aar_8-kimi26",
+        "generator_deployment": "autodata_8-kimi26",
         "researcher_kimi_deployment": "aar_8-kimi26",
         "generator_kimi_deployment": "autodata_8-kimi26",
         "chains": ["alpha", "beta", "gamma", "delta", "epsilon"],
@@ -269,6 +331,7 @@ def test_inspect_reports_static_yaml_values() -> None:
         "target_enabled": True,
         "generator_url": "http://fair-cw-use2-1-ingress-slurm-ingress/v1",
         "generator_host_header": "ram-inference-gateway.ingress.",
+        "generator_protocol": "openai_chat_completions",
         "generator_model": "Kimi-K2.6",
         "judge_model": "gpt-5-6-luna",
         "target_model": "gemma-4-31B-it",
@@ -278,6 +341,8 @@ def test_inspect_reports_static_yaml_values() -> None:
         "evaluation_memory": "0",
         "max_truncation_rate": 0.2,
         "agent_backend": "kimi",
+        "agent_model": None,
+        "agent_effort": None,
         "turn_timeout_seconds": 1800,
     }
 
