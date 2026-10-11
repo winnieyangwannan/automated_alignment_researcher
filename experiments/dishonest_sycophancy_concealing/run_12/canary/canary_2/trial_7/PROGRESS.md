@@ -105,3 +105,44 @@ production tasks, 1,000 required rows, 699 configured native meta attempts, and
 Finish the full local gate, commit only scoped integration changes and Trial 7
 records, synchronize the exact commit to HPC, rerun the gate there against the
 pinned native snapshot, then launch under the standing authorization.
+
+<a id="trial7-event-launch"></a>
+
+### ⏳ 02:56 PT — RUNNING: immutable Trial 7 launched after all gates passed
+
+The scoped integration hardening was committed as `8304146`, synchronized by
+fast-forward to the clean `autodata` HPC worktree, and validated there against
+native AutoData `d6e5619`. The live Kimi/MCP and retained Gemma endpoint probes
+also passed before submission.
+
+```text
+✓ Launcher 1813735 completed 0:0 in 34 seconds
+✓ Pinned native engine gate passed all 19 tests
+✓ Exact native/AAR serializer and budget-ledger gate passed
+✓ Meta ledger: 608 evaluations + 3 checks + 88 recovery = 699 attempts
+✓ Distinct research and controller jobs emitted
+✓ Child manifest contains no evaluator job
+⏳ Research job 1813738 awaiting allocation
+○ Controller job 1813739 dependency-gated behind research
+○ Workspace freeze and canonical execution registration
+○ Three-iteration meta-optimization
+○ Production and verified handoff
+○ One-step training smoke
+```
+
+#### Evidence
+
+- Attempt root:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T095432Z-83041461cb13`
+- AAR source: `83041461cb13f0aea54e0d23c0a8bcc602fef1a9`
+- Native source: `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`
+- Launcher: `1813735`, `COMPLETED 0:0`, 02:55:58–02:56:32 PT
+- Research: `1813738`
+- Controller: `1813739`
+- Evaluator: none
+
+#### ⏭️ Next step
+
+Monitor allocation and every typed lifecycle transition. Stop and repair before
+a replacement trial if a new code defect appears; otherwise continue through
+the verified training-smoke boundary.

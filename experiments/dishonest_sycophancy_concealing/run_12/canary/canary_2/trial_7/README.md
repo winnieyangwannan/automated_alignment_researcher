@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: prepared; launch blocked on repair commit, exact HPC sync, and gates
+- Status: running; research job `1813738`, controller `1813739`, no evaluator
 - Created: 2026-10-11 02:30 PT
-- Last updated: 2026-10-11 02:49 PT
+- Last updated: 2026-10-11 02:56 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
