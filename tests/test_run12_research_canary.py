@@ -37,6 +37,50 @@ def test_run12_launcher_uses_current_run10_helper_layout() -> None:
     assert "run_10/verify_kimi_endpoint.py" not in launcher
 
 
+def test_run12_uses_attempt_local_detached_source_snapshots() -> None:
+    launcher = (LAUNCH / "submit_full.sh").read_text()
+    pipeline = (SLURM / "pipeline.sbatch").read_text()
+    runtime = (ROOT / "scripts" / "aar_runtime_env.sh").read_text()
+    preflight = (ROOT / "scripts" / "preflight_aar.sh").read_text()
+
+    assert 'SOURCE_REPO="${attempt}/runtime/aar-source"' in launcher
+    assert 'SOURCE_AUTODATA="${attempt}/runtime/autodata-source"' in launcher
+    assert launcher.count("create_pinned_source_snapshot.sh") >= 2
+    assert launcher.index("create_pinned_source_snapshot.sh") < launcher.index(
+        "verify_kimi_endpoint.py"
+    )
+    assert launcher.index("create_pinned_source_snapshot.sh") < launcher.index(
+        '"${SV}/serve.sh" deploy'
+    )
+    assert 'export HARNESS_PY="${SHARED_HARNESS_PY}" HARNESS_ENV="${SECRET_ENV}"' in launcher
+    assert 'export WORKSPACE_DIR="${SOURCE_REPO}" PYTHONPATH="${SOURCE_REPO}"' in launcher
+    assert 'export AAR_BENCHMARK_DOCS="${SOURCE_REPO}/benchmark_docs"' in launcher
+    assert 'export BENCHMARK_DOCS_DIR="${SOURCE_REPO}/benchmark_docs"' in launcher
+    assert 'PYTHONPATH="${SOURCE_REPO}" timeout 420' in launcher
+    assert '--profile "${SNAPSHOT_PROFILE_CONFIG}" --run "${SNAPSHOT_RUN_CONFIG}"' in launcher
+    assert '--repo "${SOURCE_REPO}"' in launcher
+    assert 'LLM_UNCERTAINTY_SRC="${SNAPSHOT_SOURCE_ROOT}/data"' in launcher
+    assert 'AAR_REUSED_BASELINE="${SNAPSHOT_REUSED_BASELINE}"' in launcher
+    assert 'source_snapshot_root=%s' in launcher
+    assert 'source_snapshots_sha256=%s' in launcher
+
+    for required in (
+        '[ "${REPO}" = "${SOURCE_SNAPSHOT}" ]',
+        '[ "${REPO}" = "${ATTEMPT}/runtime/aar-source" ]',
+        'branch --show-current',
+        'rev-parse HEAD',
+        'status --porcelain --untracked-files=all',
+        '.git/objects/info/alternates',
+        'source snapshot retains a remote',
+        'AutoData source is not attempt-local',
+    ):
+        assert required in pipeline
+    assert 'export AAR_EXPECTED_COMMIT="${EXPECTED_COMMIT}"' in pipeline
+    assert "AAR_EXPECTED_COMMIT AAR_SOURCE_SNAPSHOT" in runtime
+    assert 'if [ -n "${AAR_EXPECTED_COMMIT:-}" ]; then' in preflight
+    assert "commit-pinned source snapshot is not detached" in preflight
+
+
 def test_run12_pins_autodata_provider_provenance_serialization_fix() -> None:
     launcher = (LAUNCH / "submit_full.sh").read_text()
 

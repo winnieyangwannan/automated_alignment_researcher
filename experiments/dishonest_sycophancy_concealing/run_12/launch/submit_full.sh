@@ -19,7 +19,14 @@ BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
 REQUIRED_AUTODATA_SHA=d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc
 CANONICAL_RUN_CONFIG="$(realpath -e -- "${RUN12_DIR}/config/autodata_run.yaml")"
 RUN_CONFIG="$(realpath -e -- "${AAR_RUN12_AUTODATA_RUN_CONFIG:-${CANONICAL_RUN_CONFIG}}")"
+[ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "Run 12 requires branch autodata" >&2; exit 2; }
+if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; then
+  echo "tracked worktree is dirty" >&2
+  exit 2
+fi
+SUBMITTED_COMMIT="$(git -C "${REPO}" rev-parse HEAD)"
 [ -x "${REPO}/.venv/bin/python" ] || { echo "missing AAR runtime" >&2; exit 2; }
+SHARED_HARNESS_PY="${REPO}/.venv/bin/python"
 profile_resolver=(env PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m
   aar.autodata_run_config resolve-profile --repo "${REPO}" --run "${RUN_CONFIG}")
 if [ -n "${AAR_RUN12_AUTODATA_PROFILE_CONFIG:-}" ]; then
@@ -108,16 +115,16 @@ else
   fi
 fi
 
-[ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "Run 12 requires branch autodata" >&2; exit 2; }
-if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; then
-  echo "tracked worktree is dirty" >&2
-  exit 2
-fi
 if [ ! -x "${BROKER_PYTHON}" ]; then
   echo "missing runtime" >&2
   exit 2
 fi
 [ "$(git -C "${AUTODATA_CHECKOUT}" rev-parse HEAD)" = "${REQUIRED_AUTODATA_SHA}" ] || { echo "wrong AutoData revision" >&2; exit 2; }
+if ! git -C "${AUTODATA_CHECKOUT}" diff --quiet || \
+    ! git -C "${AUTODATA_CHECKOUT}" diff --cached --quiet; then
+  echo "tracked AutoData worktree is dirty" >&2
+  exit 2
+fi
 AAR_AUTODATA=1 \
   AAR_AUTODATA_PLUGIN_ROOT="${AUTODATA_CHECKOUT}/plugin/autodata" \
   AAR_AUTODATA_SHA="${REQUIRED_AUTODATA_SHA}" \
@@ -145,14 +152,8 @@ source "${REPO}/scripts/aar_runtime_env.sh"
 source "${REPO}/replication/env_multidimensional.sh"
 for name in HF_TOKEN MODEL_API_KEY; do [ -n "${!name:-}" ] || { echo "missing ${name}" >&2; exit 2; }; done
 
-source_root="${REPO}/data/LLM-Uncertainty-Bench"
-"${REPO}/.venv/bin/python" "${REPO}/scripts/prepare_llm_uncertainty_source.py" --output-root "${source_root}" --verify-only >/dev/null
-export LLM_UNCERTAINTY_SRC="${source_root}/data" LLM_UNCERTAINTY_SOURCE_MANIFEST="${source_root}/.aar-source.json"
-"${REPO}/.venv/bin/python" "${REPO}/scripts/validate_reused_multidimensional_baseline.py" \
-  "${REUSED_BASELINE}" --recovered-source-dir "${RECOVERED_SOURCES}" >/dev/null
-
-commit="$(git -C "${REPO}" rev-parse HEAD)"
-attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "${REPO}" rev-parse --short=12 HEAD)"
+commit="${SUBMITTED_COMMIT}"
+attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-${commit:0:12}"
 run_namespace="run12-full"
 [ "${RUN_MODE}" = full ] || run_namespace="run12-bootstrap-canary"
 attempt="${RUN12_STORAGE_ROOT}/aar-runs/${run_namespace}/${attempt_id}"
@@ -161,7 +162,77 @@ mkdir -p "${attempt}/"{metadata,logs,secrets,chains,runtime}
 mkdir -p "${checkpoint_root}/chains"
 chmod 700 "${attempt}" "${attempt}/"{metadata,logs,secrets,chains}
 chmod 700 "${checkpoint_root}" "${checkpoint_root}/chains"
-"${REPO}/experiments/dishonest_sycophancy_concealing/run_10/runtime/snapshot_vllm_runtime.sh" "${attempt}" \
+[ "$(git -C "${REPO}" rev-parse HEAD)" = "${commit}" ] || {
+  echo "AAR source changed during launch preflight" >&2; exit 2;
+}
+if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; then
+  echo "AAR source became dirty during launch preflight" >&2
+  exit 2
+fi
+SOURCE_REPO="${attempt}/runtime/aar-source"
+SOURCE_AUTODATA="${attempt}/runtime/autodata-source"
+export PYTHONDONTWRITEBYTECODE=1
+"${REPO}/scripts/create_pinned_source_snapshot.sh" \
+  "${REPO}" "${commit}" "${SOURCE_REPO}" >/dev/null
+"${SOURCE_REPO}/scripts/create_pinned_source_snapshot.sh" \
+  "${AUTODATA_CHECKOUT}" "${REQUIRED_AUTODATA_SHA}" "${SOURCE_AUTODATA}" >/dev/null
+
+case "${RUN_CONFIG}" in
+  "${REPO}"/*) SNAPSHOT_RUN_CONFIG="${SOURCE_REPO}/${RUN_CONFIG#"${REPO}/"}" ;;
+  *)
+    SNAPSHOT_RUN_CONFIG="${attempt}/runtime/autodata-run.yaml"
+    install -m 400 -- "${RUN_CONFIG}" "${SNAPSHOT_RUN_CONFIG}"
+    ;;
+esac
+case "${PROFILE_CONFIG}" in
+  "${REPO}"/*) SNAPSHOT_PROFILE_CONFIG="${SOURCE_REPO}/${PROFILE_CONFIG#"${REPO}/"}" ;;
+  *)
+    SNAPSHOT_PROFILE_CONFIG="${attempt}/runtime/autodata-profile.yaml"
+    install -m 400 -- "${PROFILE_CONFIG}" "${SNAPSHOT_PROFILE_CONFIG}"
+    ;;
+esac
+if [ ! -s "${SNAPSHOT_RUN_CONFIG}" ] || [ ! -s "${SNAPSHOT_PROFILE_CONFIG}" ]; then
+  echo "attempt-local AutoData configuration snapshot is incomplete" >&2
+  exit 2
+fi
+snapshot_config_json="$(PYTHONPATH="${SOURCE_REPO}" "${SHARED_HARNESS_PY}" -m \
+  aar.autodata_run_config inspect --profile "${SNAPSHOT_PROFILE_CONFIG}" \
+  --run "${SNAPSHOT_RUN_CONFIG}")"
+[ "$(jq -S -c . <<<"${snapshot_config_json}")" = "$(jq -S -c . <<<"${config_json}")" ] || {
+  echo "attempt-local AutoData configuration differs from validated launch configuration" >&2
+  exit 2
+}
+jq -n \
+  --arg aar_commit "${commit}" --arg aar_root "${SOURCE_REPO}" \
+  --arg autodata_commit "${REQUIRED_AUTODATA_SHA}" --arg autodata_root "${SOURCE_AUTODATA}" \
+  '{schema:"aar.source-snapshots/v1",aar:{commit:$aar_commit,root:$aar_root},autodata:{commit:$autodata_commit,root:$autodata_root}}' \
+  > "${attempt}/metadata/source-snapshots.json"
+chmod 400 "${attempt}/metadata/source-snapshots.json"
+
+shared_source_root="${REPO}/data/LLM-Uncertainty-Bench"
+"${SHARED_HARNESS_PY}" "${SOURCE_REPO}/scripts/prepare_llm_uncertainty_source.py" \
+  --output-root "${shared_source_root}" --verify-only >/dev/null
+SNAPSHOT_SOURCE_ROOT="${attempt}/runtime/llm-uncertainty-source"
+mkdir -p "${SNAPSHOT_SOURCE_ROOT}"
+cp -a -- "${shared_source_root}/data" "${SNAPSHOT_SOURCE_ROOT}/data"
+install -m 400 -- "${shared_source_root}/.aar-source.json" \
+  "${SNAPSHOT_SOURCE_ROOT}/.aar-source.json"
+"${SHARED_HARNESS_PY}" "${SOURCE_REPO}/scripts/prepare_llm_uncertainty_source.py" \
+  --output-root "${SNAPSHOT_SOURCE_ROOT}" --verify-only >/dev/null
+export LLM_UNCERTAINTY_SRC="${SNAPSHOT_SOURCE_ROOT}/data"
+export LLM_UNCERTAINTY_SOURCE_MANIFEST="${SNAPSHOT_SOURCE_ROOT}/.aar-source.json"
+
+SNAPSHOT_RECOVERY_ROOT="${attempt}/runtime/baseline-recovery"
+mkdir -p "${SNAPSHOT_RECOVERY_ROOT}"
+install -m 400 -- "${REUSED_BASELINE}" "${SNAPSHOT_RECOVERY_ROOT}/baseline.json"
+cp -a -- "${RECOVERED_SOURCES}" "${SNAPSHOT_RECOVERY_ROOT}/source-artifacts"
+SNAPSHOT_REUSED_BASELINE="${SNAPSHOT_RECOVERY_ROOT}/baseline.json"
+SNAPSHOT_RECOVERED_SOURCES="${SNAPSHOT_RECOVERY_ROOT}/source-artifacts"
+"${SHARED_HARNESS_PY}" "${SOURCE_REPO}/scripts/validate_reused_multidimensional_baseline.py" \
+  "${SNAPSHOT_REUSED_BASELINE}" \
+  --recovered-source-dir "${SNAPSHOT_RECOVERED_SOURCES}" >/dev/null
+
+"${SOURCE_REPO}/experiments/dishonest_sycophancy_concealing/run_10/runtime/snapshot_vllm_runtime.sh" "${attempt}" \
   > "${attempt}/metadata/vllm_runtime_path.txt"
 
 model_env="${attempt}/secrets/model-api.env"
@@ -182,8 +253,8 @@ export AAR_SERVE_API_V2_ROOT="${SV}" KIMI_MODEL_CAPABILITIES=tool_use
 export KIMI_MODEL_MAX_OUTPUT_SIZE=65536 KIMI_MODEL_MAX_COMPLETION_TOKENS=65536
 export AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS=180
 unset KIMI_AGENT_MODEL
-timeout 420 "${REPO}/.venv/bin/python" "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/canary/verify_kimi_endpoint.py" \
-  --workspace "${REPO}" --output "${attempt}/metadata/kimi_mcp_preflight.json"
+PYTHONPATH="${SOURCE_REPO}" timeout 420 "${SHARED_HARNESS_PY}" "${SOURCE_REPO}/experiments/dishonest_sycophancy_concealing/run_10/canary/verify_kimi_endpoint.py" \
+  --workspace "${SOURCE_REPO}" --output "${attempt}/metadata/kimi_mcp_preflight.json"
 
 suffix="$(printf '%s' "${attempt_id}" | sha256sum | cut -c1-8)"
 deployments=()
@@ -209,16 +280,16 @@ for seed in "${seeds[@]}"; do
         --coord-qos cpu_x86_lowest --proxy-qos cpu_x86_lowest \
         --gateway-register --lifetime 7d --no-watch
   fi
-  "${REPO}/.venv/bin/python" -m aar.autodata_campaign_policy create-base-target \
+  PYTHONPATH="${SOURCE_REPO}" "${SHARED_HARNESS_PY}" -m aar.autodata_campaign_policy create-base-target \
     --chain-id "${seed}" --base-checkpoint "${BASE_CHECKPOINT}" \
     --target-url http://fair-cw-use2-1-ingress-slurm-ingress/v1 \
     --target-host-header ram-inference-gateway.ingress. --target-model gemma-4-31B-it \
     --target-deployment-id "${deployment}" --output "${chain_root}/bindings/iteration-1.json"
   cp -- "${chain_root}/bindings/iteration-1.json" "${chain_root}/metadata/incumbent.json"
-  PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_run_config compile \
-    --profile "${AAR_AUTODATA_PROFILE_CONFIG}" --run "${AAR_AUTODATA_RUN_CONFIG}" \
+  PYTHONPATH="${SOURCE_REPO}" "${SHARED_HARNESS_PY}" -m aar.autodata_run_config compile \
+    --profile "${SNAPSHOT_PROFILE_CONFIG}" --run "${SNAPSHOT_RUN_CONFIG}" \
     --target-binding "${chain_root}/bindings/iteration-1.json" --chain "${seed}" \
-    --repo "${REPO}" --output-dir "${chain_root}/metadata" >/dev/null
+    --repo "${SOURCE_REPO}" --output-dir "${chain_root}/metadata" >/dev/null
 done
 
 # All chains share the same static YAML settings. Source one compiled copy for
@@ -244,13 +315,20 @@ for deployment in "${deployments[@]}"; do
 done
 printf '%s\n' "${deployments[@]}" > "${attempt}/metadata/base-deployments.txt"
 
+export AAR_REPO="${SOURCE_REPO}" AAR_SOURCE_SNAPSHOT="${SOURCE_REPO}"
+export HARNESS_PY="${SHARED_HARNESS_PY}" HARNESS_ENV="${SECRET_ENV}"
+export WORKSPACE_DIR="${SOURCE_REPO}" PYTHONPATH="${SOURCE_REPO}"
+export AAR_BENCHMARK_DOCS="${SOURCE_REPO}/benchmark_docs"
+export BENCHMARK_DOCS_DIR="${SOURCE_REPO}/benchmark_docs"
 export AAR_RUN_ATTEMPT_DIR="${attempt}" AAR_RUNTIME_ROOT="${attempt}"
 export AAR_RUN12_CHECKPOINT_ROOT="${checkpoint_root}"
-export AAR_BASELINE_GIT_COMMIT="${commit}" AAR_REUSED_BASELINE="${REUSED_BASELINE}"
-export AAR_RECOVERED_BASELINE_SOURCES="${RECOVERED_SOURCES}"
-export AAR_AUTODATA_CHECKOUT="${AUTODATA_CHECKOUT}"
-export AAR_AUTODATA_PLUGIN_ROOT="${AUTODATA_CHECKOUT}/plugin/autodata"
+export AAR_BASELINE_GIT_COMMIT="${commit}" AAR_REUSED_BASELINE="${SNAPSHOT_REUSED_BASELINE}"
+export AAR_RECOVERED_BASELINE_SOURCES="${SNAPSHOT_RECOVERED_SOURCES}"
+export AAR_AUTODATA_CHECKOUT="${SOURCE_AUTODATA}"
+export AAR_AUTODATA_PLUGIN_ROOT="${SOURCE_AUTODATA}/plugin/autodata"
 export AAR_AUTODATA_SHA="${REQUIRED_AUTODATA_SHA}"
+export AAR_AUTODATA_PROFILE_CONFIG="${SNAPSHOT_PROFILE_CONFIG}"
+export AAR_AUTODATA_RUN_CONFIG="${SNAPSHOT_RUN_CONFIG}"
 export AAR_AUTODATA_BROKER_PYTHON="${BROKER_PYTHON}"
 export AAR_AUTODATA_MODEL_ENV_FILE="${model_env}"
 export AAR_AUTODATA_APPROVAL_PRIVATE_KEY="${approval_private}"
@@ -267,11 +345,14 @@ export AAR_RUN12_TARGET_PAIRS="${TARGET_PAIRS}"
 [ "${RUN_MODE}" = full ] || export AAR_RUN12_MAX_CHAIN_ATTEMPTS=2
 
 job="$(sbatch --parsable --output="${attempt}/logs/pipeline-%j.out" --export=ALL \
-  "${RUN12_DIR}/slurm/pipeline.sbatch")"
+  "${SOURCE_REPO}/experiments/dishonest_sycophancy_concealing/run_12/slurm/pipeline.sbatch")"
 base_reused=false
 [ -z "${REUSE_BASE_DEPLOYMENT}" ] || base_reused=true
-printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nmode=%s\nstop_after=%s\nproduction_required_rows=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nresearcher_kimi_deployment=%s\nautodata_kimi_deployment=%s\nautodata_profile=%s\nautodata_concurrency=%s\nautodata_model_request_attempts=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \
-  "${job}" "${attempt}" "${checkpoint_root}" "${commit}" "${RUN_MODE}" \
+source_snapshots_sha256="sha256:$(sha256sum "${attempt}/metadata/source-snapshots.json" | awk '{print $1}')"
+printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nsource_snapshot_root=%s\nautodata_commit=%s\nautodata_snapshot_root=%s\nsource_snapshots_sha256=%s\nmode=%s\nstop_after=%s\nproduction_required_rows=%s\nresearch_backend=kimi\nresearch_model=Kimi-K2.6\nresearcher_kimi_deployment=%s\nautodata_kimi_deployment=%s\nautodata_profile=%s\nautodata_concurrency=%s\nautodata_model_request_attempts=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \
+  "${job}" "${attempt}" "${checkpoint_root}" "${commit}" \
+  "${SOURCE_REPO}" "${REQUIRED_AUTODATA_SHA}" "${SOURCE_AUTODATA}" \
+  "${source_snapshots_sha256}" "${RUN_MODE}" \
   "${AAR_AUTODATA_STOP_AFTER:-score-result}" "${AAR_AUTODATA_PRODUCTION_ROWS}" \
   "${RESEARCHER_DEPLOYMENT}" "${GENERATOR_DEPLOYMENT}" "${AAR_AUTODATA_PROFILE}" \
   "${AAR_AUTODATA_CONCURRENCY}" "${AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS}" \

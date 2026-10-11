@@ -158,3 +158,73 @@ gate passed. The committed Trial 5 wrapper launched automatically as authorized:
 
 The dedicated read-only monitor is active. No research/controller/training job
 or evaluator job had been created at this first snapshot.
+
+<a id="trial5-event-launch-drift"></a>
+
+### 🔴 01:40 PT — FAIL / STOP: shared-checkout drift rejected before child launch
+
+Launcher job `1812591` started at 01:39:57 PT and failed at 01:40:11 PT with
+exit `2:0` and the bounded diagnostic `commit drift`. It expected committed AAR
+source `4e57c7fe07ac…`; the shared HPC worktree had advanced to
+`34ad5a5cc66e…` while the job waited in the Slurm queue. The integrity gate
+correctly refused to mix source revisions.
+
+No research, controller, AutoData, training, or evaluator job was created. The
+attempt is retained as terminal preflight evidence; it is not a partially run
+optimization.
+
+### 🐛 01:42 PT — BUG: queued jobs depended on a mutable shared source checkout
+
+The submission pinned a commit in metadata but pointed the queued job at the
+shared branch worktree. A legitimate later synchronization could therefore
+move `HEAD` between submission and execution. Failing closed prevented an
+incorrect run, but retrying without changing this design would remain racy.
+
+### 🛠️ 01:42 PT — FIX IN PROGRESS: immutable per-attempt source checkout
+
+Trial 5 will relaunch only after the submitter creates and validates a private
+checkout at the captured commit and all launcher/child jobs use that immutable
+path. Shared-worktree updates must then be unable to alter queued or running
+attempts. Focused regression and exact HPC gates remain required before the
+fresh launch.
+
+### ✅ 01:45 PT — PASS: bounded replacement-trial authorization confirmed
+
+The user confirmed that a pre-useful-work failure may be followed
+automatically by the next numbered trial with the unchanged confirmed contract:
+the same models, exact `3/3/3` and `64/32/32` partitions, c32, production
+`1250` to `1000`, retained target, `$5,500` campaign ceiling, and
+`training_smoke` stop with no evaluator. Every replacement still requires a
+recorded failure, completed repair, and green validation/preflight gates.
+
+Fresh confirmation remains required before changing any model, partition,
+budget, evaluation scope, or retained-artifact policy.
+
+### ✅ 01:49 PT — PASS: immutable-source repair passed expanded local gates
+
+The Run 12 submitter now creates independent detached attempt-local checkouts
+for both AAR and native AutoData, removes remotes, forbids shared Git object
+alternates, and records the exact roots, commits, and manifest digest. It also
+copies and reverifies the public source, recovered baseline inputs, run config,
+and runtime profile. All launcher, research, controller, and training paths are
+then rooted in those snapshots while the architecture-specific Python
+environment and protected secret file remain external by explicit absolute
+path.
+
+The queued pipeline validates both snapshots before sourcing any code. A
+functional regression advances the original shared repository after snapshot
+creation and proves the attempt remains on the captured revision.
+
+Validation passed:
+
+- snapshot and Run 12 focused tests: 16 passed;
+- expanded feedback/recovery suite: 258 passed plus 5 subtests;
+- adjacent launch/runtime suite: 115 passed plus 15 subtests, with one Run 13
+  test deselected because the user's unrelated working-tree deletion removes
+  its fixture;
+- shell syntax, ShellCheck excluding only the submitter's pre-existing
+  SC2155/SC2015 notices, and `git diff --check`.
+
+The repair remains uncommitted at this event. Next gates are a focused commit,
+exact HPC synchronization, HPC regression, runtime preflight, and fresh Trial 5
+launch.

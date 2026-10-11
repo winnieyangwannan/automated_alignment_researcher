@@ -2,9 +2,10 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: launched; infrastructure bootstrap pending
+- Status: first launcher failed closed; immutable-source repair validated;
+  relaunch gates in progress
 - Created: 2026-10-11 01:01 PT
-- Last updated: 2026-10-11 01:39 PT
+- Last updated: 2026-10-11 01:49 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -62,8 +63,8 @@ to these confirmed fields requires fresh user confirmation.
 
 Recorded: 2026-10-11 01:01 PT
 
-All mandatory gates passed and the user-authorized launch was submitted at
-01:39 PT:
+All original mandatory gates passed and the user-authorized first launch was
+submitted at 01:39 PT:
 
 ```bash
 AAR_RUN12_REUSE_BASE_DEPLOYMENT=winnieyangwn-r12-alpha-i1-c0dab4f7 \
@@ -78,6 +79,12 @@ stop after `training_smoke`, and submit no evaluator.
 - Launcher job: `1812591`
 - AAR commit: `4e57c7fe07acd13e0b1e6cd94ca5bcdf09e751d9`
 - Native AutoData commit: `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`
+
+That launcher failed closed before creating any child because the shared HPC
+checkout advanced during its Slurm queue wait. The preserved attempt is
+terminal preflight evidence, not a partial optimization. Trial 5 will relaunch
+as a fresh attempt after the immutable-source repair is committed,
+synchronized, and validated on HPC.
 
 ### Mandatory pre-launch gates
 
@@ -113,6 +120,13 @@ broker, supervisor, bridge, and training diagnostics are discarded rather than
 written anywhere below the Kimi-visible attempt root. Research-visible feedback
 contains only validated codes, static summaries, retryability, and bounded
 numeric metadata.
+
+The relaunch repair gives every attempt independent detached AAR and native
+AutoData checkouts at the recorded commits, with no remote or shared Git object
+store. It also copies and reverifies the public source and recovered baseline
+inputs into the attempt. Queued and running jobs use only those attempt-local
+paths, so later synchronization of the operator worktree cannot change their
+source or configuration.
 
 ## Plan
 

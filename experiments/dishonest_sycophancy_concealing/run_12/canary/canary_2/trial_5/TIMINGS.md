@@ -5,12 +5,14 @@ prompts, target responses, credentials, or held-out content belong here.
 
 ## Attempt identity
 
-- Status at 2026-10-11 01:39 PT: launcher submitted; infrastructure bootstrap pending.
+- Status at 2026-10-11 01:49 PT: first launcher attempt failed closed on
+  shared-checkout commit drift; immutable-source repair locally validated and
+  awaiting commit/HPC gates.
 - Native AutoData commit: `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`.
 - AAR source commit: `4e57c7fe07acd13e0b1e6cd94ca5bcdf09e751d9`.
 - Attempt root: `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T083852Z-4e57c7fe07ac`.
 - Launcher job: `1812591`, submitted 01:39:25 PT.
-- Research, controller, training, and evaluator jobs: none at first snapshot.
+- Research, controller, AutoData, training, and evaluator jobs: none.
 
 ## Current lifecycle
 
@@ -43,6 +45,14 @@ prompts, target responses, credentials, or held-out content belong here.
   subtests; raw evidence retention was removed from the unisolated Kimi path.
 - 01:39 PT: Trial 5 launcher job `1812591` submitted from the exact committed
   and synchronized source after all runtime gates passed.
+- 01:39:57–01:40:11 PT: launcher job `1812591` ran for 14 seconds and failed
+  closed with exit `2:0`; the shared HPC checkout advanced from expected
+  `4e57c7fe07ac…` to `34ad5a5cc66e…` during queueing. No child was submitted.
+- 01:42 PT: immutable per-attempt source-checkout repair began; the preserved
+  failed attempt is evidence only and will not be resumed.
+- 01:49 PT: immutable AAR/AutoData snapshots, attempt-local public/recovery
+  inputs, detached-commit preflight support, and regression coverage passed 258
+  expanded tests plus 5 subtests and 115 adjacent tests plus 15 subtests.
 
 ## Work and quality counters
 
@@ -56,4 +66,5 @@ prompts, target responses, credentials, or held-out content belong here.
 
 ## Unmeasured stages
 
-Downstream runtime stages are unmeasured until launcher job `1812591` starts.
+Downstream runtime stages remain unmeasured because launcher job `1812591`
+stopped before creating any child. A fresh attempt will be used after repair.

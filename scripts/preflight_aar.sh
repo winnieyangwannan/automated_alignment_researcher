@@ -18,10 +18,18 @@ source "${REPO}/scripts/axis_env.sh"
 pass() { echo "[preflight] PASS: $*"; }
 fail() { echo "[preflight] FAIL: $*" >&2; exit 1; }
 
-_EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-uv}"
-[ "$(git -C "${REPO}" branch --show-current)" = "${_EXPECTED_BRANCH}" ] || \
-  fail "checkout is not on branch ${_EXPECTED_BRANCH}"
-pass "branch ${_EXPECTED_BRANCH} at $(git -C "${REPO}" rev-parse --short HEAD)"
+if [ -n "${AAR_EXPECTED_COMMIT:-}" ]; then
+  [ -z "$(git -C "${REPO}" branch --show-current)" ] || \
+    fail "commit-pinned source snapshot is not detached"
+  [ "$(git -C "${REPO}" rev-parse HEAD)" = "${AAR_EXPECTED_COMMIT}" ] || \
+    fail "source snapshot does not match AAR_EXPECTED_COMMIT"
+  pass "detached source snapshot at $(git -C "${REPO}" rev-parse --short HEAD)"
+else
+  _EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-uv}"
+  [ "$(git -C "${REPO}" branch --show-current)" = "${_EXPECTED_BRANCH}" ] || \
+    fail "checkout is not on branch ${_EXPECTED_BRANCH}"
+  pass "branch ${_EXPECTED_BRANCH} at $(git -C "${REPO}" rev-parse --short HEAD)"
+fi
 [ -x "${HARNESS_PY}" ] || fail "Python is not executable: ${HARNESS_PY}"
 pass "Python ${HARNESS_PY}"
 case "${SUITE_NAME}" in
