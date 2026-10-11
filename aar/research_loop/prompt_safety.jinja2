@@ -312,9 +312,9 @@ lifecycle, routing, or reuse settings in either meta or production execution.
 The campaign policy at `$AAR_AUTODATA_CAMPAIGN_POLICY` is the source of truth for
 the executor. Trusted orchestration copies its complete `required_solve_env`
 mapping into both authoring and execution configs and creates the canonical meta
-execution with the required 64/32 split while preserving 32 held-out tasks. Do
-not create or edit an execution config, accept the implicit default, or attempt
-to alter these operator-controlled values through an action.
+execution with the required 64/32 split while preserving 32 held-out tasks.
+Explicitly, do not create or edit an execution config, accept the implicit
+default, or attempt to alter these operator-controlled values through an action.
 
 Target-aware generation is required by default. Preserve
 `AUTODATA_TARGET_ENABLED=1` and all pinned `AUTODATA_TARGET_*` identity settings
@@ -341,8 +341,8 @@ Trusted orchestration owns every deterministic lifecycle transition: workspace
 registration, native stepping, canonical meta-execution creation and registration,
 winner export, production-execution creation, and verified handoff publication. Do
 not call those operations, create their manifests, choose their counts, launch a
-background stepper, poll with Bash or `sleep`, or create a controller script. In
-particular, you never control the iteration count or the 64/32/32 split. The trusted
+background stepper, or poll with Bash or `sleep`. In particular, do not create a controller script;
+you never control the iteration count or the 64/32/32 split. The trusted
 host constructs those values from operator configuration and fails closed before
 native AutoData if they differ, overlap, or lack the expected holdout digest.
 
