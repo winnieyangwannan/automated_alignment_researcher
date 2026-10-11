@@ -42,9 +42,9 @@ flight). Do not infer the five-chain setting from the single-chain pass alone.
 
 ## YAML control
 
-Canary 2 has its own strict
-[`autodata_run.yaml`](autodata_run.yaml). These checked-in fields define its
-boundary independently from the full-run configuration:
+Each Canary 2 trial has its own strict YAML. The active configuration is
+[`trial_2/autodata_run.yaml`](trial_2/autodata_run.yaml). These checked-in
+fields define its boundary independently from the full-run configuration:
 
 ```yaml
 schema: aar.autodata.run-config/v1
@@ -63,8 +63,8 @@ production:
 
 The repository-relative `runtime_profile` reference is authoritative. The
 shared launcher resolves it from this YAML, and the compiler rejects a
-conflicting shell-supplied profile. `submit_canary.sh` therefore selects only
-the Canary 2 run YAML; it no longer selects the `c32` profile itself.
+conflicting shell-supplied profile. `trial_2/submit_canary.sh` therefore selects
+only the Trial 2 run YAML; it no longer selects the `c32` profile itself.
 
 `observe_only` disables supervisor elapsed-stage deadlines. Native AutoData
 requires a positive `max_wall_seconds` in its schema, so the YAML supplies
@@ -233,7 +233,7 @@ launches no evaluator. Full mode rejects an inherited canary stop boundary.
 From the Run 12 directory on HPC:
 
 ```bash
-canary/canary_2/submit_canary.sh
+canary/canary_2/trial_2/submit_canary.sh
 ```
 
 The wrapper selects the one-chain bootstrap mode and invokes the shared
@@ -242,14 +242,11 @@ deliberately shared so this gate tests the same AutoData path the five-chain run
 will use; its training path stops after the contractually defined one-step GPU
 smoke and its AutoData timing mode is observational.
 
-## Result: not passed yet
+## Trial status
 
-No attempt has produced the required verified production marker:
+- [`trial_1/`](trial_1/PROGRESS.md) preserves the stopped first trial, its timing
+  report, failure analysis, and proposed improvements.
+- [`trial_2/`](trial_2/README.md) selects the reviewed
+  `dishonest_sycophancy_concealing_v1` recipe and has not been launched yet.
 
-- `20261010T181939Z-6f244e966ed6` reached target-aware authoring and found one
-  `challenge=1.0` prompt, but no baseline passed every acceptance gate. It was
-  canceled before production.
-- `20261010T185308Z-6fd1306cc68e` was canceled during benchmark publication,
-  before child chain jobs were created.
-
-No Run 12 canary job is currently running.
+No Run 12 Canary 2 job is currently running.

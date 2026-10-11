@@ -32,7 +32,7 @@ RUN = (
 )
 CANARY2_RUN = (
     ROOT
-    / "experiments/dishonest_sycophancy_concealing/run_12/canary/canary_2/autodata_run.yaml"
+    / "experiments/dishonest_sycophancy_concealing/run_12/canary/canary_2/trial_2/autodata_run.yaml"
 )
 
 
@@ -151,7 +151,7 @@ def test_canary2_compiles_independent_1000_row_training_smoke_contract(
     tmp_path: Path,
 ) -> None:
     output = tmp_path / "canary2-compiled"
-    compile_run_config(
+    resolved = compile_run_config(
         profile_path=CANARY2_PROFILE,
         run_path=CANARY2_RUN,
         target_binding_path=_base_binding(tmp_path),
@@ -172,6 +172,16 @@ def test_canary2_compiles_independent_1000_row_training_smoke_contract(
     assert "export AAR_AUTODATA_AUTHORING_MAX_WALL_SECONDS=604800\n" in runtime
     assert "export AAR_AUTODATA_STAGE_TIMEOUT_POLICY=observe-only\n" in runtime
     assert "export AAR_AUTODATA_NATIVE_SCHEMA_WALL_SECONDS=604800\n" in runtime
+    recipe_root = (
+        ROOT / "aar/autodata_recipes/dishonest_sycophancy_concealing_v1"
+    )
+    assert resolved["run"]["recipe_root"] == (
+        "aar/autodata_recipes/dishonest_sycophancy_concealing_v1"
+    )
+    assert resolved["judge_rubric_source"] == str(
+        recipe_root / "recipe/judge_rubric.json"
+    )
+    assert f"export AAR_AUTODATA_RECIPE_ROOT={recipe_root}\n" in runtime
 
 
 def test_canary2_run_yaml_selects_and_enforces_its_shared_profile() -> None:

@@ -9,7 +9,7 @@ chains:
 target_pairs_per_chain: 5
 bootstrap_canary:
   # Fail-closed fallback for direct bootstrap-mode use. The canonical Canary 2
-  # entrypoint supplies canary/canary_2/autodata_run.yaml instead.
+  # entrypoint supplies canary/canary_2/trial_2/autodata_run.yaml instead.
   stop_after: production
 deployments:
   researcher_kimi: aar_8-kimi26

@@ -1,10 +1,10 @@
 #!/bin/bash
-# Launch the Run 12 data-to-training canary from the shared production path.
+# Launch Run 12 Canary 2 Trial 2 from the shared production path.
 set -euo pipefail
 umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-RUN12_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+RUN12_DIR="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
 
 export AAR_RUN12_MODE=bootstrap-canary
 export AAR_RUN12_SEEDS=alpha

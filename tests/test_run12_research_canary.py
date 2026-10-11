@@ -8,6 +8,7 @@ RUN12 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_12"
 CANARY = RUN12 / "canary"
 CANARY_1 = CANARY / "canary_1"
 CANARY_2 = CANARY / "canary_2"
+CANARY_2_TRIAL_2 = CANARY_2 / "trial_2"
 CONFIG = RUN12 / "config"
 LAUNCH = RUN12 / "launch"
 SLURM = RUN12 / "slurm"
@@ -133,9 +134,11 @@ def test_bootstrap_canary_stops_after_one_training_step_without_evaluator() -> N
     launcher = (LAUNCH / "submit_full.sh").read_text()
     pipeline = (SLURM / "pipeline.sbatch").read_text()
     controller = (SLURM / "chain_controller.sbatch").read_text()
-    wrapper = (CANARY_2 / "submit_canary.sh").read_text()
+    wrapper = (CANARY_2_TRIAL_2 / "submit_canary.sh").read_text()
     full_config = yaml.safe_load((CONFIG / "autodata_run.yaml").read_text())
-    canary_config = yaml.safe_load((CANARY_2 / "autodata_run.yaml").read_text())
+    canary_config = yaml.safe_load(
+        (CANARY_2_TRIAL_2 / "autodata_run.yaml").read_text()
+    )
 
     assert 'export AAR_AUTODATA_STOP_AFTER="${configured_canary_stop}"' in launcher
     assert "full mode must not inherit a canary stop boundary" in pipeline
@@ -172,13 +175,16 @@ def test_bootstrap_canary_stops_after_one_training_step_without_evaluator() -> N
         "storage",
         "evaluation",
         "agent",
-        "recipe_root",
         "training_contract",
     ):
         assert canary_config[section] == full_config[section]
+    assert canary_config["recipe_root"] == (
+        "aar/autodata_recipes/dishonest_sycophancy_concealing_v1"
+    )
     assert (CANARY_1 / "README.md").is_file()
     assert (CANARY_2 / "README.md").is_file()
-    assert (CANARY_2 / "submit_canary.sh").is_file()
+    assert (CANARY_2_TRIAL_2 / "README.md").is_file()
+    assert (CANARY_2_TRIAL_2 / "submit_canary.sh").is_file()
 
 
 def test_run12_deferred_launch_waits_for_a_working_gateway_route() -> None:

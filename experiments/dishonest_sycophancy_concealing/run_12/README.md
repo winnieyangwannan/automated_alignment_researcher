@@ -18,7 +18,8 @@ New full launches compile two strict YAML sources:
 chain's campaign policy, training-data contract, shell runtime environment, and
 resolved configuration snapshot. Unknown YAML keys, target-disabled settings,
 cross-chain bindings, or changes to compiled artifacts fail before generation.
-Canary 2 supplies its separate `canary/canary_2/autodata_run.yaml`, where
+Canary 2 Trial 2 supplies its separate
+`canary/canary_2/trial_2/autodata_run.yaml`, where
 `bootstrap_canary.stop_after: training_smoke`,
 `production.required_rows: 1000`, and `production.initial_tasks: 1250` make
 the success boundary explicit. Canary 2 consumes the verified 1,000-row
