@@ -405,6 +405,7 @@ def test_run14_finding_recovery_is_scored_run_only() -> None:
     assert '"AAR_REQUIRE_SUCCESSFUL_ITERATIONS": "1"' in finalizer
     assert '"AAR_AUTODATA": "0"' in finalizer
     assert 'completion_tool="share_finding"' in finalizer
+    assert "force_completion_tool_first_turn=True" in finalizer
     assert "Recover only the missing final finding" in finalizer
     assert "Do not call literature, edit files, submit a " in finalizer
     assert "train, or evaluate" in finalizer

@@ -305,6 +305,7 @@ class KimiAgent:
         disallowed_tools: Optional[list[str]] = None,
         auto_approve: bool = False,
         force_checkpoint_tools: bool = False,
+        force_completion_tool_first_turn: bool = False,
         turn_timeout_seconds: Optional[float] = None,
     ) -> None:
         self.name = name
@@ -315,6 +316,11 @@ class KimiAgent:
         self.system_prompt = system_prompt
         self.include_prior_work = include_prior_work
         self.completion_tool = completion_tool
+        if force_completion_tool_first_turn and not completion_tool:
+            raise ValueError(
+                "force_completion_tool_first_turn requires completion_tool"
+            )
+        self.force_completion_tool_first_turn = force_completion_tool_first_turn
         if max_continuations is None:
             autodata_enabled = os.getenv("AAR_AUTODATA", "0").strip().lower() in {
                 "1",
@@ -408,9 +414,19 @@ class KimiAgent:
                         if agent_file is not None:
                             command.extend(["--agent-file", str(agent_file)])
                         current_prompt = prompt
-                        required_tool = None
+                        required_tool = (
+                            self.completion_tool
+                            if self.force_completion_tool_first_turn
+                            else None
+                        )
                     checkpoint_tool = (
-                        required_tool if self.force_checkpoint_tools else None
+                        required_tool
+                        if self.force_checkpoint_tools
+                        or (
+                            continuation_count == 0
+                            and self.force_completion_tool_first_turn
+                        )
+                        else None
                     )
                     tool_choice_controller.arm(
                         checkpoint_tool,
@@ -2739,7 +2755,11 @@ class KimiAgent:
             "on",
         }
         controller = _ToolChoiceController()
-        if not disable_thinking and not self.force_checkpoint_tools:
+        if (
+            not disable_thinking
+            and not self.force_checkpoint_tools
+            and not self.force_completion_tool_first_turn
+        ):
             yield controller
             return
 
@@ -2748,11 +2768,11 @@ class KimiAgent:
         parsed = urlsplit(upstream_base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise RuntimeError(
-                "AAR_KIMI_DISABLE_THINKING requires a valid KIMI_MODEL_BASE_URL"
+                "Kimi request policy requires a valid KIMI_MODEL_BASE_URL"
             )
         if not upstream_api_key:
             raise RuntimeError(
-                "AAR_KIMI_DISABLE_THINKING requires KIMI_MODEL_API_KEY"
+                "Kimi request policy requires KIMI_MODEL_API_KEY"
             )
         if parsed.query or parsed.fragment:
             raise RuntimeError("KIMI_MODEL_BASE_URL cannot contain a query or fragment")

@@ -840,6 +840,108 @@ class KimiAgentTest(unittest.TestCase):
         self.assertNotIn("tool_choice", observed[1])
         self.assertEqual(len(observed[1]["tools"]), 2)
 
+    def test_completion_only_mode_forces_bound_finding_on_first_request(self) -> None:
+        observed = []
+
+        class UpstreamHandler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers["Content-Length"])
+                observed.append(json.loads(self.rfile.read(length)))
+                response = json.dumps({"ok": True}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+
+            def log_message(self, _format: str, *args: object) -> None:
+                return
+
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
+        thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        thread.start()
+        run_id = "approved-chain-run-1"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cli = root / "kimi"
+            cli.write_text(
+                f"#!{sys.executable}\n"
+                "import json, os, urllib.request\n"
+                "url = os.environ['KIMI_MODEL_BASE_URL'].rstrip('/') + "
+                "'/chat/completions'\n"
+                "payload = {'model': 'Kimi-K2.6', 'tools': [\n"
+                "  {'type': 'function', 'function': {'name': 'Read'}},\n"
+                "  {'type': 'function', 'function': {\n"
+                "    'name': 'mcp__server-api-tools__get_literature',\n"
+                "    'parameters': {'type': 'object', 'properties': {}}}},\n"
+                "  {'type': 'function', 'function': {\n"
+                "    'name': 'mcp__server-api-tools__share_finding',\n"
+                "    'parameters': {'type': 'object', 'properties': {\n"
+                "      'summary': {'type': 'string'},\n"
+                "      'run_id': {'type': 'string'},\n"
+                "      'results_writeup': {'type': 'string'}},\n"
+                "      'required': ['summary']}}}]}\n"
+                "request = urllib.request.Request(url, "
+                "data=json.dumps(payload).encode(), "
+                "headers={'Content-Type': 'application/json'}, method='POST')\n"
+                "with urllib.request.urlopen(request, timeout=5) as response:\n"
+                "  response.read()\n"
+                "arguments = {'summary': 'done', "
+                f"'run_id': {run_id!r}, "
+                "'results_writeup': 'The public benchmark was unchanged, capability "
+                "behavior remained stable, the likely mechanism was limited, and the "
+                "two-item canary is too small for scientific conclusions.'}\n"
+                "print(json.dumps({'role': 'assistant', 'content': 'done', "
+                "'tool_calls': [{'function': {'name': "
+                "'mcp__server-api-tools__share_finding', "
+                "'arguments': json.dumps(arguments)}}]}))\n"
+            )
+            cli.chmod(0o755)
+            agent = KimiAgent(
+                "test-agent",
+                root,
+                cli_path=str(cli),
+                completion_tool="share_finding",
+                force_completion_tool_first_turn=True,
+            )
+            try:
+                with (
+                    patch.dict(
+                        os.environ,
+                        {
+                            "KIMI_MODEL_BASE_URL": (
+                                f"http://127.0.0.1:{upstream.server_port}/v1"
+                            ),
+                            "KIMI_MODEL_API_KEY": "secret",
+                            "AAR_REQUIRE_SUCCESSFUL_ITERATIONS": "0",
+                        },
+                        clear=False,
+                    ),
+                    patch.object(agent, "_approved_run_id", return_value=run_id),
+                ):
+                    result = asyncio.run(agent.execute("publish only"))
+            finally:
+                upstream.shutdown()
+                upstream.server_close()
+                thread.join(timeout=5)
+
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(len(observed), 1)
+        request = observed[0]
+        self.assertEqual(request["tool_choice"], "required")
+        self.assertEqual(len(request["tools"]), 1)
+        function = request["tools"][0]["function"]
+        self.assertTrue(function["name"].endswith("__share_finding"))
+        parameters = function["parameters"]
+        self.assertEqual(
+            parameters["required"],
+            ["summary", "run_id", "results_writeup"],
+        )
+        self.assertEqual(parameters["properties"]["run_id"]["const"], run_id)
+        self.assertEqual(
+            parameters["properties"]["results_writeup"]["minLength"], 80
+        )
+
     def test_nonzero_cli_exit_is_a_failed_agent_result(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

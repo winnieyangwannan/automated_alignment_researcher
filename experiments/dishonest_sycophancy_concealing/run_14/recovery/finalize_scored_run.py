@@ -111,6 +111,7 @@ def main() -> None:
             max_continuations=args.max_continuations,
             auto_approve=True,
             force_checkpoint_tools=True,
+            force_completion_tool_first_turn=True,
             disallowed_tools=[
                 "Write",
                 "Edit",
