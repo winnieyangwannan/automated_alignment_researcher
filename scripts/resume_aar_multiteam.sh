@@ -174,6 +174,7 @@ declare -A resume_run_by_seed=()
 declare -A feedback_uid_by_seed=()
 declare -A revision_uid_by_seed=()
 declare -A repair_proposal_uid_by_seed=()
+declare -A repair_proposal_journal_by_seed=()
 declare -A retry_train_run_by_seed=()
 declare -A retry_train_job_by_seed=()
 declare -A retry_train_failure_by_seed=()
@@ -186,6 +187,24 @@ expected_remaining_for() {
     case "${item}" in "${wanted}"=*) printf '%s\n' "${item#*=}"; return 0;; esac
   done
   return 1
+}
+
+proposal_receipt_status() {
+  local marker="$1" team="$2" chain_id="$3" idea_uid="$4" backfill="$5" mark="$6"
+  PYTHONPATH="${REPO}${PYTHONPATH:+:${PYTHONPATH}}" "${HARNESS_PY}" -c '
+import sys
+from aar.research_loop.tools.server_api_tools import ensure_proposal_journal_receipt
+
+present = ensure_proposal_journal_receipt(
+    sys.argv[1],
+    team_dir=sys.argv[2],
+    chain_id=sys.argv[3],
+    idea_uid=sys.argv[4],
+    allow_backfill=sys.argv[5] == "1",
+    mark_journaled=sys.argv[6] == "1",
+)
+print("present" if present else "missing")
+' "${marker}" "${team}" "${chain_id}" "${idea_uid}" "${backfill}" "${mark}"
 }
 
 for seed in "${requested_seeds[@]}"; do
@@ -243,12 +262,29 @@ for seed in "${requested_seeds[@]}"; do
   fi
   if [ -n "${latest_proposal}" ] && \
      [ "$(jq -r '.approved // false' "${latest_proposal}")" = true ]; then
+    if [ "$(jq -r '.execution_ready == true' "${latest_proposal}")" != true ]; then
+      echo "${seed} approved proposal is not execution-ready and journaled" >&2
+      exit 2
+    fi
     idea_uid="$(jq -r '.idea_uid // empty' "${latest_proposal}")"
     run_id="$(jq -r '.run_id // empty' "${latest_proposal}")"
     if [[ ! "${idea_uid}" =~ ^[A-Za-z0-9._-]+$ ]] || \
        [ "$(basename -- "${latest_proposal}" .json)" != "${idea_uid}" ]; then
       echo "${seed} approved proposal lacks a safe bound idea_uid" >&2
       exit 2
+    fi
+    if [ "$(jq -r '.journaled == true' "${latest_proposal}")" != true ]; then
+      proposal_chain_id="${MODEL:-qwen}-explore-${seed}"
+      receipt_status="$(proposal_receipt_status \
+        "${latest_proposal}" "${team}" "${proposal_chain_id}" "${idea_uid}" 0 0)" || {
+        echo "${seed} approved proposal journal receipt is invalid" >&2
+        exit 2
+      }
+      case "${receipt_status}" in
+        present|missing) ;;
+        *) echo "${seed} approved proposal journal receipt check returned invalid status" >&2; exit 2;;
+      esac
+      repair_proposal_journal_by_seed["${seed}"]="${idea_uid}"
     fi
     finding=""
     if [ -n "${run_id}" ]; then
@@ -453,6 +489,24 @@ record_event() {
 }
 record_event recovery_start - - \
   "original_commit=${original_commit};config_sha256=${AAR_RESUME_CONFIG_SHA256:-unknown};seeds=${REQUESTED_SEEDS// /,}"
+
+for seed in "${requested_seeds[@]}"; do
+  idea_uid="${repair_proposal_journal_by_seed[${seed}]:-}"
+  [ -n "${idea_uid}" ] || continue
+  team="${team_by_seed[${seed}]}"
+  marker="${team}/scores/.proposals/${idea_uid}.json"
+  proposal_chain_id="${MODEL:-qwen}-explore-${seed}"
+  receipt_status="$(proposal_receipt_status \
+    "${marker}" "${team}" "${proposal_chain_id}" "${idea_uid}" 1 1)" || {
+    echo "${seed} approved proposal journal backfill failed" >&2
+    exit 2
+  }
+  [ "${receipt_status}" = present ] || {
+    echo "${seed} approved proposal journal backfill was not durable" >&2
+    exit 2
+  }
+  record_event proposal_journal_repaired "${seed}" - "idea_uid=${idea_uid}"
+done
 
 for seed in "${requested_seeds[@]}"; do
   idea_uid="${repair_proposal_uid_by_seed[${seed}]:-}"

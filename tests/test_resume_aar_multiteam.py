@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from aar.research_loop.chain_memory import ChainMemoryJournal
+
 
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = ROOT / "scripts" / "resume_aar_multiteam.sh"
@@ -167,7 +169,8 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
         idea_uid = f"idea-{seed}"
         run_id = f"{idea_uid}-run"
         proposal = (
-            '{"approved":true,"idea_uid":"%s","idea_name":"method_%s",'
+            '{"approved":true,"execution_ready":true,"journaled":true,'
+            '"idea_uid":"%s","idea_name":"method_%s",'
             '"run_id":"%s","code_hash":"abc","ts":1}\n'
             % (idea_uid, seed, run_id)
         )
@@ -429,7 +432,8 @@ def test_partial_resume_selects_latest_proposal_marker(tmp_path: Path) -> None:
         / ".proposals"
     )
     (proposals / "idea-alpha-new.json").write_text(
-        '{"approved":true,"idea_uid":"idea-alpha-new",'
+        '{"approved":true,"execution_ready":true,"journaled":true,'
+        '"idea_uid":"idea-alpha-new",'
         '"idea_name":"method_alpha","run_id":"idea-alpha-new-run",'
         '"code_hash":"def","ts":2}\n'
     )
@@ -457,6 +461,87 @@ def test_partial_resume_selects_latest_proposal_marker(tmp_path: Path) -> None:
 
     assert completed.returncode == 0, completed.stderr
     assert "resume_run_id=idea-alpha-new-run" in completed.stdout
+
+
+def test_resume_plan_verifies_crash_window_receipt_without_mutation(
+    tmp_path: Path,
+) -> None:
+    repo, attempt, _fake_bin, env = _fixture(tmp_path)
+    env["AAR_RESUME_PLAN_ONLY"] = "1"
+    marker = (
+        attempt
+        / "aar_teams"
+        / "team-alpha-launch"
+        / "scores"
+        / ".proposals"
+        / "idea-alpha.json"
+    )
+    payload = json.loads(marker.read_text())
+    payload["code_hash"] = "a" * 64
+    payload["paper"] = {"title": "title", "method": "method"}
+    payload["verdict"] = {"approved": True, "violations": []}
+    payload["journaled"] = False
+    marker.write_text(json.dumps(payload))
+    journal = ChainMemoryJournal(
+        marker.parents[2],
+        chain_id="qwen-explore-alpha",
+        idea_uid="idea-alpha",
+    )
+    journal.record_proposal(
+        idea_name="method_alpha",
+        title="title",
+        method="method",
+        code_hash="a" * 64,
+        approved=True,
+        verdict=payload["verdict"],
+    )
+    before = marker.read_bytes()
+
+    completed = subprocess.run(
+        [str(repo / "scripts" / ENGINE.name), str(attempt), "alpha"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "resume_run_id=idea-alpha-run" in completed.stdout
+    assert marker.read_bytes() == before
+    assert not Path(env["SBATCH_LOG"]).exists()
+
+
+def test_resume_backfills_missing_proposal_receipt_before_launch(
+    tmp_path: Path,
+) -> None:
+    repo, attempt, _fake_bin, env = _fixture(tmp_path)
+    marker = (
+        attempt
+        / "aar_teams"
+        / "team-alpha-launch"
+        / "scores"
+        / ".proposals"
+        / "idea-alpha.json"
+    )
+    payload = json.loads(marker.read_text())
+    payload["code_hash"] = "b" * 64
+    payload["paper"] = {"title": "title", "method": "method"}
+    payload["verdict"] = {"approved": True, "violations": []}
+    payload["journaled"] = False
+    marker.write_text(json.dumps(payload))
+
+    completed = subprocess.run(
+        [str(repo / "scripts" / ENGINE.name), str(attempt), "alpha"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(marker.read_text())["journaled"] is True
+    registry = (attempt / "metadata" / "recovery_jobs.tsv").read_text()
+    assert "\tproposal_journal_repaired\talpha\t-\t" in registry
 
 
 def test_run14_recovery_declares_decoupled_execution() -> None:

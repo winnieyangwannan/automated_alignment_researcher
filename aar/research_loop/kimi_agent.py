@@ -31,6 +31,7 @@ from aar.failure_feedback import (
     build_failure_feedback,
     safe_failure_feedback_view,
 )
+from aar.research_loop.tools.server_api_tools import _method_code
 
 
 _DEGENERATE_OUTPUT_STOP = "!!!!!!!!!!!!!!!!"
@@ -2818,6 +2819,11 @@ class KimiAgent:
         except (OSError, json.JSONDecodeError):
             return None
         approved = payload.get("approved")
+        if approved is True and (
+            payload.get("journaled") is not True
+            or payload.get("execution_ready") is not True
+        ):
+            return False
         return approved if isinstance(approved, bool) else None
 
     @staticmethod
@@ -2873,10 +2879,19 @@ class KimiAgent:
             marker = json.loads(marker_path.read_text())
         except (OSError, json.JSONDecodeError):
             return None
-        if marker.get("approved") is not True:
+        if (
+            marker.get("approved") is not True
+            or marker.get("execution_ready") is not True
+            or marker.get("journaled") is not True
+        ):
             return None
         idea_name = marker.get("idea_name")
         code_hash = marker.get("code_hash")
+        if not isinstance(idea_name, str) or not isinstance(code_hash, str):
+            return None
+        _, current_code_hash = _method_code(idea_name)
+        if current_code_hash != code_hash:
+            return None
         explicit_run_id = marker.get("run_id")
         expected_run_id = os.getenv("AAR_RESUME_EXPECTED_RUN_ID", "").strip()
         if explicit_run_id is not None:
@@ -2893,6 +2908,7 @@ class KimiAgent:
                 stamp.get("run_id") != explicit_run_id
                 or stamp.get("idea_name") != idea_name
                 or stamp.get("code_hash") != code_hash
+                or stamp.get("code_hash") != current_code_hash
                 or stamp.get("paper") != marker.get("paper")
             ):
                 return None
@@ -2913,6 +2929,7 @@ class KimiAgent:
             if (
                 payload.get("idea_name") == idea_name
                 and payload.get("code_hash") == code_hash
+                and payload.get("code_hash") == current_code_hash
                 and isinstance(run_id, str)
                 and re.fullmatch(r"[A-Za-z0-9._-]+", run_id)
                 and run_id.startswith(f"{idea_uid}-")

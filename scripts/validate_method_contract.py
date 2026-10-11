@@ -78,45 +78,64 @@ def _phase_context_near_misses(tree: ast.AST) -> set[str]:
     return observed
 
 
-def _gemma_regex_wrapped_in_collection(tree: ast.AST) -> bool:
-    """PEFT treats collections as literal suffixes; only a string is a regex."""
+_GEMMA4_TARGET_MODULES_REGEX = (
+    r"model\.language_model\.layers\.\d+\.self_attn\."
+    r"(q_proj|v_proj)"
+)
 
-    def is_regex_collection(node: ast.AST) -> bool:
-        if not isinstance(node, (ast.List, ast.Set, ast.Tuple)):
-            return False
-        return any(
-            isinstance(element, ast.Constant)
-            and isinstance(element.value, str)
-            and ("\\" in element.value or "|" in element.value)
-            for element in node.elts
-        )
 
-    bad_names: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and is_regex_collection(node.value):
-            bad_names.update(
-                target.id for target in node.targets if isinstance(target, ast.Name)
-            )
-        elif (
-            isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and node.value is not None
-            and is_regex_collection(node.value)
-        ):
-            bad_names.add(node.target.id)
+def _gemma4_target_errors(tree: ast.AST) -> list[str]:
+    """Bind the approved regex to each actual PEFT ``LoraConfig`` call.
 
+    PEFT interprets a string as a regex but interprets a list, set, or tuple as
+    literal module suffixes. Resolve no model-controlled aliases here: an exact
+    string literal at the call site is intentionally the smallest fail-closed
+    contract and prevents decoy regexes elsewhere in the source from passing.
+    """
+
+    calls: list[ast.Call] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        for keyword in node.keywords:
-            if keyword.arg != "target_modules":
-                continue
-            if is_regex_collection(keyword.value) or (
-                isinstance(keyword.value, ast.Name)
-                and keyword.value.id in bad_names
-            ):
-                return True
-    return False
+        function = node.func
+        name = (
+            function.id
+            if isinstance(function, ast.Name)
+            else function.attr if isinstance(function, ast.Attribute) else ""
+        )
+        if name == "LoraConfig":
+            calls.append(node)
+
+    if not calls:
+        return [
+            "Gemma-4 PEFT requires an explicit LoraConfig call with "
+            f"target_modules=r'{_GEMMA4_TARGET_MODULES_REGEX}'"
+        ]
+
+    errors: list[str] = []
+    for call in calls:
+        target_keywords = [
+            keyword for keyword in call.keywords if keyword.arg == "target_modules"
+        ]
+        if len(target_keywords) != 1:
+            errors.append(
+                "Gemma-4 PEFT LoraConfig must pass target_modules exactly once as "
+                "an explicit string literal; dynamic **kwargs are not accepted"
+            )
+            continue
+        value = target_keywords[0].value
+        if not (
+            isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+            and value.value == _GEMMA4_TARGET_MODULES_REGEX
+        ):
+            errors.append(
+                "Gemma-4 PEFT LoraConfig target_modules must be the exact string "
+                f"literal r'{_GEMMA4_TARGET_MODULES_REGEX}'; lists are literal "
+                "suffix sets in PEFT, and aliases or dynamic expressions are not "
+                "accepted by this fail-closed contract"
+            )
+    return errors
 
 
 def _unsupported_training_arguments(tree: ast.AST) -> list[str]:
@@ -1154,22 +1173,7 @@ def validate(
                 "BitsAndBytesConfig requires bitsandbytes, which is not installed"
             )
         if require_gemma4_targets:
-            normalized_source = source_text.replace("\\\\", "\\")
-            required_target = (
-                r"model\.language_model\.layers\.\d+\.self_attn\."
-                r"(q_proj|v_proj)"
-            )
-            if required_target not in normalized_source:
-                errors.append(
-                    "Gemma-4 PEFT must use target_modules regex "
-                    f"{required_target}"
-                )
-            elif _gemma_regex_wrapped_in_collection(tree):
-                errors.append(
-                    "Gemma-4 PEFT target_modules regex must be passed as a string, "
-                    "not a list, set, or tuple; PEFT treats collection entries as "
-                    "literal module suffixes"
-                )
+            errors.extend(_gemma4_target_errors(tree))
         if require_smoke_run and not any(
             isinstance(node, ast.Attribute)
             and isinstance(node.value, ast.Name)
@@ -1330,10 +1334,21 @@ def main() -> None:
             "schema_version": 1,
             "status": "failed",
             "method_path": str(args.method_path.resolve()),
-            "source_sha256": "",
+            "source_sha256": source_hash,
             "requirements": requirements,
             "errors": [f"validator failed: {type(error).__name__}: {error}"],
         }
+    if os.getenv("TEAM_DIR", "").strip():
+        try:
+            from aar.research_loop.chain_memory import record_contract_from_environment
+
+            record_contract_from_environment(result)
+        except Exception:  # noqa: BLE001 - fail closed without exposing journal internals
+            result = {
+                **result,
+                "status": "failed",
+                "errors": ["host-owned chain-memory contract checkpoint failed"],
+            }
     proof.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     print(json.dumps(result, sort_keys=True))
     raise SystemExit(0 if result["status"] == "passed" else 1)

@@ -697,6 +697,42 @@ while pending:
             )
             return result, json.loads(proof.read_text())
 
+    @staticmethod
+    def _gemma_target_source(
+        lora_call: str,
+        *,
+        class_body: str = "",
+        module_body: str = "",
+    ) -> str:
+        phases = "\n".join(
+            f'    with phase("{name}"):\n        pass'
+            for name in (
+                "data_generation",
+                "tokenization",
+                "model_loading",
+                "training",
+                "checkpoint_save",
+            )
+        )
+        return (
+            "from contextlib import contextmanager\n"
+            "@contextmanager\n"
+            "def phase(_name):\n"
+            "    yield\n"
+            f"{module_body}"
+            "class MethodConfig:\n"
+            "    def __init__(self, output_dir='out', dry_run=False):\n"
+            "        self.output_dir = output_dir\n"
+            "        self.dry_run = dry_run\n"
+            f"{class_body}"
+            "def run_experiment(config):\n"
+            "    if config.dry_run:\n"
+            "        return {'model_path': config.output_dir, 'method': 'test'}\n"
+            f"{phases}\n"
+            f"    {lora_call}\n"
+            "    return {'model_path': config.output_dir, 'method': 'test'}\n"
+        )
+
     def _run_with_smoke_required(
         self, source: str
     ) -> tuple[subprocess.CompletedProcess[str], dict]:
@@ -971,8 +1007,68 @@ while pending:
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(
-            any("must be passed as a string" in error for error in proof["errors"])
+            any("exact string literal" in error for error in proof["errors"])
         )
+
+    def test_gemma_targets_bind_exact_literal_to_lora_config_call(self) -> None:
+        approved = (
+            r"model\.language_model\.layers\.\d+\.self_attn\."
+            r"(q_proj|v_proj)"
+        )
+        rejected = {
+            "confirmed config-list failure": self._gemma_target_source(
+                "LoraConfig(target_modules=config.target_modules)",
+                class_body=(
+                    "        self.target_modules = "
+                    "[r'model\\.language_model\\.layers\\.\\d+\\.self_attn\\."
+                    "(q_proj|v_proj)']\n"
+                ),
+            ),
+            "inline list": self._gemma_target_source(
+                "LoraConfig(target_modules=[r'model\\.language_model\\.layers\\."
+                "\\d+\\.self_attn\\.(q_proj|v_proj)'])"
+            ),
+            "named list": self._gemma_target_source(
+                "LoraConfig(target_modules=target_modules)",
+                module_body=(
+                    "target_modules = [r'model\\.language_model\\.layers\\.\\d+"
+                    "\\.self_attn\\.(q_proj|v_proj)']\n"
+                ),
+            ),
+            "decoy regex": self._gemma_target_source(
+                "LoraConfig(target_modules=['q_proj', 'v_proj'])",
+                module_body=f"decoy = {approved!r}\n",
+            ),
+            "string alias": self._gemma_target_source(
+                "LoraConfig(target_modules=target_modules)",
+                module_body=f"target_modules = {approved!r}\n",
+            ),
+            "dynamic kwargs": self._gemma_target_source(
+                "LoraConfig(**kwargs)",
+                module_body=f"kwargs = {{'target_modules': {approved!r}}}\n",
+            ),
+            "close but wrong": self._gemma_target_source(
+                "LoraConfig(target_modules=r'model\\.language_model\\.layers\\."
+                "\\d+\\.self_attn\\.(q_proj|k_proj)')"
+            ),
+        }
+        for label, source in rejected.items():
+            with self.subTest(label=label):
+                result, proof = self._run_with_gemma_targets(source)
+                self.assertNotEqual(result.returncode, 0, proof)
+                self.assertTrue(
+                    any("Gemma-4 PEFT" in error for error in proof["errors"]),
+                    proof,
+                )
+
+        passing_result, passing_proof = self._run_with_gemma_targets(
+            self._gemma_target_source(
+                "LoraConfig(target_modules=r'model\\.language_model\\.layers\\."
+                "\\d+\\.self_attn\\.(q_proj|v_proj)')"
+            )
+        )
+        self.assertEqual(passing_result.returncode, 0, passing_proof)
+        self.assertEqual(passing_proof["status"], "passed")
 
     def test_requires_real_gpu_smoke_interface(self) -> None:
         phases = "\n".join(

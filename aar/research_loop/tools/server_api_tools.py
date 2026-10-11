@@ -1536,6 +1536,19 @@ def _proposal_approved():
         m = json.loads(mk.read_text())
         if m.get("approved") is not True:
             return False, "the latest idea proposal was NOT approved by the integrity monitor"
+        if m.get("execution_ready") is not True:
+            return False, "the latest approved proposal is not execution-ready and journaled"
+        if m.get("journaled") is not True:
+            if not ensure_proposal_journal_receipt(
+                mk,
+                team_dir=os.getenv("TEAM_DIR", ""),
+                chain_id=os.getenv("IDEA_NAME", "chain"),
+                idea_uid=os.getenv("IDEA_UID", ""),
+                allow_backfill=False,
+                mark_journaled=True,
+            ):
+                return False, "the latest approved proposal is not execution-ready and journaled"
+            m = json.loads(mk.read_text(encoding="utf-8"))
         ch = m.get("code_hash")
         if ch:
             _, cur = _method_code(m.get("idea_name"))
@@ -1827,6 +1840,259 @@ def _missing_method_timing_phases(code: str) -> list[str]:
     return [name for name in REQUIRED_METHOD_PHASES if name not in observed]
 
 
+def _proposal_journal_event_identity(
+    marker: Dict[str, Any], *, chain_id: str
+) -> tuple[Path, Dict[str, Any]]:
+    """Return the exact immutable event path/payload implied by a marker."""
+
+    from aar.failure_feedback import sanitize_failure_summary
+
+    def bounded(value: object, limit: int) -> str:
+        text = " ".join(str(value or "").split())
+        return text if len(text) <= limit else text[: limit - 3] + "..."
+
+    code_hash = marker.get("code_hash")
+    idea_name = marker.get("idea_name")
+    approved = marker.get("approved")
+    if (
+        approved is not True
+        or not isinstance(code_hash, str)
+        or re.fullmatch(r"[0-9a-f]{64}", code_hash) is None
+        or not isinstance(idea_name, str)
+        or not idea_name
+        or re.fullmatch(r"[A-Za-z0-9._-]+", chain_id) is None
+    ):
+        raise RuntimeError("approved proposal marker has no safe journal identity")
+    paper = marker.get("paper") if isinstance(marker.get("paper"), dict) else {}
+    verdict = marker.get("verdict") if isinstance(marker.get("verdict"), dict) else {}
+    violations = verdict.get("violations") if isinstance(verdict.get("violations"), list) else []
+    missing = (
+        verdict.get("missing_for_reproduction")
+        if isinstance(verdict.get("missing_for_reproduction"), list)
+        else []
+    )
+    error = verdict.get("error")
+    safe_verdict = {
+        "approved": True,
+        "violations": [sanitize_failure_summary(value, limit=500) for value in violations[:8]],
+        "missing_for_reproduction": [
+            sanitize_failure_summary(value, limit=500) for value in missing[:8]
+        ],
+        "error": sanitize_failure_summary(error, limit=500) if error else None,
+    }
+    safe_identity = {
+        "idea_name": bounded(idea_name, 200),
+        "title": bounded(paper.get("title"), 300),
+        "method": bounded(paper.get("method"), 2000),
+    }
+    identity_canonical = json.dumps(
+        safe_identity, sort_keys=True, separators=(",", ":")
+    )
+    proposal_identity = hashlib.sha256(
+        identity_canonical.encode("utf-8")
+    ).hexdigest()
+    canonical = json.dumps(safe_verdict, sort_keys=True, separators=(",", ":"))
+    dedupe_key = (
+        f"proposal:{code_hash}:{proposal_identity}:"
+        f"{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+    )
+    expected = {
+        "schema": "aar.chain-memory-event/v1",
+        "chain_id": chain_id,
+        "dedupe_key": dedupe_key,
+        "kind": "proposal",
+        "source": "proposal_decision",
+        **safe_identity,
+        "code_sha256": code_hash,
+        **safe_verdict,
+    }
+    event_name = hashlib.sha256(dedupe_key.encode("utf-8")).hexdigest() + ".json"
+    return Path(event_name), expected
+
+
+def _has_matching_proposal_journal_event(
+    marker: Dict[str, Any], *, team_dir: Path, chain_id: str
+) -> bool:
+    event_name, expected = _proposal_journal_event_identity(marker, chain_id=chain_id)
+    events_dir = team_dir / "host_memory" / chain_id / "events"
+    event_path = events_dir / event_name
+    if (
+        events_dir.is_symlink()
+        or event_path.is_symlink()
+        or not event_path.is_file()
+        or event_path.stat().st_size > 128 * 1024
+    ):
+        return False
+    try:
+        event = json.loads(event_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(event, dict):
+        return False
+    recorded_at = event.pop("recorded_at_pt", None)
+    return (
+        isinstance(recorded_at, str)
+        and re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}",
+            recorded_at,
+        )
+        is not None
+        and event == expected
+    )
+
+
+def ensure_proposal_journal_receipt(
+    marker_path: str | Path,
+    *,
+    team_dir: str | Path,
+    chain_id: str,
+    idea_uid: str,
+    allow_backfill: bool,
+    mark_journaled: bool,
+) -> bool:
+    """Verify, optionally backfill, and receipt one approved proposal event.
+
+    Merely setting ``journaled`` is never sufficient: the exact immutable event
+    implied by the approved marker must exist under the selected TEAM_DIR.
+    """
+
+    raw_team = str(team_dir).strip()
+    if not raw_team:
+        return False
+    team = Path(raw_team)
+    marker_path = Path(marker_path)
+    if team.is_symlink() or marker_path.is_symlink():
+        raise RuntimeError("proposal receipt paths must not be symlinks")
+    team = team.resolve(strict=True)
+    marker_path = marker_path.resolve(strict=True)
+    proposal_dir = (team / "scores" / ".proposals").resolve(strict=True)
+    if marker_path.parent != proposal_dir or marker_path.suffix != ".json":
+        raise RuntimeError("proposal marker escaped TEAM_DIR/scores/.proposals")
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    if not isinstance(marker, dict):
+        raise RuntimeError("proposal marker must contain one JSON object")
+    marker_uid = marker.get("idea_uid")
+    if (
+        not isinstance(marker_uid, str)
+        or marker_path.stem != marker_uid
+        or (idea_uid and marker_uid != idea_uid)
+    ):
+        raise RuntimeError("proposal marker has an inconsistent idea UID")
+
+    matched = _has_matching_proposal_journal_event(
+        dict(marker), team_dir=team, chain_id=chain_id
+    )
+    if not matched and allow_backfill:
+        from aar.research_loop.chain_memory import ChainMemoryJournal
+
+        paper = marker.get("paper") if isinstance(marker.get("paper"), dict) else {}
+        journal = ChainMemoryJournal(
+            team,
+            chain_id=chain_id,
+            idea_uid=marker_uid,
+        )
+        journal.record_proposal(
+            idea_name=marker.get("idea_name"),
+            title=paper.get("title"),
+            method=paper.get("method"),
+            code_hash=marker.get("code_hash"),
+            approved=True,
+            verdict=marker.get("verdict"),
+        )
+        matched = _has_matching_proposal_journal_event(
+            dict(marker), team_dir=team, chain_id=chain_id
+        )
+    if not matched:
+        return False
+    if mark_journaled and marker.get("journaled") is not True:
+        current = json.loads(marker_path.read_text(encoding="utf-8"))
+        identity = ("approved", "idea_uid", "idea_name", "code_hash", "verdict", "paper")
+        if not isinstance(current, dict) or any(
+            current.get(key) != marker.get(key) for key in identity
+        ):
+            raise RuntimeError("proposal marker changed during journal recovery")
+        current["journaled"] = True
+        _atomic_json_write(marker_path, current)
+    return True
+
+
+def _proposal_response(
+    args: Dict[str, Any],
+    verdict: Dict[str, Any],
+    *,
+    code_hash: object = None,
+) -> Dict[str, Any]:
+    """Return one proposal response after host-owned, backend-neutral journaling.
+
+    All proposal exits use this helper, including structural rejections that do
+    not create the ordinary proposal marker.  Journal failures never copy their
+    raw exception into the model-facing response.
+    """
+
+    try:
+        from aar.research_loop.chain_memory import record_proposal_from_environment
+
+        team_dir = os.getenv("TEAM_DIR", "").strip()
+        if not team_dir:
+            raise RuntimeError("TEAM_DIR is required for proposal journaling")
+        record_proposal_from_environment(args, verdict, code_hash=code_hash)
+        if verdict.get("approved") is True:
+            marker_path = _proposal_marker_path()
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            if (
+                marker.get("approved") is not True
+                or marker.get("idea_name") != args.get("idea_name")
+                or marker.get("code_hash") != code_hash
+            ):
+                raise RuntimeError(
+                    "approved proposal marker does not match the journal binding"
+                )
+            if not ensure_proposal_journal_receipt(
+                marker_path,
+                team_dir=team_dir,
+                chain_id=os.getenv("IDEA_NAME", "chain"),
+                idea_uid=os.getenv("IDEA_UID", ""),
+                allow_backfill=False,
+                mark_journaled=True,
+            ):
+                raise RuntimeError("durable proposal journal event is missing")
+            verdict["journaled"] = True
+    except Exception as error:  # noqa: BLE001 - auxiliary host journal is sanitized
+        was_approved = verdict.get("approved") is True
+        journal_failure = _tool_failure(
+            error,
+            error_code="proposal_journal_failed",
+            stage="proposal_submission",
+            public_summary="host-owned proposal journal update failed",
+        )
+        journal_failure["approved"] = False
+        verdict = journal_failure
+        if was_approved:
+            try:
+                marker_path = _proposal_marker_path()
+                marker = json.loads(marker_path.read_text(encoding="utf-8"))
+                if (
+                    marker.get("idea_name") == args.get("idea_name")
+                    and marker.get("code_hash") == code_hash
+                ):
+                    marker["execution_ready"] = False
+                    marker["journaled"] = False
+                    marker["journal_failure"] = journal_failure["failure"]
+                    _atomic_json_write(marker_path, marker)
+            except Exception:  # noqa: BLE001 - the journaled gate remains false
+                print(
+                    "[submit_idea_proposal] proposal marker invalidation failed; "
+                    "the journaled gate remains fail-closed"
+                )
+        print(
+            "[submit_idea_proposal] "
+            + str(journal_failure["failure"]["error_code"])
+        )
+    return {
+        "content": [{"type": "text", "text": json.dumps(verdict, indent=2)}]
+    }
+
+
 @tool(
     "submit_idea_proposal",
     "MANDATORY GATE — submit every method here and get APPROVAL **before** you execute it. You "
@@ -1879,33 +2145,33 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
             structured[k] = a.strip() if isinstance(a, str) else a
         code, code_hash = _method_code(idea_name)
         if idea_name and code is None:
-            return {"content": [{"type": "text", "text": json.dumps({
+            return _proposal_response(args, {
                 "approved": False, "violations": [],
                 "error": f"No code at $AAR_IDEAS_DIR/{idea_name}/run.py — write your method package FIRST, then submit (the monitor judges the actual code).",
-            }, indent=2)}]}
+            }, code_hash=code_hash)
         if code is not None and os.getenv("AAR_REQUIRE_PHASE_TIMINGS", "0").lower() in (
             "1", "true", "yes", "on"
         ):
             missing_timings = _missing_method_timing_phases(code)
             if missing_timings:
-                return {"content": [{"type": "text", "text": json.dumps({
+                return _proposal_response(args, {
                     "approved": False,
                     "violations": ["REPRODUCIBILITY: missing structured phase timings"],
                     "error": (
                         "Method must use `from aar.phase_timing import phase` and wrap "
                         "these phases before approval: " + ", ".join(missing_timings)
                     ),
-                }, indent=2)}]}
+                }, code_hash=code_hash)
         if code is not None and os.getenv("AAR_AUTODATA", "0").lower() in (
             "1", "true", "yes", "on"
         ):
             contract_error = _autodata_method_contract_error(code)
             if contract_error:
-                return {"content": [{"type": "text", "text": json.dumps({
+                return _proposal_response(args, {
                     "approved": False,
                     "violations": ["AUTODATA_CONSUMPTION: unverified training handoff"],
                     "error": contract_error,
-                }, indent=2)}]}
+                }, code_hash=code_hash)
         # (B) Validate the paper FIRST (depth, >=5 citations, RULE 1 self-containment, RULE 2 no
         # outcome). A leaky/thin paper is rejected without spending the integrity-monitor call.
         # STRUCTURAL completeness only (per-section depth + >=5 cited works). Self-reference (RULE 1) and
@@ -1913,10 +2179,10 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
         # keyword regex, which false-rejected legitimate literature-review language.
         _v = _validate_idea_paper(structured, run_classifier=False)
         if _v["missing"]:
-            return {"content": [{"type": "text", "text": json.dumps({
+            return _proposal_response(args, {
                 "approved": False, "violations": [],
                 "error": _paper_rejection_error(_v, "submit_idea_proposal"),
-            }, indent=2)}]}
+            }, code_hash=code_hash)
         # THREE FOCUSED INTEGRITY MONITORS, RUN IN PARALLEL (data-policy D1/D2 [code] | faithfulness +
         # reproducibility [code+paper] | forecasting-leakage [paper: self-contained incl. other chains /
         # leaderboard, results-free, no comparative/ranking]). approved iff ALL THREE pass; any rejection
@@ -1932,6 +2198,7 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
         marker_payload = {
             "approved": bool(verdict.get("approved")),
             "execution_ready": False,
+            "journaled": False,
             "idea_name": idea_name,
             "code_hash": code_hash,
             "ts": time.time(),
@@ -2002,6 +2269,11 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
                     "error": failure["summary"],
                     "failure": failure,
                 }
+                # The proposal journal transaction records typed failures only
+                # from this top-level hook.  Keep the nested bootstrap detail for
+                # callers while also preserving its original typed identity in
+                # host-owned memory.
+                verdict["failure"] = failure
                 marker_payload["autodata_bootstrap"] = verdict["autodata_bootstrap"]
                 marker_payload["execution_ready"] = False
                 _atomic_json_write(_proposal_marker_path(), marker_payload)
@@ -2014,7 +2286,7 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
             marker_payload["execution_ready"] = True
             _atomic_json_write(_proposal_marker_path(), marker_payload)
             verdict["execution_ready"] = True
-        return {"content": [{"type": "text", "text": json.dumps(verdict, indent=2)}]}
+        return _proposal_response(args, verdict, code_hash=code_hash)
     except Exception as e:
         failure = _tool_failure(
             e,
@@ -2023,9 +2295,11 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
             public_summary="proposal submission failed",
         )
         failure["approved"] = False
-        return {
-            "content": [{"type": "text", "text": json.dumps(failure, indent=2)}]
-        }
+        return _proposal_response(
+            args,
+            failure,
+            code_hash=locals().get("code_hash"),
+        )
 
 
 @tool(

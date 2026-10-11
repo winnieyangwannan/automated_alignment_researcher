@@ -369,6 +369,8 @@ class KimiAgentTest(unittest.TestCase):
                 json.dumps(
                     {
                         "approved": True,
+                        "execution_ready": True,
+                        "journaled": True,
                         "idea_name": "old_candidate",
                         "code_hash": "old-code",
                     }
@@ -428,6 +430,8 @@ class KimiAgentTest(unittest.TestCase):
             run_id = f"{idea_uid}-candidate-1"
             marker = {
                 "approved": True,
+                "execution_ready": True,
+                "journaled": True,
                 "idea_name": "kimi_candidate",
                 "code_hash": "abc123",
             }
@@ -479,6 +483,8 @@ class KimiAgentTest(unittest.TestCase):
             run_id = f"{idea_uid}-candidate-1"
             marker = {
                 "approved": True,
+                "execution_ready": True,
+                "journaled": True,
                 "idea_name": "kimi_candidate",
                 "code_hash": "abc123",
             }
@@ -508,6 +514,10 @@ class KimiAgentTest(unittest.TestCase):
                         "IDEA_UID": idea_uid,
                     },
                     clear=False,
+                ),
+                patch(
+                    "aar.research_loop.kimi_agent._method_code",
+                    return_value=("method code", "abc123"),
                 ),
                 patch.object(
                     KimiAgent,
@@ -544,6 +554,8 @@ class KimiAgentTest(unittest.TestCase):
             run_id = f"{idea_uid}-candidate-1"
             marker = {
                 "approved": True,
+                "execution_ready": True,
+                "journaled": True,
                 "idea_name": "kimi_candidate",
                 "code_hash": "abc123",
             }
@@ -584,6 +596,9 @@ class KimiAgentTest(unittest.TestCase):
                     "IDEA_UID": idea_uid,
                 },
                 clear=False,
+            ), patch(
+                "aar.research_loop.kimi_agent._method_code",
+                return_value=("method code", "abc123"),
             ):
                 prompt = agent._with_previous_failure_feedback("do research")
                 self.assertIn("AUTOMATIC HELD-OUT-SAFE FAILURE FEEDBACK", prompt)
@@ -610,6 +625,8 @@ class KimiAgentTest(unittest.TestCase):
             run_id = f"{idea_uid}-candidate-1"
             marker = {
                 "approved": True,
+                "execution_ready": True,
+                "journaled": True,
                 "idea_name": "kimi_candidate",
                 "code_hash": "abc123",
             }
@@ -657,6 +674,8 @@ class KimiAgentTest(unittest.TestCase):
             run_id = f"{idea_uid}-candidate-1"
             marker = {
                 "approved": True,
+                "execution_ready": True,
+                "journaled": True,
                 "idea_name": "kimi_candidate",
                 "code_hash": "abc123",
                 "run_id": run_id,
@@ -687,6 +706,9 @@ class KimiAgentTest(unittest.TestCase):
                     "IDEA_UID": idea_uid,
                 },
                 clear=False,
+            ), patch(
+                "aar.research_loop.kimi_agent._method_code",
+                return_value=("method code", "abc123"),
             ):
                 prompt = agent._with_previous_failure_feedback("do research")
 
@@ -1597,6 +1619,9 @@ class KimiAgentTest(unittest.TestCase):
                     "SCORES_DIR": str(root),
                     "TEAM_DIR": str(root),
                 },
+            ), patch(
+                "aar.research_loop.kimi_agent._method_code",
+                return_value=("method code", "hash-1"),
             ):
                 self.assertIn("Read tool exactly once", prompt())
                 self.assertEqual(forced_tool(), "Read")
@@ -1675,6 +1700,8 @@ class KimiAgentTest(unittest.TestCase):
                     json.dumps(
                         {
                             "approved": True,
+                            "execution_ready": True,
+                            "journaled": True,
                             "idea_name": module,
                             "code_hash": "hash-1",
                         }
@@ -1827,6 +1854,8 @@ class KimiAgentTest(unittest.TestCase):
             runs.mkdir(parents=True)
             marker = {
                 "approved": True,
+                "execution_ready": True,
+                "journaled": True,
                 "idea_name": "chain__kimi_candidate",
                 "code_hash": "hash-1",
             }
@@ -1865,11 +1894,78 @@ class KimiAgentTest(unittest.TestCase):
                     },
                 ),
                 patch.object(agent, "_validate_protected_submission_files"),
+                patch(
+                    "aar.research_loop.kimi_agent._method_code",
+                    return_value=("method code", "hash-1"),
+                ),
                 patch("aar.research_loop.kimi_agent.subprocess.run", side_effect=submit),
             ):
                 agent._ensure_approved_training_submission()
 
             self.assertEqual(receipt.read_text(), f"run_id={run_id}\njob_id=12345\n")
+
+    def test_post_approval_method_mutation_prevents_host_submission(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ideas = root / "ideas"
+            idea_name = "chain__kimi_candidate"
+            method_dir = ideas / idea_name
+            method_dir.mkdir(parents=True)
+            (method_dir / "run.py").write_text("from .helper import VALUE\n")
+            helper = method_dir / "helper.py"
+            helper.write_text("VALUE = 1\n")
+
+            scores = root / "scores"
+            proposal_dir = scores / ".proposals"
+            runs = proposal_dir / "runs"
+            runs.mkdir(parents=True)
+            idea_uid = "chain-uid"
+            run_id = f"{idea_uid}-{idea_name}-1"
+            environment = {
+                "AAR_AUTODATA": "0",
+                "AAR_REQUIRE_TRAIN_RECEIPT": "1",
+                "SCORES_DIR": str(scores),
+                "TEAM_DIR": str(root / "team"),
+                "IDEA_UID": idea_uid,
+            }
+            with (
+                patch.dict(os.environ, environment, clear=False),
+                patch("aar.config.IDEAS_DIR", str(ideas)),
+                patch("aar.config.SEED_IDEAS_DIR", str(root / "seed-ideas")),
+            ):
+                from aar.research_loop.tools.server_api_tools import _method_code
+
+                _, code_hash = _method_code(idea_name)
+                marker = {
+                    "approved": True,
+                    "execution_ready": True,
+                    "journaled": True,
+                    "idea_name": idea_name,
+                    "code_hash": code_hash,
+                    "run_id": run_id,
+                    "paper": {},
+                }
+                (proposal_dir / f"{idea_uid}.json").write_text(json.dumps(marker))
+                (runs / f"{run_id}.json").write_text(
+                    json.dumps({**marker, "stamped_ts": 1})
+                )
+                agent = KimiAgent(
+                    "test-agent",
+                    root,
+                    cli_path="/bin/true",
+                    completion_tool="share_finding",
+                )
+                self.assertEqual(agent._approved_run_id(), run_id)
+
+                helper.write_text("VALUE = 2\n")
+                with (
+                    patch.object(agent, "_validate_protected_submission_files"),
+                    patch("aar.research_loop.kimi_agent.subprocess.run") as submit,
+                ):
+                    agent._ensure_approved_training_submission()
+
+                self.assertIsNone(agent._approved_run_id())
+                submit.assert_not_called()
 
     def test_production_only_canary_verifies_rows_and_writes_marker(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -2006,6 +2102,8 @@ class KimiAgentTest(unittest.TestCase):
             run_id = "chain-uid-chain__kimi_candidate-1"
             marker = {
                 "approved": True,
+                "execution_ready": True,
+                "journaled": True,
                 "idea_name": "chain__kimi_candidate",
                 "code_hash": "hash-1",
             }
@@ -2040,6 +2138,10 @@ class KimiAgentTest(unittest.TestCase):
             with (
                 patch.dict(os.environ, environment, clear=False),
                 patch.object(agent, "_validate_protected_submission_files"),
+                patch(
+                    "aar.research_loop.kimi_agent._method_code",
+                    return_value=("method code", "hash-1"),
+                ),
                 patch(
                     "aar.research_loop.kimi_agent.subprocess.run", side_effect=submit
                 ) as run,
@@ -2131,6 +2233,8 @@ class KimiAgentTest(unittest.TestCase):
             run_id = "chain-uid-chain__kimi_candidate-1"
             marker = {
                 "approved": True,
+                "execution_ready": True,
+                "journaled": True,
                 "idea_name": "chain__kimi_candidate",
                 "code_hash": "hash-1",
             }
@@ -2201,6 +2305,9 @@ class KimiAgentTest(unittest.TestCase):
                     "AAR_AUTODATA_SUPERVISOR_CONTROL": str(control),
                 },
                 clear=False,
+            ), patch(
+                "aar.research_loop.kimi_agent._method_code",
+                return_value=("method code", "hash-1"),
             ):
                 prompt = agent._continuation_prompt(output)
                 self.assertIn("proposal is already approved", prompt)

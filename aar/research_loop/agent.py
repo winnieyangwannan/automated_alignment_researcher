@@ -49,8 +49,10 @@ from aar.phase_timing import phase
 from aar.failure_feedback import (
     FailureFeedbackError,
     build_failure_feedback,
+    feedback_from_exception,
     safe_failure_feedback_view,
 )
+from .chain_memory import ChainMemoryJournal
 from .autodata_plugin import resolve_autodata_plugin
 from .tools.server_api_tools import create_server_api_tools_server
 from .tools.prior_work_tools import create_prior_work_tools_server
@@ -658,6 +660,15 @@ class AutonomousAgentLoop:
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.findings_path = self.logs_dir.parent / "findings.json"
 
+        # The editable AGENT_LOG remains model scratch space.  This separate
+        # host-owned journal is reconstructed from durable public lifecycle
+        # artifacts and is injected identically for Claude and Kimi sessions.
+        self.chain_memory = ChainMemoryJournal.from_environment(
+            chain_id=self.idea_name,
+            idea_uid=self.idea_uid,
+            fallback_team_dir=self.logs_dir.parent,
+        )
+
         self.max_runtime_seconds = max_runtime_seconds or FULL_AUTO_MAX_RUNTIME_SECONDS
         # Cap on number of iterations (= sessions). env MAX_ITERATIONS or arg; None = unbounded.
         self.max_iterations = max_iterations if max_iterations is not None else (
@@ -871,16 +882,43 @@ class AutonomousAgentLoop:
             return
         from aar.research_loop.autodata_bootstrap import ensure_workspace
         from aar.research_loop.tools.server_api_tools import (
+            _atomic_json_write,
             _proposal_approved,
             _proposal_marker_path,
+            ensure_proposal_journal_receipt,
         )
 
-        approved, reason = _proposal_approved()
-        if not approved:
-            if "no idea proposal" not in reason:
-                print(f"[AutoData bootstrap] proposal not resumable: {reason}")
+        marker_path = _proposal_marker_path()
+        if not marker_path.is_file():
             return
-        marker = json.loads(_proposal_marker_path().read_text(encoding="utf-8"))
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        if not isinstance(marker, dict) or marker.get("approved") is not True:
+            return
+        if marker.get("journaled") is not True:
+            recovered = ensure_proposal_journal_receipt(
+                marker_path,
+                team_dir=os.getenv("TEAM_DIR", ""),
+                chain_id=self.idea_name,
+                idea_uid=self.idea_uid,
+                allow_backfill=False,
+                mark_journaled=True,
+            )
+            if not recovered:
+                raise FailureFeedbackError(
+                    build_failure_feedback(
+                        RuntimeError("durable proposal journal event is missing"),
+                        error_code="proposal_journal_failed",
+                        stage="proposal_submission",
+                        retryable=False,
+                        public_summary="host-owned proposal journal update failed",
+                    )
+                )
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        if marker.get("execution_ready") is True:
+            approved, reason = _proposal_approved()
+            if not approved:
+                print(f"[AutoData bootstrap] proposal not resumable: {reason}")
+                return
         identity = (
             marker.get("run_id"),
             marker.get("idea_name"),
@@ -888,15 +926,112 @@ class AutonomousAgentLoop:
         )
         if not all(isinstance(value, str) and value for value in identity):
             raise RuntimeError("approved proposal lacks AutoData bootstrap identity")
-        result = ensure_workspace(
-            run_id=identity[0],
-            idea_name=identity[1],
-            code_hash=identity[2],
-        )
+        try:
+            result = ensure_workspace(
+                run_id=identity[0],
+                idea_name=identity[1],
+                code_hash=identity[2],
+            )
+        except Exception as error:
+            failure = feedback_from_exception(
+                error,
+                error_code="autodata_bootstrap_failed",
+                stage="autodata_bootstrap",
+                retryable=True,
+                public_summary="AutoData workspace bootstrap failed",
+            )
+            current = json.loads(marker_path.read_text(encoding="utf-8"))
+            if (
+                not isinstance(current, dict)
+                or current.get("approved") is not True
+                or current.get("journaled") is not True
+                or any(
+                    current.get(key) != value
+                    for key, value in zip(
+                        ("run_id", "idea_name", "code_hash"), identity, strict=True
+                    )
+                )
+            ):
+                raise RuntimeError(
+                    "approved proposal changed during AutoData bootstrap retry"
+                ) from error
+            current["autodata_bootstrap"] = {
+                "status": "failed",
+                "error": failure["summary"],
+                "failure": failure,
+            }
+            current["execution_ready"] = False
+            _atomic_json_write(marker_path, current)
+            raise FailureFeedbackError(failure) from error
+
+        current = json.loads(marker_path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(current, dict)
+            or current.get("approved") is not True
+            or current.get("journaled") is not True
+            or any(
+                current.get(key) != value
+                for key, value in zip(
+                    ("run_id", "idea_name", "code_hash"), identity, strict=True
+                )
+            )
+        ):
+            raise RuntimeError("approved proposal changed during AutoData bootstrap retry")
+        current["autodata_bootstrap"] = {"status": "ready", **result}
+        current["execution_ready"] = True
+        _atomic_json_write(marker_path, current)
         print(
             "[AutoData bootstrap] workspace ready "
             f"workspace={result['workspace_id']} idempotent={result['idempotent']}"
         )
+
+    def _recover_approved_proposal_receipt(self) -> None:
+        """Repair only the marker bit backed by this chain's durable event."""
+
+        from aar.research_loop.tools.server_api_tools import (
+            _proposal_marker_path,
+            ensure_proposal_journal_receipt,
+        )
+
+        marker_path = _proposal_marker_path()
+        if not marker_path.is_file():
+            return
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(marker, dict)
+            or marker.get("approved") is not True
+            or marker.get("journaled") is True
+        ):
+            return
+        marker_uid = marker.get("idea_uid")
+        if not isinstance(marker_uid, str) or not marker_uid:
+            raise FailureFeedbackError(
+                build_failure_feedback(
+                    RuntimeError("approved proposal marker has no idea UID"),
+                    error_code="proposal_journal_failed",
+                    stage="proposal_submission",
+                    retryable=False,
+                    public_summary="host-owned proposal journal update failed",
+                )
+            )
+        recovered = ensure_proposal_journal_receipt(
+            marker_path,
+            team_dir=os.getenv("TEAM_DIR", ""),
+            chain_id=self.idea_name,
+            idea_uid=marker_uid,
+            allow_backfill=False,
+            mark_journaled=True,
+        )
+        if not recovered:
+            raise FailureFeedbackError(
+                build_failure_feedback(
+                    RuntimeError("durable proposal journal event is missing"),
+                    error_code="proposal_journal_failed",
+                    stage="proposal_submission",
+                    retryable=False,
+                    public_summary="host-owned proposal journal update failed",
+                )
+            )
 
     async def run(self) -> Dict[str, Any]:
         """Run the autonomous agent loop."""
@@ -951,10 +1086,16 @@ class AutonomousAgentLoop:
                 incident = probe.active_orchestration_incident()
                 if incident is not None:
                     nested = safe_failure_feedback_view(incident.get("failure"))
+                    if nested is None:
+                        nested = build_failure_feedback(
+                            RuntimeError("shared orchestration incident"),
+                            error_code="orchestration_incident",
+                            stage="research_session",
+                            public_summary="shared orchestration incident",
+                        )
+                    self._record_chain_memory_failure(nested)
                     code = (
                         nested["error_code"]
-                        if nested is not None
-                        else "orchestration_incident"
                     )
                     print(
                         "\n[Loop] Paused by shared orchestration incident: "
@@ -972,6 +1113,7 @@ class AutonomousAgentLoop:
                     },
                 ):
                     await self._run_session()
+                self._reconcile_chain_memory()
                 self.stop_checker.record_success()
                 self._next_session_failure = None
                 self._next_resume_run_id = None
@@ -1002,6 +1144,7 @@ class AutonomousAgentLoop:
                         public_summary="shared orchestration incident",
                     )
                 last_failure = failure
+                self._record_chain_memory_failure(last_failure)
                 print(
                     "\n[Loop] Paused by orchestration incident: "
                     + str(failure["error_code"])
@@ -1025,6 +1168,7 @@ class AutonomousAgentLoop:
                     # Only the schema-validated, allowlisted view may influence
                     # retry policy or cross the research-session boundary.
                     last_failure = safe_failure
+                self._record_chain_memory_failure(last_failure)
                 print(
                     "\n[Loop] Session failure: "
                     + str(last_failure["error_code"])
@@ -1069,6 +1213,7 @@ class AutonomousAgentLoop:
                     retryable=False,
                     public_summary="research session failed",
                 )
+                self._record_chain_memory_failure(last_failure)
                 print("\n[Loop] Session failure: research_session_failed")
                 self.stop_checker.record_error()
                 failed_sessions += 1
@@ -1123,6 +1268,43 @@ class AutonomousAgentLoop:
 
         return result
 
+    def _reconcile_chain_memory(self) -> None:
+        journal = getattr(self, "chain_memory", None)
+        if journal is not None:
+            try:
+                journal.reconcile()
+            except Exception as error:
+                raise FailureFeedbackError(
+                    build_failure_feedback(
+                        error,
+                        error_code="chain_memory_integrity_failed",
+                        stage="research_session",
+                        retryable=False,
+                        public_summary="host-owned chain memory integrity check failed",
+                    )
+                ) from error
+
+    def _record_chain_memory_failure(self, failure: object) -> None:
+        """Persist only the schema-validated public failure view.
+
+        Never mask the original controller disposition if auxiliary journaling
+        itself fails, and never print the raw journal exception.
+        """
+
+        journal = getattr(self, "chain_memory", None)
+        if journal is None:
+            return
+        try:
+            journal.record_failure(
+                failure,
+                session_id=getattr(self, "_last_session_id", None)
+                or os.getenv("AAR_CURRENT_SESSION_ID")
+                or f"{self.run_id}-session-{self.session_count:03d}",
+            )
+            journal.reconcile()
+        except Exception:  # noqa: BLE001 - preserve the original safe failure
+            print("[Loop] Warning: host-owned chain-memory failure record was not updated")
+
     def _successful_score_result_pairs(self) -> int:
         """Count durable score/result intersections, never session completions."""
         configured = os.getenv("TEAM_DIR")
@@ -1161,14 +1343,26 @@ class AutonomousAgentLoop:
         # one transcript, so the dashboard showed identical trajectories for all).
         _tag = re.sub(r"[^A-Za-z0-9]+", "_", self.idea_name or "chain").strip("_") or "chain"
         session_id = f"session_{self.session_count:03d}_{_tag}_{timestamp}"
+        self._last_session_id = session_id
         log_file = self.logs_dir / f"{session_id}.log"
         os.environ["AAR_CURRENT_SESSION_ID"] = session_id
 
         print(f"\n[Session {self.session_count}] {session_id}")
 
+        # Reconcile before either backend starts.  This repairs the narrow crash
+        # windows where a lifecycle artifact became durable after the previous
+        # process's last journal write.  Then repair the proposal marker receipt
+        # before Kimi or Claude can inspect it directly.
+        self._reconcile_chain_memory()
+        self._recover_approved_proposal_receipt()
         self._ensure_approved_autodata_workspace()
-
         prompt = self._get_prompt()
+        journal = getattr(self, "chain_memory", None)
+        if journal is not None:
+            prompt += (
+                "\n\nHOST-OWNED MEMORY FOR THIS CHAIN (authoritative, read-only; "
+                "do not edit it):\n\n" + journal.prompt_snapshot()
+            )
         next_failure = getattr(self, "_next_session_failure", None)
         if isinstance(next_failure, dict):
             prompt += (
