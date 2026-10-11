@@ -492,8 +492,10 @@ class KimiAgent:
             agent_file = self._write_agent_profile(overlay_home)
             with self._request_policy_proxy(env) as tool_choice_controller:
                 while True:
-                    host_resume = bool(continuation_count) or (
-                        self._resume_approved_proposal_enabled()
+                    host_resume = (
+                        bool(continuation_count)
+                        or self._resume_approved_proposal_enabled()
+                        or self._owns_approved_run(output)
                     )
                     if host_resume and self._owns_approved_run(output):
                         approved_run_id = self._approved_run_id()
@@ -624,38 +626,8 @@ class KimiAgent:
                             continue
                         autodata_wait_deadline = None
                         autodata_idle_deadline = None
-                        if action["status"] == "in_progress":
-                            if action["kind"] not in {
-                                "approve_grounding",
-                                "approve_baseline",
-                                "approve_resources",
-                            }:
-                                self._autodata_require_action_lease(
-                                    str(action["id"])
-                                )
-                                result_path = self._autodata_action_result_path(
-                                    str(action["id"])
-                                )
-                                if result_path.is_file() and not (
-                                    self._autodata_pipeline_feedback_requires_edit(
-                                        action
-                                    )
-                                ):
-                                    try:
-                                        self._autodata_complete_action(
-                                            str(action["id"]), result_path
-                                        )
-                                    except AutoDataActionResultValidationError as error:
-                                        print(
-                                            "[Kimi] host FSM rejected correctable action "
-                                            f"result: {error}"
-                                        )
-                                    else:
-                                        print(
-                                            "[Kimi] host FSM completed durable action "
-                                            f"result without a model turn: {action['id']}"
-                                        )
-                                        continue
+                        if self._autodata_consume_action_result(action) == "completed":
+                            continue
                     command = [executable]
                     if self.model:
                         command.extend(["--model", self.model])
@@ -740,6 +712,14 @@ class KimiAgent:
                             ),
                             retryable=retryable,
                         )
+                    action_result_state = (
+                        self._autodata_consume_current_action_result(output)
+                    )
+                    if action_result_state == "completed":
+                        checkpoint_retry_count = 0
+                        last_progress_signature = None
+                        repeated_progress_signature = 0
+                        continue
                     if required_tool is not None and new_tool_uses == 0:
                         if checkpoint_retry_count >= self.max_checkpoint_retries:
                             raise FailureFeedbackError(
@@ -765,12 +745,25 @@ class KimiAgent:
                         )
                         continue
                     checkpoint_retry_count = 0
-                    progress_signature = self._lifecycle_progress_signature()
+                    if action_result_state == "rejected":
+                        # A distinct validation error is durable progress: the next
+                        # turn must receive its precise repair feedback before the
+                        # generic unchanged-state detector can terminate the session.
+                        last_progress_signature = None
+                        repeated_progress_signature = 0
+                        last_contract_errors = None
+                        repeated_contract_errors = 0
+                    progress_signature = self._lifecycle_progress_signature(output)
                     if progress_signature == last_progress_signature:
                         repeated_progress_signature += 1
                     else:
                         last_progress_signature = progress_signature
                         repeated_progress_signature = 1
+                        # Any new durable lifecycle artifact earns a fresh repair
+                        # opportunity, even if an older method-contract error text
+                        # is unchanged.
+                        last_contract_errors = None
+                        repeated_contract_errors = 0
                     contract_status, contract_errors = self._current_method_contract()
                     contract_error_signature = (
                         tuple(contract_errors) if contract_status == "failed" else None
@@ -1057,7 +1050,9 @@ class KimiAgent:
     def _current_method_contract(self) -> tuple[str | None, list[str]]:
         return self._method_contract_status(self._candidate_method_path())
 
-    def _lifecycle_progress_signature(self) -> tuple[Any, ...]:
+    def _lifecycle_progress_signature(
+        self, output: dict[str, Any]
+    ) -> tuple[Any, ...]:
         """Fingerprint durable milestones rather than conversational activity."""
 
         method_path = self._candidate_method_path()
@@ -1066,7 +1061,12 @@ class KimiAgent:
         except OSError:
             method_sha = None
         contract_status, contract_errors = self._method_contract_status(method_path)
-        run_id = self._approved_run_id()
+        approved_run_id = self._approved_run_id()
+        run_id = (
+            approved_run_id
+            if approved_run_id is not None and self._owns_approved_run(output)
+            else None
+        )
         job_id = self._current_training_job_id(run_id) if run_id is not None else None
         score_state = "missing"
         if run_id is not None:
@@ -1085,6 +1085,81 @@ class KimiAgent:
             job_id,
             score_state,
             bool(run_id and self._finding_persisted_for_run(run_id)),
+            self._autodata_lifecycle_progress_signature(run_id),
+        )
+
+    @staticmethod
+    def _safe_file_sha256(path: Path) -> str | None:
+        try:
+            if path.is_symlink() or not path.is_file():
+                return None
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            return None
+
+    def _autodata_lifecycle_progress_signature(
+        self, run_id: str | None
+    ) -> tuple[Any, ...] | None:
+        """Fingerprint host-owned AutoData state that can advance between turns."""
+
+        if not self._autodata_enabled() or run_id is None:
+            return None
+        team_raw = os.environ.get("TEAM_DIR", "").strip()
+        if not team_raw:
+            return (run_id, None)
+        run_root = Path(team_raw) / "autodata" / run_id
+        handoff_sha = self._safe_file_sha256(run_root / "training-handoff.json")
+        verified_handoff_sha = self._safe_file_sha256(
+            run_root / "training-handoff.verified.json"
+        )
+        workspace_id = self._autodata_workspace_id(run_id)
+        if workspace_id is None:
+            return (run_id, handoff_sha, verified_handoff_sha, None)
+        status_subject = self._autodata_status_subject(workspace_id)
+        action = self._autodata_pending_action_record(workspace_id, status_subject)
+        if action is None:
+            return (
+                run_id,
+                handoff_sha,
+                verified_handoff_sha,
+                workspace_id,
+                status_subject,
+                None,
+            )
+        action_id = action.get("id")
+        if not isinstance(action_id, str):
+            return (
+                run_id,
+                handoff_sha,
+                verified_handoff_sha,
+                workspace_id,
+                status_subject,
+                "invalid-action-id",
+            )
+        result_root = Path(team_raw) / "autodata" / "action-results"
+        result_sha = self._safe_file_sha256(result_root / f"{action_id}.json")
+        feedback_sha = self._safe_file_sha256(
+            result_root / f"{action_id}.validation.txt"
+        )
+        strategy_sha = None
+        spec = action.get("spec")
+        editable_root = spec.get("editable_root") if isinstance(spec, dict) else None
+        if isinstance(editable_root, str):
+            strategy_sha = self._safe_file_sha256(
+                Path(editable_root) / "recipe" / "generation_strategy.json"
+            )
+        return (
+            run_id,
+            handoff_sha,
+            verified_handoff_sha,
+            workspace_id,
+            status_subject,
+            action_id,
+            action.get("kind"),
+            action.get("status"),
+            result_sha,
+            feedback_sha,
+            strategy_sha,
         )
 
     def _continuation_prompt(self, output: dict[str, Any]) -> str:
@@ -2023,6 +2098,68 @@ class KimiAgent:
         if len(token) < 20:
             raise RuntimeError("trusted AutoData action lease is invalid")
         return token
+
+    @classmethod
+    def _autodata_consume_action_result(
+        cls, action: dict[str, Any]
+    ) -> str | None:
+        """Consume a ready leased result and distinguish new repair feedback."""
+
+        if action.get("status") != "in_progress" or action.get("kind") in {
+            "approve_grounding",
+            "approve_baseline",
+            "approve_resources",
+        }:
+            return None
+        action_id = action.get("id")
+        if not isinstance(action_id, str):
+            raise RuntimeError("native AutoData action has no identifier")
+        cls._autodata_require_action_lease(action_id)
+        result_path = cls._autodata_action_result_path(action_id)
+        if not result_path.is_file() or cls._autodata_pipeline_feedback_requires_edit(
+            action
+        ):
+            return None
+        feedback_path = cls._autodata_action_result_feedback_path(action_id)
+        previous_feedback = (
+            feedback_path.read_text(encoding="utf-8")
+            if feedback_path.is_file() and not feedback_path.is_symlink()
+            else None
+        )
+        try:
+            cls._autodata_complete_action(action_id, result_path)
+        except AutoDataActionResultValidationError as error:
+            print(f"[Kimi] host FSM rejected correctable action result: {error}")
+            current_feedback = (
+                feedback_path.read_text(encoding="utf-8")
+                if feedback_path.is_file() and not feedback_path.is_symlink()
+                else None
+            )
+            return "rejected" if current_feedback != previous_feedback else "unchanged"
+        print(
+            "[Kimi] host FSM completed durable action result without a model turn: "
+            f"{action_id}"
+        )
+        return "completed"
+
+    def _autodata_consume_current_action_result(
+        self, output: dict[str, Any]
+    ) -> str | None:
+        """Re-enter the host FSM immediately after a model tool turn."""
+
+        if not self._autodata_enabled() or not self._owns_approved_run(output):
+            return None
+        approved_run_id = self._approved_run_id()
+        if approved_run_id is None:
+            return None
+        workspace_id = self._autodata_workspace_id(approved_run_id)
+        if workspace_id is None:
+            return None
+        status_subject = self._autodata_status_subject(workspace_id)
+        action = self._autodata_pending_action_record(workspace_id, status_subject)
+        if action is None:
+            return None
+        return self._autodata_consume_action_result(action)
 
     @classmethod
     def _autodata_normalize_action_result(

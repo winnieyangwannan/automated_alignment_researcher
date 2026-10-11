@@ -116,3 +116,26 @@ with full cross-file validation of call count, unique request IDs, generator
 deployment, target model/deployment/checkpoint, judge model, and the requested
 reused deployment. Validation passes 154 focused tests plus shell, bytecode,
 and whitespace checks. No Trial 12 attempt has yet been created.
+
+### ❌ 15:35 PT — TERMINAL: corrected action result lost to stall ordering
+
+Trial 12 attempt `20261011T221840Z-b6db78771f9c` launched successfully. The
+fresh provider proof passed, pipeline job `1820488` completed, and research job
+`1820501` created and registered workspace
+`ws_098e3f3c53544a01b3d94adc3cbb9d18`. Kimi authored a contract-valid method
+and reached the first native `clarify_design` action.
+
+The action result was initially malformed twice. Kimi's next correction was a
+valid `autodata.action-result/v1` envelope with the required `summary` string
+and `decisions` array, but the generic unchanged-lifecycle detector ran before
+the host FSM re-entered to consume the corrected file. The research job failed
+as `research_session_stalled` after 5m24s; controller `1820502` failed closed as
+`training_smoke_session_failed`. No native execution, baseline, meta iteration,
+production task, or training job started.
+
+The transferable repair consumes action results immediately after every model
+tool turn, fingerprints action/result/feedback/strategy and both training
+handoff receipts as durable progress, resets stale method-contract counters on
+real lifecycle progress, excludes unowned stale proposal markers, and preserves
+host-resume semantics even when an action completes during the first process
+turn. Trial 12 is retained and will not be resumed; the next launch is Trial 13.

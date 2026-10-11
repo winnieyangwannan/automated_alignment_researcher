@@ -3219,6 +3219,177 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
             self.assertFalse(result_path.exists())
             self.assertIn("proposal", feedback_path.read_text(encoding="utf-8"))
 
+    def test_host_fsm_immediately_consumes_corrected_action_result(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            action_id = "act_" + "1" * 24
+            action = {
+                "id": action_id,
+                "kind": "clarify_design",
+                "status": "in_progress",
+                "spec": {"outputs": ["summary", "decisions"]},
+            }
+            with (
+                patch.dict(os.environ, {"TEAM_DIR": str(root)}, clear=False),
+                patch.object(
+                    KimiAgent, "_autodata_action_record", return_value=action
+                ),
+                patch.object(KimiAgent, "_autodata_cli") as cli,
+            ):
+                lease_path = KimiAgent._autodata_action_lease_path(action_id)
+                result_path = KimiAgent._autodata_action_result_path(action_id)
+                KimiAgent._write_private_text(lease_path, "x" * 32)
+                KimiAgent._write_private_text(
+                    result_path,
+                    json.dumps(
+                        {
+                            "schema": "autodata.action-result/v1",
+                            "status": "completed",
+                            "action_id": action_id,
+                            "outputs": {
+                                "summary": "Design clarified.",
+                                "decisions": ["Use the reviewed recipe."],
+                            },
+                        }
+                    ),
+                )
+
+                state = KimiAgent._autodata_consume_action_result(action)
+
+            self.assertEqual(state, "completed")
+            cli.assert_called_once()
+            self.assertFalse(result_path.exists())
+            self.assertFalse(lease_path.exists())
+
+    def test_distinct_action_result_feedback_defers_generic_stall_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            action_id = "act_" + "2" * 24
+            action = {
+                "id": action_id,
+                "kind": "clarify_design",
+                "status": "in_progress",
+                "spec": {"outputs": ["summary", "decisions"]},
+            }
+            invalid = json.dumps(
+                {
+                    "schema": "autodata.action-result/v1",
+                    "status": "completed",
+                    "action_id": action_id,
+                    "outputs": {
+                        "summary": "Design clarified.",
+                        "decisions": {"choice": "reviewed recipe"},
+                    },
+                }
+            )
+            with (
+                patch.dict(os.environ, {"TEAM_DIR": str(root)}, clear=False),
+                patch.object(
+                    KimiAgent, "_autodata_action_record", return_value=action
+                ),
+                patch.object(KimiAgent, "_autodata_cli") as cli,
+            ):
+                lease_path = KimiAgent._autodata_action_lease_path(action_id)
+                result_path = KimiAgent._autodata_action_result_path(action_id)
+                KimiAgent._write_private_text(lease_path, "x" * 32)
+                KimiAgent._write_private_text(result_path, invalid)
+                first = KimiAgent._autodata_consume_action_result(action)
+                KimiAgent._write_private_text(result_path, invalid)
+                repeated = KimiAgent._autodata_consume_action_result(action)
+                feedback = KimiAgent._autodata_action_result_feedback_path(
+                    action_id
+                ).read_text(encoding="utf-8").strip()
+
+            self.assertEqual(first, "rejected")
+            self.assertEqual(repeated, "unchanged")
+            self.assertEqual(
+                feedback, "action result output 'decisions' must be a list"
+            )
+            cli.assert_not_called()
+
+    def test_autodata_progress_signature_tracks_host_owned_reentry_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            team = root / "team"
+            run_id = "approved-run"
+            action_id = "act_" + "3" * 24
+            strategy = root / "draft" / "recipe" / "generation_strategy.json"
+            strategy.parent.mkdir(parents=True)
+            strategy.write_text('{"temperature":0.2}\n')
+            action = {
+                "id": action_id,
+                "kind": "author_pipeline",
+                "status": "in_progress",
+                "spec": {"editable_root": str(root / "draft")},
+            }
+            agent = KimiAgent("test-agent", root, cli_path="/bin/true")
+            with (
+                patch.dict(
+                    os.environ,
+                    {"AAR_AUTODATA": "1", "TEAM_DIR": str(team)},
+                    clear=False,
+                ),
+                patch.object(agent, "_autodata_workspace_id", return_value="ws_1"),
+                patch.object(
+                    agent, "_autodata_status_subject", return_value="execution_1"
+                ),
+                patch.object(
+                    agent, "_autodata_pending_action_record", return_value=action
+                ),
+            ):
+                initial = agent._autodata_lifecycle_progress_signature(run_id)
+                strategy.write_text('{"temperature":0.3}\n')
+                edited = agent._autodata_lifecycle_progress_signature(run_id)
+                result_root = team / "autodata" / "action-results"
+                result_root.mkdir(parents=True)
+                (result_root / f"{action_id}.validation.txt").write_text(
+                    "precise validation feedback\n"
+                )
+                rejected = agent._autodata_lifecycle_progress_signature(run_id)
+                (result_root / f"{action_id}.json").write_text("{}\n")
+                corrected = agent._autodata_lifecycle_progress_signature(run_id)
+                run_root = team / "autodata" / run_id
+                run_root.mkdir(parents=True)
+                (run_root / "training-handoff.json").write_text("{}\n")
+                handed_off = agent._autodata_lifecycle_progress_signature(run_id)
+                (run_root / "training-handoff.verified.json").write_text("{}\n")
+                verified = agent._autodata_lifecycle_progress_signature(run_id)
+
+            self.assertNotEqual(initial, edited)
+            self.assertNotEqual(edited, rejected)
+            self.assertNotEqual(rejected, corrected)
+            self.assertNotEqual(corrected, handed_off)
+            self.assertNotEqual(handed_off, verified)
+
+    def test_post_turn_action_result_reentry_precedes_generic_stall_check(self) -> None:
+        source = Path(KimiAgent._execute_once.__code__.co_filename).read_text()
+        self.assertIn("or self._owns_approved_run(output)", source)
+        post_turn = source.index(
+            "self._autodata_consume_current_action_result(output)"
+        )
+        stall_check = source.index(
+            "progress_signature = self._lifecycle_progress_signature(output)",
+            post_turn,
+        )
+        self.assertLess(post_turn, stall_check)
+
+    def test_stale_approved_marker_is_excluded_from_progress_signature(self) -> None:
+        agent = KimiAgent("test-agent", Path.cwd(), cli_path="/bin/true")
+        output = {"tool_uses": [], "text_outputs": [], "raw_messages": []}
+        with (
+            patch.dict(os.environ, {"AAR_AUTODATA": "1"}, clear=False),
+            patch.object(agent, "_approved_run_id", return_value="stale-run"),
+            patch.object(agent, "_owns_approved_run", return_value=False),
+            patch.object(agent, "_current_training_job_id") as training_job,
+            patch.object(agent, "_autodata_workspace_id") as workspace_id,
+        ):
+            signature = agent._lifecycle_progress_signature(output)
+
+        self.assertIsNone(signature[4])
+        self.assertIsNone(signature[-1])
+        training_job.assert_not_called()
+        workspace_id.assert_not_called()
+
     def test_protected_submission_hash_mismatch_publishes_team_incident(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: explicitly confirmed; launch pending
+- Status: terminal failure before native execution; superseded by Trial 13
 - Created: 2026-10-11 06:24 PT
-- Last updated: 2026-10-11 14:40 PT
+- Last updated: 2026-10-11 15:35 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
