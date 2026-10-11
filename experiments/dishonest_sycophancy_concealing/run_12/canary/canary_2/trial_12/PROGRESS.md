@@ -83,3 +83,18 @@ The confirmed execution is exact `3/3/3` over disjoint `64/32/32`, concurrency
 attempts per semantic round, one HTTP transport attempt, 707 native attempts,
 a `$41,775` hard campaign ceiling, and a stop after verified training smoke.
 Submission is authorized from the committed immutable AAR/native snapshots.
+
+### ⏳ 14:58 PT — PREPARING: fresh base-target proof and attempt
+
+The formerly missing three-provider proof was found intact in seven immutable
+`/checkpoint/ram` snapshots. The live attempt path had disappeared, but the
+snapshot copies contain identical nonempty preflight, target-binding, and
+canary-report receipts. No Trial 12 work had started.
+
+Because the user requested a fresh Trial 12 start, submission will not depend
+on the historical adapter-target binding. The canary path now accepts the same
+base-target manifest used by Trial 12, resolves its target environment through
+the shared campaign policy, and permits the bounded second Luna usage record
+introduced by the judge-format repair. Focused validation passes: 62 Python
+tests, shell syntax checks, and whitespace checks. A new current-target proof
+will be generated before creating a fresh Trial 12 attempt.

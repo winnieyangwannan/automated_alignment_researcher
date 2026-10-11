@@ -140,6 +140,8 @@ def test_run12_target_binding_accepts_a_newly_promoted_incumbent() -> None:
     assert "AAR_RUN12_MERGED_CHECKPOINT" in launcher
     assert "AAR_RUN12_TARGET_ITERATION" in launcher
     assert '--iteration "${TARGET_ITERATION}"' in launcher
+    assert "AAR_RUN12_TARGET_KIND" in launcher
+    assert "aar.autodata_campaign_policy create-base-target" in launcher
 
 
 def test_run12_full_chain_rotates_the_training_contract_with_its_target() -> None:
@@ -341,6 +343,7 @@ def test_run12_uses_separate_kimi_deployments_and_maximum_token_allowances() -> 
     )
     assert "KIMI_MODEL_MAX_OUTPUT_SIZE=65536" in launcher
     assert "KIMI_MODEL_MAX_COMPLETION_TOKENS=65536" in launcher
+    assert '"${AAR_AUTODATA_RECIPE_ROOT:?}"' in canary_job
     assert "KIMI_MODEL_MAX_CONTEXT_SIZE=262144" in pipeline
     assert "KIMI_MODEL_MAX_OUTPUT_SIZE=65536" in pipeline
     assert "KIMI_MODEL_MAX_COMPLETION_TOKENS=65536" in pipeline

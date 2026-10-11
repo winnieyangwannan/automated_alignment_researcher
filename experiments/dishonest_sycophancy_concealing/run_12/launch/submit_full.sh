@@ -140,10 +140,11 @@ jq -e '
   and .broker_status == "SUCCEEDED"
   and .task_result_outcome == "succeeded"
   and .task_result_schema_valid == true
-  and .provider_call_count == 3
-  and ([.provider_usage[].role] == ["generator", "target", "judge"])
+  and (.provider_call_count == 3 or .provider_call_count == 4)
+  and ([.provider_usage[].role][0:2] == ["generator", "target"])
+  and ([.provider_usage[].role][2:] | all(. == "judge"))
 ' "${CANARY_ROOT}/canary-report.json" >/dev/null || {
-  echo "Run 12 canary did not prove successful three-provider routing" >&2
+  echo "Run 12 canary did not prove successful bounded provider routing" >&2
   exit 2
 }
 

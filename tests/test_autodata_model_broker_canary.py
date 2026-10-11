@@ -10,6 +10,7 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
+from aar.autodata_campaign_policy import create_base_target_manifest
 from aar.autodata_target_binding import create_binding, write_binding
 
 
@@ -258,7 +259,7 @@ class ModelBrokerCanaryTest(unittest.TestCase):
             *_FakeBrokerClient.result["provider_usage"],
             _FakeBrokerClient.result["provider_usage"][1],
         ]
-        with self.assertRaisesRegex(RuntimeError, "exactly two"):
+        with self.assertRaisesRegex(RuntimeError, "request identity"):
             self.module._validate_task_result(extra, contract.schema, rates=rates)
         wrong = json.loads(json.dumps(_FakeBrokerClient.result))
         wrong["provider_usage"][1]["model"] = "wrong-model"
@@ -401,6 +402,32 @@ class ModelBrokerCanaryTest(unittest.TestCase):
                 require_accepted=False,
             )
             self.assertEqual([call["role"] for call in usage], ["generator"])
+            repaired = json.loads(json.dumps(_FakeBrokerClient.result))
+            repaired["provider_usage"].append(
+                _usage(
+                    "luna-repair-request",
+                    "judge",
+                    "gpt-5-6-luna",
+                    21,
+                    8,
+                    "0.000053",
+                )
+            )
+            usage = self.module._validate_task_result(
+                repaired,
+                self.module._read_recipe_contract(RECIPE).schema,
+                rates={
+                    "generator": (Decimal("1"), Decimal("4")),
+                    "target": (Decimal("0"), Decimal("0")),
+                    "judge": (Decimal("1"), Decimal("4")),
+                },
+                target_binding=binding,
+                require_accepted=False,
+            )
+            self.assertEqual(
+                [call["role"] for call in usage],
+                ["generator", "target", "judge", "judge"],
+            )
 
         environment = _FakeBrokerJobSpec.captured["solve"]["env"]
         self.assertTrue(
@@ -415,6 +442,32 @@ class ModelBrokerCanaryTest(unittest.TestCase):
         self.assertEqual(report["provider_call_count"], 3)
         self.assertEqual(report["accepted_row_count"], 0)
         self.assertEqual(report["target_deployment_id"], "run12-target")
+
+    def test_base_target_manifest_is_valid_canary_provenance(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base, _, _ = _checkpoint_fixture(root)
+            value = create_base_target_manifest(
+                iteration=1,
+                chain_id="canary",
+                base_checkpoint=base,
+                endpoint={
+                    "url": "http://gateway.example/v1",
+                    "host_header": "ram-inference-gateway.ingress.",
+                    "model": "gemma-4-31B-it",
+                    "deployment_id": "run12-base-target",
+                },
+            )
+            path = root / "base-target.json"
+            path.write_text(json.dumps(value), encoding="utf-8")
+
+            loaded = self.module._load_target_manifest(path)
+
+        self.assertEqual(loaded.value["schema"], "aar.autodata.base-target/v2")
+        self.assertEqual(loaded.checkpoint_hash, value["checkpoint_hash"])
+        self.assertEqual(
+            loaded.endpoint["deployment_id"], "run12-base-target"
+        )
 
     def test_static_routes_delegate_credentials_to_broker_and_recipe(self):
         canary_source = SCRIPT.read_text()

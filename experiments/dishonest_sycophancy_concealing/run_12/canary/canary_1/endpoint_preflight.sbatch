@@ -23,10 +23,18 @@ import tempfile
 import time
 import urllib.request
 
-from aar.autodata_target_binding import load_binding
+from aar.autodata_campaign_policy import target_environment_from_manifest
 
-binding = load_binding(pathlib.Path(sys.argv[1]))
-endpoint = binding.endpoint
+binding_path = pathlib.Path(sys.argv[1])
+binding = json.loads(binding_path.read_text())
+target_environment = target_environment_from_manifest(binding_path)
+endpoint = {
+    "url": target_environment["AUTODATA_TARGET_URL"],
+    "model": target_environment["AUTODATA_TARGET_MODEL"],
+    "deployment_id": target_environment["AUTODATA_TARGET_DEPLOYMENT_ID"],
+}
+if target_environment.get("AUTODATA_TARGET_HOST_HEADER"):
+    endpoint["host_header"] = target_environment["AUTODATA_TARGET_HOST_HEADER"]
 headers = {"X-Deployment-Id": endpoint["deployment_id"]}
 if endpoint.get("host_header"):
     headers["Host"] = endpoint["host_header"]
@@ -70,9 +78,9 @@ if not isinstance(choices, list) or not choices:
 report = {
     "schema": "aar.autodata.adapter-target-preflight/v1",
     "success": True,
-    "target_iteration": binding.value["iteration"],
-    "target_incumbent_run_id": binding.value["incumbent_run_id"],
-    "target_checkpoint_hash": binding.checkpoint_hash,
+    "target_iteration": binding["iteration"],
+    "target_incumbent_run_id": binding.get("incumbent_run_id"),
+    "target_checkpoint_hash": target_environment["AUTODATA_TARGET_CHECKPOINT_HASH"],
     "target_model": endpoint["model"],
     "target_deployment_id": endpoint["deployment_id"],
     "request_id": request_id,

@@ -26,7 +26,8 @@ from aar.autodata_capacity_profile import (
     apply_profile_to_args,
     load_capacity_profile,
 )
-from aar.autodata_target_binding import TargetBinding, load_binding
+from aar.autodata_campaign_policy import target_environment_from_manifest
+from aar.autodata_target_binding import TargetBinding
 
 
 DEFAULT_IMAGE = (
@@ -81,6 +82,39 @@ class _RecipeContract:
     output_path: str
     timeout_seconds: int
     schema: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _LoadedTargetManifest:
+    value: dict[str, Any]
+    environment: dict[str, str]
+
+    @property
+    def checkpoint_hash(self) -> str:
+        return self.environment["AUTODATA_TARGET_CHECKPOINT_HASH"]
+
+    @property
+    def endpoint(self) -> dict[str, str]:
+        endpoint = self.value.get("endpoint")
+        if not isinstance(endpoint, dict):
+            raise RuntimeError("target manifest endpoint is malformed")
+        return dict(endpoint)
+
+    def solve_environment(self) -> dict[str, str]:
+        return dict(self.environment)
+
+
+def _load_target_manifest(path: Path) -> _LoadedTargetManifest:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise RuntimeError("target manifest is unreadable") from error
+    if not isinstance(value, dict):
+        raise RuntimeError("target manifest must be a JSON object")
+    return _LoadedTargetManifest(
+        value=value,
+        environment=target_environment_from_manifest(path),
+    )
 
 
 def _decimal(value: str) -> Decimal:
@@ -343,7 +377,8 @@ def _task_input(*, target_aware: bool = False) -> dict[str, Any]:
 
 
 def _model_environment(
-    args: argparse.Namespace, target_binding: TargetBinding | None = None
+    args: argparse.Namespace,
+    target_binding: TargetBinding | _LoadedTargetManifest | None = None,
 ) -> dict[str, str]:
     if args.campaign_policy is not None:
         try:
@@ -424,7 +459,7 @@ def _validate_task_result(
     schema: dict[str, Any],
     *,
     rates: dict[str, tuple[Decimal, Decimal]],
-    target_binding: TargetBinding | None = None,
+    target_binding: TargetBinding | _LoadedTargetManifest | None = None,
     require_accepted: bool = True,
 ) -> list[dict[str, Any]]:
     # This focused validator covers every keyword in the checked-in task-result
@@ -475,18 +510,25 @@ def _validate_task_result(
     if target_binding is not None:
         full_expected.append(("target", target_binding.endpoint["model"]))
     full_expected.append(("judge", JUDGE_MODEL))
+    maximum_expected = [*full_expected, ("judge", JUDGE_MODEL)]
     if outcome == "succeeded":
-        expected = full_expected
+        expected = (
+            maximum_expected
+            if isinstance(usage, list) and len(usage) == len(maximum_expected)
+            else full_expected
+        )
     elif not require_accepted and isinstance(usage, list):
-        if not 1 <= len(usage) <= len(full_expected):
+        if not 1 <= len(usage) <= len(maximum_expected):
             raise RuntimeError(
                 "failed model-backed canary retained an invalid provider-call count"
             )
-        expected = full_expected[: len(usage)]
+        expected = maximum_expected[: len(usage)]
     else:
         expected = full_expected
     if not isinstance(usage, list) or len(usage) != len(expected):
-        count_name = {2: "two", 3: "three"}.get(len(expected), str(len(expected)))
+        count_name = {2: "two", 3: "three", 4: "four"}.get(
+            len(expected), str(len(expected))
+        )
         raise RuntimeError(
             f"model-backed canary must retain exactly {count_name} provider calls"
         )
@@ -664,7 +706,9 @@ def run(args: argparse.Namespace, *, runtime: _Runtime | None = None) -> dict[st
     runtime = runtime or _load_runtime()
     token = _read_owned_token(args.broker_auth_token_file)
     target_binding = (
-        load_binding(args.target_binding) if args.target_binding is not None else None
+        _load_target_manifest(args.target_binding)
+        if args.target_binding is not None
+        else None
     )
     campaign_policy: dict[str, Any] | None = None
     if args.campaign_policy is not None:
@@ -835,7 +879,9 @@ def run(args: argparse.Namespace, *, runtime: _Runtime | None = None) -> dict[st
                     "schema": "aar.autodata.adapter-target-canary/v1",
                     "target_binding_checkpoint_hash": target_binding.checkpoint_hash,
                     "target_iteration": target_binding.value["iteration"],
-                    "target_incumbent_run_id": target_binding.value["incumbent_run_id"],
+                    "target_incumbent_run_id": target_binding.value.get(
+                        "incumbent_run_id"
+                    ),
                     "target_model": target_binding.endpoint["model"],
                     "target_deployment_id": target_binding.endpoint["deployment_id"],
                     "accepted_row_count": len(result["generated_items"]),

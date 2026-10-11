@@ -73,7 +73,7 @@ PYTHONPATH="${CANARY_PYTHONPATH}" "${REPO}/.venv/bin/python" \
   "${REPO}/scripts/autodata_model_broker_canary.py" \
   --broker-url "${broker_url}" \
   --broker-auth-token-file "${CAPABILITY_FILE}" \
-  --recipe-root "${REPO}/aar/autodata_recipes/dishonest_sycophancy_concealing" \
+  --recipe-root "${AAR_AUTODATA_RECIPE_ROOT:?}" \
   --campaign-policy "${AAR_AUTODATA_CAMPAIGN_POLICY:?}" \
   --target-binding "${BINDING}" \
   --output "${ROOT}/canary-report.json" \
@@ -88,11 +88,12 @@ import sys
 
 root = pathlib.Path(sys.argv[1])
 report = json.loads((root / "canary-report.json").read_text())
-if not report.get("success") or report.get("provider_call_count") != 3:
-    raise SystemExit("target-aware canary did not record three provider calls")
-if [call.get("role") for call in report["provider_usage"]] != [
-    "generator", "target", "judge"
-]:
+roles = [call.get("role") for call in report["provider_usage"]]
+if not report.get("success") or len(roles) not in {3, 4}:
+    raise SystemExit("target-aware canary did not record bounded provider calls")
+if roles[:2] != ["generator", "target"] or any(
+    role != "judge" for role in roles[2:]
+):
     raise SystemExit("target-aware canary provider order is invalid")
 timing = {
     "schema": "aar.autodata.adapter-target-timing/v1",

@@ -22,6 +22,7 @@ RUN7_ROOT="/checkpoint/ram/aar/${USER}/honesty-sycophancy-concealing-gemma4-31b-
 ADAPTER_CHECKPOINT="${AAR_RUN12_ADAPTER_CHECKPOINT:-${RUN7_ROOT}/aar_teams/honesty-sycophancy-concealing-gemma4_31b-opus48-fiveagent-vllm-run7-v0/submissions/${INCUMBENT_RUN_ID}/model}"
 MERGED_CHECKPOINT="${AAR_RUN12_MERGED_CHECKPOINT:-${RUN7_ROOT}/merged_candidates/${INCUMBENT_RUN_ID}}"
 TARGET_ITERATION="${AAR_RUN12_TARGET_ITERATION:-2}"
+TARGET_KIND="${AAR_RUN12_TARGET_KIND:-adapter}"
 PROFILE_CONFIG="${AAR_RUN12_AUTODATA_PROFILE_CONFIG:-${REPO}/configs/autodata/target_aware_local_v1.yaml}"
 RUN_CONFIG="${AAR_RUN12_AUTODATA_CANARY_CONFIG:-${SCRIPT_DIR}/autodata_canary.yaml}"
 
@@ -29,6 +30,7 @@ RUN_CONFIG="${AAR_RUN12_AUTODATA_CANARY_CONFIG:-${SCRIPT_DIR}/autodata_canary.ya
 git -C "${REPO}" diff --quiet && git -C "${REPO}" diff --cached --quiet || { echo "tracked AAR worktree is dirty" >&2; exit 2; }
 [ -x "${REPO}/.venv/bin/python" ] || { echo "missing HPC AAR environment" >&2; exit 2; }
 [ -x "${BROKER_PYTHON}" ] || { echo "missing broker Python" >&2; exit 2; }
+case "${TARGET_KIND}" in base|adapter) ;; *) echo "invalid target kind" >&2; exit 2;; esac
 config_json="$(PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_run_config inspect \
   --profile "${PROFILE_CONFIG}" --run "${RUN_CONFIG}")"
 [ "$(jq -r '.target_enabled' <<<"${config_json}")" = true ] || {
@@ -62,18 +64,26 @@ if [ "${ACTION}" = preflight ]; then
   mkdir -p "${root}/secrets"
   chmod 700 "${root}" "${root}/secrets"
   binding="${root}/target-binding.json"
-  PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_target_binding create \
-    --iteration "${TARGET_ITERATION}" \
-    --chain-id canary \
-    --incumbent-run-id "${INCUMBENT_RUN_ID}" \
-    --base-checkpoint "${BASE_CHECKPOINT}" \
-    --adapter-checkpoint "${ADAPTER_CHECKPOINT}" \
-    --merged-checkpoint "${MERGED_CHECKPOINT}" \
-    --target-url "${TARGET_URL}" \
-    --target-host-header "${TARGET_HOST_HEADER}" \
-    --target-model "${TARGET_MODEL}" \
-    --target-deployment-id "${TARGET_DEPLOYMENT_ID}" \
-    --output "${binding}"
+  if [ "${TARGET_KIND}" = base ]; then
+    PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_campaign_policy create-base-target \
+      --iteration 1 --chain-id canary --base-checkpoint "${BASE_CHECKPOINT}" \
+      --target-url "${TARGET_URL}" --target-host-header "${TARGET_HOST_HEADER}" \
+      --target-model "${TARGET_MODEL}" --target-deployment-id "${TARGET_DEPLOYMENT_ID}" \
+      --output "${binding}"
+  else
+    PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_target_binding create \
+      --iteration "${TARGET_ITERATION}" \
+      --chain-id canary \
+      --incumbent-run-id "${INCUMBENT_RUN_ID}" \
+      --base-checkpoint "${BASE_CHECKPOINT}" \
+      --adapter-checkpoint "${ADAPTER_CHECKPOINT}" \
+      --merged-checkpoint "${MERGED_CHECKPOINT}" \
+      --target-url "${TARGET_URL}" \
+      --target-host-header "${TARGET_HOST_HEADER}" \
+      --target-model "${TARGET_MODEL}" \
+      --target-deployment-id "${TARGET_DEPLOYMENT_ID}" \
+      --output "${binding}"
+  fi
   export AAR_REPO="${REPO}" AAR_RUN12_ROOT="${root}" AAR_RUN12_TARGET_BINDING="${binding}"
   job_id="$(sbatch --parsable --output="${root}/preflight-%j.out" --export=ALL "${SCRIPT_DIR}/endpoint_preflight.sbatch")"
   printf 'phase=preflight\njob_id=%s\nroot=%s\naar_git_commit=%s\ntarget_deployment_id=%s\n' \
@@ -93,7 +103,9 @@ case "${root}" in
 esac
 binding="${root}/target-binding.json"
 [ -f "${root}/preflight.json" ] || { echo "endpoint preflight has not passed" >&2; exit 2; }
-PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_target_binding validate "${binding}" >/dev/null
+PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -c \
+  'import pathlib,sys; from aar.autodata_campaign_policy import target_environment_from_manifest; target_environment_from_manifest(pathlib.Path(sys.argv[1]))' \
+  "${binding}"
 [ -f "${SECRET_ENV}" ] && [ "$(stat -c %a "${SECRET_ENV}")" = 600 ] || { echo "secret env must be mode 600" >&2; exit 2; }
 export AAR_REPO="${REPO}" HARNESS_ENV="${SECRET_ENV}"
 source "${REPO}/scripts/aar_runtime_env.sh"
