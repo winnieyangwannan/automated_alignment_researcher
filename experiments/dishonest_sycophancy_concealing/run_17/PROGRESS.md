@@ -59,3 +59,15 @@ over direct Git-over-SSH to a unique temporary `refs/aar-sync/` ref, require an
 ancestor-verified fast-forward, check every incoming path against preserved HPC
 local state, verify the final branch and SHA, and delete only that temporary
 ref. GitHub is not part of this transfer.
+
+<a id="run17-event-proof-path-correction"></a>
+
+### ⚠️ 15:31 PT — CORRECTED: pinned AutoData checkout materialized
+
+The first proof command stopped before Slurm submission because its expected
+AutoData worktree path did not exist on HPC. No attempt or job was created. The
+exact clean AutoData commit `28a9c22125dc0cf101ebabc1b22408b4e974678a`
+was transferred directly from its clean devserver worktree and materialized as
+the detached HPC worktree
+`/storage/home/winnieyangwn/autodata-worktrees/judge-repair-28a9c22`, restoring
+the source-pinned path already enforced by the launch wrappers.

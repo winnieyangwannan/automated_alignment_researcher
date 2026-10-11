@@ -41,3 +41,13 @@ validated focused suite completed with 105 tests and 10 subtests passing.
 Jobs: none. Attempt: not created. Evidence: local test output only. Decision:
 commit and synchronize; do not submit the broker proof or main canary before
 explicit confirmation of the full model-role mapping.
+
+<a id="run17-canary2-event-proof-path-correction"></a>
+
+### ⚠️ 15:31 PT — CORRECTED: proof stopped before submission
+
+The confirmed proof command failed closed before creating an attempt or Slurm
+job because the configured pinned AutoData checkout path was absent on HPC.
+The required clean commit was transferred and materialized at
+`/storage/home/winnieyangwn/autodata-worktrees/judge-repair-28a9c22`, restoring
+the exact path enforced by the wrapper. Retry is authorized after revalidation.
