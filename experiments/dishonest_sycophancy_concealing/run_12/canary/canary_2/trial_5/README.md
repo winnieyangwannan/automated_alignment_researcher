@@ -2,10 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: first launcher failed closed; immutable-source repair validated;
-  relaunch gates in progress
+- Status: fresh immutable-source attempt launched; launcher queued
 - Created: 2026-10-11 01:01 PT
-- Last updated: 2026-10-11 01:49 PT
+- Last updated: 2026-10-11 01:55 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -85,6 +84,19 @@ checkout advanced during its Slurm queue wait. The preserved attempt is
 terminal preflight evidence, not a partial optimization. Trial 5 will relaunch
 as a fresh attempt after the immutable-source repair is committed,
 synchronized, and validated on HPC.
+
+The repair was committed as `2dde96057ffa8d3ba6a6a35f0225583b074df08a`,
+passed the exact HPC gate, and launched a fresh attempt at 01:55 PT:
+
+- Attempt: `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T085409Z-2dde96057ffa`
+- Launcher job: `1812713`
+- AAR source snapshot: exact `2dde96057ffa8d3ba6a6a35f0225583b074df08a`
+- Native source snapshot: exact `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`
+- Snapshot manifest digest:
+  `sha256:c03b99b063e95507f9cf0214222bbcf7fba458daaaaeda4e870d2a7e4f63d2f3`
+
+The launcher was `PENDING` at the first snapshot. No research, controller,
+training, or evaluator child existed yet.
 
 ### Mandatory pre-launch gates
 

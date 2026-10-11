@@ -228,3 +228,32 @@ Validation passed:
 The repair remains uncommitted at this event. Next gates are a focused commit,
 exact HPC synchronization, HPC regression, runtime preflight, and fresh Trial 5
 launch.
+
+### ✅ 01:53 PT — PASS: exact HPC immutable-source regression gate
+
+AAR commit `2dde96057ffa8d3ba6a6a35f0225583b074df08a` was transferred directly and
+fast-forwarded from `34ad5a5cc66e…` into the clean HPC `autodata` worktree.
+The temporary transfer ref was removed; GitHub was not used. Slurm job
+`1812667` completed `0:0` in 29 seconds with 258 tests and 5 subtests passing.
+
+The final live preflight then verified clean exact AAR and native revisions,
+mode-600 required secrets without printing values, the fixed checkpoint, all
+three model endpoints, and the unchanged Trial 5 contract.
+
+### ⏳ 01:55 PT — RUNNING: fresh immutable-source Trial 5 attempt launched
+
+The committed wrapper created and validated independent AAR and native
+AutoData source snapshots, copied and reverified the public/recovery inputs,
+and passed a fresh Kimi Bash-plus-MCP round trip. It submitted:
+
+- attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T085409Z-2dde96057ffa`;
+- launcher job: `1812713`, initially `PENDING`;
+- AAR snapshot commit: `2dde96057ffa8d3ba6a6a35f0225583b074df08a`;
+- native snapshot commit: `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`;
+- source manifest digest:
+  `sha256:c03b99b063e95507f9cf0214222bbcf7fba458daaaaeda4e870d2a7e4f63d2f3`.
+
+No research, controller, training, or evaluator job existed at the first
+snapshot. The evaluator remains forbidden and the stop boundary remains
+verified `training_smoke`.

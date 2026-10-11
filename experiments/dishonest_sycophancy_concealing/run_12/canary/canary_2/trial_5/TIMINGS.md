@@ -5,14 +5,16 @@ prompts, target responses, credentials, or held-out content belong here.
 
 ## Attempt identity
 
-- Status at 2026-10-11 01:49 PT: first launcher attempt failed closed on
-  shared-checkout commit drift; immutable-source repair locally validated and
-  awaiting commit/HPC gates.
+- Status at 2026-10-11 01:55 PT: fresh immutable-source launcher job `1812713`
+  queued; no child jobs yet.
 - Native AutoData commit: `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`.
 - AAR source commit: `4e57c7fe07acd13e0b1e6cd94ca5bcdf09e751d9`.
 - Attempt root: `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T083852Z-4e57c7fe07ac`.
 - Launcher job: `1812591`, submitted 01:39:25 PT.
 - Research, controller, AutoData, training, and evaluator jobs: none.
+- Fresh attempt root:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T085409Z-2dde96057ffa`.
+- Fresh launcher job: `1812713`, submitted 01:55 PT and initially `PENDING`.
 
 ## Current lifecycle
 
@@ -53,6 +55,12 @@ prompts, target responses, credentials, or held-out content belong here.
 - 01:49 PT: immutable AAR/AutoData snapshots, attempt-local public/recovery
   inputs, detached-commit preflight support, and regression coverage passed 258
   expanded tests plus 5 subtests and 115 adjacent tests plus 15 subtests.
+- 01:52:41–01:53:10 PT: exact HPC regression job `1812667` passed 258 tests
+  plus 5 subtests with exit `0:0`.
+- 01:54–01:55 PT: exact source/secret/checkpoint/config and three-endpoint live
+  preflight passed; fresh Kimi Bash-plus-MCP proof passed.
+- 01:55 PT: fresh Trial 5 attempt created with independent AAR and native
+  snapshots; launcher job `1812713` submitted and initially queued.
 
 ## Work and quality counters
 
@@ -66,5 +74,5 @@ prompts, target responses, credentials, or held-out content belong here.
 
 ## Unmeasured stages
 
-Downstream runtime stages remain unmeasured because launcher job `1812591`
-stopped before creating any child. A fresh attempt will be used after repair.
+Downstream runtime stages remain unmeasured until fresh launcher job `1812713`
+starts and records its child jobs.
