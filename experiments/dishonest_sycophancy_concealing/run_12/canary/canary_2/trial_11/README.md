@@ -53,6 +53,9 @@ applies.
   FAIR's `/home` and `/storage/home` aliases.
 - `9f81cda`: refresh the durable supervisor heartbeat throughout long native
   steps without weakening timeouts, semantic-stall detection, or cleanup.
+- Prelaunch hardening after `9f81cda`: serialize status writes and extend the
+  same heartbeat guarantee across workspace reconciliation, meta-to-production
+  and production-to-handoff transitions, and idle/retry waits.
 
 ## Launch
 

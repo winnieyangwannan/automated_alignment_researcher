@@ -31,3 +31,14 @@ All displayed timestamps use Pacific Time (`PT`).
 ○ Production and verified handoff
 ○ One-step training smoke
 ```
+
+## Prelaunch hardening
+
+- 04:42 PT: independent review found uncovered heartbeat risk in synchronous
+  reconciliation/transition work and configurable idle/retry waits.
+- Trial 11 submission remained held; jobs and attempt roots created: 0.
+- Generalized heartbeat and serialized shutdown validation: 119 tests plus 6
+  subtests passed locally.
+- Broader AutoData/Run 12 validation: 326 tests plus 6 subtests passed; one
+  unrelated test failed because user-owned dirty state deletes its Run 13
+  fixture tree.

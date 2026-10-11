@@ -761,6 +761,189 @@ def test_long_native_step_refreshes_supervisor_heartbeat(
     assert all(value.get("phase") == "final_pending" for value in stepping)
 
 
+def test_synchronous_host_work_refreshes_supervisor_heartbeat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = lifecycle_supervisor.Supervisor(
+        Namespace(status_file=tmp_path / "status.json")
+    )
+    writes: list[dict[str, object]] = []
+    monkeypatch.setattr(lifecycle_supervisor, "DEFAULT_STATUS_HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_atomic_json",
+        lambda _path, value: writes.append(value),
+    )
+
+    result = supervisor._call_with_status_heartbeat(
+        lambda: lifecycle_supervisor.time.sleep(0.04),
+        state="reconciling",
+        subject_kind="execution",
+        subject_id="exe_long_transition",
+    )
+
+    assert result is None
+    reconciling = [value for value in writes if value["state"] == "reconciling"]
+    assert len(reconciling) >= 3
+    assert all(
+        value.get("subject_id") == "exe_long_transition" for value in reconciling
+    )
+
+
+def test_long_idle_sleep_refreshes_supervisor_heartbeat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = lifecycle_supervisor.Supervisor(
+        Namespace(status_file=tmp_path / "status.json")
+    )
+    writes: list[dict[str, object]] = []
+    monkeypatch.setattr(lifecycle_supervisor, "DEFAULT_STATUS_HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_atomic_json",
+        lambda _path, value: writes.append(value),
+    )
+
+    supervisor._sleep_with_status_heartbeat(0.04, state="idle")
+
+    idle = [value for value in writes if value["state"] == "idle"]
+    assert len(idle) >= 3
+
+
+def test_signal_handler_does_not_reenter_atomic_status_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = lifecycle_supervisor.Supervisor(
+        Namespace(status_file=tmp_path / "status.json")
+    )
+    writes: list[dict[str, object]] = []
+
+    def atomic_write(_path: Path, value: dict[str, object]) -> None:
+        if not writes:
+            supervisor._signal(signal.SIGTERM, None)
+        writes.append(value)
+
+    monkeypatch.setattr(lifecycle_supervisor, "_atomic_json", atomic_write)
+
+    supervisor._write_status(state="running")
+
+    assert supervisor.stop_requested is True
+    assert supervisor.stop_signal == signal.SIGTERM
+    assert [value["state"] for value in writes] == ["running"]
+
+
+def test_run_serially_publishes_signal_stop_states(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = lifecycle_supervisor.Supervisor(
+        Namespace(
+            status_file=tmp_path / "status.json",
+            lock_file=tmp_path / "supervisor.lock",
+            state=tmp_path / "state.db",
+            retained_state=tmp_path / "retained.db",
+        )
+    )
+    writes: list[dict[str, object]] = []
+    supervisor.stop_requested = True
+    supervisor.stop_signal = signal.SIGTERM
+    monkeypatch.setattr(supervisor, "_lock", lambda: None)
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "snapshot_database",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(lifecycle_supervisor.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_atomic_json",
+        lambda _path, value: writes.append(value),
+    )
+
+    assert supervisor.run() == 0
+    assert [value["state"] for value in writes] == [
+        "starting",
+        "stopping",
+        "stopped",
+    ]
+    assert writes[-1]["signal"] == signal.SIGTERM
+
+
+@pytest.mark.parametrize(
+    ("workspace_id", "transition", "expected_kind", "expected_id"),
+    [
+        ("ws_long", None, "workspace", "ws_long"),
+        (None, ("exe_long", "meta_optimize"), "execution", "exe_long"),
+    ],
+)
+def test_run_wraps_every_reconciliation_edge_with_heartbeat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    workspace_id: str | None,
+    transition: tuple[str, str] | None,
+    expected_kind: str,
+    expected_id: str,
+) -> None:
+    args = Namespace(
+        state=tmp_path / "state.db",
+        retained_state=tmp_path / "retained.db",
+        control_file=tmp_path / "control.json",
+        status_file=tmp_path / "status.json",
+        lock_file=tmp_path / "supervisor.lock",
+        error_backoff_seconds=0,
+        poll_seconds=0.01,
+        production_timeout_seconds=60,
+        stage_timeout_policy="enforce",
+    )
+    supervisor = lifecycle_supervisor.Supervisor(args)
+    calls: list[dict[str, object]] = []
+
+    def wrapped(operation, **status_fields):
+        calls.append(status_fields)
+        return operation()
+
+    def finish_reconciliation(*_args):
+        supervisor.stop_requested = True
+        return {"transition": "complete"}
+
+    monkeypatch.setattr(supervisor, "_lock", lambda: None)
+    monkeypatch.setattr(
+        supervisor,
+        "_snapshot",
+        lambda _reason, **_kwargs: None,
+    )
+    monkeypatch.setattr(supervisor, "_write_status", lambda **_fields: None)
+    monkeypatch.setattr(supervisor, "_call_with_status_heartbeat", wrapped)
+    monkeypatch.setattr(lifecycle_supervisor.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_frozen_registered_workspace",
+        lambda *_args: workspace_id,
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_pending_completed_execution_transition",
+        lambda *_args: transition,
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "reconcile_frozen_workspace",
+        finish_reconciliation,
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "reconcile_completed_execution_transition",
+        finish_reconciliation,
+    )
+
+    assert supervisor.run() == 0
+    assert any(
+        call.get("state") == "reconciling"
+        and call.get("subject_kind") == expected_kind
+        and call.get("subject_id") == expected_id
+        for call in calls
+    )
+
+
 def test_supervisor_stops_repeated_failure_despite_database_mtime_progress(
     tmp_path: Path,
 ) -> None:

@@ -38,3 +38,25 @@ exact `3/3/3`, disjoint `64/32/32`, concurrency 32, 1,250→1,000 production,
 
 Next: commit and synchronize the Trial 11 records, launch through the committed
 submitter, and monitor through verified `training_smoke`.
+
+### 🛠️ 04:42 PT — FIX: generalized heartbeat coverage before launch
+
+Independent review found that the initial repair covered the observed native
+step but not every adjacent synchronous path. Trial 11 was held before `sbatch`.
+The supervisor now:
+
+- refreshes status during frozen-workspace reconciliation;
+- pre-detects and refreshes status throughout meta-to-production and
+  production-to-handoff transitions;
+- refreshes status during arbitrary idle and retry backoffs;
+- serializes concurrent status writes and fails closed if a refresh fails;
+- keeps signal handlers out of the atomic status writer, then publishes
+  `stopping` and `stopped` through the serialized main path after child cleanup;
+- retains the existing native-step timeout, semantic-stall, and bounded cleanup
+  behavior.
+
+Focused validation passes 119 tests plus 6 subtests. The broader AutoData/Run 12
+gate passes 326 tests plus 6 subtests; its sole failure is unrelated user-owned
+dirty state where the Run 13 fixture files are deleted. An independent read-only
+review found no remaining normal-path launch blocker; no Trial 11 job or durable
+attempt exists yet.

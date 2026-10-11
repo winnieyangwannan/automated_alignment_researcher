@@ -91,3 +91,18 @@ bounded at 30+10 seconds. Focused coverage passes: 113 tests plus 6 subtests.
 Next: commit and synchronize this repair, create a fresh Trial 11 from the frozen
 contract, then launch and monitor it through verified `training_smoke` with the
 evaluator disabled.
+
+### 🔎 04:42 PT — OBSERVATION: prelaunch audit widened the repair scope
+
+The first blocking-path review understated the residual risk. Independent
+prelaunch review confirmed that synchronous frozen-workspace reconciliation and
+completed-execution transitions can contain multiple individually bounded calls
+plus unbounded filesystem copies, hashes, and fsyncs whose cumulative runtime
+can exceed 180 seconds. Idle and retry sleeps were also configurable without a
+heartbeat-aware wrapper.
+
+Trial 11 remains unlaunched while the repair is generalized. All synchronous
+reconciliation work and idle/retry waits will receive the same 30-second durable
+heartbeat guarantee as native steps. This correction supersedes the earlier
+claim that the native `step` subprocess was the only path able to exceed the
+liveness SLA.

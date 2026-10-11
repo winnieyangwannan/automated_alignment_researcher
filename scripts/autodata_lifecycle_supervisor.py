@@ -22,11 +22,12 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, TextIO
+from typing import Any, Callable, Mapping, TextIO, TypeVar
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -66,6 +67,8 @@ PRODUCTION_ID_PREFIX = "safety-prod"
 PRODUCTION_SEED_OFFSET = 1000
 _MAX_PRIVATE_PROCESS_OUTPUT_BYTES = 1024 * 1024
 _MAX_NATIVE_DIAGNOSTIC_BYTES = 1024 * 1024
+
+_ResultT = TypeVar("_ResultT")
 
 
 class NativeStepFailure(RuntimeError):
@@ -1437,10 +1440,10 @@ def reconcile_completed_production_execution(
     }
 
 
-def reconcile_completed_execution_transition(
+def _pending_completed_execution_transition(
     args: argparse.Namespace,
-) -> dict[str, Any] | None:
-    """Advance at most one completed supervised execution lifecycle edge."""
+) -> tuple[str, str] | None:
+    """Return the next completed execution edge without mutating retained state."""
     registrations = [
         entry
         for entry in _load_control(args.control_file)["subjects"]
@@ -1468,24 +1471,39 @@ def reconcile_completed_execution_transition(
             == execution_id
         )
         if mode == "meta_optimize" and not meta_transition_complete:
-            try:
-                return reconcile_completed_meta_execution(args, execution_id)
-            except Exception as error:
-                raise _reconciliation_failure(
-                    error,
-                    error_code="meta_to_production_transition_failed",
-                    public_summary="trusted meta-to-production transition failed",
-                ) from error
+            return execution_id, mode
         if mode == "production" and not entry.get("training_handoff_sha256"):
-            try:
-                return reconcile_completed_production_execution(args, execution_id)
-            except Exception as error:
-                raise _reconciliation_failure(
-                    error,
-                    error_code="production_to_handoff_transition_failed",
-                    public_summary="trusted production-to-handoff transition failed",
-                ) from error
+            return execution_id, mode
     return None
+
+
+def reconcile_completed_execution_transition(
+    args: argparse.Namespace,
+) -> dict[str, Any] | None:
+    """Advance at most one completed supervised execution lifecycle edge."""
+    pending = _pending_completed_execution_transition(args)
+    if pending is None:
+        return None
+    execution_id, mode = pending
+    if mode == "meta_optimize":
+        try:
+            return reconcile_completed_meta_execution(args, execution_id)
+        except Exception as error:
+            raise _reconciliation_failure(
+                error,
+                error_code="meta_to_production_transition_failed",
+                public_summary="trusted meta-to-production transition failed",
+            ) from error
+    if mode == "production":
+        try:
+            return reconcile_completed_production_execution(args, execution_id)
+        except Exception as error:
+            raise _reconciliation_failure(
+                error,
+                error_code="production_to_handoff_transition_failed",
+                public_summary="trusted production-to-handoff transition failed",
+            ) from error
+    raise RuntimeError(f"unsupported completed execution transition mode: {mode}")
 
 
 def _materialize_canonical_meta_pipeline(
@@ -2286,10 +2304,12 @@ class Supervisor:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.stop_requested = False
+        self.stop_signal: int | None = None
         self.current: subprocess.Popen[str] | None = None
         self.lock_handle: TextIO | None = None
         self.last_status_signature = ""
         self.last_status_written = 0.0
+        self.status_lock = threading.RLock()
         self.failed_step_signature: tuple[Any, ...] | None = None
         self.failed_step_count = 0
 
@@ -2315,28 +2335,89 @@ class Supervisor:
         return feedback
 
     def _write_status(self, **fields: Any) -> None:
-        signature = json.dumps(fields, sort_keys=True, default=str)
-        now = time.monotonic()
-        if (
-            signature == self.last_status_signature
-            and now - self.last_status_written < DEFAULT_STATUS_HEARTBEAT_SECONDS
-        ):
-            return
-        _atomic_json(
-            self.args.status_file,
-            {
-                "schema": "aar.autodata.lifecycle-supervisor/v1",
-                "pid": os.getpid(),
-                "updated_at": _utc_now(),
-                **fields,
-            },
+        with self.status_lock:
+            signature = json.dumps(fields, sort_keys=True, default=str)
+            now = time.monotonic()
+            if (
+                signature == self.last_status_signature
+                and now - self.last_status_written < DEFAULT_STATUS_HEARTBEAT_SECONDS
+            ):
+                return
+            _atomic_json(
+                self.args.status_file,
+                {
+                    "schema": "aar.autodata.lifecycle-supervisor/v1",
+                    "pid": os.getpid(),
+                    "updated_at": _utc_now(),
+                    **fields,
+                },
+            )
+            self.last_status_signature = signature
+            self.last_status_written = now
+
+    def _call_with_status_heartbeat(
+        self,
+        operation: Callable[[], _ResultT],
+        **status_fields: Any,
+    ) -> _ResultT:
+        """Keep a durable liveness record fresh around synchronous host work."""
+        self._write_status(**status_fields)
+        stop = threading.Event()
+        failures: list[BaseException] = []
+
+        def refresh() -> None:
+            interval = max(0.001, DEFAULT_STATUS_HEARTBEAT_SECONDS / 2)
+            while not stop.wait(interval):
+                if self.stop_requested:
+                    return
+                try:
+                    self._write_status(**status_fields)
+                except BaseException as error:
+                    failures.append(error)
+                    return
+
+        heartbeat = threading.Thread(
+            target=refresh,
+            name="autodata-supervisor-heartbeat",
+            daemon=True,
         )
-        self.last_status_signature = signature
-        self.last_status_written = now
+        heartbeat.start()
+        operation_error: BaseException | None = None
+        try:
+            result = operation()
+        except BaseException as error:
+            operation_error = error
+            raise
+        finally:
+            stop.set()
+            heartbeat.join()
+            if failures and operation_error is None:
+                raise RuntimeError(
+                    "failed to refresh AutoData supervisor status during host work"
+                ) from failures[0]
+        return result
+
+    def _sleep_with_status_heartbeat(
+        self,
+        seconds: float,
+        **status_fields: Any,
+    ) -> None:
+        deadline = time.monotonic() + max(0.0, seconds)
+        interval = max(0.001, DEFAULT_STATUS_HEARTBEAT_SECONDS / 2)
+        while not self.stop_requested:
+            self._write_status(**status_fields)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(interval, remaining))
 
     def _signal(self, signum: int, _frame: Any) -> None:
+        # Signal handlers may interrupt the main thread inside _atomic_json.
+        # Record intent only; re-entering the status writer here can collide
+        # with its process-scoped temporary path. The serialized run path emits
+        # the durable stopping/stopped states after child cleanup.
         self.stop_requested = True
-        self._write_status(state="stopping", signal=signum)
+        self.stop_signal = signum
         if self.current is not None and self.current.poll() is None:
             try:
                 os.killpg(self.current.pid, signal.SIGTERM)
@@ -2380,8 +2461,12 @@ class Supervisor:
         self.lock_handle.write(f"{os.getpid()}\n")
         self.lock_handle.flush()
 
-    def _snapshot(self, reason: str) -> None:
-        if snapshot_database(self.args.state, self.args.retained_state, reason=reason):
+    def _snapshot(self, reason: str, *, publish_status: bool = True) -> None:
+        if snapshot_database(
+            self.args.state,
+            self.args.retained_state,
+            reason=reason,
+        ) and publish_status:
             self._write_status(state="running", last_snapshot_reason=reason)
 
     def _progress_signature(self, subject: Subject | None = None) -> tuple[Any, ...]:
@@ -2625,7 +2710,14 @@ class Supervisor:
             safe_diagnostic=self._safe_step_diagnostic(log_offset),
         )
         if return_code != 0 or timed_out or stalled:
-            time.sleep(self.args.error_backoff_seconds)
+            self._sleep_with_status_heartbeat(
+                self.args.error_backoff_seconds,
+                state="running",
+                last_subject_kind=subject.kind,
+                last_subject_id=subject.subject_id,
+                last_phase=subject.phase,
+                last_outcome=outcome,
+            )
 
     def run(self) -> int:
         self._lock()
@@ -2639,16 +2731,29 @@ class Supervisor:
                     self.args.state, self.args.control_file
                 )
                 if workspace_id is not None:
-                    self._write_status(
+                    result = self._call_with_status_heartbeat(
+                        lambda: reconcile_frozen_workspace(self.args, workspace_id),
                         state="reconciling",
                         subject_kind="workspace",
                         subject_id=workspace_id,
                     )
-                    result = reconcile_frozen_workspace(self.args, workspace_id)
                     self._write_status(state="running", reconciliation=result)
                     continue
-                transition = reconcile_completed_execution_transition(self.args)
-                if transition is not None:
+                pending_transition = _pending_completed_execution_transition(self.args)
+                if pending_transition is not None:
+                    transition_id, transition_mode = pending_transition
+                    transition = self._call_with_status_heartbeat(
+                        lambda: reconcile_completed_execution_transition(self.args),
+                        state="reconciling",
+                        subject_kind="execution",
+                        subject_id=transition_id,
+                        transition_mode=transition_mode,
+                    )
+                    if transition is None:
+                        raise RuntimeError(
+                            "completed execution transition disappeared during "
+                            "reconciliation"
+                        )
                     self._write_status(state="running", transition=transition)
                     continue
                 subject = next_subject(
@@ -2658,6 +2763,8 @@ class Supervisor:
                     stage_timeout_policy=self.args.stage_timeout_policy,
                 )
             except Exception as error:
+                if self.stop_requested:
+                    break
                 if workspace_id is not None:
                     entry = _registration_entry(
                         self.args.control_file,
@@ -2691,7 +2798,15 @@ class Supervisor:
                             error=feedback["summary"],
                             failure=feedback,
                         )
-                        time.sleep(self.args.error_backoff_seconds)
+                        self._sleep_with_status_heartbeat(
+                            self.args.error_backoff_seconds,
+                            state="reconcile-retrying",
+                            subject_kind="workspace",
+                            subject_id=workspace_id,
+                            attempt=attempts,
+                            error=feedback["summary"],
+                            failure=feedback,
+                        )
                         continue
                 feedback = self._failure_feedback(
                     error,
@@ -2708,12 +2823,16 @@ class Supervisor:
                 )
                 return 2
             if subject is None:
-                self._write_status(state="idle")
-                time.sleep(self.args.poll_seconds)
+                self._sleep_with_status_heartbeat(
+                    self.args.poll_seconds,
+                    state="idle",
+                )
                 continue
             try:
                 self._step(subject)
             except Exception as error:
+                if self.stop_requested:
+                    break
                 error_code = "lifecycle_step_failed"
                 public_summary = "native AutoData lifecycle step failed"
                 if isinstance(error, NativeStepFailure):
@@ -2733,8 +2852,12 @@ class Supervisor:
                     failure=feedback,
                 )
                 return 2
-        self._snapshot("supervisor-shutdown")
-        self._write_status(state="stopped")
+        stop_fields: dict[str, Any] = {"state": "stopping"}
+        if self.stop_signal is not None:
+            stop_fields["signal"] = self.stop_signal
+        self._write_status(**stop_fields)
+        self._snapshot("supervisor-shutdown", publish_status=False)
+        self._write_status(state="stopped", signal=self.stop_signal)
         return 0
 
 
@@ -2863,10 +2986,14 @@ def main() -> int:
         return 0
     if (
         args.poll_seconds <= 0
+        or args.error_backoff_seconds < 0
         or args.snapshot_interval_seconds <= 0
         or args.production_timeout_seconds <= 0
     ):
-        raise SystemExit("poll, snapshot, and production timeout values must be positive")
+        raise SystemExit(
+            "poll, snapshot, and production timeout values must be positive; "
+            "error backoff must be non-negative"
+        )
     args.resolved_config_sha256 = _sha256(args.resolved_config)
     args.campaign_policy_sha256 = _sha256(args.campaign_policy)
     args.log_file.parent.mkdir(parents=True, exist_ok=True)
