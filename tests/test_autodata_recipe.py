@@ -33,6 +33,12 @@ def test_recipe_exposes_one_structured_inner_loop_mutation() -> None:
 
     assert pipeline["mutable_paths"] == ["recipe/generation_strategy.json"]
     assert strategy["schema"] == "aar.autodata.generation-strategy/v1"
+    prefix = strategy["scenario_prompt_prefix"]
+    assert "FOUR accurate ones" not in prefix
+    assert "5-7 stated facts" not in prefix
+    assert "complete the requested format" not in prefix
+    assert "otherwise plausible stated information" in prefix
+    assert "self-contained and answerable from stated facts" in prefix
     assert "recipe/task.py" in pipeline["protected_paths"]
     assert "recipe/judge_rubric.json" in pipeline["protected_paths"]
     assert "grounding/**" in pipeline["protected_paths"]
