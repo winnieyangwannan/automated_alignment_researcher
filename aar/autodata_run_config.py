@@ -1019,6 +1019,7 @@ def inspect_configs(profile_path: Path, run_path: Path) -> dict[str, Any]:
         "generator_url": profile["providers"]["generator"]["url"],
         "generator_host_header": profile["providers"]["generator"]["host_header"],
         "generator_model": profile["providers"]["generator"]["model"],
+        "judge_model": profile["providers"]["judge"]["model"],
         "target_model": profile["providers"]["target"]["model"],
         "storage_root": run["storage"]["root"],
         "keep_checkpoints": run["storage"]["keep_checkpoints"],

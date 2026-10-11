@@ -162,6 +162,7 @@ class ModelBrokerCanaryTest(unittest.TestCase):
         _FakeBrokerClient.instances.clear()
         _FakeBrokerJobSpec.captured = None
         generator = _usage("kimi-request", "generator", "Kimi-K2.6", 10, 5, "0.00003")
+        generator["deployment_id"] = "winnieyangwn-kimi26"
         judge = _usage("luna-request", "judge", "gpt-5-6-luna", 20, 7, "0.000048")
         _FakeBrokerClient.result = {
             "schema": "autodata.task-result/v1",
@@ -267,6 +268,26 @@ class ModelBrokerCanaryTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "provenance"):
             self.module._validate_task_result(wrong, contract.schema, rates=rates)
 
+        wrong_deployment = json.loads(json.dumps(_FakeBrokerClient.result))
+        wrong_deployment["provider_usage"][0]["deployment_id"] = "wrong-deployment"
+        wrong_deployment["generated_items"][0]["_autodata_usage"] = (
+            wrong_deployment["provider_usage"]
+        )
+        with self.assertRaisesRegex(RuntimeError, "generator deployment provenance"):
+            self.module._validate_task_result(
+                wrong_deployment, contract.schema, rates=rates
+            )
+
+        missing_deployment = json.loads(json.dumps(_FakeBrokerClient.result))
+        del missing_deployment["provider_usage"][0]["deployment_id"]
+        missing_deployment["generated_items"][0]["_autodata_usage"] = (
+            missing_deployment["provider_usage"]
+        )
+        with self.assertRaisesRegex(RuntimeError, "usage record is malformed"):
+            self.module._validate_task_result(
+                missing_deployment, contract.schema, rates=rates
+            )
+
     def test_rejects_judge_rejected_or_invalid_sample(self):
         contract = self.module._read_recipe_contract(RECIPE)
         rates = {
@@ -346,6 +367,7 @@ class ModelBrokerCanaryTest(unittest.TestCase):
             generator = _usage(
                 "kimi-request", "generator", "Kimi-K2.6", 10, 5, "0.00003"
             )
+            generator["deployment_id"] = "winnieyangwn-kimi26"
             target = _usage("gemma-request", "target", "gemma-4-31B-it", 30, 8, "0")
             target.update(
                 {

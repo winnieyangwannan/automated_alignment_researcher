@@ -65,6 +65,43 @@ def test_recipe_timeouts_cover_final_judge_repair_envelope() -> None:
         assert pipeline["commands"]["task"]["timeout_seconds"] >= 5 * 4 * 90
 
 
+@pytest.mark.parametrize(
+    "recipe_name",
+    ["dishonest_sycophancy_concealing", "dishonest_sycophancy_concealing_v1"],
+)
+@pytest.mark.parametrize("role", ["generator", "target"])
+def test_token_ceiling_errors_retain_routing_provenance(
+    recipe_name: str, role: str
+) -> None:
+    task = _load_module(
+        f"aar_autodata_{recipe_name}_{role}_ceiling_provenance",
+        ROOT / "aar" / "autodata_recipes" / recipe_name / "recipe" / "task.py",
+    )
+    kwargs = {"deployment_id": f"{role}-deployment"}
+    if role == "target":
+        kwargs["checkpoint_hash"] = "sha256:" + "a" * 64
+
+    with pytest.raises(task.MeteredCallError) as raised:
+        task._usage(
+            {
+                "id": f"{role}-request",
+                "usage": {"prompt_tokens": 11, "completion_tokens": 1},
+            },
+            role=role,
+            model=f"{role}-model",
+            input_rate=task.Decimal("1"),
+            output_rate=task.Decimal("4"),
+            max_input_tokens=10,
+            max_output_tokens=10,
+            **kwargs,
+        )
+
+    usage = raised.value.usage
+    assert usage["deployment_id"] == f"{role}-deployment"
+    if role == "target":
+        assert usage["checkpoint_hash"] == "sha256:" + "a" * 64
+
+
 def test_v1_recipe_reports_safe_structured_unsupported_field_error() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         recipe = Path(temporary) / "recipe"

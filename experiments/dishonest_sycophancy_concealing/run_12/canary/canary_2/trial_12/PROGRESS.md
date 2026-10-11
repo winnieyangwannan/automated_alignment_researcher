@@ -98,3 +98,21 @@ the shared campaign policy, and permits the bounded second Luna usage record
 introduced by the judge-format repair. Focused validation passes: 62 Python
 tests, shell syntax checks, and whitespace checks. A new current-target proof
 will be generated before creating a fresh Trial 12 attempt.
+
+### ⏳ 15:09 PT — REPAIRED: provider proof identity contract
+
+Fresh endpoint preflight job `1819999` passed against retained deployment
+`winnieyangwn-r12-alpha-i1-c0dab4f7`. Provider canary job `1820087` then made
+successful Kimi, Gemma, and Luna calls but failed closed before Trial 12 launch:
+the proof validator incorrectly rejected the generator's required
+`deployment_id` as an extra field. The failed proof attempt is retained under
+`/checkpoint/ram/winnieyangwn/aar-runs/run12-adapter-target/20261011T215928Z-dabb748ef749`.
+
+The shared validator now uses role-specific usage contracts and verifies the
+current compiled generator and judge identities. The systematic audit also
+fixed both recipe variants so token-ceiling failures retain generator/target
+routing provenance, and replaced the weak launch-time role-only proof check
+with full cross-file validation of call count, unique request IDs, generator
+deployment, target model/deployment/checkpoint, judge model, and the requested
+reused deployment. Validation passes 154 focused tests plus shell, bytecode,
+and whitespace checks. No Trial 12 attempt has yet been created.

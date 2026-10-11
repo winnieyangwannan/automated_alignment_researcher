@@ -412,6 +412,8 @@ def _usage(
     output_rate: Decimal,
     max_input_tokens: int,
     max_output_tokens: int,
+    deployment_id: str | None = None,
+    checkpoint_hash: str | None = None,
 ) -> dict[str, Any]:
     raw = response.get("usage")
     if not isinstance(raw, dict):
@@ -442,6 +444,10 @@ def _usage(
         "estimated_cost_usd": format(cost, "f"),
         "cost_basis": "operator-configured-token-rates",
     }
+    if deployment_id is not None:
+        usage["deployment_id"] = deployment_id
+    if checkpoint_hash is not None:
+        usage["checkpoint_hash"] = checkpoint_hash
     if input_tokens > max_input_tokens or output_tokens > max_output_tokens:
         raise MeteredCallError(
             f"{role} usage exceeded the operator-pinned token ceiling", usage
@@ -617,9 +623,9 @@ def _probe_target(
             "AUTODATA_TARGET_MAX_INPUT", "196608", maximum=1_000_000
         ),
         max_output_tokens=max_tokens,
+        deployment_id=config["AUTODATA_TARGET_DEPLOYMENT_ID"],
+        checkpoint_hash=config["AUTODATA_TARGET_CHECKPOINT_HASH"],
     )
-    usage["deployment_id"] = config["AUTODATA_TARGET_DEPLOYMENT_ID"]
-    usage["checkpoint_hash"] = config["AUTODATA_TARGET_CHECKPOINT_HASH"]
     try:
         target_response = _generator_text(response).strip()
     except Exception as error:
@@ -716,10 +722,10 @@ def _generate(
             "AUTODATA_GENERATOR_MAX_INPUT", "196608", maximum=1_000_000
         ),
         max_output_tokens=max_tokens,
+        deployment_id=deployment,
     )
     # The request header routes the call, but the durable usage record must
     # independently bind the result to the trusted campaign deployment.
-    usage["deployment_id"] = deployment
     try:
         generated = _json_object(_generator_text(response))
         prompt, answer = generated.get("prompt"), generated.get("response")

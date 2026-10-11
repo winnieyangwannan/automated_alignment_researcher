@@ -270,6 +270,7 @@ def test_inspect_reports_static_yaml_values() -> None:
         "generator_url": "http://fair-cw-use2-1-ingress-slurm-ingress/v1",
         "generator_host_header": "ram-inference-gateway.ingress.",
         "generator_model": "Kimi-K2.6",
+        "judge_model": "gpt-5-6-luna",
         "target_model": "gemma-4-31B-it",
         "storage_root": f"/checkpoint/ram/{os.environ['USER']}",
         "keep_checkpoints": False,

@@ -81,20 +81,20 @@ PYTHONPATH="${CANARY_PYTHONPATH}" "${REPO}/.venv/bin/python" \
   > "${ROOT}/canary.log" 2>&1
 end_ns="$(date +%s%N)"
 
+PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" \
+  "${REPO}/scripts/verify_autodata_canary_proof.py" \
+  --root "${ROOT}" \
+  --generator-model "${AUTODATA_GENERATOR_MODEL:?}" \
+  --generator-deployment-id "${AUTODATA_GENERATOR_DEPLOYMENT_ID:?}" \
+  --judge-model "${AUTODATA_JUDGE_MODEL:?}" \
+  --expected-target-deployment-id "${AUTODATA_TARGET_DEPLOYMENT_ID:?}"
+
 PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" - "${ROOT}" "${start_ns}" "${end_ns}" <<'PY'
 import json
 import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
-report = json.loads((root / "canary-report.json").read_text())
-roles = [call.get("role") for call in report["provider_usage"]]
-if not report.get("success") or len(roles) not in {3, 4}:
-    raise SystemExit("target-aware canary did not record bounded provider calls")
-if roles[:2] != ["generator", "target"] or any(
-    role != "judge" for role in roles[2:]
-):
-    raise SystemExit("target-aware canary provider order is invalid")
 timing = {
     "schema": "aar.autodata.adapter-target-timing/v1",
     "elapsed_seconds": round((int(sys.argv[3]) - int(sys.argv[2])) / 1e9, 3),

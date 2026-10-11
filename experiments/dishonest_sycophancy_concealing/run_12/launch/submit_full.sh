@@ -52,6 +52,8 @@ esac
 CANARY_ROOT="$(realpath -e -- "${AAR_RUN12_CANARY_ROOT:-${RUN12_STORAGE_ROOT}/aar-runs/run12-adapter-target/20261009T150557Z-68f6178b2ac4}")"
 RESEARCHER_DEPLOYMENT="$(jq -r '.researcher_kimi_deployment' <<<"${config_json}")"
 GENERATOR_DEPLOYMENT="$(jq -r '.generator_kimi_deployment' <<<"${config_json}")"
+GENERATOR_MODEL="$(jq -r '.generator_model' <<<"${config_json}")"
+JUDGE_MODEL="$(jq -r '.judge_model' <<<"${config_json}")"
 AGENT_BACKEND="$(jq -r '.agent_backend' <<<"${config_json}")"
 [ "${AGENT_BACKEND}" = kimi ] || { echo "Run 12 requires agent.backend=kimi" >&2; exit 2; }
 export AAR_RUN_STORAGE_ROOT="${RUN12_STORAGE_ROOT}"
@@ -135,18 +137,20 @@ AAR_AUTODATA=1 \
 for proof in preflight.json canary-report.json target-binding.json; do
   [ -s "${CANARY_ROOT}/${proof}" ] || { echo "missing Run 12 canary proof ${proof}" >&2; exit 2; }
 done
-jq -e '
-  .success == true
-  and .broker_status == "SUCCEEDED"
-  and .task_result_outcome == "succeeded"
-  and .task_result_schema_valid == true
-  and (.provider_call_count == 3 or .provider_call_count == 4)
-  and ([.provider_usage[].role][0:2] == ["generator", "target"])
-  and ([.provider_usage[].role][2:] | all(. == "judge"))
-' "${CANARY_ROOT}/canary-report.json" >/dev/null || {
-  echo "Run 12 canary did not prove successful bounded provider routing" >&2
-  exit 2
-}
+proof_args=(
+  --root "${CANARY_ROOT}"
+  --generator-model "${GENERATOR_MODEL}"
+  --generator-deployment-id "${GENERATOR_DEPLOYMENT}"
+  --judge-model "${JUDGE_MODEL}"
+)
+if [ -n "${REUSE_BASE_DEPLOYMENT}" ]; then
+  proof_args+=(--expected-target-deployment-id "${REUSE_BASE_DEPLOYMENT}")
+fi
+PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" \
+  "${REPO}/scripts/verify_autodata_canary_proof.py" "${proof_args[@]}" >/dev/null || {
+    echo "Run 12 canary proof is inconsistent with the launch configuration" >&2
+    exit 2
+  }
 
 export AAR_REPO="${REPO}" HARNESS_ENV="${SECRET_ENV}"
 # shellcheck disable=SC1091

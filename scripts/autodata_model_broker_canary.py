@@ -64,7 +64,8 @@ SAFE_USAGE_FIELDS = {
     "estimated_cost_usd",
     "cost_basis",
 }
-TARGET_USAGE_FIELDS = SAFE_USAGE_FIELDS | {"deployment_id", "checkpoint_hash"}
+GENERATOR_USAGE_FIELDS = SAFE_USAGE_FIELDS | {"deployment_id"}
+TARGET_USAGE_FIELDS = GENERATOR_USAGE_FIELDS | {"checkpoint_hash"}
 
 
 @dataclass(frozen=True)
@@ -459,6 +460,9 @@ def _validate_task_result(
     schema: dict[str, Any],
     *,
     rates: dict[str, tuple[Decimal, Decimal]],
+    generator_model: str = GENERATOR_MODEL,
+    generator_deployment_id: str = GENERATOR_DEPLOYMENT_ID,
+    judge_model: str = JUDGE_MODEL,
     target_binding: TargetBinding | _LoadedTargetManifest | None = None,
     require_accepted: bool = True,
 ) -> list[dict[str, Any]]:
@@ -506,11 +510,11 @@ def _validate_task_result(
     ):
         raise RuntimeError("model-backed canary returned a rejection reason")
     usage = value.get("provider_usage")
-    full_expected = [("generator", GENERATOR_MODEL)]
+    full_expected = [("generator", generator_model)]
     if target_binding is not None:
         full_expected.append(("target", target_binding.endpoint["model"]))
-    full_expected.append(("judge", JUDGE_MODEL))
-    maximum_expected = [*full_expected, ("judge", JUDGE_MODEL)]
+    full_expected.append(("judge", judge_model))
+    maximum_expected = [*full_expected, ("judge", judge_model)]
     if outcome == "succeeded":
         expected = (
             maximum_expected
@@ -535,11 +539,19 @@ def _validate_task_result(
     safe_usage: list[dict[str, Any]] = []
     request_ids: set[str] = set()
     for call, (role, model) in zip(usage, expected):
-        expected_fields = TARGET_USAGE_FIELDS if role == "target" else SAFE_USAGE_FIELDS
+        expected_fields = {
+            "generator": GENERATOR_USAGE_FIELDS,
+            "target": TARGET_USAGE_FIELDS,
+            "judge": SAFE_USAGE_FIELDS,
+        }[role]
         if not isinstance(call, dict) or set(call) != expected_fields:
             raise RuntimeError("model-backed canary usage record is malformed")
         if call.get("role") != role or call.get("model") != model:
             raise RuntimeError("model-backed canary usage provenance is incorrect")
+        if role == "generator" and call.get("deployment_id") != generator_deployment_id:
+            raise RuntimeError(
+                "model-backed canary generator deployment provenance is incorrect"
+            )
         request_id = call.get("request_id")
         if (
             not isinstance(request_id, str)
@@ -841,6 +853,11 @@ def run(args: argparse.Namespace, *, runtime: _Runtime | None = None) -> dict[st
             result,
             contract.schema,
             rates=rates,
+            generator_model=model_environment["AUTODATA_GENERATOR_MODEL"],
+            generator_deployment_id=model_environment[
+                "AUTODATA_GENERATOR_DEPLOYMENT_ID"
+            ],
+            judge_model=model_environment["AUTODATA_JUDGE_MODEL"],
             target_binding=target_binding,
             require_accepted=not args.allow_judge_rejection,
         )
