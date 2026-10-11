@@ -105,7 +105,9 @@ def load_run_config(path: Path) -> dict[str, str]:
         "research",
     )
     _reject_unknown(
-        training, {"mode", "time_limit", "max_concurrent_jobs"}, "training"
+        training,
+        {"mode", "time_limit", "method_budget_minutes", "max_concurrent_jobs"},
+        "training",
     )
     _reject_unknown(
         evaluation,
@@ -230,6 +232,14 @@ def load_run_config(path: Path) -> dict[str, str]:
     if "time_limit" in training:
         environment["AAR_TRAIN_TIME"] = _time_limit(
             training["time_limit"], "training.time_limit"
+        )
+    if "method_budget_minutes" in training:
+        environment["AAR_METHOD_TRAIN_MINUTES"] = str(
+            _integer(
+                training["method_budget_minutes"],
+                "training.method_budget_minutes",
+                maximum=10080,
+            )
         )
     if "max_concurrent_jobs" in training:
         environment["AAR_MAX_CONCURRENT_TRAIN_JOBS"] = str(

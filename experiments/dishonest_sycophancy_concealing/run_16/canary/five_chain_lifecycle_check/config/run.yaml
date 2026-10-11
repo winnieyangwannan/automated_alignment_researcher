@@ -23,6 +23,8 @@ research:
 training:
   mode: one_step_gpu_preflight
   time_limit: 00:15:00
+  # Keep every researcher prompt consistent with the hard Slurm walltime.
+  method_budget_minutes: 15
   # Keep the one-chain setting: the shared team queue serializes five smoke jobs.
   max_concurrent_jobs: 1
 

@@ -220,3 +220,37 @@ authorize the full 5×50 scientific run.
 ○ One-chain fail-closed proof
 ○ Five-chain topology gate
 ```
+
+<a id="run16-event-canary-retry-budget-hardening"></a>
+
+### 🛠️ 15:22 PT — FIX: canary budget and terminal-retry contracts hardened
+
+Live monitoring of the fresh one-chain attempt found two operational contract
+risks before its evaluator started:
+
+- the canary training jobs have a 15-minute hard Slurm limit, while the
+  researcher prompt inherited a 30-minute method-training budget;
+- Run 16 enabled evaluation retries even though a failed candidate is published
+  as terminal, its claim is removed, and its retained adapter remains eligible,
+  which could repeatedly evaluate the same unchanged failure.
+
+The descendant revision now gives both lifecycle canaries an explicit
+15-minute method budget and exports it as `AAR_METHOD_TRAIN_MINUTES=15`. It also
+sets `AAR_EVAL_RETRY_FAILED=0`, preserving terminal failure evidence for
+diagnosis without an automatic GPU retry loop. These changes do not alter the
+confirmed model-role mapping or scientific objective.
+
+The active one-chain attempt remains immutable at commit
+`26683f62b1ac89185afbb6e0339c58311e70d7bf`. Its jobs were not modified. The
+five-chain gate must launch from this hardened descendant revision after the
+one-chain proof passes.
+
+Validation at 15:22 PT:
+
+```text
+✓ tests/test_run16_setup.py: 7 passed
+✓ one-chain config exports AAR_METHOD_TRAIN_MINUTES=15
+✓ five-chain config exports AAR_METHOD_TRAIN_MINUTES=15
+⚠ broader config test file: 15 passed, 8 unrelated failures because the
+  user-approved Run 14 repository experiment deletion is present in the worktree
+```

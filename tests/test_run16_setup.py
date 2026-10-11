@@ -85,6 +85,7 @@ def test_run16_canaries_are_fresh_bounded_and_ordered() -> None:
         "prerequisite_chain_count": 0,
     }
     assert one["research"]["max_sessions_per_chain"] == 1
+    assert one["training"]["method_budget_minutes"] == 15
     assert one["evaluation"]["items_per_benchmark"] == 2
     assert one["evaluation"]["on_demand"] is True
     assert one["data_generation"]["max_sequential_target_generations"] == 256
@@ -102,11 +103,36 @@ def test_run16_canaries_are_fresh_bounded_and_ordered() -> None:
         "epsilon",
     ]
     assert five["research"]["max_sessions_per_chain"] == 1
+    assert five["training"]["method_budget_minutes"] == 15
     assert five["training"]["max_concurrent_jobs"] == 1
     assert five["evaluation"]["workers"] == 1
     assert five["evaluation"]["on_demand"] is True
     assert five["data_generation"]["max_sequential_target_generations"] == 256
     assert five["agent"]["backend"] == "claude"
+
+    one_environment = _resolved_environment(
+        RUN16
+        / "canary"
+        / "one_chain_lifecycle_check"
+        / "config"
+        / "run.yaml"
+    )
+    five_environment = _resolved_environment(
+        RUN16
+        / "canary"
+        / "five_chain_lifecycle_check"
+        / "config"
+        / "run.yaml"
+    )
+    assert "export AAR_METHOD_TRAIN_MINUTES=15" in one_environment
+    assert "export AAR_METHOD_TRAIN_MINUTES=15" in five_environment
+
+
+def test_run16_terminal_evaluation_failures_do_not_retry_unchanged_adapter() -> None:
+    pipeline = (RUN16 / "slurm" / "pipeline.sbatch").read_text()
+
+    assert "export AAR_EVAL_RETRY_FAILED=0" in pipeline
+    assert "export AAR_EVAL_RETRY_FAILED=1" not in pipeline
 
 
 def test_run16_launch_and_recovery_pin_claude_opus_48() -> None:

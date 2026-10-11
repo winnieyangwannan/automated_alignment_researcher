@@ -209,7 +209,10 @@ if [ "${AAR_EVAL_ON_DEMAND:-0}" = 1 ]; then
       'import sys; from aar.transport import put_model; print(put_model(sys.argv[1], sys.argv[2]))' \
       "${adapter_paths[${index}]}" "${run_ids[${index}]}"
   done
-  export AAR_EVAL_RETRY_FAILED=1
+  # A failed candidate is terminal. The worker publishes a durable failure
+  # marker and removes its claim; enabling retries here would immediately make
+  # the unchanged adapter eligible again and can create an evaluator loop.
+  export AAR_EVAL_RETRY_FAILED=0
   export EVAL_VLLM_MAX_NUM_SEQS=8 EVAL_VLLM_MAX_NUM_BATCHED_TOKENS=8192
   eval_launch_log="${ATTEMPT}/metadata/launch-on-demand-evaluator.txt"
   "${REPO}/scripts/launch_eval_worker.sh" "${SUITE_NAME}" \
