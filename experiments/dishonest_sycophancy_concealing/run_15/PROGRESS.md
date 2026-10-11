@@ -431,6 +431,77 @@ Gamma/Delta/Epsilon evaluators are pending GPU resources. There are no training
 jobs, adapters, scores, or findings. Total: **0/250 completed atomic
 score/finding pairs**.
 
+### ⏳ 03:33 PT — RUNNING: first training failure handed to session 2
+
+### Alpha — session 2/60, pairs 0/50
+
+```text
+✓ Session 1 method contract and proposal approved
+✗ Training 1814237 failed after 1m11s with a structured TypeError
+✓ Failure marker durably handed to a fresh session
+⏳ Session 2 diagnosing and repairing the method
+○ Contract and proposal review
+○ Training and evaluation
+○ Score and finding publication
+```
+
+The full path passed `None` where the training stack compares an integer. No
+adapter or score was produced. This exposes a method-contract/smoke coverage
+gap, but the orchestration recovery behaved correctly.
+
+### Beta — session 1/60, pairs 0/50
+
+```text
+✓ Method authored
+✓ Earlier DPO-stack, processing_class, and generation-bound issues repaired
+✗ Latest contract has only the regex-as-list issue
+⏳ Revalidating the scalar-regex repair
+○ Proposal review, training, evaluation, and publication
+```
+
+No proposal or training job exists yet.
+
+### Gamma — session 1/60, pairs 0/50
+
+```text
+✓ Corrupt initial draft repaired
+✓ Method contract passed
+✓ Proposal approved
+⏳ Training 1814273 pending allocation
+○ Adapter submission and merge
+○ Evaluation and score/finding publication
+```
+
+No adapter or score exists yet.
+
+### Delta — session 1/60, pairs 0/50
+
+```text
+✓ Undefined-name and processing_class errors repaired
+✗ Latest contract has only the regex-as-list issue
+⏳ Revalidating the scalar-regex repair
+○ Proposal review, training, evaluation, and publication
+```
+
+No proposal or training job exists yet.
+
+### Epsilon — session 1/60, pairs 0/50
+
+```text
+✓ Method contract passed
+✓ Proposal revision 2 approved
+⏳ Approved-run training submission handoff
+○ Training and adapter submission
+○ Evaluation and score/finding publication
+```
+
+The corrected proposal passed data-policy and faithfulness/reproducibility
+review. Its deterministic training job has not yet been emitted.
+
+All five research-chain jobs remain running. Alpha/Beta evaluators are running;
+Gamma/Delta/Epsilon evaluators are pending GPU resources. Total: **0/250
+completed atomic score/finding pairs**.
+
 #### ⏭️ Next step
 
 Finish fail-closed source validation and obtain explicit confirmation of the
