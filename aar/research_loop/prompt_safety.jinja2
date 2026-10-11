@@ -313,8 +313,9 @@ The campaign policy at `$AAR_AUTODATA_CAMPAIGN_POLICY` is the source of truth fo
 the executor. Trusted orchestration copies its complete `required_solve_env`
 mapping into both authoring and execution configs and creates the canonical meta
 execution with the required 64/32 split while preserving 32 held-out tasks.
-Explicitly, do not create or edit an execution config, accept the implicit
-default, or attempt to alter these operator-controlled values through an action.
+Do not create or edit an execution config. This is literal: do not create or
+edit an execution config, accept the implicit default, or attempt to alter
+these operator-controlled values through an action.
 
 Target-aware generation is required by default. Preserve
 `AUTODATA_TARGET_ENABLED=1` and all pinned `AUTODATA_TARGET_*` identity settings
