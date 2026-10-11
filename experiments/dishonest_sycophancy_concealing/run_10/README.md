@@ -1,5 +1,10 @@
 # Run 10: Kimi research agents
 
+**Experiment code branch:** `multi_kimi`
+
+Run 10 was developed and executed from isolated worktrees on this branch.
+Copies of this README on other branches do not change that provenance.
+
 Run 10 is the Run 7 five-chain experiment with `Kimi-K2.6` as the research agent. It deliberately preserves the existing Claude default: Kimi is selected only when `AAR_AGENT_BACKEND=kimi` is exported by this run's launcher.
 
 ## Topology

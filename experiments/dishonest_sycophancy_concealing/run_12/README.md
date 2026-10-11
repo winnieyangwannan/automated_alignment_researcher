@@ -1,5 +1,10 @@
 # Run 12: iteration-scoped Gemma adapter target canary
 
+**Experiment code branch:** `autodata`
+
+Run 12 was developed and executed from devserver and FAIR HPC worktrees on
+this branch.
+
 New full launches compile two strict YAML sources:
 
 - [`configs/autodata/target_aware_local_v1.yaml`](../../../configs/autodata/target_aware_local_v1.yaml)

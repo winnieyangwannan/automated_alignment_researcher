@@ -12,6 +12,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN10 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_10"
+RUN14 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_14"
 LIFECYCLE = RUN10 / "canary" / "one_chain_lifecycle_check"
 
 
@@ -176,3 +177,39 @@ def test_training_prunes_redundant_staging_by_default() -> None:
     default = 'AAR_KEEP_CHECKPOINTS="${AAR_KEEP_CHECKPOINTS:-0}"'
     assert default in multidimensional
     assert default in legacy
+
+
+def test_run14_declares_native_data_generation_and_target_pairs() -> None:
+    config_path = RUN14 / "config" / "run.yaml"
+    config = yaml.safe_load(config_path.read_text())
+
+    assert config["data_generation"] == {"backend": "native"}
+    assert config["research"]["target_score_result_pairs"] == 5
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/load_aar_run_config.py"),
+            str(config_path),
+        ],
+        env={**os.environ, "USER": "test-user"},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "export AAR_AUTODATA=0" in result.stdout
+    assert "export AAR_TARGET_SUCCESSFUL_ITERATIONS=5" in result.stdout
+
+
+def test_run14_launch_path_fails_closed_without_autodata() -> None:
+    launcher = (RUN14 / "launch" / "submit_full.sh").read_text()
+    pipeline = (RUN14 / "slurm" / "pipeline.sbatch").read_text()
+    combined = launcher + pipeline
+
+    assert combined.count('export AAR_AUTODATA=0') >= 2
+    assert '"${AAR_AUTODATA:?missing data-generation backend}" = 0' in launcher
+    assert '"${AAR_AUTODATA:?missing data-generation backend}" = 0' in pipeline
+    assert "AAR_AUTODATA=1" not in combined
+    assert "autodata_run_config" not in combined
+    assert "AAR_AUTODATA_PLUGIN_ROOT" not in combined

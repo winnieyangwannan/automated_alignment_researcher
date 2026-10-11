@@ -72,6 +72,7 @@ def load_run_config(path: Path) -> dict[str, str]:
             "training",
             "evaluation",
             "agent",
+            "data_generation",
         },
         "top-level",
     )
@@ -84,13 +85,21 @@ def load_run_config(path: Path) -> dict[str, str]:
     training = _mapping(payload.get("training"), "training")
     evaluation = _mapping(payload.get("evaluation"), "evaluation")
     agent = _mapping(payload.get("agent"), "agent")
+    data_generation = _mapping(
+        payload.get("data_generation"), "data_generation"
+    )
     _reject_unknown(
         lifecycle, {"name", "prerequisite_chain_count"}, "lifecycle"
     )
     _reject_unknown(storage, {"root", "keep_checkpoints"}, "storage")
     _reject_unknown(
         research,
-        {"seeds", "max_sessions_per_chain", "walltime_hours"},
+        {
+            "seeds",
+            "max_sessions_per_chain",
+            "walltime_hours",
+            "target_score_result_pairs",
+        },
         "research",
     )
     _reject_unknown(
@@ -121,6 +130,7 @@ def load_run_config(path: Path) -> dict[str, str]:
         },
         "agent",
     )
+    _reject_unknown(data_generation, {"backend"}, "data_generation")
 
     environment: dict[str, str] = {}
     if "name" in lifecycle:
@@ -183,6 +193,14 @@ def load_run_config(path: Path) -> dict[str, str]:
             _integer(
                 research["walltime_hours"],
                 "research.walltime_hours",
+                maximum=1000,
+            )
+        )
+    if "target_score_result_pairs" in research:
+        environment["AAR_TARGET_SUCCESSFUL_ITERATIONS"] = str(
+            _integer(
+                research["target_score_result_pairs"],
+                "research.target_score_result_pairs",
                 maximum=1000,
             )
         )
@@ -307,6 +325,14 @@ def load_run_config(path: Path) -> dict[str, str]:
                 maximum=604800,
             )
         )
+
+    if "backend" in data_generation:
+        backend = data_generation["backend"]
+        if backend not in {"native", "autodata"}:
+            raise ValueError(
+                "data_generation.backend must be native or autodata"
+            )
+        environment["AAR_AUTODATA"] = "1" if backend == "autodata" else "0"
 
     return environment
 
