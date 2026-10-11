@@ -13,9 +13,25 @@ REPO="${AAR_REPO:?submit through run_16/launch/submit_full.sh}"
 ATTEMPT="${AAR_RUN_ATTEMPT_DIR:?missing attempt}"
 RUN_CONFIG="${AAR_RUN_CONFIG:?missing run config}"
 EXPECTED_COMMIT="${AAR_BASELINE_GIT_COMMIT:?missing source commit}"
+SOURCE_SNAPSHOT="${AAR_SOURCE_SNAPSHOT:?missing immutable source snapshot}"
 REUSED_BASELINE="${AAR_REUSED_BASELINE:?missing baseline}"
 RECOVERED_SOURCES="${AAR_RECOVERED_BASELINE_SOURCES:?missing source bundle}"
 export HF_HOME="${ATTEMPT}/cache/huggingface"
+
+[ "${REPO}" = "${SOURCE_SNAPSHOT}" ] || { echo "source snapshot path drift" >&2; exit 2; }
+[ "${REPO}" = "${ATTEMPT}/runtime/aar-source" ] || { echo "source is not attempt-local" >&2; exit 2; }
+[ -z "$(git -C "${REPO}" branch --show-current)" ] || { echo "source snapshot is not detached" >&2; exit 2; }
+[ "$(git -C "${REPO}" rev-parse HEAD)" = "${EXPECTED_COMMIT}" ] || { echo "commit drift" >&2; exit 2; }
+[ -z "$(git -C "${REPO}" remote)" ] || { echo "source snapshot retains a remote" >&2; exit 2; }
+[ ! -e "${REPO}/.git/objects/info/alternates" ] || { echo "source snapshot has shared-object alternates" >&2; exit 2; }
+if [ -n "$(git -C "${REPO}" status --porcelain --untracked-files=all)" ]; then
+  echo "dirty source snapshot" >&2
+  exit 2
+fi
+case "${RUN_CONFIG}" in
+  "${REPO}"/*) ;;
+  *) echo "Run 16 config is not source-pinned" >&2; exit 2 ;;
+esac
 
 # shellcheck disable=SC1091
 source "${REPO}/replication/env_multidimensional.sh"
@@ -31,15 +47,10 @@ eval "$("${HARNESS_PY}" "${REPO}/scripts/load_aar_run_config.py" "${RUN_CONFIG}"
 while IFS= read -r name; do unset "${name}"; done < <(compgen -A variable AAR_AUTODATA_)
 export AAR_AUTODATA=0
 
-[ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "wrong branch" >&2; exit 2; }
-[ "$(git -C "${REPO}" rev-parse HEAD)" = "${EXPECTED_COMMIT}" ] || { echo "commit drift" >&2; exit 2; }
-if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; then
-  echo "dirty worktree" >&2
-  exit 2
-fi
 mkdir -p "${HF_HOME}" "${ATTEMPT}/metadata"
 
-export AAR_EXPECTED_BRANCH=autodata AAR_RUNTIME_ROOT="${ATTEMPT}"
+unset AAR_EXPECTED_BRANCH
+export AAR_EXPECTED_COMMIT="${EXPECTED_COMMIT}" AAR_RUNTIME_ROOT="${ATTEMPT}"
 export AAR_BASELINE_OVERRIDES="${ATTEMPT}/metadata/gemma4_31b_multidimensional_baseline.json"
 export HOLDOUT_DIR="${ATTEMPT}/eval/holdout/gemma4_31b"
 export BASELINES_PATH="${ATTEMPT}/baselines.honesty_sycophancy_concealing_uncertainty.google_gemma-4-31B-it.json"

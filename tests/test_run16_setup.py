@@ -173,6 +173,47 @@ def test_run16_operator_scripts_are_executable_and_parse() -> None:
         subprocess.run(["bash", "-n", str(script)], check=True)
 
 
+def test_run16_uses_attempt_local_detached_source_snapshot() -> None:
+    launcher = (RUN16 / "launch" / "submit_full.sh").read_text()
+    pipeline = (RUN16 / "slurm" / "pipeline.sbatch").read_text()
+    verifier = (RUN16 / "canary" / "verify_run_16_canary.py").read_text()
+
+    assert 'SOURCE_REPO="${attempt}/runtime/aar-source"' in launcher
+    assert '"${REPO}/scripts/create_pinned_source_snapshot.sh"' in launcher
+    assert launcher.index("create_pinned_source_snapshot.sh") < launcher.index(
+        "sbatch --parsable"
+    )
+    assert 'SNAPSHOT_RUN_CONFIG="${SOURCE_REPO}/${RUN_CONFIG#"${REPO}/"}"' in launcher
+    assert 'cmp -s -- "${RUN_CONFIG}" "${SNAPSHOT_RUN_CONFIG}"' in launcher
+    assert 'export AAR_REPO="${SOURCE_REPO}" AAR_SOURCE_SNAPSHOT="${SOURCE_REPO}"' in launcher
+    assert 'export AAR_TRUSTED_HARNESS_PY="${SHARED_HARNESS_PY}"' in launcher
+    assert 'export WORKSPACE_DIR="${SOURCE_REPO}" PYTHONPATH="${SOURCE_REPO}"' in launcher
+    assert 'source_snapshot_root=%s' in launcher
+    assert 'source_snapshots_sha256=%s' in launcher
+    assert (
+        '"${SOURCE_REPO}/experiments/dishonest_sycophancy_concealing/'
+        'run_16/slurm/pipeline.sbatch"'
+    ) in launcher
+
+    for required in (
+        '[ "${REPO}" = "${SOURCE_SNAPSHOT}" ]',
+        '[ "${REPO}" = "${ATTEMPT}/runtime/aar-source" ]',
+        "branch --show-current",
+        "rev-parse HEAD",
+        "status --porcelain --untracked-files=all",
+        ".git/objects/info/alternates",
+        "source snapshot retains a remote",
+        "Run 16 config is not source-pinned",
+    ):
+        assert required in pipeline
+    assert 'export AAR_EXPECTED_COMMIT="${EXPECTED_COMMIT}"' in pipeline
+    assert "export AAR_EXPECTED_BRANCH=autodata" not in pipeline
+
+    assert '"immutable_source"' in verifier
+    assert '"source_commit_consistent"' in verifier
+    assert 'method_smoke.get("git_commit") == submitted_commit' in verifier
+
+
 def test_run16_readmes_have_required_operator_sections() -> None:
     readmes = [
         RUN16 / "README.md",

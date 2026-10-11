@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -38,6 +39,15 @@ def _key_values(path: Path) -> dict[str, str]:
     )
 
 
+def _git_output(repository: Path, *arguments: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repository), *arguments],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("attempt", type=Path)
@@ -47,15 +57,40 @@ def main() -> None:
     submission = _key_values(attempt / "metadata/submission.txt")
     children = _key_values(attempt / "metadata/children.env")
     preflight = load_json(attempt / "metadata/claude_research_preflight.json")
-    method_runs = _method_runs(
-        load_json(attempt / "metadata/method_smoke_passed.json")
-    )
+    method_smoke = load_json(attempt / "metadata/method_smoke_passed.json")
+    method_runs = _method_runs(method_smoke)
     evaluation_contract = load_json(
         attempt / "metadata/lifecycle_evaluation_contract.json"
     )
     config = yaml.safe_load((attempt / "metadata/run.yaml").read_text())
     if not isinstance(config, dict):
         raise RuntimeError("retained run config must be a mapping")
+
+    submitted_commit = submission.get("git_commit")
+    source_snapshot = attempt / "runtime/aar-source"
+    source_snapshots_path = attempt / "metadata/source-snapshots.json"
+    source_snapshots = load_json(source_snapshots_path)
+    source_record = source_snapshots.get("aar")
+    immutable_source = (
+        isinstance(submitted_commit, str)
+        and len(submitted_commit) == 40
+        and source_snapshots.get("schema") == "aar.source-snapshots/v1"
+        and isinstance(source_record, dict)
+        and source_record.get("commit") == submitted_commit
+        and source_record.get("root") == str(source_snapshot)
+        and submission.get("source_snapshot_root") == str(source_snapshot)
+        and submission.get("source_snapshots_sha256")
+        == f"sha256:{_sha256(source_snapshots_path)}"
+        and _git_output(source_snapshot, "rev-parse", "HEAD") == submitted_commit
+        and _git_output(source_snapshot, "branch", "--show-current") == ""
+        and _git_output(source_snapshot, "remote") == ""
+        and _git_output(
+            source_snapshot, "status", "--porcelain", "--untracked-files=all"
+        )
+        == ""
+        and not (source_snapshot / ".git/objects/info/alternates").exists()
+    )
+    source_commit_consistent = method_smoke.get("git_commit") == submitted_commit
 
     chain_count = len(method_runs)
     configured_seeds = config.get("research", {}).get("seeds", [])
@@ -176,6 +211,8 @@ def main() -> None:
         and len(evaluator_ids) == expected_evaluator_jobs > 0,
         "evaluation_item_contract": chain_count > 0 and all(score_contracts),
         "autodata_disabled": autodata_disabled,
+        "immutable_source": immutable_source,
+        "source_commit_consistent": source_commit_consistent,
         "evaluation_benchmarks": expected_benchmarks,
         "expected_items_per_benchmark": expected_items,
         "evaluated_items_per_run": evaluated_items,
@@ -200,6 +237,8 @@ def main() -> None:
         "on_demand_evaluator",
         "evaluation_item_contract",
         "autodata_disabled",
+        "immutable_source",
+        "source_commit_consistent",
     )
     failed = [field for field in required if not proof.get(field)]
     if chain_count not in {1, 5} or len(configured_seeds) != chain_count:

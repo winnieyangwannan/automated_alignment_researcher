@@ -31,6 +31,7 @@ else
 fi
 
 [ -x "${REPO}/.venv/bin/python" ] || { echo "missing worktree-local runtime" >&2; exit 2; }
+SHARED_HARNESS_PY="${REPO}/.venv/bin/python"
 SECRET_ENV="$(realpath -e -- "${AAR_RUN16_SECRET_ENV:-${REPO}/.env}")"
 RECOVERY_BUNDLE="$(realpath -e -- "${AAR_RUN16_RECOVERY_BUNDLE:-/storage/home/${USER:?}/aar-recovery/run7_20261007T004406Z-1b3303d02821/baseline_salvage}")"
 REUSED_BASELINE="${RECOVERY_BUNDLE}/gemma4_31b_multidimensional_baseline.json"
@@ -48,6 +49,7 @@ eval "$("${REPO}/.venv/bin/python" "${REPO}/scripts/load_aar_run_config.py" "${R
 }
 while IFS= read -r name; do unset "${name}"; done < <(compgen -A variable AAR_AUTODATA_)
 export AAR_AUTODATA=0
+commit="$(git -C "${REPO}" rev-parse HEAD)"
 
 validate_lifecycle_proof() {
   local proof="$1" expected_chains="$2"
@@ -61,7 +63,7 @@ validate_lifecycle_proof() {
   for field in score_result_pair fail_closed_markers merge_manifest_retained \
     ephemeral_merge_removed claude_research_preflight method_gpu_smoke \
     adapter_reload_validation on_demand_evaluator evaluation_item_contract \
-    autodata_disabled; do
+    autodata_disabled immutable_source source_commit_consistent; do
     [ "$(jq -r --arg field "${field}" '.[$field]' "${proof}")" = true ] || {
       echo "lifecycle proof did not prove ${field}" >&2; exit 2;
     }
@@ -106,14 +108,6 @@ for secret_name in HF_TOKEN MODEL_API_KEY; do
   [ -n "${!secret_name:-}" ] || { echo "Run 16 requires ${secret_name}" >&2; exit 2; }
 done
 
-source_root="${REPO}/data/LLM-Uncertainty-Bench"
-"${REPO}/.venv/bin/python" "${REPO}/scripts/prepare_llm_uncertainty_source.py" \
-  --output-root "${source_root}" --verify-only >/dev/null
-export LLM_UNCERTAINTY_SRC="${source_root}/data"
-export LLM_UNCERTAINTY_SOURCE_MANIFEST="${source_root}/.aar-source.json"
-"${REPO}/.venv/bin/python" "${REPO}/scripts/validate_reused_multidimensional_baseline.py" \
-  "${REUSED_BASELINE}" --recovered-source-dir "${RECOVERED_SOURCES}" >/dev/null
-
 storage_root="${AAR_RUN_STORAGE_ROOT:?run config did not set storage.root}"
 case "${storage_root}" in /checkpoint/ram/aar/"${USER}"/run16_native_generation) ;; *)
   echo "unexpected Run 16 storage root: ${storage_root}" >&2; exit 2;;
@@ -121,13 +115,77 @@ esac
 attempt_kind=full_attempts
 [ "${MODE}" != canary ] || attempt_kind=canary_attempts
 mkdir -p "${storage_root}/${attempt_kind}"
-commit="$(git -C "${REPO}" rev-parse HEAD)"
-attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "${REPO}" rev-parse --short=12 HEAD)"
+attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-${commit:0:12}"
 attempt="${storage_root}/${attempt_kind}/${attempt_id}"
 mkdir "${attempt}"
 mkdir -p "${attempt}/"{metadata,logs,runtime}
 chmod 700 "${attempt}" "${attempt}/"{metadata,logs}
-cp -- "${RUN_CONFIG}" "${attempt}/metadata/run.yaml"
+[ "$(git -C "${REPO}" rev-parse HEAD)" = "${commit}" ] || {
+  echo "AAR source changed during launch preflight" >&2
+  exit 2
+}
+if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; then
+  echo "AAR source became dirty during launch preflight" >&2
+  exit 2
+fi
+
+SOURCE_REPO="${attempt}/runtime/aar-source"
+export PYTHONDONTWRITEBYTECODE=1
+"${REPO}/scripts/create_pinned_source_snapshot.sh" \
+  "${REPO}" "${commit}" "${SOURCE_REPO}" >/dev/null
+[ -x "${SOURCE_REPO}/experiments/dishonest_sycophancy_concealing/run_16/launch/submit_full.sh" ] || {
+  echo "Run 16 launcher is absent from the source commit" >&2
+  exit 2
+}
+case "${RUN_CONFIG}" in
+  "${REPO}"/*)
+    SNAPSHOT_RUN_CONFIG="${SOURCE_REPO}/${RUN_CONFIG#"${REPO}/"}"
+    ;;
+  *)
+    echo "Run 16 config must be tracked inside the source repository" >&2
+    exit 2
+    ;;
+esac
+[ -s "${SNAPSHOT_RUN_CONFIG}" ] || {
+  echo "attempt-local Run 16 config is missing" >&2
+  exit 2
+}
+cmp -s -- "${RUN_CONFIG}" "${SNAPSHOT_RUN_CONFIG}" || {
+  echo "attempt-local Run 16 config differs from the validated config" >&2
+  exit 2
+}
+install -m 400 -- "${SNAPSHOT_RUN_CONFIG}" "${attempt}/metadata/run.yaml"
+
+jq -n \
+  --arg aar_commit "${commit}" --arg aar_root "${SOURCE_REPO}" \
+  '{schema:"aar.source-snapshots/v1",aar:{commit:$aar_commit,root:$aar_root}}' \
+  > "${attempt}/metadata/source-snapshots.json"
+chmod 400 "${attempt}/metadata/source-snapshots.json"
+
+shared_source_root="${REPO}/data/LLM-Uncertainty-Bench"
+"${SHARED_HARNESS_PY}" "${SOURCE_REPO}/scripts/prepare_llm_uncertainty_source.py" \
+  --output-root "${shared_source_root}" --verify-only >/dev/null
+SNAPSHOT_SOURCE_ROOT="${attempt}/runtime/llm-uncertainty-source"
+mkdir -p "${SNAPSHOT_SOURCE_ROOT}"
+cp -a -- "${shared_source_root}/data" "${SNAPSHOT_SOURCE_ROOT}/data"
+install -m 400 -- "${shared_source_root}/.aar-source.json" \
+  "${SNAPSHOT_SOURCE_ROOT}/.aar-source.json"
+"${SHARED_HARNESS_PY}" "${SOURCE_REPO}/scripts/prepare_llm_uncertainty_source.py" \
+  --output-root "${SNAPSHOT_SOURCE_ROOT}" --verify-only >/dev/null
+export LLM_UNCERTAINTY_SRC="${SNAPSHOT_SOURCE_ROOT}/data"
+export LLM_UNCERTAINTY_SOURCE_MANIFEST="${SNAPSHOT_SOURCE_ROOT}/.aar-source.json"
+
+SNAPSHOT_RECOVERY_ROOT="${attempt}/runtime/baseline-recovery"
+mkdir -p "${SNAPSHOT_RECOVERY_ROOT}"
+install -m 400 -- "${REUSED_BASELINE}" "${SNAPSHOT_RECOVERY_ROOT}/baseline.json"
+cp -a -- "${RECOVERED_SOURCES}" "${SNAPSHOT_RECOVERY_ROOT}/source-artifacts"
+SNAPSHOT_REUSED_BASELINE="${SNAPSHOT_RECOVERY_ROOT}/baseline.json"
+SNAPSHOT_RECOVERED_SOURCES="${SNAPSHOT_RECOVERY_ROOT}/source-artifacts"
+"${SHARED_HARNESS_PY}" \
+  "${SOURCE_REPO}/scripts/validate_reused_multidimensional_baseline.py" \
+  "${SNAPSHOT_REUSED_BASELINE}" \
+  --recovered-source-dir "${SNAPSHOT_RECOVERED_SOURCES}" >/dev/null
+
 [ -z "${PREREQUISITE_PROOF}" ] || \
   cp -- "${PREREQUISITE_PROOF}" \
     "${attempt}/metadata/prerequisite_lifecycle_passed.json"
@@ -141,7 +199,7 @@ if [ "${MODE}" = full ]; then
     "${one_chain_proof_sha256}" "${five_chain_proof_sha256}" \
     > "${attempt}/metadata/lifecycle_proofs.sha256"
 fi
-"${REPO}/experiments/dishonest_sycophancy_concealing/run_10/runtime/snapshot_vllm_runtime.sh" "${attempt}" \
+"${SOURCE_REPO}/experiments/dishonest_sycophancy_concealing/run_10/runtime/snapshot_vllm_runtime.sh" "${attempt}" \
   > "${attempt}/metadata/vllm_runtime_path.txt"
 
 export AAR_AGENT_MODEL=claude-opus-4-8 AAR_EFFORT=max AAR_WEB_MODE=meta_secure
@@ -152,11 +210,11 @@ export CLAUDE_CLI_PATH
   echo "Claude CLI lacks secure-internet mode" >&2
   exit 2
 }
-[ -x "${REPO}/scripts/aar-paper-search" ] || {
+[ -x "${SOURCE_REPO}/scripts/aar-paper-search" ] || {
   echo "bounded paper-search helper is missing" >&2
   exit 2
 }
-"${REPO}/.venv/bin/python" - \
+"${SHARED_HARNESS_PY}" - \
   "${attempt}/metadata/claude_research_preflight.json" \
   "${CLAUDE_CLI_PATH}" <<'PY'
 import json
@@ -185,20 +243,29 @@ output.write_text(
 )
 PY
 
+export AAR_REPO="${SOURCE_REPO}" AAR_SOURCE_SNAPSHOT="${SOURCE_REPO}"
+export AAR_TRUSTED_HARNESS_PY="${SHARED_HARNESS_PY}"
+export HARNESS_PY="${SHARED_HARNESS_PY}" HARNESS_ENV="${SECRET_ENV}"
+export WORKSPACE_DIR="${SOURCE_REPO}" PYTHONPATH="${SOURCE_REPO}"
+export AAR_BENCHMARK_DOCS="${SOURCE_REPO}/benchmark_docs"
+export BENCHMARK_DOCS_DIR="${SOURCE_REPO}/benchmark_docs"
+export AAR_RUN_CONFIG="${SNAPSHOT_RUN_CONFIG}"
 export AAR_RUN_ATTEMPT_DIR="${attempt}" AAR_RUNTIME_ROOT="${attempt}"
-export AAR_BASELINE_GIT_COMMIT="${commit}" AAR_REUSED_BASELINE="${REUSED_BASELINE}"
-export AAR_RECOVERED_BASELINE_SOURCES="${RECOVERED_SOURCES}"
+export AAR_BASELINE_GIT_COMMIT="${commit}" AAR_REUSED_BASELINE="${SNAPSHOT_REUSED_BASELINE}"
+export AAR_RECOVERED_BASELINE_SOURCES="${SNAPSHOT_RECOVERED_SOURCES}"
 export AAR_MONITOR_MODEL_API_KEY="${MODEL_API_KEY}"
 export AAR_RUN16_MODE="${MODE}"
 pipeline_time=02:00:00
 [ "${MODE}" != canary ] || pipeline_time=04:00:00
 job="$(sbatch --parsable --time="${pipeline_time}" \
   --output="${attempt}/logs/pipeline-%j.out" --export=ALL \
-  "${RUN16_DIR}/slurm/pipeline.sbatch")"
+  "${SOURCE_REPO}/experiments/dishonest_sycophancy_concealing/run_16/slurm/pipeline.sbatch")"
 
 submitted_at_pt="$(TZ=America/Los_Angeles date '+%Y-%m-%d %H:%M:%S %Z')"
-printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nmode=%s\nlifecycle_name=%s\nsubmitted_at_pt=%s\nresearch_backend=%s\nresearch_model=%s\nresearch_effort=%s\ndata_generation_backend=native\nautodata=0\nseeds=%s\ntarget_score_result_pairs=%s\n' \
-  "${job}" "${attempt}" "${commit}" "${MODE}" "${AAR_LIFECYCLE_NAME:-none}" \
+source_snapshots_sha256="sha256:$(sha256sum "${attempt}/metadata/source-snapshots.json" | awk '{print $1}')"
+printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nsource_snapshot_root=%s\nsource_snapshots_sha256=%s\nmode=%s\nlifecycle_name=%s\nsubmitted_at_pt=%s\nresearch_backend=%s\nresearch_model=%s\nresearch_effort=%s\ndata_generation_backend=native\nautodata=0\nseeds=%s\ntarget_score_result_pairs=%s\n' \
+  "${job}" "${attempt}" "${commit}" "${SOURCE_REPO}" \
+  "${source_snapshots_sha256}" "${MODE}" "${AAR_LIFECYCLE_NAME:-none}" \
   "${submitted_at_pt}" "${AAR_AGENT_BACKEND}" "${AAR_AGENT_MODEL}" \
   "${AAR_EFFORT}" "${AAR_RESEARCH_SEEDS}" \
   "${AAR_TARGET_SUCCESSFUL_ITERATIONS}" | tee "${attempt}/metadata/submission.txt"

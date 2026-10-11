@@ -149,3 +149,42 @@ wrapper silently before `bwrap` started.
 Validate, commit, synchronize the focused fix, then rerun the one-chain
 lifecycle check. Do not advance to the five-chain topology gate until the new
 attempt retains the required lifecycle proof.
+
+<a id="run16-event-one-chain-functional-pass-source-drift"></a>
+
+### 🔴 04:45 PT — FAIL / STOP: functional pass rejected for mixed source commits
+
+The fresh one-chain attempt completed its full functional lifecycle with all
+jobs at exit code zero:
+
+- pipeline `1814581`;
+- Claude Opus 4.8 research chain `1814586`;
+- one-step GPU training job `1814698`;
+- on-demand vLLM evaluator `1814708`;
+- one durable score/finding pair for one started session.
+
+The evaluator proved vLLM `0.25.1`, `language_model_only=True`, and
+`lora_strategy=merged_checkpoint`; it retained the merge manifest and removed
+the ephemeral merged checkpoint.
+
+This attempt is not eligible as the canonical lifecycle proof. Submission
+recorded source commit `7f364115984290c9046684d64085933b67eb2a5f`, while the
+later GPU smoke recorded `08011928cada9a9729994f85ed7cede63b5b868a` after the
+shared HPC worktree advanced concurrently. The artifacts remain retained at
+`/checkpoint/ram/aar/winnieyangwn/run16_native_generation/canary_attempts/20261011T104634Z-7f3641159842`.
+
+<a id="run16-event-immutable-source-recovery"></a>
+
+### 🛠️ 11:33 PT — FIX: immutable-source recovery authorized
+
+The user directed the operator to perform what is necessary to start the
+five-chain gate. The recovery adds an attempt-local detached, remote-free,
+independent Git snapshot; source-pins the run configuration and reproducible
+input copies; and rejects any mismatch between submission and training source
+commits. The required sequence remains:
+
+```text
+○ Validate and synchronize immutable-source fix
+○ Fresh one-chain lifecycle proof
+○ Five-chain topology launch
+```
