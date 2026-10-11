@@ -198,10 +198,17 @@ class _ToolChoiceController:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._pending: Optional[str] = None
+        self._argument_schema: dict[str, dict[str, Any]] = {}
 
-    def arm(self, tool_name: Optional[str]) -> None:
+    def arm(
+        self,
+        tool_name: Optional[str],
+        *,
+        argument_schema: Optional[dict[str, dict[str, Any]]] = None,
+    ) -> None:
         with self._lock:
             self._pending = tool_name
+            self._argument_schema = argument_schema or {}
 
     def consume(self, tools: Any) -> Optional[str]:
         with self._lock:
@@ -234,7 +241,49 @@ class _ToolChoiceController:
                 raise ValueError(
                     f"required Kimi checkpoint tool {requested!r} is ambiguous"
                 )
+            if self._argument_schema:
+                selected = next(
+                    item
+                    for item in tools
+                    if isinstance(item, dict)
+                    and isinstance(item.get("function"), dict)
+                    and item["function"].get("name") == matches[0]
+                )
+                function = selected["function"]
+                parameters = function.setdefault(
+                    "parameters", {"type": "object", "properties": {}}
+                )
+                if not isinstance(parameters, dict):
+                    raise ValueError(
+                        f"required Kimi checkpoint tool {requested!r} has no "
+                        "object parameter schema"
+                    )
+                properties = parameters.setdefault("properties", {})
+                if not isinstance(properties, dict):
+                    raise ValueError(
+                        f"required Kimi checkpoint tool {requested!r} has invalid "
+                        "parameter properties"
+                    )
+                required = parameters.setdefault("required", [])
+                if not isinstance(required, list) or not all(
+                    isinstance(name, str) for name in required
+                ):
+                    raise ValueError(
+                        f"required Kimi checkpoint tool {requested!r} has invalid "
+                        "required parameters"
+                    )
+                for name, schema in self._argument_schema.items():
+                    existing = properties.get(name)
+                    if existing is not None and not isinstance(existing, dict):
+                        raise ValueError(
+                            f"required Kimi checkpoint argument {name!r} has an "
+                            "invalid schema"
+                        )
+                    properties[name] = {**(existing or {}), **schema}
+                    if name not in required:
+                        required.append(name)
             self._pending = None
+            self._argument_schema = {}
             return matches[0]
 
 
@@ -360,8 +409,14 @@ class KimiAgent:
                             command.extend(["--agent-file", str(agent_file)])
                         current_prompt = prompt
                         required_tool = None
-                    tool_choice_controller.arm(
+                    checkpoint_tool = (
                         required_tool if self.force_checkpoint_tools else None
+                    )
+                    tool_choice_controller.arm(
+                        checkpoint_tool,
+                        argument_schema=self._checkpoint_argument_schema(
+                            checkpoint_tool
+                        ),
                     )
                     command.extend(
                         ["--prompt", current_prompt, "--output-format", "stream-json"]
@@ -724,6 +779,28 @@ class KimiAgent:
             if approved_run_id is not None
             else None
         )
+        incomplete_finding_attempt = any(
+            name == "share_finding"
+            and (
+                inputs[index].get("run_id") != approved_run_id
+                or not isinstance(inputs[index].get("results_writeup"), str)
+                or len(inputs[index]["results_writeup"].strip()) < 80
+            )
+            for index, name in enumerate(names)
+        )
+
+        if approved_run_id is not None and incomplete_finding_attempt:
+            return (
+                "The previous share_finding attempt did not persist because its "
+                "structured arguments were incomplete or incorrectly bound. Call the "
+                "native structured MCP tool share_finding exactly once now. In that "
+                "SAME structured call, pass run_id="
+                f"{json.dumps(approved_run_id)} exactly and pass results_writeup as a "
+                "single string of at least 80 characters explaining which public "
+                "benchmarks moved or did not, capability behavior, mechanism, and "
+                "limitations. Do not split these fields across calls, use another run "
+                "ID, emit prose, or call another tool."
+            )
 
         if (
             approved_run_id is not None
@@ -1002,6 +1079,20 @@ class KimiAgent:
         if "native Bash tool exactly once" in prompt:
             return "Bash"
         return None
+
+    def _checkpoint_argument_schema(
+        self, required_tool: Optional[str]
+    ) -> dict[str, dict[str, Any]]:
+        """Bind forced result publication to one complete, approved tool call."""
+        if required_tool != "share_finding":
+            return {}
+        run_id = self._approved_run_id()
+        if run_id is None:
+            return {}
+        return {
+            "run_id": {"type": "string", "const": run_id},
+            "results_writeup": {"type": "string", "minLength": 80},
+        }
 
     @staticmethod
     def _autodata_action_record(action_id: str) -> dict[str, Any] | None:

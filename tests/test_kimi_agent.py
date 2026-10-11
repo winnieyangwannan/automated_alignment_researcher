@@ -753,6 +753,93 @@ class KimiAgentTest(unittest.TestCase):
         )
         self.assertNotIn("tool_choice", observed[1])
 
+    def test_forced_finding_tool_requires_bound_run_and_writeup_together(self) -> None:
+        observed = []
+
+        class UpstreamHandler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers["Content-Length"])
+                observed.append(json.loads(self.rfile.read(length)))
+                response = json.dumps({"ok": True}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+
+            def log_message(self, _format: str, *args: object) -> None:
+                return
+
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
+        thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        thread.start()
+        env = {
+            "KIMI_MODEL_BASE_URL": f"http://127.0.0.1:{upstream.server_port}/v1",
+            "KIMI_MODEL_API_KEY": "secret",
+        }
+        agent = KimiAgent(
+            "test-agent",
+            Path.cwd(),
+            cli_path="/bin/true",
+            force_checkpoint_tools=True,
+        )
+        run_id = "approved-chain-run-1"
+        try:
+            with agent._request_policy_proxy(env) as controller:
+                controller.arm(
+                    "share_finding",
+                    argument_schema={
+                        "run_id": {"type": "string", "const": run_id},
+                        "results_writeup": {"type": "string", "minLength": 80},
+                    },
+                )
+                request = {
+                    "model": "Kimi-K2.6",
+                    "tools": [
+                        {"type": "function", "function": {"name": "Read"}},
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "mcp__server-api-tools__share_finding",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "summary": {"type": "string"},
+                                        "run_id": {"type": "string"},
+                                        "results_writeup": {"type": "string"},
+                                    },
+                                    "required": ["summary"],
+                                },
+                            },
+                        },
+                    ],
+                }
+                for _ in range(2):
+                    response = requests.post(
+                        f"{env['KIMI_MODEL_BASE_URL']}/chat/completions",
+                        json=request,
+                        timeout=5,
+                    )
+                    response.raise_for_status()
+        finally:
+            upstream.shutdown()
+            upstream.server_close()
+            thread.join(timeout=5)
+
+        self.assertEqual(observed[0]["tool_choice"], "required")
+        self.assertEqual(len(observed[0]["tools"]), 1)
+        parameters = observed[0]["tools"][0]["function"]["parameters"]
+        self.assertEqual(
+            parameters["required"],
+            ["summary", "run_id", "results_writeup"],
+        )
+        self.assertEqual(parameters["properties"]["run_id"]["const"], run_id)
+        self.assertEqual(
+            parameters["properties"]["results_writeup"]["minLength"], 80
+        )
+        self.assertNotIn("tool_choice", observed[1])
+        self.assertEqual(len(observed[1]["tools"]), 2)
+
     def test_nonzero_cli_exit_is_a_failed_agent_result(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -839,6 +926,50 @@ class KimiAgentTest(unittest.TestCase):
                 registry.parent.mkdir(parents=True)
                 registry.write_text(json.dumps({"post_id": "post-1"}))
                 self.assertTrue(agent._completion_tool_used(output))
+
+    def test_incomplete_finding_calls_force_one_exact_bound_retry(self) -> None:
+        run_id = "chain-candidate-1"
+        agent = KimiAgent(
+            "test-agent",
+            Path.cwd(),
+            cli_path="/bin/true",
+            completion_tool="share_finding",
+        )
+        output = {
+            "tool_uses": [
+                {
+                    "tool": "mcp__server-api-tools__share_finding",
+                    "input": {"run_id": run_id},
+                },
+                {
+                    "tool": "mcp__server-api-tools__share_finding",
+                    "input": {
+                        "results_writeup": "A sufficiently detailed result discussion "
+                        "that was incorrectly sent without the approved run binding."
+                    },
+                },
+            ]
+        }
+        with (
+            patch.object(agent, "_approved_run_id", return_value=run_id),
+            patch.object(agent, "_resume_approved_proposal_enabled", return_value=True),
+            patch.object(agent, "_current_training_job_id", return_value="12345"),
+        ):
+            prompt = agent._continuation_prompt(output)
+            schema = agent._checkpoint_argument_schema(
+                agent._continuation_tool(output)
+            )
+
+        self.assertIn("did not persist", prompt)
+        self.assertIn("SAME structured call", prompt)
+        self.assertIn(f'run_id="{run_id}" exactly', prompt)
+        self.assertEqual(
+            schema,
+            {
+                "run_id": {"type": "string", "const": run_id},
+                "results_writeup": {"type": "string", "minLength": 80},
+            },
+        )
 
     def test_share_finding_continuations_advance_missing_milestone(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
