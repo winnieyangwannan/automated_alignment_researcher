@@ -138,9 +138,30 @@ def test_run15_launch_and_recovery_are_isolated_from_run14() -> None:
 
     launcher = (RUN15 / "launch" / "submit_full.sh").read_text()
     assert 'usage: $0 <one-chain-proof.json> <five-chain-proof.json>' in launcher
+    assert "--user-authorized-without-lifecycle-proofs" in launcher
+    assert "aar.run15-lifecycle-proof-override/v1" in launcher
+    assert "full-five-chain-5x50" in launcher
     assert '"${ONE_CHAIN_PROOF}" 1 one_chain_native_generation' in launcher
     assert '"${FIVE_CHAIN_PROOF}" 5 five_chain_lifecycle_check' in launcher
     assert "five-chain proof is not bound to the supplied one-chain proof" in launcher
+    assert "autodata2_8-kimi26" in combined
+    assert "steerability_8-kimi26" not in combined
+
+    pipeline = (RUN15 / "slurm" / "pipeline.sbatch").read_text()
+    assert "AAR_RUN15_LIFECYCLE_PROOF_POLICY" in pipeline
+    assert "user_authorized_bypass" in pipeline
+    assert "lifecycle_proof_override.json" in pipeline
+    assert '.git_commit == $git_commit' in pipeline
+    assert '.researcher_deployment == "autodata2_8-kimi26"' in pipeline
+
+    recovery = (RUN15 / "recovery" / "resume_full.sh").read_text()
+    assert 'lifecycle_proof_policy="$(sed -n' in recovery
+    assert "retained lifecycle-proof policies disagree" in recovery
+    assert "user_authorized_bypass)" in recovery
+    assert "proof-gated attempt unexpectedly retains an override" in recovery
+    assert "override attempt unexpectedly retains lifecycle proof" in recovery
+    assert "aar.run15-lifecycle-proof-override/v1" in recovery
+    assert '.git_commit == $git_commit' in recovery
 
 
 def test_run15_uses_attempt_local_detached_source_snapshot() -> None:
@@ -350,4 +371,5 @@ def test_run15_readmes_have_required_operator_sections() -> None:
     root = readmes[0].read_text()
     assert "**Experiment code branch:** `autodata`" in root
     assert "## Model and execution roles" in root
-    assert "not launched" in root
+    assert "`autodata2_8-kimi26`" in root
+    assert "explicitly authorized direct full attempt" in root

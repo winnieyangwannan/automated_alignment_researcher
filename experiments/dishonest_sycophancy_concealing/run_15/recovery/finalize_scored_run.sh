@@ -46,7 +46,7 @@ export AAR_AUTODATA=0
 export PATH="/storage/home/${USER}/tools/node-v22.22.0-linux-arm64/bin:${PATH}"
 export KIMI_CLI_PATH="/storage/home/${USER}/tools/kimi-code-2.1.1/node_modules/.bin/kimi"
 export AAR_WEB_MODE=native_web
-export AAR_KIMI_SERVE_DEPLOYMENT=steerability_8-kimi26
+export AAR_KIMI_SERVE_DEPLOYMENT=autodata2_8-kimi26
 export AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
 export AAR_KIMI_PROVIDER_TYPE=kimi AAR_KIMI_DISABLE_THINKING=1
 export AAR_SERVE_API_V2_ROOT="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"

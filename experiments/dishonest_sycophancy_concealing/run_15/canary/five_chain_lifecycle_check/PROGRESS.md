@@ -20,3 +20,21 @@ Append-only operational record. All timestamps use Pacific Time (`PT`).
 ○ Five score/finding pairs
 ○ Fail-closed topology proof
 ```
+
+### 🔎 03:07 PT — OBSERVATION: topology gate bypassed by user authorization
+
+The five-chain canary did not launch and produced no topology proof. After
+fresh preflight of replacement deployment `autodata2_8-kimi26` and all other
+dependencies, the user explicitly authorized a direct full five-chain 5x50
+launch. The full attempt must retain that override; this canary remains not run.
+
+```text
+↷ Validate exact one-chain prerequisite proof — explicitly bypassed
+↷ Launch five parallel canary chains — explicitly bypassed
+○ Five method authoring and contract checks
+○ Five proposal approvals
+○ Five real-GPU one-step adapters
+○ Shared bounded evaluation
+○ Five score/finding pairs
+✗ Fail-closed topology proof — not produced
+```

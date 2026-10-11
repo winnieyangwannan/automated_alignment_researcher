@@ -166,3 +166,52 @@ commit in an isolated HPC checkout without advancing the live Run 14 checkout.
 
 Commit and synchronize the reviewed source, then exercise the one-chain gate
 from that exact revision. Any later model/config change requires reconfirmation.
+
+<a id="run15-event-stopped-one-chain"></a>
+
+### 🔴 02:29 PT — STOP: first one-chain attempt cancelled at user request
+
+- Retained attempt:
+  `/checkpoint/ram/aar/winnieyangwn/run15_native_generation/canary_attempts/20261011T091414Z-c6ddf73a6477`
+- Pipeline job `1813100` and chain job `1813157` were cancelled.
+- The attempt produced no training, evaluation, score/finding pair, or
+  lifecycle proof. It remains retained as stopped evidence and is not a pass.
+
+<a id="run15-event-endpoint-replacement"></a>
+
+### ✅ 02:50 PT — PASS: replacement Kimi endpoint verified
+
+- Serve API v2 deployment `autodata2_8-kimi26` reports served model
+  `Kimi-K2.6` and passed endpoint health/generation checks.
+- The exact AAR harness preflight passed with Kimi thinking disabled, a Bash
+  tool roundtrip, MCP literature roundtrip, and forced-tool recovery.
+- Claude 4.8 Opus proposal monitoring, GPT-5.6 Luna judging, thinking-enabled
+  Gemma target generation, public sources, baseline, secrets, CUDA runtime,
+  merge helper, storage, and prior merged-vLLM evidence were also verified.
+
+### 🛠️ 03:07 PT — FIX: endpoint replacement and direct-full override authorized
+
+> [!IMPORTANT]
+> The user permanently replaced `steerability_8-kimi26` with
+> `autodata2_8-kimi26` for every Run 15 gate and explicitly authorized the
+> full five-chain 5x50 launch without either lifecycle proof.
+
+- The proof-gated launch remains the reusable default.
+- The direct path requires the exact
+  `--user-authorized-without-lifecycle-proofs` flag and writes a mode-400,
+  commit-bound override record identifying the scope, endpoint, skipped
+  proofs, and retained safety checks.
+- The scheduled pipeline validates that record before launching children.
+
+#### Lifecycle
+
+```text
+✓ Replacement Kimi endpoint and MCP preflight
+✓ Non-Kimi launch dependencies
+↷ One-chain lifecycle proof — explicitly bypassed; stopped attempt is not a pass
+↷ Five-chain topology proof — explicitly bypassed; no proof claimed
+⏳ Commit, exact HPC synchronization, and full submission
+○ Five distinct research-chain jobs
+○ Five distinct evaluator jobs
+○ 250 durable score/finding pairs
+```

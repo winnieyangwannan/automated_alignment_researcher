@@ -1,8 +1,8 @@
 # Run 15 five-chain native-generation lifecycle check
 
-- Status: planned; blocked on the Run 15 one-chain proof
+- Status: not run; bypassed for the authorized direct full launch
 - Created: 2026-10-11 01:43 PT
-- Last updated: 2026-10-11 01:43 PT
+- Last updated: 2026-10-11 03:07 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -63,7 +63,7 @@ Recorded: 2026-10-11 01:43 PT
 Recorded: 2026-10-11 01:43 PT
 
 The role mapping is identical to the one-chain gate: Kimi-K2.6 at logical
-deployment `steerability_8-kimi26` authors the methods and native training data;
+deployment `autodata2_8-kimi26` authors the methods and native training data;
 `claude-4-8-opus` through Meta Model API reviews proposals; Gemma 4 31B IT is
 the fixed training base and the vLLM evaluator base plus each promoted adapter.
 `verbalized_ece` is rule-scored, so no evaluator-judge model is used. AutoData
@@ -97,3 +97,8 @@ Recorded: 2026-10-11 01:43 PT
 
 Review and retain the held-out-safe proof. Only then may the full five-chain
 Run 15 launcher be authorized; neither canary score is a scientific result.
+
+For the 2026-10-11 direct launch, the user explicitly bypassed this gate after
+fresh endpoint and dependency preflight. No topology proof was produced, and
+the bypass is retained in full-attempt metadata rather than represented as a
+canary pass.

@@ -35,9 +35,7 @@ fi
 submission="${ATTEMPT}/metadata/submission.txt"
 full_launch="${ATTEMPT}/metadata/full-launch.env"
 children="${ATTEMPT}/metadata/children.tsv"
-for required in "${submission}" "${full_launch}" "${children}" \
-  "${ATTEMPT}/metadata/one_chain_lifecycle_passed.json" \
-  "${ATTEMPT}/metadata/five_chain_lifecycle_passed.json"; do
+for required in "${submission}" "${full_launch}" "${children}"; do
   [ -f "${required}" ] || { echo "missing retained attempt metadata: ${required}" >&2; exit 2; }
 done
 [ "$(sed -n 's/^attempt_dir=//p' "${submission}")" = "${ATTEMPT}" ] || {
@@ -53,6 +51,49 @@ original_commit="$(sed -n 's/^git_commit=//p' "${submission}")"
   echo "submission record has no full source commit" >&2
   exit 2
 }
+lifecycle_proof_policy="$(sed -n 's/^lifecycle_proof_policy=//p' "${submission}")"
+[ "${lifecycle_proof_policy}" = "$(sed -n 's/^lifecycle_proof_policy=//p' "${full_launch}")" ] || {
+  echo "retained lifecycle-proof policies disagree" >&2
+  exit 2
+}
+case "${lifecycle_proof_policy}" in
+  required)
+    [ ! -e "${ATTEMPT}/metadata/lifecycle_proof_override.json" ] || {
+      echo "proof-gated attempt unexpectedly retains an override" >&2
+      exit 2
+    }
+    for proof in one_chain_lifecycle_passed.json five_chain_lifecycle_passed.json; do
+      [ -f "${ATTEMPT}/metadata/${proof}" ] || {
+        echo "missing retained attempt metadata: ${ATTEMPT}/metadata/${proof}" >&2
+        exit 2
+      }
+    done
+    ;;
+  user_authorized_bypass)
+    for proof in one_chain_lifecycle_passed.json five_chain_lifecycle_passed.json; do
+      [ ! -e "${ATTEMPT}/metadata/${proof}" ] || {
+        echo "override attempt unexpectedly retains lifecycle proof ${proof}" >&2
+        exit 2
+      }
+    done
+    override="${ATTEMPT}/metadata/lifecycle_proof_override.json"
+    [ -s "${override}" ] || {
+      echo "user-authorized lifecycle-proof override metadata is missing" >&2
+      exit 2
+    }
+    jq -e --arg git_commit "${original_commit}" \
+      '.schema == "aar.run15-lifecycle-proof-override/v1" and
+       .status == "user_authorized" and
+       .scope == "full-five-chain-5x50" and
+       .git_commit == $git_commit and
+       .researcher_deployment == "autodata2_8-kimi26"' \
+      "${override}" >/dev/null || {
+        echo "user-authorized lifecycle-proof override metadata is invalid" >&2
+        exit 2
+      }
+    ;;
+  *) echo "invalid retained lifecycle-proof policy" >&2; exit 2 ;;
+esac
 git -C "${REPO}" merge-base --is-ancestor "${original_commit}" HEAD || {
   echo "current recovery source does not descend from ${original_commit}" >&2
   exit 2
@@ -175,7 +216,7 @@ export AAR_VLLM_EPHEMERAL_MIN_FREE_BYTES=75161927680
 export AAR_WEB_MODE=native_web
 export KIMI_CLI_PATH=/storage/home/${USER}/tools/kimi-code-2.1.1/node_modules/.bin/kimi
 export PATH=/storage/home/${USER}/tools/node-v22.22.0-linux-arm64/bin:"${PATH}"
-export AAR_KIMI_SERVE_DEPLOYMENT=steerability_8-kimi26 AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
+export AAR_KIMI_SERVE_DEPLOYMENT=autodata2_8-kimi26 AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
 export AAR_KIMI_PROVIDER_TYPE=kimi AAR_KIMI_DISABLE_THINKING=1
 export AAR_SERVE_API_V2_ROOT=/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2
 export KIMI_MODEL_MAX_CONTEXT_SIZE=262144 KIMI_MODEL_MAX_OUTPUT_SIZE=65536

@@ -20,9 +20,11 @@ the run and up to 10 unsuccessful sessions of headroom per chain.
 - Every method declares reproducible data provenance and passes the proposal
   monitor and source-bound method contract before GPU submission.
 - Benchmark and held-out items remain unavailable to research chains.
-- Full launch metadata retains both ordered lifecycle proofs, verifies that the
-  five-chain proof is SHA-256-bound to the exact one-chain proof, and records
-  the hash of each retained copy.
+- By default, full launch metadata retains both ordered lifecycle proofs,
+  verifies that the five-chain proof is SHA-256-bound to the exact one-chain
+  proof, and records the hash of each retained copy. An exact explicit
+  user-authorized bypass may replace those proofs only when its scope, source
+  commit, and researcher deployment are durably recorded and validated.
 - Every launch executes from an independent detached clone of the exact clean
   source commit under the attempt runtime. The clone has no remote or shared
   object alternates, and the scheduled pipeline rejects source/config drift
@@ -45,9 +47,10 @@ the run and up to 10 unsuccessful sessions of headroom per chain.
    source revision to the matching HPC `autodata` worktree.
 6. Create and validate the attempt-local immutable source snapshot before the
    endpoint preflight and scheduler submission.
-7. Launch the full run only with both exact proof files. Require five distinct
-   research jobs and five distinct evaluator jobs in retained metadata before
-   reporting the run active.
+7. Launch the full run with both exact proof files by default, or with the
+   narrowly scoped recorded user override confirmed on 2026-10-11. Require
+   five distinct research jobs and five distinct evaluator jobs in retained
+   metadata before reporting the run active.
 8. Monitor each isolated chain until it reaches 50 complete pairs or exhausts
    60 sessions. Preserve and report terminal state rather than resetting
    retained work.
@@ -60,14 +63,14 @@ the run and up to 10 unsuccessful sessions of headroom per chain.
   merged exact adapter.
 - No chain starts more than 60 sessions.
 - Attempt metadata retains the resolved config, source commit, immutable
-  source-snapshot root and manifest hash, model identity, child job IDs, both
-  ordered proofs and hashes, baseline/source provenance, and evaluator runtime
-  snapshot.
+  source-snapshot root and manifest hash, model identity, child job IDs, either
+  both ordered proofs and hashes or the validated user-override record,
+  baseline/source provenance, and evaluator runtime snapshot.
 
 ## Stop conditions
 
-Stop before scale-up if either lifecycle proof is missing, failed, stale, or
-not correctly bound; if the configured budget differs from 50 successful pairs
+Stop before scale-up if neither correctly bound lifecycle proofs nor the exact
+validated user override is present; if the configured budget differs from 50 successful pairs
 and 60 sessions per chain; if model roles are unconfirmed; if AutoData loads;
 if data provenance or the method contract fails; if the real-GPU adapter smoke
 or score/finding join fails; or if evaluator-only data is exposed to research.

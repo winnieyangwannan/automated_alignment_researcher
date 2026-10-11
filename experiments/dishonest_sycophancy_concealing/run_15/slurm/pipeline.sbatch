@@ -14,6 +14,7 @@ ATTEMPT="${AAR_RUN_ATTEMPT_DIR:?missing attempt}"
 RUN_CONFIG="${AAR_RUN_CONFIG:?missing run config}"
 EXPECTED_COMMIT="${AAR_BASELINE_GIT_COMMIT:?missing source commit}"
 SOURCE_SNAPSHOT="${AAR_SOURCE_SNAPSHOT:?missing immutable source snapshot}"
+LIFECYCLE_PROOF_POLICY="${AAR_RUN15_LIFECYCLE_PROOF_POLICY:-required}"
 REUSED_BASELINE="${AAR_REUSED_BASELINE:?missing baseline}"
 RECOVERED_SOURCES="${AAR_RECOVERED_BASELINE_SOURCES:?missing source bundle}"
 export HF_HOME="${ATTEMPT}/cache/huggingface"
@@ -31,6 +32,26 @@ fi
 case "${RUN_CONFIG}" in
   "${REPO}"/*) ;;
   *) echo "Run 15 config is not source-pinned" >&2; exit 2 ;;
+esac
+case "${LIFECYCLE_PROOF_POLICY}" in
+  required) ;;
+  user_authorized_bypass)
+    [ -s "${ATTEMPT}/metadata/lifecycle_proof_override.json" ] || {
+      echo "user-authorized lifecycle-proof override metadata is missing" >&2
+      exit 2
+    }
+    jq -e --arg git_commit "${EXPECTED_COMMIT}" \
+      '.schema == "aar.run15-lifecycle-proof-override/v1" and
+       .status == "user_authorized" and
+       .scope == "full-five-chain-5x50" and
+       .git_commit == $git_commit and
+       .researcher_deployment == "autodata2_8-kimi26"' \
+      "${ATTEMPT}/metadata/lifecycle_proof_override.json" >/dev/null || {
+        echo "user-authorized lifecycle-proof override metadata is invalid" >&2
+        exit 2
+      }
+    ;;
+  *) echo "invalid Run 15 lifecycle-proof policy" >&2; exit 2 ;;
 esac
 
 # shellcheck disable=SC1091
@@ -72,7 +93,7 @@ export AAR_VLLM_EPHEMERAL_MIN_FREE_BYTES=75161927680
 export AAR_WEB_MODE=native_web
 export KIMI_CLI_PATH=/storage/home/${USER}/tools/kimi-code-2.1.1/node_modules/.bin/kimi
 export PATH=/storage/home/${USER}/tools/node-v22.22.0-linux-arm64/bin:"${PATH}"
-export AAR_KIMI_SERVE_DEPLOYMENT=steerability_8-kimi26 AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
+export AAR_KIMI_SERVE_DEPLOYMENT=autodata2_8-kimi26 AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
 export AAR_KIMI_PROVIDER_TYPE=kimi AAR_KIMI_DISABLE_THINKING=1
 export AAR_SERVE_API_V2_ROOT=/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2
 export KIMI_MODEL_MAX_CONTEXT_SIZE=262144 KIMI_MODEL_MAX_OUTPUT_SIZE=65536
@@ -244,7 +265,7 @@ else
     exit 1
   }
 fi
-printf 'research_backend=kimi\nresearch_model=Kimi-K2.6\ndata_generation_backend=native\nautodata=0\nchains=%s\ntarget_score_result_pairs=%s\nseeds=%s\n' \
-  "${#seeds[@]}" "${AAR_TARGET_SUCCESSFUL_ITERATIONS}" "${AAR_RESEARCH_SEEDS}" \
+printf 'research_backend=kimi\nresearch_model=Kimi-K2.6\nresearcher_deployment=autodata2_8-kimi26\ndata_generation_backend=native\nautodata=0\nlifecycle_proof_policy=%s\nchains=%s\ntarget_score_result_pairs=%s\nseeds=%s\n' \
+  "${LIFECYCLE_PROOF_POLICY}" "${#seeds[@]}" "${AAR_TARGET_SUCCESSFUL_ITERATIONS}" "${AAR_RESEARCH_SEEDS}" \
   > "${ATTEMPT}/metadata/full-launch.env"
 echo "[run15] launched ${#seeds[@]} isolated native-generation chains"

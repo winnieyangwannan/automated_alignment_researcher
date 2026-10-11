@@ -1,8 +1,8 @@
 # Run 15 one-chain native-generation lifecycle check
 
-- Status: planned; not launched
+- Status: stopped without a proof; bypassed for the authorized direct full launch
 - Created: 2026-10-11 01:43 PT
-- Last updated: 2026-10-11 01:43 PT
+- Last updated: 2026-10-11 03:07 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -52,7 +52,7 @@ or comparator role.
 ```text
 AAR control plane
 ├─ AAR researcher and native data-generation author
-│  └─ Kimi-K2.6, deployment steerability_8-kimi26
+│  └─ Kimi-K2.6, deployment autodata2_8-kimi26
 │     Direct Serve API v2 proxy behind a credential-hiding local bridge
 ├─ AAR proposal-approval monitor
 │  └─ claude-4-8-opus through Meta Model API
@@ -97,3 +97,7 @@ Recorded: 2026-10-11 01:43 PT
 Create and review the fail-closed lifecycle proof, then supply that exact proof
 to the five-chain topology gate. A one-chain pass does not directly authorize
 the full run. Do not treat the bounded score as a scientific conclusion.
+
+The stopped 2026-10-11 attempt did not pass and produced no proof. The user
+subsequently authorized a direct full launch through the separately recorded
+full-launch override; that decision does not convert this canary into a pass.

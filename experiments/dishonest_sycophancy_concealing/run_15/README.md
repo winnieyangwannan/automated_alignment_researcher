@@ -4,9 +4,9 @@
 
 Run 15's launchers and scheduled payload require this branch.
 
-- Status: model roles confirmed; source pinning locally validated; not launched
+- Status: direct full launch authorized; exact source preparing for HPC launch
 - Created: 2026-10-11 01:43 PT
-- Last updated: 2026-10-11 02:04 PT
+- Last updated: 2026-10-11 03:07 PT
 
 ## Goal
 
@@ -29,7 +29,7 @@ after the reusable failure-feedback, proposal-revision, and one-shot recovery
 fixes are committed, synchronized, and tested. Run 14 artifacts remain retained
 as incident evidence.
 
-Scale-up is ordered and fail-closed:
+The reusable default scale-up remains ordered and fail-closed:
 
 ```text
 one-chain lifecycle proof
@@ -37,9 +37,12 @@ one-chain lifecycle proof
   → full five-chain 5×50 run
 ```
 
-Run 15's gates are planned and have not launched. Their proofs must come from
-the final Run 15 source revision; Run 14 proof files are historical evidence,
-not authorization for this fresh attempt.
+The user explicitly authorized this full 5x50 attempt to bypass both lifecycle
+proofs after the replacement Kimi endpoint and all other launch dependencies
+passed fresh preflight. The launcher requires an exact, conspicuous bypass
+flag and retains a commit-bound override record. This exception does not weaken
+the proof-gated default for future submissions. Run 14 proof files remain
+historical evidence, not authorization for this fresh attempt.
 
 ## Directory layout
 
@@ -98,7 +101,7 @@ a static product above 256 fails the method contract before GPU submission.
 ## Model and execution roles
 
 - Researcher and native data-generation author: Kimi-K2.6, logical deployment
-  `steerability_8-kimi26`, through the credential-hiding Serve API v2 bridge;
+  `autodata2_8-kimi26`, through the credential-hiding Serve API v2 bridge;
   Kimi's optional thinking mode is disabled for the agent harness.
 - Proposal monitor: `claude-4-8-opus` through Meta Model API.
 - Training base and optional target probe: fixed Gemma 4 31B IT at
@@ -115,9 +118,10 @@ a static product above 256 fails the method contract before GPU submission.
   judge, broker, workspace, recipe, comparator, and production export roles do
   not exist in Run 15.
 
-The user explicitly confirmed this mapping and the 5×50/60-session topology at
-2026-10-11 01:45 PT. Any model, deployment, checkpoint, adapter mode, backend,
-or role change requires a new confirmation before submission.
+The user confirmed the 5x50/60-session topology at 2026-10-11 01:45 PT and
+permanently replaced the Run 15 Kimi deployment with `autodata2_8-kimi26` at
+2026-10-11 03:07 PT. Any subsequent model, deployment, checkpoint, adapter
+mode, backend, or role change requires a new confirmation before submission.
 
 ## Topology
 
@@ -164,10 +168,19 @@ experiments/dishonest_sycophancy_concealing/run_15/launch/submit_full.sh \
   <five-chain-attempt>/metadata/canary_passed.json
 ```
 
+For the explicitly authorized direct full attempt, use the narrow override:
+
+```bash
+experiments/dishonest_sycophancy_concealing/run_15/launch/submit_full.sh \
+  --user-authorized-without-lifecycle-proofs
+```
+
 The full launcher validates both proofs, verifies that the five-chain proof is
 bound to the exact one-chain proof by SHA-256, copies both proofs into the new
-attempt, and records their hashes before submission. Before endpoint preflight
-or `sbatch`, every canary and full launch clones the clean submitted commit into
+attempt, and records their hashes before submission. Under the explicit bypass,
+it instead records the user-authorized scope, source commit, replacement Kimi
+deployment, skipped proofs, and retained safety checks in mode-400 attempt
+metadata. Before endpoint preflight or `sbatch`, every canary and full launch clones the clean submitted commit into
 `<attempt>/runtime/aar-source` as a detached, remote-free, independent Git
 snapshot. The scheduled pipeline and all child jobs use that attempt-local
 source, config, benchmark documentation, and Python import root. Later progress
@@ -197,12 +210,11 @@ after exactly one finding is durably joined to the scored run ID.
 
 ## Pass criteria
 
-- The Run 15 one-chain proof passes all lifecycle checks.
-- A Run 15 five-chain proof passes for all five configured seeds and retains
-  the SHA-256 of the exact one-chain proof it consumed.
-- Full-attempt metadata retains the resolved YAML, both ordered proof files,
-  their hashes, the source commit, the immutable source-snapshot root and
-  manifest hash, and five distinct research/evaluator job pairs.
+- Full-attempt metadata retains either both valid ordered proof files and their
+  hashes or the exact commit-bound user-authorization override record.
+- Full-attempt metadata also retains the resolved YAML, source commit, immutable
+  source-snapshot root and manifest hash, and five distinct
+  research/evaluator job pairs.
 - Each chain publishes 50 complete score/finding pairs joined by run ID; the
   full run therefore produces 250 complete pairs. Started or failed sessions do
   not count toward this target.
@@ -214,8 +226,9 @@ after exactly one finding is durably joined to the scored run ID.
 
 ## Stop criteria
 
-Stop before scale-up or submission if either ordered proof is missing, failed,
-stale, or not bound to the other; if the model-role mapping is unconfirmed; if
+Stop before scale-up or submission if neither valid ordered proofs nor the exact
+explicit user-authorized override is present; if the model-role mapping is
+unconfirmed; if
 the worktree is dirty or not at the retained source commit; if the attempt-local
 source is not detached, exact-commit, remote-free, independent, and clean; or if
 baseline, public-source, endpoint, runtime, secret, or storage validation fails.

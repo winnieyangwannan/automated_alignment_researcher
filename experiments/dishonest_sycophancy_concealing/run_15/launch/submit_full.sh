@@ -17,12 +17,20 @@ case "${MODE}" in full|canary) ;; *) echo "AAR_RUN15_MODE must be full or canary
   exit 2
 }
 if [ "${MODE}" = full ]; then
-  [ "$#" -eq 2 ] || {
+  LIFECYCLE_PROOF_POLICY=required
+  if [ "$#" -eq 1 ] && \
+     [ "$1" = --user-authorized-without-lifecycle-proofs ]; then
+    LIFECYCLE_PROOF_POLICY=user_authorized_bypass
+    ONE_CHAIN_PROOF=""
+    FIVE_CHAIN_PROOF=""
+  elif [ "$#" -eq 2 ]; then
+    ONE_CHAIN_PROOF="$(realpath -e -- "$1")"
+    FIVE_CHAIN_PROOF="$(realpath -e -- "$2")"
+  else
     echo "usage: $0 <one-chain-proof.json> <five-chain-proof.json>" >&2
+    echo "   or: $0 --user-authorized-without-lifecycle-proofs" >&2
     exit 2
-  }
-  ONE_CHAIN_PROOF="$(realpath -e -- "$1")"
-  FIVE_CHAIN_PROOF="$(realpath -e -- "$2")"
+  fi
 else
   [ "$#" -eq 0 ] || {
     echo "Run 15 canary mode takes no positional arguments" >&2
@@ -30,6 +38,7 @@ else
   }
   ONE_CHAIN_PROOF=""
   FIVE_CHAIN_PROOF=""
+  LIFECYCLE_PROOF_POLICY=required
 fi
 
 [ -x "${REPO}/.venv/bin/python" ] || { echo "missing worktree-local runtime" >&2; exit 2; }
@@ -73,7 +82,7 @@ if [ "${MODE}" = canary ] && \
     "${PREREQUISITE_PROOF}" "${AAR_LIFECYCLE_PREREQUISITE_CHAIN_COUNT}" \
     one_chain_native_generation "${ONE_CHAIN_CONFIG}"
 fi
-if [ "${MODE}" = full ]; then
+if [ "${MODE}" = full ] && [ "${LIFECYCLE_PROOF_POLICY}" = required ]; then
   validate_lifecycle_proof \
     "${ONE_CHAIN_PROOF}" 1 one_chain_native_generation "${ONE_CHAIN_CONFIG}"
   validate_lifecycle_proof \
@@ -182,7 +191,7 @@ SNAPSHOT_RECOVERED_SOURCES="${SNAPSHOT_RECOVERY_ROOT}/source-artifacts"
 [ -z "${PREREQUISITE_PROOF}" ] || \
   cp -- "${PREREQUISITE_PROOF}" \
     "${attempt}/metadata/prerequisite_lifecycle_passed.json"
-if [ "${MODE}" = full ]; then
+if [ "${MODE}" = full ] && [ "${LIFECYCLE_PROOF_POLICY}" = required ]; then
   cp -- "${ONE_CHAIN_PROOF}" \
     "${attempt}/metadata/one_chain_lifecycle_passed.json"
   cp -- "${FIVE_CHAIN_PROOF}" \
@@ -191,6 +200,23 @@ if [ "${MODE}" = full ]; then
   printf 'one_chain_sha256=%s\nfive_chain_sha256=%s\n' \
     "${one_chain_proof_sha256}" "${five_chain_proof_sha256}" \
     > "${attempt}/metadata/lifecycle_proofs.sha256"
+elif [ "${MODE}" = full ]; then
+  override_recorded_at_pt="$(TZ=America/Los_Angeles date '+%Y-%m-%d %H:%M:%S %Z')"
+  jq -n \
+    --arg recorded_at_pt "${override_recorded_at_pt}" \
+    --arg git_commit "${commit}" \
+    --arg researcher_deployment "autodata2_8-kimi26" \
+    '{schema:"aar.run15-lifecycle-proof-override/v1",
+      status:"user_authorized",
+      scope:"full-five-chain-5x50",
+      recorded_at_pt:$recorded_at_pt,
+      git_commit:$git_commit,
+      researcher_deployment:$researcher_deployment,
+      skipped_proofs:["one_chain_native_generation","five_chain_lifecycle_check"],
+      retained_checks:["endpoint_mcp_preflight","immutable_source","native_generation",
+        "method_contract","proposal_review","training_receipt","merged_vllm_evaluation"]}' \
+    > "${attempt}/metadata/lifecycle_proof_override.json"
+  chmod 400 "${attempt}/metadata/lifecycle_proof_override.json"
 fi
 "${SOURCE_REPO}/experiments/dishonest_sycophancy_concealing/run_10/runtime/snapshot_vllm_runtime.sh" "${attempt}" \
   > "${attempt}/metadata/vllm_runtime_path.txt"
@@ -198,7 +224,7 @@ fi
 export PATH="/storage/home/${USER}/tools/node-v22.22.0-linux-arm64/bin:${PATH}"
 export KIMI_CLI_PATH="/storage/home/${USER}/tools/kimi-code-2.1.1/node_modules/.bin/kimi"
 export AAR_WEB_MODE=native_web
-export AAR_KIMI_SERVE_DEPLOYMENT=steerability_8-kimi26 AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
+export AAR_KIMI_SERVE_DEPLOYMENT=autodata2_8-kimi26 AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
 export AAR_KIMI_PROVIDER_TYPE=kimi AAR_KIMI_DISABLE_THINKING=1
 export AAR_SERVE_API_V2_ROOT="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 export KIMI_MODEL_CAPABILITIES=tool_use KIMI_MODEL_MAX_CONTEXT_SIZE=262144
@@ -222,6 +248,7 @@ export AAR_BASELINE_GIT_COMMIT="${commit}" AAR_REUSED_BASELINE="${SNAPSHOT_REUSE
 export AAR_RECOVERED_BASELINE_SOURCES="${SNAPSHOT_RECOVERED_SOURCES}"
 export AAR_MONITOR_MODEL_API_KEY="${MODEL_API_KEY}"
 export AAR_RUN15_MODE="${MODE}"
+export AAR_RUN15_LIFECYCLE_PROOF_POLICY="${LIFECYCLE_PROOF_POLICY}"
 pipeline_time=02:00:00
 [ "${MODE}" != canary ] || pipeline_time=04:00:00
 job="$(sbatch --parsable --time="${pipeline_time}" \
@@ -230,9 +257,9 @@ job="$(sbatch --parsable --time="${pipeline_time}" \
 
 submitted_at_pt="$(TZ=America/Los_Angeles date '+%Y-%m-%d %H:%M:%S %Z')"
 source_snapshots_sha256="sha256:$(sha256sum "${attempt}/metadata/source-snapshots.json" | awk '{print $1}')"
-printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nsource_snapshot_root=%s\nsource_snapshots_sha256=%s\nmode=%s\nlifecycle_name=%s\nsubmitted_at_pt=%s\nresearch_backend=%s\nresearch_model=Kimi-K2.6\ndata_generation_backend=native\nautodata=0\nseeds=%s\ntarget_score_result_pairs=%s\n' \
+printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nsource_snapshot_root=%s\nsource_snapshots_sha256=%s\nmode=%s\nlifecycle_name=%s\nlifecycle_proof_policy=%s\nsubmitted_at_pt=%s\nresearch_backend=%s\nresearch_model=Kimi-K2.6\nresearcher_deployment=autodata2_8-kimi26\ndata_generation_backend=native\nautodata=0\nseeds=%s\ntarget_score_result_pairs=%s\n' \
   "${job}" "${attempt}" "${commit}" "${SOURCE_REPO}" \
   "${source_snapshots_sha256}" "${MODE}" "${AAR_LIFECYCLE_NAME:-none}" \
-  "${submitted_at_pt}" "${AAR_AGENT_BACKEND}" "${AAR_RESEARCH_SEEDS}" \
+  "${LIFECYCLE_PROOF_POLICY}" "${submitted_at_pt}" "${AAR_AGENT_BACKEND}" "${AAR_RESEARCH_SEEDS}" \
   "${AAR_TARGET_SUCCESSFUL_ITERATIONS}" | tee "${attempt}/metadata/submission.txt"
 unset MODEL_API_KEY HF_TOKEN
