@@ -34,6 +34,28 @@ def test_approved_proposal_recovery_disables_after_finding_persists(
         assert not KimiAgent._resume_approved_proposal_enabled()
 
 
+def test_approved_proposal_recovery_disables_after_structured_failure() -> None:
+    with (
+        patch.dict(
+            os.environ,
+            {"AAR_RESUME_APPROVED_PROPOSAL": "1"},
+            clear=False,
+        ),
+        patch.object(KimiAgent, "_approved_run_id", return_value="run-1"),
+        patch.object(
+            KimiAgent,
+            "_finding_persisted_for_run",
+            return_value=False,
+        ),
+        patch.object(
+            KimiAgent,
+            "_current_training_failure",
+            return_value={"error_code": "method_contract_failure"},
+        ),
+    ):
+        assert not KimiAgent._resume_approved_proposal_enabled()
+
+
 def test_approved_proposal_without_run_id_stops_as_infrastructure_incident(
     tmp_path,
 ) -> None:

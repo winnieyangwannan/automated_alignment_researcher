@@ -2335,12 +2335,17 @@ class KimiAgent:
             return False
 
         # Recovery is a one-run handoff, even though the chain process can host
-        # many research sessions.  Once the retained run has a durable finding,
-        # stop treating its proposal as the current session's proposal.  Keeping
-        # the environment flag active after this point replays share_finding in
-        # every subsequent session and silently consumes the chain budget.
+        # many research sessions.  Once the retained run reaches either terminal
+        # outcome, stop treating its proposal as the current session's proposal.
+        # A durable finding advances normally; a structured failure must flow to
+        # the next fresh Kimi turn as repair feedback.  Keeping the environment
+        # flag active after either outcome replays the terminal handoff and
+        # silently consumes the chain budget without a model turn.
         run_id = cls._approved_run_id()
-        return run_id is None or not cls._finding_persisted_for_run(run_id)
+        return run_id is None or (
+            not cls._finding_persisted_for_run(run_id)
+            and cls._current_training_failure() is None
+        )
 
     @staticmethod
     def _finding_persisted_for_run(run_id: str) -> bool:
