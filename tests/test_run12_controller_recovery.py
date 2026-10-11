@@ -19,6 +19,8 @@ def test_controller_requires_authoritative_terminal_accounting_state() -> None:
     assert "squeue is advisory only" in source
     assert "sacct_state_unavailable" in source
     assert "aar.slurm_session_recovery classify" in source
+    assert "reconcile-result" in source
+    assert "research-session-result-${job_id}.json" in source
     assert 'if [ "${terminal}" = true ]; then' in source
     assert "state=${LAST_JOB_STATE}" in source
 
@@ -50,8 +52,43 @@ def test_chain_propagates_service_death_and_bounds_cleanup() -> None:
     source = CHAIN.read_text()
 
     assert "stop_child_bounded" in source
+    assert "stop_active_research" in source
     assert "ignored TERM; sending KILL" in source
     assert "AutoData broker exited while research was active" in source
     assert "Kimi auth bridge exited while research was active" in source
     assert "AutoData lifecycle supervisor exited while research was active" in source
     assert "aar.research-session-result/v1" in source
+
+
+def test_chain_distinguishes_cancellation_from_internal_watchdog_failure() -> None:
+    source = CHAIN.read_text()
+
+    assert "terminate_aar_chain TERM 143 cancelled" in source
+    assert "terminate_aar_chain USR2 70 runtime_service_failure" in source
+    assert 'kill -USR2 "${_aar_chain_pid}"' in source
+    assert 'category="${_aar_termination_category}"' in source
+
+
+def test_chain_retains_signal_marker_before_bounded_child_cleanup() -> None:
+    source = CHAIN.read_text()
+
+    marker_write = source.index('"${PY}" - "${TEAM_DIR}/logs/research-session-result-')
+    child_stop = source.index("  stop_active_research\n", marker_write)
+    broker_stop = source.index("  cleanup_autodata_broker\n", child_stop)
+    assert marker_write < child_stop < broker_stop
+    assert "os.fsync(handle.fileno())" in source
+    assert "os.fsync(directory)" in source
+    assert "secrets.token_hex(16)" in source
+    assert "dir_fd=directory" in source
+
+
+def test_chain_keeps_privileged_service_logs_out_of_research_logs() -> None:
+    source = CHAIN.read_text()
+
+    assert "_aar_auth_bridge_log=/dev/null" in source
+    assert "_aar_broker_log=/dev/null" in source
+    assert "_aar_supervisor_log=/dev/null" in source
+    assert '>"${_aar_auth_bridge_log}"' in source
+    assert '> "${_aar_broker_log}"' in source
+    assert '--log-file "${_aar_supervisor_log}"' in source
+    assert '"${TEAM_DIR}/logs/autodata-broker.log"' not in source

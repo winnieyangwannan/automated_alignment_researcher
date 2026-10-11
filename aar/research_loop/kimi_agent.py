@@ -26,6 +26,12 @@ from urllib.parse import urlsplit
 
 import requests
 
+from aar.failure_feedback import (
+    FailureFeedbackError,
+    build_failure_feedback,
+    safe_failure_feedback_view,
+)
+
 
 _DEGENERATE_OUTPUT_STOP = "!!!!!!!!!!!!!!!!"
 
@@ -53,10 +59,38 @@ class KimiAgentResult:
     duration: float
     iteration_count: int
     error: Optional[str] = None
+    failure: Optional[dict[str, Any]] = None
 
 
 class OrchestrationIncident(RuntimeError):
     """Shared infrastructure failure that research sessions cannot repair."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure: dict[str, Any] | None = None,
+    ) -> None:
+        self.failure = failure
+        super().__init__(message)
+
+
+def _retain_process_failure(
+    *,
+    error: BaseException,
+    error_code: str,
+    stage: str,
+    public_summary: str,
+    retryable: bool = False,
+) -> FailureFeedbackError:
+    feedback = build_failure_feedback(
+        error,
+        error_code=error_code,
+        stage=stage,
+        retryable=retryable,
+        public_summary=public_summary,
+    )
+    return FailureFeedbackError(feedback)
 
 
 PROTECTED_SUBMISSION_FILES = (
@@ -379,12 +413,22 @@ class KimiAgent:
         except OrchestrationIncident:
             raise
         except Exception as error:
+            if isinstance(error, FailureFeedbackError):
+                feedback = dict(error.feedback)
+            else:
+                feedback = _retain_process_failure(
+                    error=error,
+                    error_code="kimi_session_failed",
+                    stage="research_session",
+                    public_summary="Kimi research session failed",
+                ).feedback
             return KimiAgentResult(
                 success=False,
                 output={},
                 duration=time.time() - start_time,
                 iteration_count=0,
-                error=str(error),
+                error=str(feedback["summary"]),
+                failure=feedback,
             )
 
     async def _execute_once(self, task: str, start_time: float) -> KimiAgentResult:
@@ -488,9 +532,19 @@ class KimiAgent:
                             snapshot = self._autodata_native_status(status_subject)
                             status = str(snapshot.get("status") or "").lower()
                             if status in {"failed", "cancelled", "error"}:
-                                raise RuntimeError(
-                                    "AutoData lifecycle terminated before handoff: "
-                                    + json.dumps(snapshot, sort_keys=True)[:4000]
+                                nested = snapshot.get("failure")
+                                safe_nested = safe_failure_feedback_view(nested)
+                                if safe_nested is not None:
+                                    raise FailureFeedbackError(safe_nested)
+                                raise FailureFeedbackError(
+                                    build_failure_feedback(
+                                        RuntimeError(status),
+                                        error_code="autodata_lifecycle_failed",
+                                        stage="autodata_lifecycle",
+                                        public_summary=(
+                                            "AutoData lifecycle terminated before handoff"
+                                        ),
+                                    )
                                 )
                             print(
                                 "[Kimi] host FSM waiting without a model turn: "
@@ -587,16 +641,41 @@ class KimiAgent:
                     iteration_count += new_tool_uses
                     if return_code != 0:
                         detail = stderr or self._event_error(output["raw_messages"])
-                        raise RuntimeError(
-                            f"Kimi Code exited with status {return_code}: "
-                            f"{detail or 'no error detail'}"
+                        retryable = bool(
+                            detail
+                            and any(
+                                token in detail.lower()
+                                for token in ("529", "overloaded", "temporarily unavailable")
+                            )
+                        )
+                        raise _retain_process_failure(
+                            error=RuntimeError(f"Kimi CLI exit {return_code}"),
+                            error_code=(
+                                "kimi_model_overloaded"
+                                if retryable
+                                else "kimi_cli_failed"
+                            ),
+                            stage="research_session",
+                            public_summary=(
+                                "Kimi model service is overloaded"
+                                if retryable
+                                else f"Kimi Code exited with status {return_code}"
+                            ),
+                            retryable=retryable,
                         )
                     if required_tool is not None and new_tool_uses == 0:
                         if checkpoint_retry_count >= self.max_checkpoint_retries:
-                            raise RuntimeError(
-                                "Kimi repeatedly stopped without calling required "
-                                f"checkpoint tool {required_tool} after "
-                                f"{self.max_checkpoint_retries} retries"
+                            raise FailureFeedbackError(
+                                build_failure_feedback(
+                                    RuntimeError("required checkpoint missing"),
+                                    error_code="required_checkpoint_missing",
+                                    stage="research_session",
+                                    public_summary=(
+                                        "Kimi repeatedly stopped without calling required "
+                                        f"checkpoint tool {required_tool} after "
+                                        f"{self.max_checkpoint_retries} retries"
+                                    ),
+                                )
                             )
                         checkpoint_retry_count += 1
                         print(
@@ -642,21 +721,23 @@ class KimiAgent:
                                 if training_failure is not None and not (
                                     score_path is not None and score_path.is_file()
                                 ):
-                                    raise RuntimeError(
-                                        "Kimi training failed closed: "
-                                        + json.dumps(
-                                            training_failure, sort_keys=True
-                                        )[:2000]
-                                    )
+                                    raise FailureFeedbackError(training_failure)
                     if bounded_canary_complete:
                         break
                     if not self.completion_tool or self._completion_tool_used(output):
                         break
                     if continuation_count >= self.max_continuations:
-                        raise RuntimeError(
-                            "Kimi stopped before calling the required completion tool "
-                            f"{self.completion_tool} after {self.max_continuations} "
-                            "continuations"
+                        raise FailureFeedbackError(
+                            build_failure_feedback(
+                                RuntimeError("required completion missing"),
+                                error_code="required_completion_missing",
+                                stage="research_session",
+                                public_summary=(
+                                    "Kimi stopped before calling the required completion "
+                                    f"tool {self.completion_tool} after "
+                                    f"{self.max_continuations} continuations"
+                                ),
+                            )
                         )
                     continuation_count += 1
                     print(
@@ -665,7 +746,14 @@ class KimiAgent:
                     )
 
         if not output["text_outputs"] and not output["tool_uses"]:
-            raise RuntimeError("Kimi Code ended without an assistant response")
+            raise FailureFeedbackError(
+                build_failure_feedback(
+                    RuntimeError("empty Kimi response"),
+                    error_code="kimi_empty_response",
+                    stage="research_session",
+                    public_summary="Kimi Code ended without an assistant response",
+                )
+            )
 
         output["continuations"] = continuation_count
         output["result_message"] = (
@@ -737,21 +825,18 @@ class KimiAgent:
                 )
             except TimeoutError as error:
                 await self._terminate_process_group(process)
-                tool_names = [
-                    str(item.get("tool", ""))
-                    for item in output.get("tool_uses", [])
-                ]
-                last_event = output.get("raw_messages", [])[-1:]
-                last_event_type = (
-                    str(last_event[0].get("type", ""))
-                    if last_event and isinstance(last_event[0], dict)
-                    else ""
-                )
-                raise RuntimeError(
-                    "Kimi Code turn exceeded "
-                    f"{self.turn_timeout_seconds:g} seconds; terminated its "
-                    f"process group; tools={tool_names}, "
-                    f"last_event_type={last_event_type!r}"
+                raise FailureFeedbackError(
+                    build_failure_feedback(
+                        error,
+                        error_code="kimi_turn_timeout",
+                        stage="research_session",
+                        retryable=True,
+                        public_summary=(
+                            "Kimi Code turn exceeded "
+                            f"{self.turn_timeout_seconds:g} seconds and its process "
+                            "group was terminated"
+                        ),
+                    )
                 ) from error
             stderr = (await stderr_task).decode("utf-8", errors="replace").strip()
             if stderr:
@@ -1343,16 +1428,27 @@ class KimiAgent:
             check=False,
         )
         if completed.returncode != 0:
-            detail = completed.stderr.strip()[-2000:]
-            raise RuntimeError(
-                "trusted AutoData action bridge command failed: "
-                + (detail or f"exit {completed.returncode}")
+            raise _retain_process_failure(
+                error=RuntimeError(
+                    f"trusted AutoData action bridge exit {completed.returncode}"
+                ),
+                error_code="autodata_action_bridge_failed",
+                stage="autodata_action",
+                public_summary=(
+                    "trusted AutoData action bridge command failed "
+                    f"(exit {completed.returncode})"
+                ),
             )
         try:
             payload = json.loads(completed.stdout)
         except json.JSONDecodeError as error:
-            raise RuntimeError(
-                "trusted AutoData action bridge returned invalid JSON"
+            raise _retain_process_failure(
+                error=error,
+                error_code="autodata_action_bridge_invalid_json",
+                stage="autodata_action",
+                public_summary=(
+                    "trusted AutoData action bridge returned invalid JSON"
+                ),
             ) from error
         if not isinstance(payload, dict):
             raise RuntimeError("trusted AutoData action bridge returned a non-object")
@@ -1631,8 +1727,14 @@ class KimiAgent:
             check=False,
         )
         if completed.returncode != 0:
-            detail = completed.stderr[-2000:].strip() or completed.stdout[-2000:].strip()
-            raise RuntimeError(f"reviewed grounding repair failed: {detail}")
+            raise _retain_process_failure(
+                error=RuntimeError(
+                    f"reviewed grounding repair exit {completed.returncode}"
+                ),
+                error_code="grounding_repair_failed",
+                stage="autodata_grounding",
+                public_summary="reviewed grounding repair failed",
+            )
         try:
             repaired = json.loads(manifest.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -2011,9 +2113,13 @@ class KimiAgent:
             return
         active_incident = self.active_orchestration_incident()
         if active_incident is not None:
+            failure = safe_failure_feedback_view(
+                active_incident.get("failure"),
+                public_summary="team is paused by a shared orchestration incident",
+            )
             raise OrchestrationIncident(
-                "team is paused by a shared orchestration incident: "
-                f"{active_incident.get('error', 'unknown infrastructure failure')}"
+                "team is paused by a shared orchestration incident",
+                failure=failure,
             )
         run_id = self._approved_run_id()
         if run_id is None or self._current_training_job_id(run_id) is not None:
@@ -2064,23 +2170,48 @@ class KimiAgent:
                 check=False,
             )
         except subprocess.TimeoutExpired as error:
+            feedback = build_failure_feedback(
+                error,
+                error_code="training_submission_timeout",
+                stage="training_submission",
+                retryable=True,
+                public_summary="approved training submission wrapper timed out",
+            )
             incident = OrchestrationIncident(
-                "approved training submission wrapper timed out"
+                str(feedback["summary"]), failure=feedback
             )
             self._publish_orchestration_incident(incident)
             raise incident from error
         job_id = completed.stdout.strip()
         if completed.returncode != 0 or not re.fullmatch(r"[0-9]+", job_id):
-            detail = completed.stderr.strip() or completed.stdout.strip()
+            failure_error = _retain_process_failure(
+                error=RuntimeError(
+                    f"training submission exit {completed.returncode}"
+                ),
+                error_code="training_submission_failed",
+                stage="training_submission",
+                public_summary=(
+                    "approved training submission wrapper failed "
+                    f"(exit {completed.returncode})"
+                ),
+            )
             incident = OrchestrationIncident(
-                "approved training submission wrapper failed: " + detail[-4000:]
+                str(failure_error), failure=failure_error.feedback
             )
             self._publish_orchestration_incident(incident)
             raise incident
         receipt_job = self._current_training_job_id(run_id)
         if receipt_job != job_id:
+            feedback = build_failure_feedback(
+                RuntimeError("verified receipt missing"),
+                error_code="training_receipt_missing",
+                stage="training_submission",
+                public_summary=(
+                    "training submission did not publish its verified receipt"
+                ),
+            )
             incident = OrchestrationIncident(
-                "training submission did not publish its verified receipt"
+                str(feedback["summary"]), failure=feedback
             )
             self._publish_orchestration_incident(incident)
             raise incident
@@ -2440,27 +2571,30 @@ class KimiAgent:
                     timeout=30,
                     check=False,
                 )
-            except (OSError, subprocess.TimeoutExpired) as error:
+            except (OSError, subprocess.TimeoutExpired):
                 self._raise_orchestration_incident(
-                    f"cannot verify protected file from Git: {relative_path}: {error}"
+                    f"cannot verify protected file from Git: {relative_path}",
+                    error_code="protected_file_verification_failed",
                 )
             if committed.returncode != 0:
-                detail = committed.stderr.decode(errors="replace").strip()
                 self._raise_orchestration_incident(
-                    f"cannot read protected file from Git: {relative_path}: {detail}"
+                    f"cannot read protected file from Git: {relative_path}",
+                    error_code="protected_file_git_read_failed",
                 )
             try:
                 actual = path.read_bytes()
-            except OSError as error:
+            except OSError:
                 self._raise_orchestration_incident(
-                    f"cannot read protected file: {relative_path}: {error}"
+                    f"cannot read protected file: {relative_path}",
+                    error_code="protected_file_read_failed",
                 )
             expected_hash = hashlib.sha256(committed.stdout).hexdigest()
             actual_hash = hashlib.sha256(actual).hexdigest()
             if actual_hash != expected_hash:
                 self._raise_orchestration_incident(
                     "protected file hash mismatch: "
-                    f"{relative_path} expected={expected_hash} actual={actual_hash}"
+                    f"{relative_path} expected={expected_hash} actual={actual_hash}",
+                    error_code="protected_file_hash_mismatch",
                 )
             if path.suffix == ".sh":
                 try:
@@ -2472,20 +2606,31 @@ class KimiAgent:
                         timeout=30,
                         check=False,
                     )
-                except (OSError, subprocess.TimeoutExpired) as error:
+                except (OSError, subprocess.TimeoutExpired):
                     self._raise_orchestration_incident(
                         f"cannot syntax-check protected shell file: "
-                        f"{relative_path}: {error}"
+                        f"{relative_path}",
+                        error_code="protected_file_syntax_check_failed",
                     )
                 if syntax.returncode != 0:
-                    detail = syntax.stderr.strip() or syntax.stdout.strip()
                     self._raise_orchestration_incident(
-                        f"protected shell syntax check failed: {relative_path}: "
-                        f"{detail[-2000:]}"
+                        f"protected shell syntax check failed: {relative_path}",
+                        error_code="protected_file_syntax_invalid",
                     )
 
-    def _raise_orchestration_incident(self, message: str) -> NoReturn:
-        incident = OrchestrationIncident(message)
+    def _raise_orchestration_incident(
+        self,
+        message: str,
+        *,
+        error_code: str = "orchestration_integrity_failed",
+    ) -> NoReturn:
+        feedback = build_failure_feedback(
+            RuntimeError(message),
+            error_code=error_code,
+            stage="training_submission",
+            public_summary=message,
+        )
+        incident = OrchestrationIncident(message, failure=feedback)
         self._publish_orchestration_incident(incident)
         raise incident
 
@@ -2506,10 +2651,19 @@ class KimiAgent:
                 timeout=10,
                 check=False,
             )
+            failure = error.failure if isinstance(error, OrchestrationIncident) else None
+            if not isinstance(failure, dict):
+                failure = build_failure_feedback(
+                    error,
+                    error_code="orchestration_incident",
+                    stage="training_submission",
+                    public_summary="shared orchestration incident",
+                )
             payload = {
                 "status": "paused",
                 "stage": "training_submission",
-                "error": str(error),
+                "error": failure["summary"],
+                "failure": failure,
                 "source_head": head.stdout.strip() if head.returncode == 0 else None,
                 "chain": os.environ.get("IDEA_UID") or os.environ.get("IDEA_NAME"),
                 "created_at": datetime.now().astimezone().isoformat(),
@@ -2531,12 +2685,11 @@ class KimiAgent:
             finally:
                 with contextlib.suppress(FileNotFoundError):
                     os.unlink(temporary)
-        except (OSError, subprocess.SubprocessError) as publish_error:
+        except (OSError, subprocess.SubprocessError):
             # The originating OrchestrationIncident must still escape and stop
             # this chain even if the shared filesystem cannot accept the marker.
             print(
-                "[Kimi] WARNING: could not publish orchestration incident marker: "
-                f"{publish_error}",
+                "[Kimi] WARNING: could not publish orchestration incident marker",
                 file=sys.stderr,
             )
 
@@ -2597,24 +2750,35 @@ class KimiAgent:
                 return
             failure = self._current_training_failure()
             if failure is not None:
-                raise RuntimeError(
-                    "Kimi training failed closed: "
-                    + json.dumps(failure, sort_keys=True)[:2000]
-                )
+                raise FailureFeedbackError(failure)
             if time.monotonic() >= next_scheduler_check:
                 failure = self._reconcile_terminal_training_job(run_id, job_id)
                 if failure is not None:
-                    raise RuntimeError(
-                        "Kimi training failed closed: "
-                        + json.dumps(failure, sort_keys=True)[:2000]
+                    validated = self._current_training_failure()
+                    if validated is not None:
+                        raise FailureFeedbackError(validated)
+                    raise FailureFeedbackError(
+                        build_failure_feedback(
+                            RuntimeError("invalid training failure marker"),
+                            error_code="training_failure_marker_invalid",
+                            stage="training",
+                            public_summary="training produced an invalid failure marker",
+                        )
                     )
                 next_scheduler_check = time.monotonic() + 30
             if time.monotonic() >= next_update:
                 print(f"[Kimi] waiting for score from training job {job_id}")
                 next_update = time.monotonic() + 60
             await asyncio.sleep(10)
-        raise RuntimeError(
-            f"timed out waiting for score or failure marker for approved run {run_id}"
+        raise FailureFeedbackError(
+            build_failure_feedback(
+                TimeoutError("training score wait timed out"),
+                error_code="training_result_timeout",
+                stage="training",
+                public_summary=(
+                    "timed out waiting for the approved training score or failure marker"
+                ),
+            )
         )
 
     async def _wait_for_training_smoke_result(self) -> None:
@@ -2637,24 +2801,33 @@ class KimiAgent:
                 return
             failure = self._current_training_failure()
             if failure is not None:
-                raise RuntimeError(
-                    "Kimi training smoke failed closed: "
-                    + json.dumps(failure, sort_keys=True)[:2000]
-                )
+                raise FailureFeedbackError(failure)
             if time.monotonic() >= next_scheduler_check:
                 failure = self._reconcile_terminal_training_job(run_id, job_id)
                 if failure is not None:
-                    raise RuntimeError(
-                        "Kimi training smoke failed closed: "
-                        + json.dumps(failure, sort_keys=True)[:2000]
+                    validated = self._current_training_failure()
+                    if validated is not None:
+                        raise FailureFeedbackError(validated)
+                    raise FailureFeedbackError(
+                        build_failure_feedback(
+                            RuntimeError("invalid training failure marker"),
+                            error_code="training_failure_marker_invalid",
+                            stage="training",
+                            public_summary="training produced an invalid failure marker",
+                        )
                     )
                 next_scheduler_check = time.monotonic() + 30
             if time.monotonic() >= next_update:
                 print(f"[Kimi] waiting for one-step training job {job_id}")
                 next_update = time.monotonic() + 60
             await asyncio.sleep(10)
-        raise RuntimeError(
-            f"timed out waiting for one-step marker for approved run {run_id}"
+        raise FailureFeedbackError(
+            build_failure_feedback(
+                TimeoutError("training smoke wait timed out"),
+                error_code="training_smoke_timeout",
+                stage="training",
+                public_summary="timed out waiting for the one-step training marker",
+            )
         )
 
     @staticmethod
@@ -2725,8 +2898,13 @@ class KimiAgent:
 
         log_path = None
         team_dir = os.environ.get("TEAM_DIR", "").strip()
-        if team_dir:
-            log_path = Path(team_dir) / "logs" / f"train-{job_id}.out"
+        if team_dir and os.getenv("AAR_RESEARCH_ENV_ISOLATION", "0") == "1":
+            log_path = (
+                Path(team_dir)
+                / "secrets"
+                / "failure-evidence"
+                / f"train-{job_id}.out"
+            )
         try:
             failure_path = publish_failure(
                 scores_dir,
@@ -2738,6 +2916,7 @@ class KimiAgent:
                 in {"BOOT_FAIL", "NODE_FAIL", "PREEMPTED", "REVOKED"},
                 exit_code=exit_code,
                 log_path=log_path,
+                replace_invalid=True,
             )
         except FileExistsError:
             return None
@@ -2774,7 +2953,23 @@ class KimiAgent:
             or not isinstance(retryable, bool)
         ):
             return None
-        return payload
+        feedback = build_failure_feedback(
+            RuntimeError(error_code),
+            error_code=error_code,
+            stage=stage,
+            retryable=retryable,
+            public_summary=f"{stage} failed ({error_code})",
+        )
+        feedback["run_id"] = run_id
+        exception_type = payload.get("exception_type")
+        if isinstance(exception_type, str) and re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_.]{0,127}", exception_type
+        ):
+            feedback["exception_type"] = exception_type
+        exit_code = payload.get("exit_code")
+        if isinstance(exit_code, int) and not isinstance(exit_code, bool):
+            feedback["exit_code"] = exit_code
+        return feedback
 
     @classmethod
     def _previous_failure_feedback(cls) -> Optional[dict[str, Any]]:
@@ -2789,21 +2984,7 @@ class KimiAgent:
         failure = cls._current_training_failure()
         if failure is None:
             return None
-        allowed_fields = (
-            "schema_version",
-            "status",
-            "run_id",
-            "stage",
-            "error_code",
-            "exception_type",
-            "error",
-            "reason",
-            "retryable",
-            "exit_code",
-            "log_path",
-            "eval_job_id",
-        )
-        return {key: failure[key] for key in allowed_fields if key in failure}
+        return failure
 
     @classmethod
     def _with_previous_failure_feedback(cls, task: str) -> str:
@@ -2816,7 +2997,8 @@ class KimiAgent:
             "CANDIDATE:\n"
             + json.dumps(feedback, sort_keys=True)
             + "\nBefore proposing another method, diagnose and fix this exact failure. "
-            "Read log_path when present, record the cause in your chain memory, "
+            "Use the typed code and retryability; operator evidence is intentionally "
+            "not readable from the research sandbox. Record the cause in your chain memory, "
             "and do not resubmit the unchanged method. This feedback contains no "
             "held-out examples or partial held-out scores."
         )

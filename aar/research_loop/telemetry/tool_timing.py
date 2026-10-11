@@ -72,8 +72,8 @@ def record_start_time(session_id: str, tool_name: str, tool_input: dict) -> None
     try:
         with open(timing_file, 'w') as f:
             json.dump(timing_data, f)
-    except IOError as e:
-        print(f"[Timing] Failed to save timing data: {e}")
+    except IOError:
+        print("[Timing] Failed to save timing data")
 
 
 def get_duration_ms(session_id: str, tool_name: str, tool_input: dict) -> Optional[int]:

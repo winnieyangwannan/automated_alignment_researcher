@@ -206,3 +206,81 @@ transition.
 
 The pipeline explicitly recorded `bounded canary: skipping evaluator holdout
 publication`; evaluator job ID is `-`. No evaluator or held-out scoring began.
+
+<a id="trial4-event-workspace-registered"></a>
+
+### ⏳ 00:45 PT — RUNNING: Method validated and authoring workspace registered
+
+Research job `1811790` started at 00:41:50 PT after an ordinary scheduler queue
+wait. Runtime startup verified the c32 target-aware profile, pinned AutoData
+plugin, campaign broker, and lifecycle supervisor. Kimi then produced a method
+whose contract passed validation and submitted its proposal.
+
+Trusted bootstrap atomically registered workspace
+`ws_00ce21e80399454f9b021cb4e58905f5` for study
+`study_195d7d6e3d9baffd55605a7d956a9fc1`. The supervisor is healthy and exposed
+the scoped `clarify_design` action. No execution has been created; this is
+authoring/design clarification before baseline review.
+
+<a id="trial4-event-feedback-loop"></a>
+
+### 🐛 00:53 PT — BUG: Generic dry-run feedback caused repeated invalid edits
+
+Pipeline authoring reached a deterministic validation failure that native
+feedback reduced to the generic status `solve_failed`. The protected checker's
+actual safe error was `generation strategy contains missing or unsupported
+fields`: Kimi had added unsupported `max_tokens` to
+`recipe/generation_strategy.json`, whose allowlist is exactly `schema`, `name`,
+`system_prompt`, `scenario_prompt_prefix`, and `temperature`.
+
+Revisions 6, 8, 10, 12, 14, 16, and 18 repeated the same invalid field; revision
+19 still contained it. Each authoring check exited `1` before verifier execution
+(`verifierExitCode=null`), but the action exposed only `solve_failed`. The
+stable-failure breaker also did not cover this native authoring-loop failure
+class, so it consumed revisions instead of failing loudly after repetition.
+
+The live attempt remains read-only and in `pipeline_pending`; there is still no
+freeze, baseline review, or execution. Shared-code repair now requires bounded,
+sanitized actionable failure propagation plus repeated-signature termination at
+this boundary, followed by a systematic audit of the other lifecycle feedback
+boundaries.
+
+<a id="trial4-event-stopped"></a>
+
+### 🔴 00:54:05 PT — STOP: Trial 4 cancelled for non-actionable feedback loop
+
+The user explicitly authorized stopping Trial 4. Research job `1811790` and its
+dependency-held controller `1811791` were cancelled together. Authoritative
+Slurm state is `CANCELLED` for both; the research job ran 12 minutes 15 seconds
+and the controller never started. No jobs remain queued or running.
+
+#### Final lifecycle state
+
+- Workspace: `ws_00ce21e80399454f9b021cb4e58905f5`
+- Native state: active, `pipeline_pending`, revision 21
+- Persisted revisions: 22 (`r0000` through `r0021`)
+- Task attempts: 10 total; one successful authoring check, one successful
+  model-backed dry run, and eight failed authoring checks
+- Repeated failure: revisions 6, 8, 10, 12, 14, 16, 18, and 20 rejected the
+  same unsupported `max_tokens` field
+- Actions: nine `author_pipeline` actions completed; the tenth was in progress
+  at cancellation
+- Baseline summary: none
+- Native executions: zero
+- Production, handoff, training, adapter, evaluator, and scores: none
+
+The supervisor stopped cleanly. Retained Gemma deployment
+`winnieyangwn-r12-alpha-i1-c0dab4f7` remains healthy and serving for a future
+trial.
+
+#### Additional terminal-state bug
+
+Cancellation cleanup wrote `research-session-result-1811790.json` as
+`category="completed", exit_code=0`, contradicting authoritative Slurm
+`CANCELLED`. This misleading marker joins the feedback-propagation audit and
+must be repaired before the next trial.
+
+Trial 4 is terminal. Trial 5 must not launch until the comprehensive feedback
+audit, safe actionable-error propagation, repeated-failure coverage,
+cancellation-marker repair, regression tests, commit, synchronization, and
+runtime preflight all pass.

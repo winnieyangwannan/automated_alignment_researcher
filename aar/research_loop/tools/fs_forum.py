@@ -73,8 +73,8 @@ def _snapshot_method_code(idea_name: str, dest_dir: Path) -> str | None:
             return dest_dir.name
         shutil.copytree(src, dest_dir, ignore=_snapshot_ignore)
         return dest_dir.name
-    except Exception as e:  # pragma: no cover - defensive
-        print(f"[fs_forum] code snapshot skipped for {idea_name!r}: {e}")
+    except Exception:  # pragma: no cover - defensive
+        print("[fs_forum] code snapshot skipped")
         return None
 
 

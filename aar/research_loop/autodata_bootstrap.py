@@ -21,11 +21,27 @@ import time
 from pathlib import Path
 from typing import Any, Mapping
 
+from aar.failure_feedback import FailureFeedbackError, build_failure_feedback
 
 BOOTSTRAP_SCHEMA = "aar.autodata.workspace-bootstrap/v1"
 BOOTSTRAP_INTENT_SCHEMA = "aar.autodata.workspace-bootstrap-intent/v1"
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9._:-]+$")
 _WORKSPACE_ID = re.compile(r"^ws_[0-9a-f]{32}$")
+
+
+def _subprocess_failure(
+    completed: subprocess.CompletedProcess[str],
+    *,
+    error_code: str,
+    public_summary: str,
+) -> FailureFeedbackError:
+    feedback = build_failure_feedback(
+        RuntimeError(public_summary),
+        error_code=error_code,
+        stage="autodata_bootstrap",
+        public_summary=f"{public_summary} (exit {completed.returncode})",
+    )
+    return FailureFeedbackError(feedback)
 
 
 def _acquire_bootstrap_lock(lock: Any) -> None:
@@ -161,12 +177,19 @@ def _run_json(command: list[str], *, timeout: int = 120) -> dict[str, Any]:
         check=False,
     )
     if completed.returncode != 0:
-        detail = completed.stderr[-2000:].strip() or completed.stdout[-2000:].strip()
-        raise RuntimeError(f"AutoData bootstrap command failed: {detail}")
+        raise _subprocess_failure(
+            completed,
+            error_code="autodata_bootstrap_cli_failed",
+            public_summary="AutoData bootstrap command failed",
+        )
     try:
         value = json.loads(completed.stdout)
     except json.JSONDecodeError as error:
-        raise RuntimeError("AutoData bootstrap command returned invalid JSON") from error
+        raise _subprocess_failure(
+            completed,
+            error_code="autodata_bootstrap_invalid_json",
+            public_summary="AutoData bootstrap command returned invalid JSON",
+        ) from error
     if not isinstance(value, dict):
         raise RuntimeError("AutoData bootstrap command returned a non-object")
     return value
@@ -379,8 +402,11 @@ def _stage_reviewed_recipe(run_root: Path) -> None:
         check=False,
     )
     if completed.returncode != 0:
-        detail = completed.stderr[-2000:].strip() or completed.stdout[-2000:].strip()
-        raise RuntimeError(f"reviewed grounding build failed: {detail}")
+        raise _subprocess_failure(
+            completed,
+            error_code="grounding_build_failed",
+            public_summary="reviewed grounding build failed",
+        )
     generated = _json_object(manifest, "generated reviewed grounding manifest")
     tasks = generated.get("tasks")
     if generated.get("schema") != "autodata.grounding/v1" or not isinstance(

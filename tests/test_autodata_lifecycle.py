@@ -12,6 +12,7 @@ import pytest
 
 from aar.infrastructure.autodata_lifecycle import (
     HANDOFF_SCHEMA,
+    _safe_attempt_failure_code,
     _canonical_tree_digest,
     create_reuse_handoff,
     verify_consumption,
@@ -22,6 +23,22 @@ RUBRIC = {
     "version": "run9-axis-conditioned-v3",
     "sha256": "sha256:" + "c" * 64,
 }
+
+
+def test_attempt_failure_feedback_exposes_codes_not_rows_or_prompts() -> None:
+    assert _safe_attempt_failure_code("provider_http_409") == "provider_http_409"
+    assert (
+        _safe_attempt_failure_code(
+            "task attempt job-1 failed: checker_failed:generator_invalid_content"
+        )
+        == "generator_invalid_content"
+    )
+    assert (
+        _safe_attempt_failure_code(
+            "task attempt job-2 failed: prompt contained private row text"
+        )
+        is None
+    )
 
 
 def _write_json(path: Path, value: object) -> Path:

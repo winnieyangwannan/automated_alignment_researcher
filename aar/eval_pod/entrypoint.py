@@ -23,6 +23,7 @@ from pathlib import Path
 
 from aar import config, transport
 from aar.eval_pod import run_eval
+from aar.failure_feedback import build_failure_feedback
 from aar.phase_timing import phase
 
 
@@ -78,9 +79,22 @@ def main() -> None:
                 out=str(local_scores),
             )
     except Exception as e:
-        result = {"error": str(e)}
+        feedback = build_failure_feedback(
+            e,
+            stage="evaluation_scoring",
+            error_code="evaluation_scoring_failure",
+            public_summary=(
+                "evaluation scoring failed; inspect evaluator-private logs"
+            ),
+        )
+        # Keep the legacy ``error`` sentinel used by candidate selection while
+        # publishing only the bounded, redacted summary and typed metadata.
+        result = {**feedback, "error": feedback["summary"]}
         local_scores.write_text(json.dumps(result, indent=2))
-        print(f"[eval] scoring failed: {e}", file=sys.stderr)
+        print(
+            "[eval] scoring failed: " + str(feedback["summary"]),
+            file=sys.stderr,
+        )
         if os.getenv("EVAL_FAIL_ON_SCORING_ERROR", "0").lower() in (
             "1", "true", "yes", "on"
         ):

@@ -57,13 +57,18 @@ record_event() {
 }
 
 wait_job() {
-  local job_id="$1" state="" classification="" terminal="false"
+  local job_id="$1" state="" slurm_exit="" accounting=""
+  local classification="" terminal="false"
   local unknown_since="" now="" timeout="${AAR_RUN12_SACCT_UNKNOWN_TIMEOUT_SECONDS:-900}"
   while true; do
     # squeue is advisory only. A transient squeue outage or disappearance never
     # constitutes completion; sacct is the authoritative terminal record.
     squeue -h -j "${job_id}" -o '%T' >/dev/null 2>&1 || true
-    state="$(sacct -n -X -j "${job_id}" --format=State 2>/dev/null | awk 'NF{print $1; exit}')"
+    accounting="$(sacct -n -X -j "${job_id}" --format=State,ExitCode -P \
+      2>/dev/null | awk 'NF{print; exit}')"
+    state="${accounting%%|*}"
+    slurm_exit="${accounting#*|}"
+    [ "${slurm_exit}" != "${accounting}" ] || slurm_exit=""
     classification="$(PYTHONPATH="${REPO}" "${PY}" -m \
       aar.slurm_session_recovery classify --state "${state}")"
     terminal="$(jq -r '.terminal' <<<"${classification}")"
@@ -86,6 +91,11 @@ wait_job() {
   LAST_JOB_STATE="$(jq -r '.state' <<<"${classification}")"
   LAST_JOB_RETRYABLE="$(jq -r '.retryable' <<<"${classification}")"
   LAST_JOB_CATEGORY="$(jq -r '.category' <<<"${classification}")"
+  PYTHONPATH="${REPO}" "${PY}" -m aar.slurm_session_recovery \
+    reconcile-result \
+    --path "${TEAM_DIR}/logs/research-session-result-${job_id}.json" \
+    --job-id "${job_id}" --state "${LAST_JOB_STATE}" \
+    --exit-code "${slurm_exit:-unknown}" >/dev/null
   record_event "job=${job_id} state=${LAST_JOB_STATE} category=${LAST_JOB_CATEGORY} retryable=${LAST_JOB_RETRYABLE}"
 }
 

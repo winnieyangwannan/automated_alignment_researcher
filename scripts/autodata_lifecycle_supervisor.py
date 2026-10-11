@@ -20,12 +20,20 @@ import signal
 import sqlite3
 import stat
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, TextIO
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from aar.failure_feedback import (
+    FailureFeedbackError,
+    build_failure_feedback,
+    feedback_from_exception,
+)
 from aar.infrastructure.autodata_contract import validate_generation_inputs
 from aar.infrastructure.autodata_execution_contract import (
     bound_grounding_task_ids,
@@ -54,6 +62,22 @@ SUPERVISED_TRANSITION_SCHEMA = "aar.autodata.supervised-transition/v1"
 PRODUCTION_GROUNDING_PATH = "grounding/production-manifest.json"
 PRODUCTION_ID_PREFIX = "safety-prod"
 PRODUCTION_SEED_OFFSET = 1000
+
+
+def _subprocess_failure(
+    completed: subprocess.CompletedProcess[str],
+    *,
+    error_code: str,
+    stage: str,
+    public_summary: str,
+) -> FailureFeedbackError:
+    feedback = build_failure_feedback(
+        RuntimeError(public_summary),
+        error_code=error_code,
+        stage=stage,
+        public_summary=f"{public_summary} (exit {completed.returncode})",
+    )
+    return FailureFeedbackError(feedback)
 
 
 def _utc_now() -> str:
@@ -507,12 +531,21 @@ def _native_cli(
         timeout=WORKSPACE_RECONCILE_SLA_SECONDS,
     )
     if completed.returncode != 0:
-        detail = completed.stderr.strip()[-2000:]
-        raise RuntimeError(f"native AutoData CLI failed: {detail}")
+        raise _subprocess_failure(
+            completed,
+            error_code="autodata_native_cli_failed",
+            stage="autodata_lifecycle",
+            public_summary="native AutoData CLI failed",
+        )
     try:
         value = json.loads(completed.stdout)
     except json.JSONDecodeError as error:
-        raise RuntimeError("native AutoData CLI returned invalid JSON") from error
+        raise _subprocess_failure(
+            completed,
+            error_code="autodata_native_cli_invalid_json",
+            stage="autodata_lifecycle",
+            public_summary="native AutoData CLI returned invalid JSON",
+        ) from error
     if not isinstance(value, dict):
         raise RuntimeError("native AutoData CLI did not return one JSON object")
     return value
@@ -789,8 +822,12 @@ def _copy_tree_with_production_grounding(
             timeout=120,
         )
         if completed.returncode != 0:
-            detail = completed.stderr.strip()[-2000:] or completed.stdout.strip()[-2000:]
-            raise RuntimeError(f"trusted production grounding build failed: {detail}")
+            raise _subprocess_failure(
+                completed,
+                error_code="production_grounding_build_failed",
+                stage="autodata_production",
+                public_summary="trusted production grounding build failed",
+            )
         value = _json_object(manifest, "production grounding manifest")
         tasks = value.get("tasks")
         if not isinstance(tasks, list) or len(tasks) != task_count:
@@ -2016,6 +2053,27 @@ class Supervisor:
         self.failed_step_signature: tuple[Any, ...] | None = None
         self.failed_step_count = 0
 
+    def _failure_feedback(
+        self,
+        error: BaseException,
+        *,
+        error_code: str,
+        stage: str,
+        retryable: bool,
+        public_summary: str,
+    ) -> dict[str, Any]:
+        feedback = feedback_from_exception(
+            error,
+            error_code=error_code,
+            stage=stage,
+            retryable=retryable,
+            public_summary=public_summary,
+        )
+        # Retryability belongs to this supervisor transition, not to the lower
+        # level CLI call that may have produced the nested typed failure.
+        feedback["retryable"] = retryable
+        return feedback
+
     def _write_status(self, **fields: Any) -> None:
         signature = json.dumps(fields, sort_keys=True, default=str)
         now = time.monotonic()
@@ -2336,17 +2394,36 @@ class Supervisor:
                         attempts < WORKSPACE_RECONCILE_MAX_ATTEMPTS
                         and elapsed < WORKSPACE_RECONCILE_SLA_SECONDS
                     ):
+                        feedback = self._failure_feedback(
+                            error,
+                            error_code="workspace_reconcile_failed",
+                            stage="autodata_lifecycle",
+                            retryable=True,
+                            public_summary="workspace reconciliation failed",
+                        )
                         self._write_status(
                             state="reconcile-retrying",
                             subject_kind="workspace",
                             subject_id=workspace_id,
                             attempt=attempts,
-                            error=str(error),
+                            error=feedback["summary"],
+                            failure=feedback,
                         )
                         time.sleep(self.args.error_backoff_seconds)
                         continue
+                feedback = self._failure_feedback(
+                    error,
+                    error_code="lifecycle_configuration_failed",
+                    stage="autodata_lifecycle",
+                    retryable=False,
+                    public_summary="AutoData lifecycle configuration failed",
+                )
                 self._snapshot("supervisor-configuration-failure")
-                self._write_status(state="failed", error=str(error))
+                self._write_status(
+                    state="failed",
+                    error=feedback["summary"],
+                    failure=feedback,
+                )
                 return 2
             if subject is None:
                 self._write_status(state="idle")
@@ -2355,8 +2432,19 @@ class Supervisor:
             try:
                 self._step(subject)
             except Exception as error:
+                feedback = self._failure_feedback(
+                    error,
+                    error_code="lifecycle_step_failed",
+                    stage="autodata_lifecycle",
+                    retryable=False,
+                    public_summary="native AutoData lifecycle step failed",
+                )
                 self._snapshot("supervisor-step-failure")
-                self._write_status(state="failed", error=str(error))
+                self._write_status(
+                    state="failed",
+                    error=feedback["summary"],
+                    failure=feedback,
+                )
                 return 2
         self._snapshot("supervisor-shutdown")
         self._write_status(state="stopped")

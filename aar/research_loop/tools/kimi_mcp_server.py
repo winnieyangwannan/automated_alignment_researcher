@@ -12,6 +12,8 @@ import mcp.types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
+from aar.failure_feedback import build_failure_feedback
+
 from .prior_work_tools import download_snapshot
 from .server_api_tools import (
     evaluate_model,
@@ -23,6 +25,18 @@ from .server_api_tools import (
     share_literature,
     submit_idea_proposal,
 )
+
+
+def _mcp_failure(error: BaseException) -> dict[str, Any]:
+    """Return a static research-facing envelope for an unexpected tool error."""
+
+    return build_failure_feedback(
+        error,
+        error_code="mcp_tool_failed",
+        stage="research_tool",
+        retryable=False,
+        public_summary="research tool failed",
+    )
 
 
 SERVER_TOOLS = {
@@ -168,9 +182,12 @@ def create_server(name: str) -> Server:
         try:
             result = await tool.handler(params.arguments or {})
         except Exception as error:
+            feedback = _mcp_failure(error)
             return types.CallToolResult(
                 content=[
-                    types.TextContent(type="text", text=f"Tool failed: {error}")
+                    types.TextContent(
+                        type="text", text=json.dumps(feedback, sort_keys=True)
+                    )
                 ],
                 isError=True,
             )

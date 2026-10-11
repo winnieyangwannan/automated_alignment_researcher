@@ -32,6 +32,11 @@ REQUIRED_TRAINING_ROWS = 1000
 _EXECUTION_ID = re.compile(r"exe_[0-9a-f]{32}\Z")
 _WORKSPACE_ID = re.compile(r"ws_[0-9a-f]{32}\Z")
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}\Z")
+_SAFE_FAILURE_CODE = re.compile(r"[a-z][a-z0-9_.-]{0,63}\Z")
+_BROKER_FAILURE = re.compile(
+    r"(?:task|authoring task) attempt [A-Za-z0-9._-]+ "
+    r"(?:failed|cancelled): (?:checker_failed:)?([a-z][a-z0-9_.-]{0,63})\Z"
+)
 
 
 def _object(value: Any, where: str) -> dict[str, Any]:
@@ -157,6 +162,16 @@ def _positive_environment_integer(name: str, default: int) -> int:
     return value
 
 
+def _safe_attempt_failure_code(value: str) -> str | None:
+    """Extract only a non-content failure code from native attempt errors."""
+
+    normalized = value.strip().lower()
+    if _SAFE_FAILURE_CODE.fullmatch(normalized):
+        return normalized
+    match = _BROKER_FAILURE.fullmatch(normalized)
+    return match.group(1) if match is not None else None
+
+
 def _execution(connection: sqlite3.Connection, execution_id: str) -> dict[str, Any]:
     row = connection.execute(
         "SELECT * FROM executions WHERE id=?", (execution_id,)
@@ -277,6 +292,11 @@ def _scope_timing(
             1 for value in attempts if float(value["metrics"].get("valid", 0.0)) >= 1.0
         )
         error_texts = [value["error"] for value in attempts if value["error"]]
+        failure_codes: dict[str, int] = {}
+        for error in error_texts:
+            code = _safe_attempt_failure_code(error)
+            if code is not None:
+                failure_codes[code] = failure_codes.get(code, 0) + 1
 
         def metric_total(key: str) -> float:
             return sum(
@@ -342,6 +362,9 @@ def _scope_timing(
                         for error in error_texts
                     ),
                 },
+                # Codes are protected-recipe/broker identifiers only. Never
+                # expose arbitrary stderr, prompts, rows, or model responses.
+                "failure_codes": dict(sorted(failure_codes.items())),
             }
         )
     result["task_phases"] = task_phases

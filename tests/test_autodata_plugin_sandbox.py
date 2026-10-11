@@ -54,6 +54,15 @@ def test_sandbox_can_bind_relocated_run_artifacts_read_write() -> None:
     assert "AAR_RUNTIME_ARTIFACT_ROOT" in runtime
 
 
+def test_sandbox_masks_team_secret_directory_after_rw_bind() -> None:
+    source = BWRAP.read_text()
+
+    assert 'resolved_team_dir="$(realpath -e -- "${TEAM_DIR}")"' in source
+    assert 'team_secret_root="${resolved_team_dir}/secrets"' in source
+    assert '"${team_secret_root}"' in source
+    assert 'bwrap_args+=(--tmpfs "${secret_root}")' in source
+
+
 def test_runtime_exports_plugin_inputs_not_adapter_configuration() -> None:
     runtime = RUNTIME_ENV.read_text()
     chain = CHAIN.read_text()

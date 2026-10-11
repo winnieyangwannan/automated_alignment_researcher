@@ -157,7 +157,7 @@ class FullLoopLaunchTest(unittest.TestCase):
             self.assertIn("--gpus=1", submitted)
             self.assertIn("--mem=128G", submitted)
             self.assertIn("--time=00:15:00", submitted)
-            self.assertIn(str(team / "logs" / "train-%j.out"), submitted)
+            self.assertIn("--output=/dev/null", submitted)
             self.assertIn("slurm_train_submit.sh idea run-1", submitted)
 
     def test_opt_in_receipt_makes_training_submission_idempotent(self) -> None:

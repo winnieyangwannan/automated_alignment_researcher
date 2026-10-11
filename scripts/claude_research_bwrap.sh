@@ -235,7 +235,25 @@ for masked_file in \
   [ -e "${masked_file}" ] || continue
   bwrap_args+=(--ro-bind /dev/null "${masked_file}")
 done
-for secret_root in "${runtime_root}/secrets" "${artifact_root:+${artifact_root}/secrets}"; do
+team_secret_root=""
+if [ -n "${TEAM_DIR:-}" ] && [ -d "${TEAM_DIR}" ]; then
+  resolved_team_dir="$(realpath -e -- "${TEAM_DIR}")"
+  team_dir_allowed=0
+  case "${resolved_team_dir}" in
+    "${runtime_root}"/*) team_dir_allowed=1 ;;
+  esac
+  if [ -n "${artifact_root}" ]; then
+    case "${resolved_team_dir}" in
+      "${artifact_root}"/*) team_dir_allowed=1 ;;
+    esac
+  fi
+  [ "${team_dir_allowed}" = 1 ] || fail "TEAM_DIR must be inside a run root"
+  team_secret_root="${resolved_team_dir}/secrets"
+fi
+for secret_root in \
+  "${runtime_root}/secrets" \
+  "${artifact_root:+${artifact_root}/secrets}" \
+  "${team_secret_root}"; do
   [ -n "${secret_root}" ] || continue
   if [ -d "${secret_root}" ]; then
     bwrap_args+=(--tmpfs "${secret_root}")

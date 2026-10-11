@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from aar.failure_feedback import FailureFeedbackError
 import scripts.autodata_lifecycle_supervisor as lifecycle_supervisor
 from scripts.autodata_lifecycle_supervisor import (
     META_STALL_SECONDS,
@@ -27,6 +28,34 @@ from scripts.autodata_lifecycle_supervisor import (
     restore_database,
     snapshot_database,
 )
+
+
+def test_supervisor_subprocess_failure_keeps_raw_output_operator_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    team = tmp_path / "team"
+    team.mkdir()
+    monkeypatch.setenv("TEAM_DIR", str(team))
+    completed = subprocess.CompletedProcess(
+        args=[],
+        returncode=9,
+        stdout="private generated row",
+        stderr="Authorization: Bearer secret-token",
+    )
+
+    error = lifecycle_supervisor._subprocess_failure(
+        completed,
+        error_code="autodata_native_cli_failed",
+        stage="autodata_lifecycle",
+        public_summary="native AutoData CLI failed",
+    )
+
+    assert isinstance(error, FailureFeedbackError)
+    public = json.dumps(error.feedback)
+    assert "private generated row" not in public
+    assert "secret-token" not in public
+    assert "evidence" not in error.feedback
+    assert not (team / "secrets").exists()
 
 
 def _frozen_reconcile_fixture(

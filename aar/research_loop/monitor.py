@@ -13,7 +13,27 @@ import os
 import re
 from typing import Any
 
+from aar.failure_feedback import build_failure_feedback
+
 MONITOR_MODEL = os.getenv("MONITOR_MODEL", "claude-4-8-opus")
+
+
+def _monitor_failure(
+    error: BaseException,
+    *,
+    error_code: str,
+    public_summary: str,
+) -> dict[str, Any]:
+    """Return research-safe feedback without retaining raw provider content."""
+
+    feedback = build_failure_feedback(
+        error,
+        error_code=error_code,
+        stage="proposal_review",
+        retryable=True,
+        public_summary=public_summary,
+    )
+    return feedback
 
 
 def _monitor_api_key() -> str:
@@ -355,8 +375,17 @@ def _call_monitor(content: str, max_tokens: int = 1024) -> dict[str, Any]:
         v["monitor_model"] = MONITOR_MODEL
         v["monitor_backend"] = backend
         return v
-    except Exception as e:
-        return {"approved": False, "violations": [], "reasoning": f"monitor call failed (fail-closed): {e}", "error": str(e)}
+    except Exception as error:
+        return {
+            "approved": False,
+            "violations": [],
+            "reasoning": "integrity monitor unavailable (fail-closed)",
+            "failure": _monitor_failure(
+                error,
+                error_code="integrity_monitor_failed",
+                public_summary="integrity monitor unavailable",
+            ),
+        }
 
 
 def check_data_policy(idea_text: str, code_text: str | None) -> dict[str, Any]:
@@ -555,5 +584,14 @@ def check_self_containment(paper_text: str) -> dict[str, Any]:
         v.setdefault("violations", [])
         v["monitor_model"] = MONITOR_MODEL
         return v
-    except Exception as e:
-        return {"clean": True, "violations": [], "reasoning": f"classifier call failed (fail-open): {e}"}
+    except Exception as error:
+        return {
+            "clean": True,
+            "violations": [],
+            "reasoning": "self-containment classifier unavailable (fail-open)",
+            "failure": _monitor_failure(
+                error,
+                error_code="self_containment_monitor_failed",
+                public_summary="self-containment classifier unavailable",
+            ),
+        }

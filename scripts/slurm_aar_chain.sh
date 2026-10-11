@@ -78,6 +78,16 @@ export FORUM_BACKEND=fs           # default under LOCAL_MODE; explicit for clari
 # ===========================================================================
 export TEAM_DIR="${TEAM_DIR:-${AAR_RUNTIME_ROOT}/aar_teams/${TEAM_ID}}"
 mkdir -p "${TEAM_DIR}"/{forum,submissions,scores,methods,logs,litreview,_train}
+_aar_auth_bridge_log=/dev/null
+_aar_broker_log=/dev/null
+_aar_supervisor_log=/dev/null
+if [ "${AAR_RESEARCH_ENV_ISOLATION:-0}" = 1 ]; then
+  mkdir -p "${TEAM_DIR}/secrets/failure-evidence"
+  chmod 700 "${TEAM_DIR}/secrets" "${TEAM_DIR}/secrets/failure-evidence"
+  _aar_auth_bridge_log="${TEAM_DIR}/secrets/failure-evidence/autodata-kimi-auth-bridge-${SLURM_JOB_ID:-$$}.log"
+  _aar_broker_log="${TEAM_DIR}/secrets/failure-evidence/autodata-broker.log"
+  _aar_supervisor_log="${TEAM_DIR}/secrets/failure-evidence/autodata-lifecycle-supervisor.log"
+fi
 export LOCAL_FINDINGS_DIR="${LOCAL_FINDINGS_DIR:-${TEAM_DIR}/forum}"
 export SUBMISSIONS_DIR="${SUBMISSIONS_DIR:-${TEAM_DIR}/submissions}"
 export SCORES_DIR="${SCORES_DIR:-${TEAM_DIR}/scores}"
@@ -103,6 +113,9 @@ _autodata_native_state=''
 _autodata_native_state_retained=''
 _aar_chain_pid="$$"
 _aar_research_started=0
+_aar_research_pid=''
+_aar_termination_signal=""
+_aar_termination_category=""
 _aar_research_pid_file="${TEAM_DIR}/logs/.research-process-${SLURM_JOB_ID:-$$}.pid"
 snapshot_autodata_broker_database() {
   if [ -n "${_autodata_broker_database}" ] \
@@ -143,12 +156,26 @@ cleanup_autodata_broker() {
   snapshot_autodata_broker_database || true
   stop_child_bounded "${_autodata_bridge_pid}" "Kimi auth bridge"
 }
+stop_active_research() {
+  local research_pid="${_aar_research_pid}"
+  if [ -z "${research_pid}" ] && [ -s "${_aar_research_pid_file}" ]; then
+    read -r research_pid < "${_aar_research_pid_file}" || true
+  fi
+  if [[ "${research_pid}" =~ ^[0-9]+$ ]]; then
+    stop_child_bounded "${research_pid}" "research agent"
+  fi
+}
 finalize_aar_chain() {
   local result="$1" category="completed" phase="research"
-  trap - EXIT
+  trap - EXIT TERM INT HUP USR1 USR2
   set +e
+  if [ "${_aar_research_started}" != 1 ]; then
+    phase="startup"
+  fi
   if [ "${result}" -ne 0 ]; then
-    if [ "${_aar_research_started}" = 1 ]; then
+    if [ -n "${_aar_termination_signal}" ]; then
+      category="${_aar_termination_category}"
+    elif [ "${_aar_research_started}" = 1 ]; then
       category="research_process_failure"
     else
       category="configuration_or_startup_failure"
@@ -156,10 +183,12 @@ finalize_aar_chain() {
     fi
   fi
   "${PY}" - "${TEAM_DIR}/logs/research-session-result-${SLURM_JOB_ID:-$$}.json" \
-    "${SLURM_JOB_ID:-}" "${result}" "${category}" "${phase}" <<'PY'
+    "${SLURM_JOB_ID:-}" "${result}" "${category}" "${phase}" \
+    "${_aar_termination_signal}" <<'PY'
 import json
 import os
 import pathlib
+import secrets
 import sys
 from datetime import datetime, timezone
 
@@ -170,19 +199,66 @@ value = {
     "exit_code": int(sys.argv[3]),
     "category": sys.argv[4],
     "phase": sys.argv[5],
+    "termination_signal": sys.argv[6] or None,
     "retryable": False,
     "finished_at": datetime.now(timezone.utc).isoformat(),
 }
-temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
-temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
-temporary.chmod(0o600)
-os.replace(temporary, path)
+path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+directory = os.open(
+    path.parent,
+    os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+)
+temporary_name = f".{path.name}.tmp.{secrets.token_hex(16)}"
+descriptor = -1
+try:
+    descriptor = os.open(
+        temporary_name,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+        dir_fd=directory,
+    )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        descriptor = -1
+        handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(
+        temporary_name,
+        path.name,
+        src_dir_fd=directory,
+        dst_dir_fd=directory,
+    )
+    os.fsync(directory)
+finally:
+    if descriptor >= 0:
+        os.close(descriptor)
+    try:
+        os.unlink(temporary_name, dir_fd=directory)
+    except FileNotFoundError:
+        pass
+    os.close(directory)
 PY
+  # The marker is retained before bounded child cleanup so a scheduler KILL
+  # after TERM cannot erase the authoritative cancellation evidence.
+  stop_active_research
   cleanup_autodata_broker
   rm -f -- "${_aar_research_pid_file}"
   exit "${result}"
 }
+terminate_aar_chain() {
+  local signal="$1" result="$2" category="$3"
+  _aar_termination_signal="${signal}"
+  _aar_termination_category="${category}"
+  exit "${result}"
+}
 trap 'finalize_aar_chain "$?"' EXIT
+trap 'terminate_aar_chain TERM 143 cancelled' TERM
+trap 'terminate_aar_chain INT 130 cancelled' INT
+trap 'terminate_aar_chain HUP 129 cancelled' HUP
+trap 'terminate_aar_chain USR1 138 cancelled' USR1
+# A distinct watchdog signal keeps internal service death separate from an
+# operator/scheduler cancellation while sharing the same durable cleanup path.
+trap 'terminate_aar_chain USR2 70 runtime_service_failure' USR2
 if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   : "${AAR_AUTODATA_CHECKOUT:?missing canonical AutoData checkout}"
   : "${AAR_AUTODATA_PLUGIN_ROOT:?missing pinned AutoData plugin root}"
@@ -312,7 +388,7 @@ PY
     export AAR_AUTODATA_CAMPAIGN_POLICY="${_autodata_repaired_policy}"
     "${PY}" "${REPO}/scripts/loopback_model_auth_bridge.py" \
       --proxy-info "${AAR_KIMI_PROXY_INFO}" --port "${_autodata_bridge_port}" \
-      >"${TEAM_DIR}/logs/autodata-kimi-auth-bridge-${SLURM_JOB_ID:-$$}.log" 2>&1 &
+      >"${_aar_auth_bridge_log}" 2>&1 &
     _autodata_bridge_pid=$!
     _autodata_bridge_ready=0
     for _autodata_probe in $(seq 1 30); do
@@ -361,7 +437,7 @@ PY
   PYTHONPATH="${AAR_AUTODATA_CHECKOUT}/src" \
     "${AAR_AUTODATA_BROKER_PYTHON}" -m autodata.broker.cli \
       "${_autodata_broker_args[@]}" \
-      > "${TEAM_DIR}/logs/autodata-broker.log" 2>&1 &
+      > "${_aar_broker_log}" 2>&1 &
   _autodata_broker_pid=$!
   _autodata_broker_ready=0
   for _autodata_probe in $(seq 1 60); do
@@ -394,7 +470,7 @@ PY
       --resolved-config "${AAR_AUTODATA_RESOLVED_CONFIG}" \
       --lock-file "${TEAM_DIR}/autodata/native/lifecycle-supervisor.lock" \
       --status-file "${TEAM_DIR}/autodata/native/lifecycle-supervisor-status.json" \
-      --log-file "${TEAM_DIR}/logs/autodata-lifecycle-supervisor.log" \
+      --log-file "${_aar_supervisor_log}" \
       --stage-timeout-policy "${AAR_AUTODATA_STAGE_TIMEOUT_POLICY:-enforce}" &
     _autodata_supervisor_pid=$!
     sleep 1
@@ -414,7 +490,7 @@ PY
           stop_child_bounded "${research_pid}" "research agent"
         fi
       fi
-      kill -TERM "${_aar_chain_pid}" 2>/dev/null || true
+      kill -USR2 "${_aar_chain_pid}" 2>/dev/null || true
       exit 1
     }
     while sleep 15; do
@@ -534,6 +610,9 @@ if [ "${AAR_RESEARCH_ENV_ISOLATION:-0}" = 1 ]; then
     [ ! -e "$HOME/.ssh" ]
     if [ -d "$AAR_RUNTIME_ROOT/secrets" ]; then
       [ -z "$(find "$AAR_RUNTIME_ROOT/secrets" -mindepth 1 -print -quit)" ]
+    fi
+    if [ -d "$TEAM_DIR/secrets" ]; then
+      [ -z "$(find "$TEAM_DIR/secrets" -mindepth 1 -print -quit)" ]
     fi
     touch "$AAR_RUNTIME_ROOT/.research-sandbox-write-canary"
     rm -f "$AAR_RUNTIME_ROOT/.research-sandbox-write-canary"

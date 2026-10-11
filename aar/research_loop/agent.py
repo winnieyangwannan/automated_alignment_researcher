@@ -12,7 +12,6 @@ import os
 import re
 import shutil
 import time
-import traceback
 import uuid
 from contextlib import contextmanager
 from datetime import datetime
@@ -47,6 +46,11 @@ from aar.config import (
     AAR_MODE,
 )
 from aar.phase_timing import phase
+from aar.failure_feedback import (
+    FailureFeedbackError,
+    build_failure_feedback,
+    safe_failure_feedback_view,
+)
 from .autodata_plugin import resolve_autodata_plugin
 from .tools.server_api_tools import create_server_api_tools_server
 from .tools.prior_work_tools import create_prior_work_tools_server
@@ -306,6 +310,7 @@ class AgentResult:
     duration: float
     iteration_count: int
     error: Optional[str] = None
+    failure: Optional[Dict[str, Any]] = None
 
 
 def _is_overloaded(err: object) -> bool:
@@ -452,7 +457,8 @@ class BaseAgent:
             try:
                 return await self._execute_once(task, start_time)
             except Exception as e:
-                if _is_overloaded(e) and overloaded_retries < OVERLOADED_MAX_RETRIES:
+                overloaded = _is_overloaded(e)
+                if overloaded and overloaded_retries < OVERLOADED_MAX_RETRIES:
                     overloaded_retries += 1
                     print(
                         f"[{self.name}] API overloaded (529). Waiting "
@@ -461,12 +467,29 @@ class BaseAgent:
                     )
                     await asyncio.sleep(OVERLOADED_WAIT_SECONDS)
                     continue
+                error_code = (
+                    "claude_model_overloaded"
+                    if overloaded
+                    else "claude_agent_failed"
+                )
+                feedback = build_failure_feedback(
+                    e,
+                    error_code=error_code,
+                    stage="research_session",
+                    retryable=overloaded,
+                    public_summary=(
+                        "Claude model service is overloaded"
+                        if overloaded
+                        else "Claude research session failed"
+                    ),
+                )
                 return AgentResult(
                     success=False,
                     output={},
                     duration=time.time() - start_time,
                     iteration_count=0,
-                    error=str(e),
+                    error=str(feedback["summary"]),
+                    failure=feedback,
                 )
 
     async def _execute_once(self, task: str, start_time: float) -> AgentResult:
@@ -621,12 +644,12 @@ class AutonomousAgentLoop:
             try:
                 self.mcp_servers["server-api-tools"] = create_server_api_tools_server()
             except Exception as e:
-                print(f"[Init] Warning: server API tools unavailable: {e}")
+                print("[Init] Warning: server API tools unavailable")
             if not local_mode:
                 try:
                     self.mcp_servers["prior-work-tools"] = create_prior_work_tools_server()
-                except Exception as e:
-                    print(f"[Init] Warning: prior work tools unavailable: {e}")
+                except Exception:
+                    print("[Init] Warning: prior work tools unavailable")
         # AutoData is an upstream local Claude plugin. AAR verifies the pinned
         # checkout, then lets the agent use the plugin's own skill and CLI.
         # No AAR-specific AutoData MCP server or lifecycle wrapper is created.
@@ -857,17 +880,18 @@ class AutonomousAgentLoop:
             try:
                 count = self.findings_sync.sync_once()
                 print(f"[Loop] Fetched {count} finding(s) from server")
-            except Exception as e:
-                print(f"[Loop] Warning: initial findings fetch failed: {e}")
+            except Exception:
+                print("[Loop] Warning: initial findings fetch failed")
 
             try:
                 self.findings_sync.start()
-            except Exception as e:
-                print(f"[Loop] Warning: could not start findings sync: {e}")
+            except Exception:
+                print("[Loop] Warning: could not start findings sync")
 
         stop_reason = None
         successful_sessions = 0
         failed_sessions = 0
+        last_failure: dict[str, Any] | None = None
         target_successful_pairs = int(
             os.getenv("AAR_TARGET_SUCCESSFUL_ITERATIONS", "0") or "0"
         )
@@ -886,9 +910,15 @@ class AutonomousAgentLoop:
                 probe = self._create_agent(f"incident-check-{self.session_count}")
                 incident = probe.active_orchestration_incident()
                 if incident is not None:
+                    nested = safe_failure_feedback_view(incident.get("failure"))
+                    code = (
+                        nested["error_code"]
+                        if nested is not None
+                        else "orchestration_incident"
+                    )
                     print(
                         "\n[Loop] Paused by shared orchestration incident: "
-                        f"{incident.get('error', 'unknown infrastructure failure')}"
+                        f"{code}"
                     )
                     stop_reason = "orchestration_incident"
                     break
@@ -921,22 +951,56 @@ class AutonomousAgentLoop:
                 break
 
             except OrchestrationIncident as error:
-                print(f"\n[Loop] Paused by orchestration incident: {error}")
+                failure = error.failure
+                if not isinstance(failure, dict):
+                    failure = build_failure_feedback(
+                        error,
+                        error_code="orchestration_incident",
+                        stage="research_session",
+                        public_summary="shared orchestration incident",
+                    )
+                last_failure = failure
+                print(
+                    "\n[Loop] Paused by orchestration incident: "
+                    + str(failure["error_code"])
+                )
                 self.stop_checker.record_error()
                 failed_sessions += 1
                 stop_reason = "orchestration_incident"
                 break
 
-            except Exception as e:
-                print(f"\n[Loop] Session error: {e}")
-                traceback.print_exc()
+            except FailureFeedbackError as error:
+                last_failure = dict(error.feedback)
+                print(
+                    "\n[Loop] Session failure: "
+                    + str(last_failure["error_code"])
+                )
                 self.stop_checker.record_error()
                 failed_sessions += 1
-                # If a 529 still reached the loop (e.g. after in-call retries
-                # were exhausted), back off the full 10 min rather than 30s so we
-                # don't hammer an overloaded API and burn sessions.
-                backoff = OVERLOADED_WAIT_SECONDS if _is_overloaded(e) else 30
-                await asyncio.sleep(backoff)
+                if last_failure.get("retryable") is True:
+                    backoff = (
+                        OVERLOADED_WAIT_SECONDS
+                        if last_failure.get("error_code") == "kimi_model_overloaded"
+                        else 30
+                    )
+                    await asyncio.sleep(backoff)
+                else:
+                    stop_reason = "permanent_session_failure"
+                    break
+
+            except Exception as e:
+                last_failure = build_failure_feedback(
+                    e,
+                    error_code="research_session_failed",
+                    stage="research_session",
+                    retryable=False,
+                    public_summary="research session failed",
+                )
+                print("\n[Loop] Session failure: research_session_failed")
+                self.stop_checker.record_error()
+                failed_sessions += 1
+                stop_reason = "permanent_session_failure"
+                break
             finally:
                 # `--max-iterations` caps sessions that BEGIN, not only sessions
                 # that finish successfully.  A failed first session may already
@@ -968,6 +1032,8 @@ class AutonomousAgentLoop:
             "failed_sessions": failed_sessions,
             "successful_score_result_pairs": self._successful_score_result_pairs(),
         }
+        if last_failure is not None:
+            result["last_failure"] = last_failure
 
         summary_dir = getattr(self, "logs_dir", None)
         if summary_dir is not None:
@@ -1060,14 +1126,43 @@ class AutonomousAgentLoop:
                            f"duration={result.duration:.1f}s, "
                            f"tools={result.iteration_count}\n")
                 if result.error:
-                    log_f.write(f"# Error: {result.error}\n")
+                    failure = getattr(result, "failure", None)
+                    code = (
+                        failure.get("error_code")
+                        if isinstance(failure, dict)
+                        else "agent_backend_failed"
+                    )
+                    log_f.write(f"# Error code: {code}\n")
 
                 if not result.success:
-                    raise RuntimeError(f"Agent failed: {result.error}")
+                    failure = getattr(result, "failure", None)
+                    if isinstance(failure, dict):
+                        raise FailureFeedbackError(failure)
+                    feedback = build_failure_feedback(
+                        RuntimeError(result.error or "agent failed"),
+                        error_code="agent_backend_failed",
+                        stage="research_session",
+                        retryable=False,
+                        public_summary="research agent backend failed",
+                    )
+                    raise FailureFeedbackError(feedback)
 
             except Exception as e:
-                log_f.write(f"\n# ERROR: {e}\n{traceback.format_exc()}")
-                raise
+                if isinstance(e, FailureFeedbackError):
+                    log_f.write(
+                        "\n# ERROR_CODE: "
+                        + str(e.feedback.get("error_code"))
+                        + "\n"
+                    )
+                    raise
+                feedback = build_failure_feedback(
+                    e,
+                    error_code="research_session_failed",
+                    stage="research_session",
+                    public_summary="research session failed",
+                )
+                log_f.write("\n# ERROR_CODE: research_session_failed\n")
+                raise FailureFeedbackError(feedback) from e
             finally:
                 log_f.write(f"\n# Ended: {datetime.now().isoformat()}\n")
                 os.environ.pop("AAR_CURRENT_SESSION_ID", None)
@@ -1095,8 +1190,8 @@ class AutonomousAgentLoop:
                     bucket_name=self.s3_bucket,
                     content_type="text/plain",
                 )
-        except Exception as e:
-            print(f"[Sync] Failed: {e}")
+        except Exception:
+            print("[Sync] Failed")
 
 
 # ---------------------------------------------------------------------------

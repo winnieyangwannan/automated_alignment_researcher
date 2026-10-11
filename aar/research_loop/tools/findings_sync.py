@@ -73,8 +73,8 @@ def save_finding_to_dir(finding: dict, findings_dir: Path) -> Optional[Path]:
             json.dump(finding, f, indent=2, default=str)
         tmp.rename(filepath)
         return filepath
-    except Exception as e:
-        print(f"[findings-sync] Failed to write {filepath}: {e}")
+    except Exception:
+        print("[findings-sync] Failed to write finding")
         # Clean up temp file if rename failed
         try:
             tmp.unlink(missing_ok=True)
@@ -132,8 +132,8 @@ class FindingsSync:
         """Run one sync cycle. Returns number of new findings saved."""
         try:
             findings = self._fetch_all_findings()
-        except Exception as e:
-            print(f"[findings-sync] Fetch failed: {e}")
+        except Exception:
+            print("[findings-sync] Fetch failed")
             return 0
 
         new_count = 0

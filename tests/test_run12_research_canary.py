@@ -41,7 +41,7 @@ def test_run12_pins_autodata_provider_provenance_serialization_fix() -> None:
     launcher = (LAUNCH / "submit_full.sh").read_text()
 
     assert "/autodata-worktrees/finalization-recovery" in launcher
-    assert "8ed79b55843d259deea9132cf257f02ff7eb5ee9" in launcher
+    assert "d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc" in launcher
     assert "Preserves provider provenance" in launcher
 
 

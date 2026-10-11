@@ -9,6 +9,7 @@ from unittest import mock
 
 import pytest
 
+from aar.failure_feedback import FailureFeedbackError
 from aar.research_loop import autodata_approval
 from aar.research_loop import monitor
 
@@ -56,9 +57,15 @@ def test_run_cli_reports_signal_when_stderr_is_empty(tmp_path: Path) -> None:
     with (
         mock.patch.dict(os.environ, _environment(tmp_path), clear=False),
         mock.patch("subprocess.run", return_value=completed),
-        pytest.raises(RuntimeError, match=r"exit=-9 signal=SIGKILL.*<empty>"),
+        pytest.raises(
+            FailureFeedbackError,
+            match=r"exit=-9 signal=SIGKILL",
+        ) as captured,
     ):
         autodata_approval._run_cli(["status", "ws_test"])
+
+    assert captured.value.feedback["error_code"] == "autodata_approval_cli_failed"
+    assert "stderr" not in captured.value.feedback["summary"].lower()
 
 
 def _baseline_package(*, valid: float = 0.0, challenge: float = 0.0) -> dict:

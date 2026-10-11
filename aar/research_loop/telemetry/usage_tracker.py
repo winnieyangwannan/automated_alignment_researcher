@@ -151,5 +151,5 @@ class UsageTracker:
             with open(temp, 'w') as f:
                 json.dump(self._stats, f, indent=2)
             temp.replace(self.log_file)
-        except Exception as e:
-            print(f"[UsageTracker] Failed to save: {e}")
+        except Exception:
+            print("[UsageTracker] Failed to save")

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -54,6 +56,30 @@ def test_v1_recipe_check_and_comparator_contract() -> None:
         "valid": {"minimum": 0.75}
     }
     assert comparator["constraints"] == pipeline["comparator"]["constraints"]
+
+
+def test_v1_recipe_reports_safe_structured_unsupported_field_error() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        recipe = Path(temporary) / "recipe"
+        shutil.copytree(RECIPE, recipe)
+        strategy_path = recipe / "recipe" / "generation_strategy.json"
+        strategy = json.loads(strategy_path.read_text(encoding="utf-8"))
+        strategy["max_tokens"] = 768
+        strategy_path.write_text(json.dumps(strategy), encoding="utf-8")
+
+        completed = subprocess.run(
+            [sys.executable, str(recipe / "recipe" / "check.py")],
+            cwd=recipe,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    assert completed.returncode != 0
+    assert completed.stderr.strip() == (
+        "AUTODATA_CHECK_ERROR:generation_strategy_unsupported_fields"
+    )
+    assert "max_tokens" not in completed.stderr
 
 
 def test_v1_generator_usage_binds_runtime_deployment(monkeypatch) -> None:

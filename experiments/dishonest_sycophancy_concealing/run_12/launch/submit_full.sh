@@ -16,7 +16,7 @@ SV="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
 # Preserves provider provenance when native TaskResult objects are serialized
 # into the baseline-review artifact used by the trusted approval gate.
-REQUIRED_AUTODATA_SHA=8ed79b55843d259deea9132cf257f02ff7eb5ee9
+REQUIRED_AUTODATA_SHA=d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc
 CANONICAL_RUN_CONFIG="$(realpath -e -- "${RUN12_DIR}/config/autodata_run.yaml")"
 RUN_CONFIG="$(realpath -e -- "${AAR_RUN12_AUTODATA_RUN_CONFIG:-${CANONICAL_RUN_CONFIG}}")"
 [ -x "${REPO}/.venv/bin/python" ] || { echo "missing AAR runtime" >&2; exit 2; }

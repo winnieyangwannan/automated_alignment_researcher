@@ -61,7 +61,11 @@ export SCORES_DIR="${SCORES_DIR:-${TEAM_DIR:+${TEAM_DIR}/scores}}"
 export SCORES_DIR="${SCORES_DIR:-${REPO}/_runs/scores}"
 mkdir -p "${SCORES_DIR}"
 if [ -n "${TEAM_DIR:-}" ] && [ -n "${SLURM_JOB_ID:-}" ]; then
-  export AAR_TRAIN_LOG_PATH="${TEAM_DIR}/logs/train-${SLURM_JOB_ID}.out"
+  if [ "${AAR_RESEARCH_ENV_ISOLATION:-0}" = 1 ]; then
+    export AAR_TRAIN_LOG_PATH="${TEAM_DIR}/secrets/failure-evidence/train-${SLURM_JOB_ID}.out"
+  else
+    unset AAR_TRAIN_LOG_PATH
+  fi
 fi
 _record_training_failure() {
   _exit_code=$?
@@ -76,7 +80,7 @@ _record_training_failure() {
         --error-code training_process_failed \
         --exit-code "${_exit_code}" \
         --log-path "${AAR_TRAIN_LOG_PATH:-}" \
-        --reason "training process exited before model scoring; inspect log_path" \
+        --reason "training process exited before model scoring; operator evidence retained privately" \
         >/dev/null 2>&1 || \
         printf '{"schema_version":2,"run_id":"%s","status":"failed","stage":"training","error_code":"training_process_failed","retryable":false,"exit_code":%d,"error":"training process exited before model scoring","reason":"training process exited before model scoring"}\n' \
           "${RUN_ID}" "${_exit_code}" > "${_failure_path}"

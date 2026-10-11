@@ -648,7 +648,7 @@ without an approval.** Once approved → train + `evaluate_model` **that approve
      sleep 60
      st=$(sacct -j "$(cat "$TEAM_DIR/logs/jobid_$RUN_ID")" --format=State -n 2>/dev/null | head -1)
      case "$st" in *FAIL*|*CANCEL*|*TIMEOUT*|*OUT_OF*)
-       echo "TRAIN JOB DIED ($st) — do NOT resubmit; read $TEAM_DIR/logs/train-*.out, fix the method NEXT iteration"; break;; esac
+       echo "TRAIN JOB DIED ($st) — do NOT resubmit; wait for the typed failure marker, then fix the method NEXT iteration"; break;; esac
    done
    ```
    If `$SCORES_DIR/$RUN_ID.failed.json` exists, the evaluator rejected this

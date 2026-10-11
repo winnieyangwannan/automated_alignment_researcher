@@ -187,8 +187,8 @@ def validate_tool_call(
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
-    except (OSError, json.JSONDecodeError) as error:
-        print(f"Kimi Write/Edit denied: invalid hook input ({error})", file=sys.stderr)
+    except (OSError, json.JSONDecodeError):
+        print("Kimi Write/Edit denied: invalid hook input", file=sys.stderr)
         return 2
     if not isinstance(payload, dict):
         print("Kimi Write/Edit denied: hook input must be an object", file=sys.stderr)

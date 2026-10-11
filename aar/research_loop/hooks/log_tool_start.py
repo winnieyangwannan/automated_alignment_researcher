@@ -29,11 +29,11 @@ def read_hook_input():
             return {}
 
         return json.loads(stdin_data)
-    except json.JSONDecodeError as e:
-        print(f"[Timing] Failed to parse stdin as JSON: {e}")
+    except json.JSONDecodeError:
+        print("[Timing] Failed to parse stdin as JSON")
         return {}
-    except Exception as e:
-        print(f"[Timing] Error reading stdin: {e}")
+    except Exception:
+        print("[Timing] Error reading stdin")
         return {}
 
 
@@ -58,10 +58,10 @@ def main():
         from aar.research_loop.telemetry.tool_timing import record_start_time
         record_start_time(session_id, tool_name, tool_input)
         print(f"[Timing] Start time recorded")
-    except ImportError as e:
-        print(f"[Timing] Skipping (import error): {e}")
-    except Exception as e:
-        print(f"[Timing] Error recording start time: {e}")
+    except ImportError:
+        print("[Timing] Skipping (import error)")
+    except Exception:
+        print("[Timing] Error recording start time")
 
 
 if __name__ == "__main__":

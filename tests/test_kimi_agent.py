@@ -366,7 +366,9 @@ class KimiAgentTest(unittest.TestCase):
             ):
                 asyncio.run(agent._wait_for_training_result())
 
-    def test_slurm_timeout_publishes_failure_instead_of_waiting_forever(self) -> None:
+    def test_slurm_timeout_repairs_malformed_marker_instead_of_waiting_forever(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             scores = root / "scores"
@@ -388,6 +390,9 @@ class KimiAgentTest(unittest.TestCase):
             )
             (receipts / f"{run_id}.env").write_text(
                 f"run_id={run_id}\njob_id=12345\n"
+            )
+            (scores / f"{run_id}.failed.json").write_text(
+                '{"status":"failed","error":"private malformed body"}'
             )
             agent = KimiAgent(
                 "test-agent",
@@ -419,7 +424,7 @@ class KimiAgentTest(unittest.TestCase):
             self.assertEqual(failure["stage"], "training")
             self.assertEqual(failure["error_code"], "training_slurm_timeout")
             self.assertEqual(failure["exit_code"], 0)
-            self.assertEqual(failure["log_path"], str(root / "logs" / "train-12345.out"))
+            self.assertNotIn("log_path", failure)
 
     def test_slurm_result_normalizes_signal_exit_and_state_suffix(self) -> None:
         completed = subprocess.CompletedProcess(
@@ -461,28 +466,86 @@ class KimiAgentTest(unittest.TestCase):
                 "stage": "training",
                 "error_code": "training_python_exception",
                 "exception_type": "TypeError",
-                "error": "unexpected keyword argument 'tokenizer'",
+                "error": "held-out row; API_KEY=must-not-leak",
                 "retryable": False,
-                "log_path": str(root / "logs" / "train-123.out"),
+                "log_path": str(
+                    root / "secrets" / "failure-evidence" / "train-123.out"
+                ),
             }
+            evidence = root / "secrets" / "failure-evidence"
+            evidence.mkdir(parents=True)
+            (evidence / "train-123.out").write_text("operator evidence")
             (scores / f"{run_id}.failed.json").write_text(json.dumps(failure))
             agent = KimiAgent("test-agent", root, cli_path="/bin/true")
 
             with patch.dict(
                 os.environ,
-                {"SCORES_DIR": str(scores), "IDEA_UID": idea_uid},
+                {
+                    "SCORES_DIR": str(scores),
+                    "TEAM_DIR": str(root),
+                    "IDEA_UID": idea_uid,
+                },
                 clear=False,
             ):
                 prompt = agent._with_previous_failure_feedback("do research")
                 self.assertIn("AUTOMATIC HELD-OUT-SAFE FAILURE FEEDBACK", prompt)
                 self.assertIn("training_python_exception", prompt)
-                self.assertIn("unexpected keyword argument", prompt)
-                self.assertIn("train-123.out", prompt)
+                self.assertNotIn("held-out row", prompt)
+                self.assertNotIn("must-not-leak", prompt)
+                self.assertNotIn("train-123.out", prompt)
+                self.assertNotIn('"evidence":', prompt)
 
                 (scores / f"{run_id}.json").write_text("{}\n")
                 self.assertEqual(
                     agent._with_previous_failure_feedback("do research"),
                     "do research",
+                )
+
+    def test_previous_failure_rejects_unbound_or_invalid_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            scores = root / "scores"
+            proposals = scores / ".proposals"
+            runs = proposals / "runs"
+            runs.mkdir(parents=True)
+            idea_uid = "kimi-invalid-feedback"
+            run_id = f"{idea_uid}-candidate-1"
+            marker = {
+                "approved": True,
+                "idea_name": "kimi_candidate",
+                "code_hash": "abc123",
+            }
+            (proposals / f"{idea_uid}.json").write_text(json.dumps(marker))
+            (runs / "candidate.json").write_text(
+                json.dumps({**marker, "run_id": run_id, "stamped_ts": 1})
+            )
+            (scores / f"{run_id}.failed.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "status": "failed",
+                        "run_id": "different-run",
+                        "stage": "training",
+                        "error_code": "training_failed",
+                        "retryable": False,
+                        "error": "held-out prompt row",
+                        "log_path": "/outside/operator.log",
+                    }
+                )
+            )
+
+            agent = KimiAgent("test-agent", root, cli_path="/bin/true")
+            with patch.dict(
+                os.environ,
+                {
+                    "SCORES_DIR": str(scores),
+                    "TEAM_DIR": str(root),
+                    "IDEA_UID": idea_uid,
+                },
+                clear=False,
+            ):
+                assert agent._with_previous_failure_feedback("do research") == (
+                    "do research"
                 )
 
     def test_launcher_selects_kimi_without_anthropic_credentials(self) -> None:
@@ -1054,12 +1117,15 @@ class KimiAgentTest(unittest.TestCase):
             cli = root / "kimi"
             cli.write_text(f"#!{sys.executable}\nimport sys\nsys.stderr.write('bad auth')\nsys.exit(7)\n")
             cli.chmod(0o755)
-            result = asyncio.run(
-                KimiAgent("test-agent", root, cli_path=str(cli)).execute("task")
-            )
-        self.assertFalse(result.success)
-        self.assertIn("status 7", result.error or "")
-        self.assertIn("bad auth", result.error or "")
+            with patch.dict(os.environ, {"TEAM_DIR": str(root)}, clear=False):
+                result = asyncio.run(
+                    KimiAgent("test-agent", root, cli_path=str(cli)).execute("task")
+                )
+            self.assertFalse(result.success)
+            self.assertIn("status 7", result.error or "")
+            self.assertNotIn("bad auth", result.error or "")
+            self.assertEqual(result.failure["error_code"], "kimi_cli_failed")
+            self.assertNotIn("evidence", result.failure)
 
     def test_incomplete_kimi_turn_resumes_until_completion_tool(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

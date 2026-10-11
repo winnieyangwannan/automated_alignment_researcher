@@ -185,6 +185,12 @@ elif [ "${_submission_status}" = submitting ]; then
   PYTHONPATH="${REPO}" "${HARNESS_PY}" -m aar.slurm_session_recovery transition \
     --path "${_intent_path}" --status registered --job-id "${_jid}" >/dev/null
 else
+  _train_log_path=/dev/null
+  if [ "${AAR_RESEARCH_ENV_ISOLATION:-0}" = 1 ]; then
+    mkdir -p "${TEAM_DIR}/secrets/failure-evidence"
+    chmod 700 "${TEAM_DIR}/secrets" "${TEAM_DIR}/secrets/failure-evidence"
+    _train_log_path="${TEAM_DIR}/secrets/failure-evidence/train-%j.out"
+  fi
   if [ -n "${_receipt_path}" ]; then
     [ "${_submission_status}" = prepared ] || {
       echo "submit_train_job: invalid submission intent status: ${_submission_status:-missing}" >&2
@@ -199,7 +205,7 @@ else
     --qos="${AAR_TRAIN_QOS}" \
     --gpus="${AAR_TRAIN_GPUS:-1}" \
     --job-name="aar-train-${TEAM_ID:-team}" \
-    --output="${TEAM_DIR}/logs/train-%j.out" \
+    --output="${_train_log_path}" \
     "${_comment_args[@]}" \
     "${_resource_args[@]}" \
     "${_dependency[@]}" \

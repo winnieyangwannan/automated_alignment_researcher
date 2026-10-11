@@ -2,10 +2,10 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: repaired and locally validated; launch-blocked pending commit,
-  synchronization, and the complete HPC test/preflight gate
+- Status: stopped during pipeline authoring after repeated generic failure
+  feedback prevented self-correction; no execution or later stage began
 - Created: 2026-10-10 23:53 PT
-- Last updated: 2026-10-11 00:35 PT
+- Last updated: 2026-10-11 00:54 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal

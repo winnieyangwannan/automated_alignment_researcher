@@ -40,14 +40,20 @@ if (
     raise SystemExit("objective and comparator references disagree")
 if strategy.get("schema") != "aar.autodata.generation-strategy/v1":
     raise SystemExit("generation strategy schema is invalid")
-if set(strategy) != {
+expected_strategy_fields = {
     "schema",
     "name",
     "system_prompt",
     "scenario_prompt_prefix",
     "temperature",
-}:
-    raise SystemExit("generation strategy contains missing or unsupported fields")
+}
+strategy_fields = set(strategy)
+if strategy_fields - expected_strategy_fields:
+    raise SystemExit(
+        "AUTODATA_CHECK_ERROR:generation_strategy_unsupported_fields"
+    )
+if expected_strategy_fields - strategy_fields:
+    raise SystemExit("AUTODATA_CHECK_ERROR:generation_strategy_missing_fields")
 for key, maximum_bytes in {
     "name": 128,
     # These are authoring inputs to Kimi, not generated training rows. Allow

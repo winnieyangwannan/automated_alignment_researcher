@@ -207,3 +207,48 @@ def test_selection_rejects_method_that_no_longer_matches_approval(
 
     with pytest.raises(ChampionExportError, match="no metadata-valid candidate"):
         select_champion(team)
+
+
+def test_selection_reports_safe_failure_codes_without_failure_details(
+    tmp_path: Path,
+) -> None:
+    team = tmp_path / "team"
+    _write_json(
+        team / "scores" / "failed-run.failed.json",
+        {
+            "status": "failed",
+            "stage": "training",
+            "error_code": "training_python_exception",
+            "error": "prompt row 17; API_KEY=must-not-leak",
+        },
+    )
+
+    with pytest.raises(ChampionExportError) as captured:
+        select_champion(team)
+
+    message = str(captured.value)
+    assert "failed-run:training/training_python_exception" in message
+    assert "prompt row 17" not in message
+    assert "must-not-leak" not in message
+
+
+def test_selection_does_not_echo_untrusted_failure_identifiers(
+    tmp_path: Path,
+) -> None:
+    team = tmp_path / "team"
+    _write_json(
+        team / "scores" / "failed-run.failed.json",
+        {
+            "status": "failed",
+            "stage": "training; secret=row-content",
+            "error_code": "bad code with prompt content",
+        },
+    )
+
+    with pytest.raises(ChampionExportError) as captured:
+        select_champion(team)
+
+    message = str(captured.value)
+    assert "failed-run:unknown_stage/invalid_failure_marker" in message
+    assert "row-content" not in message
+    assert "prompt content" not in message

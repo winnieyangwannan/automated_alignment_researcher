@@ -67,8 +67,8 @@ def _upload_file(upload_fn, file_path: Path, s3_key: str, bucket: str, content_t
         upload_fn(file_path=file_path, s3_key=s3_key, bucket_name=bucket, content_type=content_type)
         print(f"Synced {file_path.name}")
         return True
-    except Exception as e:
-        print(f"Failed to sync {file_path.name}: {e}")
+    except Exception:
+        print(f"Failed to sync {file_path.name}")
         return False
 
 

@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass, field
@@ -96,6 +97,47 @@ def _safe_component(value: str) -> bool:
     return bool(value) and value not in {".", ".."} and all(
         char.isalnum() or char in "-_" for char in value
     )
+
+
+_FAILURE_FIELD_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+def _terminal_failure_summary(scores_dir: Path, *, limit: int = 20) -> str | None:
+    """Summarize failed runs without copying evaluator diagnostics.
+
+    Failure markers may be research-readable, but their free-form reason and
+    error fields can still contain prompts, held-out rows, paths, or secrets.
+    Only schema-constrained identifiers are safe to echo in export errors.
+    """
+
+    summaries: list[str] = []
+    failure_paths = sorted(scores_dir.glob("*.failed.json"))
+    for failure_path in failure_paths[:limit]:
+        run_id = failure_path.name[: -len(".failed.json")]
+        safe_run_id = _safe_run_filename(run_id)
+        stage = "unknown_stage"
+        error_code = "invalid_failure_marker"
+        try:
+            failure = _read_json(failure_path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+        else:
+            raw_stage = failure.get("stage")
+            raw_error_code = failure.get("error_code")
+            if isinstance(raw_stage, str) and _FAILURE_FIELD_RE.fullmatch(raw_stage):
+                stage = raw_stage
+            if (
+                isinstance(raw_error_code, str)
+                and _FAILURE_FIELD_RE.fullmatch(raw_error_code)
+            ):
+                error_code = raw_error_code
+        summaries.append(f"{safe_run_id}:{stage}/{error_code}")
+    if not summaries:
+        return None
+    omitted = len(failure_paths) - len(summaries)
+    if omitted:
+        summaries.append(f"and_{omitted}_more")
+    return ", ".join(summaries)
 
 
 def method_code_hash(method_dir: Path) -> str | None:
@@ -299,7 +341,13 @@ def discover_candidates(
                 )
 
     if not candidates:
-        raise ChampionExportError(f"no completed score JSON files under {scores_dir}")
+        failure_summary = _terminal_failure_summary(scores_dir)
+        detail = (
+            f"; terminal failures: {failure_summary}" if failure_summary else ""
+        )
+        raise ChampionExportError(
+            f"no completed score JSON files under {scores_dir}{detail}"
+        )
     return candidates
 
 

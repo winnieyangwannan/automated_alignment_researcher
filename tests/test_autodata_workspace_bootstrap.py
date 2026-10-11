@@ -4,14 +4,17 @@ import fcntl
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from aar.failure_feedback import FailureFeedbackError
 from aar.research_loop.agent import AutonomousAgentLoop
 from aar.research_loop.autodata_bootstrap import (
     BOOTSTRAP_SCHEMA,
+    _run_json,
     ensure_workspace,
 )
 
@@ -125,6 +128,30 @@ args.output.write_text(json.dumps({"schema": "autodata.grounding/v1", "tasks": l
         "AAR_AUTODATA_APPROVAL_ACTOR": "aar-integrity-monitor",
         "AAR_AUTODATA_APPROVAL_POLICY_VERSION": "test/v1",
     }
+
+
+def test_bootstrap_cli_failure_discards_private_output(tmp_path: Path) -> None:
+    team = tmp_path / "team"
+    team.mkdir()
+    completed = subprocess.CompletedProcess(
+        args=[],
+        returncode=1,
+        stdout="held-out prompt row",
+        stderr="API_KEY=must-not-leak",
+    )
+    with (
+        patch.dict(os.environ, {"TEAM_DIR": str(team)}, clear=False),
+        patch("subprocess.run", return_value=completed),
+        pytest.raises(FailureFeedbackError) as captured,
+    ):
+        _run_json(["autodata", "status"])
+
+    feedback = captured.value.feedback
+    assert feedback["error_code"] == "autodata_bootstrap_cli_failed"
+    assert "held-out prompt" not in json.dumps(feedback)
+    assert "must-not-leak" not in json.dumps(feedback)
+    assert "evidence" not in feedback
+    assert not (team / "secrets").exists()
 
 
 def test_bootstrap_creates_registers_and_resumes_one_workspace(tmp_path: Path) -> None:

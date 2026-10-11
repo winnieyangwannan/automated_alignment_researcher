@@ -12,25 +12,15 @@ from pathlib import Path
 from types import TracebackType
 from typing import Callable
 
+from aar.failure_feedback import sanitize_failure_summary
+
 
 _ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _STAGE_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
-_SECRET_ASSIGNMENT_RE = re.compile(
-    r"(?i)\b(api[_-]?key|authorization|password|secret|token)"
-    r"(\s*[:=]\s*)([^\s,;]+)"
-)
-_BEARER_RE = re.compile(r"(?i)\bbearer\s+[^\s,;]+")
-
-
 def sanitize_failure_text(value: object, *, limit: int = 1000) -> str:
     """Return a compact diagnostic that is safe for the research-side handoff."""
 
-    text = " ".join(str(value).split())
-    text = _BEARER_RE.sub("Bearer [REDACTED]", text)
-    text = _SECRET_ASSIGNMENT_RE.sub(r"\1\2[REDACTED]", text)
-    if len(text) > limit:
-        return text[: limit - 3] + "..."
-    return text
+    return sanitize_failure_summary(value, limit=limit)
 
 
 def publish_failure(
@@ -45,8 +35,15 @@ def publish_failure(
     exception_type: str | None = None,
     exit_code: int | None = None,
     log_path: str | Path | None = None,
+    replace_invalid: bool = False,
 ) -> Path:
-    """Publish an idempotent, structured failure without exposing partial scores."""
+    """Publish an idempotent, structured failure without exposing partial scores.
+
+    ``reason`` crosses to research-readable storage and therefore must already
+    be non-content-bearing. This function additionally bounds and redacts common
+    credential forms, but cannot infer whether arbitrary text contains held-out
+    prompts or rows.
+    """
     if not run_id or Path(run_id).name != run_id:
         raise ValueError("run_id must be one nonempty path component")
     if not _STAGE_RE.fullmatch(stage):
@@ -60,8 +57,27 @@ def publish_failure(
     failure_path = directory / f"{run_id}.failed.json"
     if success_path.exists():
         raise FileExistsError(f"refusing to replace successful score: {success_path}")
-    if failure_path.exists():
-        return failure_path
+    if failure_path.exists() or failure_path.is_symlink():
+        if not replace_invalid:
+            return failure_path
+        existing: object = None
+        if not failure_path.is_symlink() and failure_path.is_file():
+            try:
+                existing = json.loads(failure_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                pass
+        if (
+            isinstance(existing, dict)
+            and existing.get("schema_version") == 2
+            and existing.get("status") == "failed"
+            and existing.get("run_id") == run_id
+            and isinstance(existing.get("stage"), str)
+            and _STAGE_RE.fullmatch(existing["stage"]) is not None
+            and isinstance(existing.get("error_code"), str)
+            and _ERROR_CODE_RE.fullmatch(existing["error_code"]) is not None
+            and isinstance(existing.get("retryable"), bool)
+        ):
+            return failure_path
 
     safe_reason = sanitize_failure_text(reason)
     payload: dict[str, object] = {

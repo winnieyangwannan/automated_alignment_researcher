@@ -20,10 +20,32 @@ from typing import Any, Dict
 
 from claude_agent_sdk import tool, create_sdk_mcp_server
 
+from aar.failure_feedback import feedback_from_exception
 from aar.phase_timing import timed_async_phase
 
 from .http_utils import get_server_url, async_http_post, async_http_get
 from .fs_forum import use_fs_forum, write_finding, leaderboard as fs_leaderboard
+
+
+def _tool_failure(
+    error: BaseException,
+    *,
+    error_code: str,
+    stage: str,
+    public_summary: str,
+) -> dict[str, Any]:
+    feedback = feedback_from_exception(
+        error,
+        error_code=error_code,
+        stage=stage,
+        retryable=False,
+        public_summary=public_summary,
+    )
+    return {
+        "success": False,
+        "error": feedback["summary"],
+        "failure": feedback,
+    }
 
 
 def _fsync_directory(path: Path) -> None:
@@ -151,7 +173,12 @@ async def evaluate_predictions(args: Dict[str, Any]) -> Dict[str, Any]:
             }
 
         if "error" in result:
-            error_response = {"success": False, "error": result["error"]}
+            error_response = _tool_failure(
+                RuntimeError(str(result["error"])),
+                error_code="prediction_evaluator_rejected",
+                stage="evaluation_submission",
+                public_summary="prediction evaluator rejected the request",
+            )
             return {
                 "content": [{
                     "type": "text",
@@ -191,7 +218,12 @@ async def evaluate_predictions(args: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     except Exception as e:
-        error_response = {"success": False, "error": str(e)}
+        error_response = _tool_failure(
+            e,
+            error_code="prediction_evaluation_failed",
+            stage="evaluation_submission",
+            public_summary="prediction evaluation failed",
+        )
         return {
             "content": [{
                 "type": "text",
@@ -318,7 +350,20 @@ async def evaluate_model(args: Dict[str, Any]) -> Dict[str, Any]:
                 timeout=config.EVAL_POD_TIMEOUT_SECONDS + 120,
             )
         result = _strip_held_out(result)   # held-out invisible to the AAR (generalization check is human-only)
-        if "error" not in result:
+        if "error" in result:
+            failure = _tool_failure(
+                RuntimeError(str(result["error"])),
+                error_code="model_evaluator_rejected",
+                stage="evaluation",
+                public_summary="model evaluator rejected the candidate",
+            )
+            failure["run_id"] = run_id
+            return {
+                "content": [
+                    {"type": "text", "text": json.dumps(failure, indent=2)}
+                ]
+            }
+        else:
             global _LAST_EVAL_RUN_ID
             _LAST_EVAL_RUN_ID = run_id      # bind a subsequent share_finding to THIS exact run
         # Return run_id so the agent passes it VERBATIM to share_finding(run_id=...) — the only
@@ -328,7 +373,15 @@ async def evaluate_model(args: Dict[str, Any]) -> Dict[str, Any]:
         response_data = {**result, "success": "error" not in result, "run_id": run_id}
         return {"content": [{"type": "text", "text": json.dumps(response_data, indent=2)}]}
     except Exception as e:
-        return {"content": [{"type": "text", "text": json.dumps({"success": False, "error": str(e)}, indent=2)}]}
+        failure = _tool_failure(
+            e,
+            error_code="model_evaluation_failed",
+            stage="evaluation_submission",
+            public_summary="model evaluation submission failed",
+        )
+        return {
+            "content": [{"type": "text", "text": json.dumps(failure, indent=2)}]
+        }
 
 
 async def _auto_upload_snapshot(
@@ -418,7 +471,13 @@ async def _auto_upload_snapshot(
         }
 
     except Exception as e:
-        print(f"[auto-snapshot] Failed: {e}")
+        _tool_failure(
+            e,
+            error_code="snapshot_upload_failed",
+            stage="result_publication",
+            public_summary="workspace snapshot upload failed",
+        )
+        print("[auto-snapshot] Failed: snapshot_upload_failed")
         return {}
 
 
@@ -460,7 +519,13 @@ def _authoritative_composite(agent_metrics: Dict[str, Any] | None,
             return d
         return None
     except Exception as e:
-        print(f"[share_finding] authoritative-scores lookup failed: {e}")
+        _tool_failure(
+            e,
+            error_code="authoritative_score_read_failed",
+            stage="result_publication",
+            public_summary="authoritative score lookup failed",
+        )
+        print("[share_finding] authoritative-scores lookup failed")
         return None
 
 
@@ -530,7 +595,13 @@ def _result_dedup(auth: dict, idea_name: str | None, run_id: str | None):
                 # same idea reusing its key = honest reproduction → keep checking remaining keys
         return True, None, None
     except Exception as e:
-        print(f"[share_finding] result dedup skipped (fail-open): {e}")
+        _tool_failure(
+            e,
+            error_code="result_dedup_failed",
+            stage="result_publication",
+            public_summary="result deduplication check failed",
+        )
+        print("[share_finding] result dedup skipped (fail-open)")
         return True, None, None
 
 
@@ -564,7 +635,13 @@ def _runid_existing_post(run_id: str):
             if rec.get("post_id") or rec.get("finding_id"):
                 return rec
     except Exception as e:
-        print(f"[share_finding] run_id idempotency check skipped (fail-open): {e}")
+        _tool_failure(
+            e,
+            error_code="run_id_lookup_failed",
+            stage="result_publication",
+            public_summary="run ID idempotency lookup failed",
+        )
+        print("[share_finding] run_id idempotency check skipped (fail-open)")
     return None
 
 
@@ -581,7 +658,13 @@ def _runid_record_post(run_id: str, post_id, finding_id, idea_name) -> None:
             p.write_text(json.dumps({"run_id": run_id, "post_id": post_id,
                                      "finding_id": finding_id, "idea_name": idea_name}))
     except Exception as e:
-        print(f"[share_finding] run_id post-record failed (non-fatal): {e}")
+        _tool_failure(
+            e,
+            error_code="run_id_record_failed",
+            stage="result_publication",
+            public_summary="run ID result record failed",
+        )
+        print("[share_finding] run_id post-record failed (non-fatal)")
 
 
 # ---------------------------------------------------------------------------
@@ -1067,7 +1150,13 @@ async def share_finding(args: Dict[str, Any]) -> Dict[str, Any]:
                     if saved:
                         message += f" (saved locally: {saved.name})"
                 except Exception as e:
-                    print(f"[share_finding] Warning: local save failed: {e}")
+                    _tool_failure(
+                        e,
+                        error_code="local_finding_save_failed",
+                        stage="result_publication",
+                        public_summary="local finding save failed",
+                    )
+                    print("[share_finding] Warning: local save failed")
 
         # Record run_id -> this forum post so any later share of the SAME run_id (orphan recovery,
         # resume, retry) is recognised as a duplicate and returns THIS post instead of creating another.
@@ -1092,11 +1181,16 @@ async def share_finding(args: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     except Exception as e:
-
+        failure = _tool_failure(
+            e,
+            error_code="finding_share_failed",
+            stage="result_publication",
+            public_summary="result finding publication failed",
+        )
         return {
             "content": [{
                 "type": "text",
-                "text": json.dumps({"success": False, "error": str(e)}, indent=2)
+                "text": json.dumps(failure, indent=2)
             }]
         }
 
@@ -1144,10 +1238,13 @@ async def get_leaderboard(args: Dict[str, Any] = None) -> Dict[str, Any]:
         }
 
     except Exception as e:
-
         error_response = {
-            "success": False,
-            "error": str(e),
+            **_tool_failure(
+                e,
+                error_code="leaderboard_fetch_failed",
+                stage="research_tool",
+                public_summary="leaderboard fetch failed",
+            ),
             "entries": [],
             "top_pgr": 0.0,
             "count": 0,
@@ -1263,7 +1360,13 @@ async def get_literature(args: Dict[str, Any]) -> Dict[str, Any]:
                            "use query/category to reach them.")
         return {"content": [{"type": "text", "text": json.dumps(out, indent=2)}]}
     except Exception as e:
-        return {"content": [{"type": "text", "text": json.dumps({"success": False, "error": str(e)})}]}
+        failure = _tool_failure(
+            e,
+            error_code="literature_fetch_failed",
+            stage="research_tool",
+            public_summary="literature fetch failed",
+        )
+        return {"content": [{"type": "text", "text": json.dumps(failure)}]}
 
 
 @tool(
@@ -1316,7 +1419,13 @@ async def share_literature(args: Dict[str, Any]) -> Dict[str, Any]:
             indent=2,
         )}]}
     except Exception as e:
-        return {"content": [{"type": "text", "text": json.dumps({"success": False, "error": str(e)})}]}
+        failure = _tool_failure(
+            e,
+            error_code="literature_share_failed",
+            stage="research_tool",
+            public_summary="literature publication failed",
+        )
+        return {"content": [{"type": "text", "text": json.dumps(failure)}]}
 
 
 def _proposal_marker_path():
@@ -1365,7 +1474,13 @@ def _stamp_run_proposal(run_id: str) -> bool:
         _create_json_first_write(rp, value)
         return True
     except Exception as e:
-        print(f"[stamp] per-run proposal stamp failed: {e}")
+        _tool_failure(
+            e,
+            error_code="proposal_stamp_failed",
+            stage="proposal_submission",
+            public_summary="per-run proposal stamp failed",
+        )
+        print("[stamp] per-run proposal stamp failed")
         return False
 
 
@@ -1430,7 +1545,13 @@ def _proposal_approved():
                 return False, "the approved method's run.py CHANGED since approval — re-submit submit_idea_proposal"
         return True, "approved"
     except Exception as e:
-        return False, f"proposal gate error: {e}"
+        failure = _tool_failure(
+            e,
+            error_code="proposal_gate_failed",
+            stage="proposal_submission",
+            public_summary="proposal gate failed",
+        )
+        return False, str(failure["failure"]["error_code"])
 
 
 def _requires_explicit_proposal_run_id() -> bool:
@@ -1865,22 +1986,41 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
                 # The integrity approval remains immutable and can be resumed.  A
                 # later host session retries this idempotent infrastructure step
                 # before either researcher backend is started.
+                failure = _tool_failure(
+                    error,
+                    error_code="autodata_bootstrap_failed",
+                    stage="autodata_bootstrap",
+                    public_summary="AutoData workspace bootstrap failed",
+                )["failure"]
                 verdict["autodata_bootstrap"] = {
                     "status": "failed",
-                    "error": str(error),
+                    "error": failure["summary"],
+                    "failure": failure,
                 }
                 marker_payload["autodata_bootstrap"] = verdict["autodata_bootstrap"]
                 marker_payload["execution_ready"] = False
                 _atomic_json_write(_proposal_marker_path(), marker_payload)
                 verdict["execution_ready"] = False
-                print(f"[submit_idea_proposal] AutoData bootstrap failed: {error}")
+                print(
+                    "[submit_idea_proposal] AutoData bootstrap failed: "
+                    + str(failure["error_code"])
+                )
         elif verdict.get("approved"):
             marker_payload["execution_ready"] = True
             _atomic_json_write(_proposal_marker_path(), marker_payload)
             verdict["execution_ready"] = True
         return {"content": [{"type": "text", "text": json.dumps(verdict, indent=2)}]}
     except Exception as e:
-        return {"content": [{"type": "text", "text": json.dumps({"approved": False, "error": str(e)}, indent=2)}]}
+        failure = _tool_failure(
+            e,
+            error_code="proposal_submission_failed",
+            stage="proposal_submission",
+            public_summary="proposal submission failed",
+        )
+        failure["approved"] = False
+        return {
+            "content": [{"type": "text", "text": json.dumps(failure, indent=2)}]
+        }
 
 
 @tool(
@@ -1911,7 +2051,13 @@ async def review_autodata_action(args: Dict[str, Any]) -> Dict[str, Any]:
 
         result = review_and_complete_action(str(args.get("action_id") or ""))
     except Exception as error:
-        result = {"approved": False, "error": str(error)}
+        result = _tool_failure(
+            error,
+            error_code="autodata_review_failed",
+            stage="autodata_approval",
+            public_summary="AutoData approval review failed",
+        )
+        result["approved"] = False
     return {
         "content": [
             {"type": "text", "text": json.dumps(result, indent=2, sort_keys=True)}

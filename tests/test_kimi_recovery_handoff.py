@@ -166,7 +166,9 @@ def test_native_resume_submits_and_waits_before_first_model_turn() -> None:
         result = asyncio.run(agent.execute("resume the approved proposal"))
 
     assert not result.success
-    assert "stop after host wait" in (result.error or "")
+    assert result.error == "Kimi research session failed"
+    assert result.failure["error_code"] == "kimi_session_failed"
+    assert "stop after host wait" not in json.dumps(result.failure)
     submit.assert_called_once_with()
     wait_for_score.assert_awaited_once_with()
     run_command.assert_not_awaited()

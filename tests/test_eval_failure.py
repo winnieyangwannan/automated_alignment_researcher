@@ -48,6 +48,28 @@ def test_publish_failure_rejects_path_run_id(tmp_path: Path) -> None:
         publish_failure(tmp_path, "../candidate", "failure")
 
 
+def test_publish_failure_repairs_only_malformed_existing_marker(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "candidate-4.failed.json"
+    path.write_text('{"status":"failed","error":"private malformed body"}')
+
+    repaired = publish_failure(
+        tmp_path,
+        "candidate-4",
+        "training job failed",
+        stage="training",
+        error_code="training_slurm_failed",
+        replace_invalid=True,
+    )
+    payload = json.loads(repaired.read_text())
+
+    assert payload["schema_version"] == 2
+    assert payload["run_id"] == "candidate-4"
+    assert payload["error_code"] == "training_slurm_failed"
+    assert "private malformed body" not in repaired.read_text()
+
+
 def test_publish_failure_sanitizes_diagnostics_and_adds_training_context(
     tmp_path: Path,
 ) -> None:
@@ -98,3 +120,12 @@ def test_sanitize_failure_text_collapses_lines_and_redacts_bearer() -> None:
     assert sanitize_failure_text("first\nsecond Bearer abc123") == (
         "first second Bearer [REDACTED]"
     )
+
+
+def test_sanitize_failure_text_redacts_url_credentials_and_query() -> None:
+    text = sanitize_failure_text(
+        "failed https://user:pass@example.test/v1?api_key=secret"
+    )
+    assert "user:pass" not in text
+    assert "api_key=secret" not in text
+    assert text == "failed https://[REDACTED]@example.test/v1?[REDACTED]"

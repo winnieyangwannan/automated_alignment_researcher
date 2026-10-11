@@ -24,6 +24,8 @@ import time
 from pathlib import Path
 from typing import Any, Mapping
 
+from aar.failure_feedback import FailureFeedbackError, build_failure_feedback
+
 from .monitor import check_autodata_action
 
 APPROVAL_SCHEMA = "autodata.delegated-approval/v1"
@@ -34,6 +36,21 @@ INCUMBENTS_SCHEMA = "aar.autodata.baseline-axis-incumbents/v1"
 _ACTION_ID = re.compile(r"^act_[0-9a-f]{24}$")
 _APPROVAL_KINDS = {"approve_grounding", "approve_baseline", "approve_resources"}
 _WORKSPACE_ID = re.compile(r"^ws_[0-9a-f]{32}$")
+
+
+def _native_cli_failure(
+    termination: str,
+    *,
+    error_code: str = "autodata_approval_cli_failed",
+    public_summary: str = "native AutoData CLI failed",
+) -> FailureFeedbackError:
+    feedback = build_failure_feedback(
+        RuntimeError("native AutoData CLI failed"),
+        error_code=error_code,
+        stage="autodata_approval",
+        public_summary=f"{public_summary} ({termination})",
+    )
+    return FailureFeedbackError(feedback)
 
 
 def _atomic_private_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -1099,11 +1116,15 @@ def _run_cli(arguments: list[str]) -> dict[str, Any]:
                 termination += f" signal={signal.Signals(-completed.returncode).name}"
             except ValueError:
                 termination += f" signal={-completed.returncode}"
-        stderr = completed.stderr[-1000:].strip() or "<empty>"
-        raise RuntimeError(
-            f"native AutoData CLI failed ({termination}); stderr: {stderr}"
-        )
-    value = json.loads(completed.stdout)
+        raise _native_cli_failure(termination)
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise _native_cli_failure(
+            "exit=0",
+            error_code="autodata_approval_invalid_json",
+            public_summary="native AutoData CLI returned invalid JSON",
+        ) from error
     if not isinstance(value, dict):
         raise RuntimeError("native AutoData CLI returned invalid JSON")
     return value

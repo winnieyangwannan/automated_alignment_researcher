@@ -137,6 +137,66 @@ class RecipeTaskError(RuntimeError):
         self.reason_code = reason_code
 
 
+_FAILURE_BEARER = re.compile(r"(?i)\bbearer\s+[^\s,;]+")
+_FAILURE_SECRET = re.compile(
+    r"(?i)\b(api[_-]?key|authorization|cookie|password|secret|token)"
+    r"(\s*[:=]\s*)([^\s,;]+)"
+)
+_FAILURE_URL_CREDENTIALS = re.compile(r"(?i)(https?://)[^/@\s:]+:[^/@\s]+@")
+_FAILURE_URL_QUERY = re.compile(r"(?i)(https?://[^\s?]+)\?[^\s]+")
+_FAILURE_PRIVATE_KEY = re.compile(
+    r"-----BEGIN [^-\n]*PRIVATE KEY-----.*?-----END [^-\n]*PRIVATE KEY-----",
+    re.DOTALL,
+)
+
+
+def _safe_failure_detail(error: BaseException, *, limit: int = 800) -> str:
+    """Keep an actionable native task error without copying secrets or bodies."""
+
+    parts = [f"{type(error).__name__}: {error}"]
+    cause = error.__cause__
+    if cause is not None and str(cause):
+        parts.append(f"caused by {type(cause).__name__}: {cause}")
+    text = " ".join("; ".join(parts).split())
+    text = _FAILURE_PRIVATE_KEY.sub("[REDACTED PRIVATE KEY]", text)
+    text = _FAILURE_BEARER.sub("Bearer [REDACTED]", text)
+    text = _FAILURE_SECRET.sub(r"\1\2[REDACTED]", text)
+    text = _FAILURE_URL_CREDENTIALS.sub(r"\1[REDACTED]@", text)
+    text = _FAILURE_URL_QUERY.sub(r"\1?[REDACTED]", text)
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def _failure_reason_code(error: BaseException) -> str:
+    explicit = getattr(error, "reason_code", None)
+    if isinstance(explicit, str) and re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", explicit):
+        return explicit
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    while current is not None and current not in chain:
+        chain.append(current)
+        current = current.__cause__
+    for item in chain:
+        if isinstance(item, urllib.error.HTTPError):
+            return f"provider_http_{item.code}"
+        if isinstance(item, urllib.error.URLError):
+            if isinstance(item.reason, TimeoutError):
+                return "provider_timeout"
+            return "provider_connection_failure"
+    if any(isinstance(item, TimeoutError) for item in chain):
+        return "provider_timeout"
+    if any(isinstance(item, ConnectionError) for item in chain):
+        return "provider_connection_failure"
+    if any(isinstance(item, json.JSONDecodeError) for item in chain):
+        return "provider_invalid_json"
+    if isinstance(error, MeteredCallError):
+        role = str(error).split(maxsplit=1)[0].lower()
+        if role in {"generator", "target", "judge"}:
+            return f"{role}_invalid_content"
+    if "required runtime setting" in str(error):
+        return "recipe_configuration_error"
+    return "model_or_parse_failure"
+
+
 def _load_judge_rubric(path: Path = _RUBRIC_PATH) -> dict[str, Any]:
     """Load and validate the protected, content-addressed judge contract."""
     if path.is_symlink() or not path.is_file():
@@ -466,7 +526,9 @@ def _post_json(
             if attempt == attempts - 1:
                 break
             time.sleep(2**attempt)
-    raise RuntimeError(f"model request failed after {attempts} bounded attempts: {last}")
+    raise RuntimeError(
+        f"model request failed after {attempts} bounded attempts: {last}"
+    ) from last
 
 
 def _json_object(text: str) -> dict[str, Any]:
@@ -1312,9 +1374,9 @@ def main() -> int:
         # Persist any completed call's usage even when the later call or parser
         # fails. Keep the reason bounded and secret-free; detailed HTTP bodies
         # are deliberately not copied into the dataset.
-        reason_code = getattr(error, "reason_code", "model_or_parse_failure")
+        reason_code = _failure_reason_code(error)
         print(
-            f"model task failed: {type(error).__name__}: {reason_code}",
+            f"model task failed [{reason_code}]: {_safe_failure_detail(error)}",
             file=sys.stderr,
         )
         result = {

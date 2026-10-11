@@ -33,8 +33,8 @@ def get_duration_ms(session_id: str, tool_name: str, tool_input: dict):
         return _get_duration(session_id, tool_name, tool_input)
     except ImportError:
         return None
-    except Exception as e:
-        print(f"[Usage] Error getting duration: {e}")
+    except Exception:
+        print("[Usage] Error getting duration")
         return None
 
 
@@ -54,11 +54,11 @@ def read_hook_input():
             return {}
 
         return json.loads(stdin_data)
-    except json.JSONDecodeError as e:
-        print(f"[Usage] Failed to parse stdin as JSON: {e}")
+    except json.JSONDecodeError:
+        print("[Usage] Failed to parse stdin as JSON")
         return {}
-    except Exception as e:
-        print(f"[Usage] Error reading stdin: {e}")
+    except Exception:
+        print("[Usage] Error reading stdin")
         return {}
 
 
@@ -239,10 +239,10 @@ def main():
             # Other built-in tools - we could track these too if needed
             print(f"[Usage] Skipping built-in tool: {tool_name}")
 
-    except ImportError as e:
-        print(f"[Usage] Skipping (import error): {e}")
-    except Exception as e:
-        print(f"[Usage] Error recording usage: {e}")
+    except ImportError:
+        print("[Usage] Skipping (import error)")
+    except Exception:
+        print("[Usage] Error recording usage")
 
 
 if __name__ == "__main__":
