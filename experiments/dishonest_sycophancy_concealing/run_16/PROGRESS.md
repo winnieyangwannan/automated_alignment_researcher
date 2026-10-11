@@ -334,3 +334,33 @@ non-fatal and did not prevent the Claude session from progressing.
 
 The five-chain gate remains closed until this one-chain attempt reaches a
 terminal state and the fail-closed verifier produces a passing proof.
+
+<a id="run16-event-trusted-python-sandbox-bind"></a>
+
+### 🛠️ 16:40 PT — FIX: expose the trusted runtime inside research isolation
+
+The fresh one-chain attempt reached an approved method but failed before
+training submission. The immutable source snapshot correctly used an external
+ARM64 virtual environment as `HARNESS_PY`; Claude's mount namespace hid the
+entire storage home and did not restore that validated environment. Therefore
+`submit_train_job.sh` failed its trusted-Python check before `sbatch` and no GPU
+job started. Pipeline `1820641` and research job `1820681` were cancelled with
+their method, approved proposal, transcript, and failure evidence initially
+preserved. At the user's explicit direction, the stopped 229 MB attempt was
+then deleted at 16:41 PT; it is not recoverable from the checkpoint filesystem.
+
+The focused repair restores only the validated virtual-environment root as a
+read-only sandbox bind. It does not expose the rest of the storage home or
+change prompts, methods, training, evaluation, retry, or scientific policy.
+The direct namespace test proves that the interpreter is executable, the
+environment remains read-only, run artifacts remain writable, and an unrelated
+neighboring home path remains hidden.
+
+Validation at 16:40 PT:
+
+```text
+✓ 20 focused sandbox, immutable-snapshot, and Run 16 tests passed
+✓ edited Python test passed Ruff
+✓ shell syntax and whitespace checks passed
+✓ direct Bubblewrap visibility/read-only/isolation proof passed
+```

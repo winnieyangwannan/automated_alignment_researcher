@@ -43,6 +43,16 @@ def test_sandbox_exposes_attempt_local_method_validation_tools() -> None:
     assert 'AAR_METHOD_VALIDATOR_PY:-${HARNESS_PY:-python}' in submitter
 
 
+def test_sandbox_exposes_only_trusted_external_python_environment() -> None:
+    source = BWRAP.read_text()
+
+    assert 'trusted_harness_py="${AAR_TRUSTED_HARNESS_PY:-${HARNESS_PY:-}}"' in source
+    assert '[ -x "${trusted_harness_py}" ]' in source
+    assert '[ -f "${trusted_harness_root}/pyvenv.cfg" ]' in source
+    assert 'bind_visible_dir "${trusted_harness_root}" ro' in source
+    assert 'bind_visible_dir "${storage_home}"' not in source
+
+
 def test_sandbox_can_bind_relocated_run_artifacts_read_write() -> None:
     source = BWRAP.read_text()
     runtime = RUNTIME_ENV.read_text()

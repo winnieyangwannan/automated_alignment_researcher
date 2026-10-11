@@ -25,6 +25,8 @@ storage_home="${AAR_RESEARCH_STORAGE_HOME:-/storage/home/${USER:?missing USER}}"
 autodata_plugin_root="${AAR_AUTODATA_PLUGIN_ROOT:-}"
 autodata_state="${AAR_AUTODATA_STATE:-}"
 research_tool_dir="${AAR_RESEARCH_TOOL_DIR:-}"
+trusted_harness_py="${AAR_TRUSTED_HARNESS_PY:-${HARNESS_PY:-}}"
+trusted_harness_root=""
 
 [ -x "${real_cli}" ] || fail "real Claude CLI is not executable"
 [ -d "${repo}" ] || fail "repository does not exist"
@@ -47,6 +49,9 @@ if [ -n "${research_tool_dir}" ]; then
   esac
   [ -x "${research_tool_dir}/ruff" ] || fail "research tool directory lacks ruff"
 fi
+if [ -n "${trusted_harness_py}" ]; then
+  [ -x "${trusted_harness_py}" ] || fail "trusted harness Python is not executable"
+fi
 if [ -n "${autodata_plugin_root}" ]; then
   [ -d "${autodata_plugin_root}" ] || fail "AutoData plugin does not exist"
   autodata_plugin_root="$(realpath -e -- "${autodata_plugin_root}")"
@@ -65,6 +70,28 @@ if [ -d "${storage_home}" ]; then
   storage_home="$(realpath -e -- "${storage_home}")"
   case "${storage_home}" in /|/home|/storage|/storage/home) fail "unsafe storage home";; esac
   [ "${storage_home}" = "${sandbox_home}" ] || hidden_roots+=("${storage_home}")
+fi
+
+# Only an interpreter below a home root hidden by this wrapper needs an
+# explicit bind. System interpreters and environments already inside an
+# approved source/runtime bind remain visible without another mount.
+if [ -n "${trusted_harness_py}" ]; then
+  for hidden_root in "${hidden_roots[@]}"; do
+    case "${trusted_harness_py}" in
+      "${hidden_root}"/*)
+        trusted_harness_bin="$(dirname -- "${trusted_harness_py}")"
+        [ "$(basename -- "${trusted_harness_bin}")" = bin ] || \
+          fail "trusted harness Python must be inside a virtual-environment bin directory"
+        trusted_harness_root="$(realpath -e -- "${trusted_harness_bin}/..")"
+        [ -f "${trusted_harness_root}/pyvenv.cfg" ] || \
+          fail "trusted harness Python environment lacks pyvenv.cfg"
+        case "${trusted_harness_root}" in
+          "${hidden_root}") fail "unsafe trusted harness environment root" ;;
+        esac
+        break
+        ;;
+    esac
+  done
 fi
 
 declare -a bwrap_args=(
@@ -148,6 +175,17 @@ if [ -n "${artifact_root}" ] && [ "${artifact_root}" != "${runtime_root}" ]; the
   case "${artifact_root}" in
     "${repo}"|"${repo}"/*) fail "run artifact root must not overlap the source checkout" ;;
     *) bind_visible_dir "${artifact_root}" rw ;;
+  esac
+fi
+
+# The immutable source snapshot intentionally has no installed environment.
+# Restore only the already-validated external virtual environment read-only so
+# the research child can run the authoritative method validator and submitter;
+# keep the rest of the otherwise hidden user home inaccessible.
+if [ -n "${trusted_harness_root}" ]; then
+  case "${trusted_harness_root}" in
+    "${repo}"|"${repo}"/*|"${runtime_root}"|"${runtime_root}"/*) ;;
+    *) bind_visible_dir "${trusted_harness_root}" ro ;;
   esac
 fi
 
@@ -295,7 +333,7 @@ unset git_common cli_dir masked_file hidden_root storage_home autodata_plugin_ro
 unset autodata_state autodata_state_root autodata_state_visible
 unset artifact_root artifact_team_eval_private resolved_team_dir secret_root
 unset claude_native_cache dotslash_cache
-unset research_tool_dir
+unset research_tool_dir trusted_harness_py trusted_harness_bin trusted_harness_root
 while IFS= read -r env_name; do
   upper_name="${env_name^^}"
   case "${upper_name}" in
