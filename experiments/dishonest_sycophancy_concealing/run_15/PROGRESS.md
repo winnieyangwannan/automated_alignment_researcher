@@ -502,6 +502,79 @@ All five research-chain jobs remain running. Alpha/Beta evaluators are running;
 Gamma/Delta/Epsilon evaluators are pending GPU resources. Total: **0/250
 completed atomic score/finding pairs**.
 
+### 🔴 11:06 PT — STOP/RUNNING: two chains terminal; three remain active
+
+### Alpha — terminal after session 7/60, pairs 3/50
+
+```text
+✓ Three score/finding pairs durable
+✓ Last scored result: 0.00%; filter and regression passed
+✗ Session 7 exhausted 24/24 continuations
+✗ Controller classified required_completion_missing as permanent_session_failure
+○ No pending adapter or evaluation
+```
+
+Chain `1814095` exited with `Error: required successful AAR iterations did not
+complete`. The replacement session spun on missing phase contexts after a
+recurring `NoneType > int` training failure instead of advancing to session 8.
+
+### Beta — session 12/60, pairs 6/50
+
+```text
+✓ Six score/finding pairs durable
+✓ Current contract and proposal approved
+⏳ Training 1817674 allocated but showing a startup-stall signature
+○ Adapter submission and evaluation
+○ Score and finding publication
+```
+
+The job has only recorded `train.queue_wait`; it has no preflight phase,
+adapter, or substantive training output yet despite being allocated for about
+22 minutes. Evaluator `1814096` is alive and idle.
+
+### Gamma — session 16/60, pairs 6/50
+
+```text
+✓ Six score/finding pairs durable
+✓ Previous training, evaluation, and finding completed
+✓ Latest result: 22.33%; filter and regression failed
+⏳ New method authoring, continuation 2/24
+○ Contract, proposal, training, evaluation, and publication
+```
+
+Gamma recovered from the prior list/input-shape failure. Evaluator `1814098`
+is alive and idle after publication.
+
+### Delta — terminal after session 6/60, pairs 3/50
+
+```text
+✓ Three score/finding pairs durable
+✗ Session 6 exhausted 24/24 continuations
+✗ Controller classified required_completion_missing as permanent_session_failure
+○ No pending adapter or evaluation
+```
+
+Chain `1814101` exited after the preceding training produced zero valid examples
+and its recovery session exhausted continuations diagnosing the generation,
+ORPOTrainer, and dataset-format path instead of advancing to session 7.
+
+### Epsilon — session 4/60, pairs 3/50
+
+```text
+✓ Three score/finding pairs durable
+✓ Current method contract passed
+⏳ Proposal-submission checkpoint retry, continuation 5/24
+○ Training and adapter submission
+○ Evaluation and score/finding publication
+```
+
+The proposal checkpoint has stalled twice but remains within its configured
+retry path. The earlier post-score Read stall and 5h34m first training both
+self-recovered without intervention.
+
+Active chain controllers: Beta, Gamma, and Epsilon. Alpha and Delta are
+terminal. Total: **21/250 completed atomic score/finding pairs**.
+
 #### ⏭️ Next step
 
 Finish fail-closed source validation and obtain explicit confirmation of the
