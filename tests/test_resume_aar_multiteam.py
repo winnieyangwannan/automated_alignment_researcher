@@ -561,6 +561,85 @@ def test_failed_proposal_preserves_feedback_uid_without_resume(
     assert "resume_run_id=" not in registry
 
 
+def test_rejected_proposal_preserves_revision_uid_without_resume(
+    tmp_path: Path,
+) -> None:
+    repo, attempt, _fake_bin, env = _fixture(tmp_path)
+    proposals = (
+        attempt
+        / "aar_teams"
+        / "team-alpha-launch"
+        / "scores"
+        / ".proposals"
+    )
+    (proposals / "idea-alpha-revision.json").write_text(
+        json.dumps(
+            {
+                "approved": False,
+                "execution_ready": False,
+                "idea_uid": "idea-alpha-revision",
+                "idea_name": "method_alpha",
+                "code_hash": "rejected-code",
+                "ts": 2,
+                "verdict": {"approved": False},
+            }
+        )
+    )
+
+    completed = subprocess.run(
+        [str(repo / "scripts" / ENGINE.name), str(attempt), "alpha"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    launch = Path(env["SBATCH_LOG"]).read_text().strip().split("|")
+    assert launch[1] == "idea-alpha-revision"
+    assert launch[2] == ""
+    registry = (attempt / "metadata" / "recovery_jobs.tsv").read_text()
+    assert "revision_idea_uid=idea-alpha-revision" in registry
+    assert "resume_run_id=" not in registry
+
+
+def test_malformed_rejected_proposal_fails_closed(tmp_path: Path) -> None:
+    repo, attempt, _fake_bin, env = _fixture(tmp_path)
+    proposals = (
+        attempt
+        / "aar_teams"
+        / "team-alpha-launch"
+        / "scores"
+        / ".proposals"
+    )
+    (proposals / "idea-alpha-malformed.json").write_text(
+        json.dumps(
+            {
+                "approved": "false",
+                "execution_ready": False,
+                "idea_uid": "idea-alpha-malformed",
+                "idea_name": "method_alpha",
+                "run_id": None,
+                "code_hash": "rejected-code",
+                "ts": 2,
+                "verdict": {"approved": False},
+            }
+        )
+    )
+
+    completed = subprocess.run(
+        [str(repo / "scripts" / ENGINE.name), str(attempt), "alpha"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 2
+    assert "non-boolean approval state" in completed.stderr
+    assert not Path(env["SBATCH_LOG"]).exists()
+
+
 def test_score_wins_over_stale_failure_and_resumes_finding(
     tmp_path: Path,
 ) -> None:

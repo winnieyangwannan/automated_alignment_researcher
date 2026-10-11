@@ -970,7 +970,19 @@ class AutonomousAgentLoop:
                 break
 
             except FailureFeedbackError as error:
-                last_failure = dict(error.feedback)
+                safe_failure = safe_failure_feedback_view(error.feedback)
+                if safe_failure is None:
+                    last_failure = build_failure_feedback(
+                        error,
+                        error_code="invalid_failure_feedback",
+                        stage="research_session",
+                        retryable=False,
+                        public_summary="research session returned invalid failure feedback",
+                    )
+                else:
+                    # Only the schema-validated, allowlisted view may influence
+                    # retry policy or cross the research-session boundary.
+                    last_failure = safe_failure
                 print(
                     "\n[Loop] Session failure: "
                     + str(last_failure["error_code"])
@@ -984,6 +996,18 @@ class AutonomousAgentLoop:
                         else 30
                     )
                     await asyncio.sleep(backoff)
+                elif (
+                    safe_failure is not None
+                    and safe_failure.get("stage") in {"training", "evaluation"}
+                    and isinstance(safe_failure.get("run_id"), str)
+                ):
+                    # `retryable` governs retrying the failed operation.  A
+                    # run-bound candidate failure is instead evidence for the
+                    # next research session to author a different method.
+                    print(
+                        "[Loop] Advancing to a fresh research session with "
+                        "candidate failure feedback"
+                    )
                 else:
                     stop_reason = "permanent_session_failure"
                     break

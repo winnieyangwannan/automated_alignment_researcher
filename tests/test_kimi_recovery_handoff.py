@@ -32,6 +32,12 @@ def test_approved_proposal_recovery_disables_after_finding_persists(
         registry.write_text(json.dumps({"finding_id": "finding-1"}))
 
         assert not KimiAgent._resume_approved_proposal_enabled()
+        assert os.environ["AAR_RESUME_APPROVED_PROPOSAL"] == "0"
+
+        # A later rejected proposal has no approved run ID.  The completed
+        # recovery must remain disarmed instead of reactivating on that marker.
+        with patch.object(KimiAgent, "_approved_run_id", return_value=None):
+            assert not KimiAgent._resume_approved_proposal_enabled()
 
 
 def test_approved_proposal_recovery_disables_after_structured_failure() -> None:
@@ -54,6 +60,7 @@ def test_approved_proposal_recovery_disables_after_structured_failure() -> None:
         ),
     ):
         assert not KimiAgent._resume_approved_proposal_enabled()
+        assert os.environ["AAR_RESUME_APPROVED_PROPOSAL"] == "0"
 
 
 @pytest.mark.parametrize(

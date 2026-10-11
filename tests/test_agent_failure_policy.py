@@ -85,6 +85,60 @@ def test_only_explicit_retryable_session_failure_retries(tmp_path: Path) -> None
     assert result["successful_sessions"] == 1
 
 
+def test_run_bound_candidate_failure_advances_without_operation_retry(
+    tmp_path: Path,
+) -> None:
+    failure = build_failure_feedback(
+        RuntimeError("candidate method failed preflight"),
+        error_code="training_python_exception",
+        stage="training",
+        retryable=False,
+        public_summary="candidate training failed",
+    )
+    failure["run_id"] = "candidate-run-1"
+    loop = _loop(tmp_path, FailureFeedbackError(failure))
+    loop.max_iterations = 2
+    loop._run_session = AsyncMock(
+        side_effect=[FailureFeedbackError(failure), None]
+    )
+
+    with patch("aar.research_loop.agent.asyncio.sleep", new=AsyncMock()) as sleep:
+        result = asyncio.run(loop.run())
+
+    assert loop._run_session.await_count == 2
+    sleep.assert_not_awaited()
+    assert result["failed_sessions"] == 1
+    assert result["successful_sessions"] == 1
+    assert result["stop_reason"] == "max_iterations"
+
+
+def test_malformed_failure_feedback_fails_closed_without_leaking(
+    tmp_path: Path,
+) -> None:
+    failure = FailureFeedbackError(
+        {
+            "schema": "not-a-valid-schema",
+            "status": "failed",
+            "stage": "training",
+            "error_code": "training_python_exception",
+            "retryable": True,
+            "run_id": "candidate-run-1",
+            "secret": "API_KEY=do-not-return-this",
+        }
+    )
+    loop = _loop(tmp_path, failure)
+
+    with patch("aar.research_loop.agent.asyncio.sleep", new=AsyncMock()) as sleep:
+        result = asyncio.run(loop.run())
+
+    assert loop._run_session.await_count == 1
+    sleep.assert_not_awaited()
+    assert result["stop_reason"] == "permanent_session_failure"
+    assert result["last_failure"]["error_code"] == "invalid_failure_feedback"
+    assert "do-not-return-this" not in str(result)
+    assert "secret" not in result["last_failure"]
+
+
 def test_base_agent_returns_typed_failure_and_hides_backend_detail(
     tmp_path: Path, monkeypatch
 ) -> None:

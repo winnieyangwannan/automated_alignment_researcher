@@ -172,6 +172,7 @@ declare -A remaining_by_seed=()
 declare -A resume_uid_by_seed=()
 declare -A resume_run_by_seed=()
 declare -A feedback_uid_by_seed=()
+declare -A revision_uid_by_seed=()
 declare -A repair_proposal_uid_by_seed=()
 declare -A retry_train_run_by_seed=()
 declare -A retry_train_job_by_seed=()
@@ -235,6 +236,11 @@ for seed in "${requested_seeds[@]}"; do
       exit 2
     fi
   done
+  if [ -n "${latest_proposal}" ] && \
+     [ "$(jq -r '.approved | type' "${latest_proposal}")" != boolean ]; then
+    echo "${seed} latest proposal has a non-boolean approval state" >&2
+    exit 2
+  fi
   if [ -n "${latest_proposal}" ] && \
      [ "$(jq -r '.approved // false' "${latest_proposal}")" = true ]; then
     idea_uid="$(jq -r '.idea_uid // empty' "${latest_proposal}")"
@@ -314,6 +320,28 @@ for seed in "${requested_seeds[@]}"; do
         repair_proposal_uid_by_seed["${seed}"]="${idea_uid}"
       fi
     fi
+  elif [ -n "${latest_proposal}" ] && \
+       [ "$(jq -r '.approved' "${latest_proposal}")" = false ]; then
+    if ! jq -e '
+      .approved == false and
+      (.execution_ready | type) == "boolean" and
+      .execution_ready == false and
+      ((has("run_id") | not) or .run_id == null) and
+      (.verdict | type) == "object" and
+      .verdict.approved == false
+    ' "${latest_proposal}" >/dev/null; then
+      echo "${seed} latest rejected proposal has inconsistent state" >&2
+      exit 2
+    fi
+    idea_uid="$(jq -r '.idea_uid // empty' "${latest_proposal}")"
+    idea_name="$(jq -r '.idea_name // empty' "${latest_proposal}")"
+    if [[ ! "${idea_uid}" =~ ^[A-Za-z0-9._-]+$ ]] || \
+       [ "$(basename -- "${latest_proposal}" .json)" != "${idea_uid}" ] || \
+       [[ ! "${idea_name}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      echo "${seed} rejected proposal lacks a safe bound identity" >&2
+      exit 2
+    fi
+    revision_uid_by_seed["${seed}"]="${idea_uid}"
   fi
 
   for claim in "${team}/scores/.claims"/*; do
@@ -388,10 +416,11 @@ done
 
 if [ "${AAR_RESUME_PLAN_ONLY:-0}" = 1 ]; then
   for seed in "${requested_seeds[@]}"; do
-    printf '[resume-plan] %s: started=%s remaining=%s resume_run_id=%s feedback_idea_uid=%s retry_training_job=%s\n' \
+    printf '[resume-plan] %s: started=%s remaining=%s resume_run_id=%s feedback_idea_uid=%s revision_idea_uid=%s retry_training_job=%s\n' \
       "${seed}" "${started_by_seed[${seed}]}" "${remaining_by_seed[${seed}]}" \
       "${resume_run_by_seed[${seed}]:-none}" \
       "${feedback_uid_by_seed[${seed}]:-none}" \
+      "${revision_uid_by_seed[${seed}]:-none}" \
       "${retry_train_job_by_seed[${seed}]:-none}"
   done
   printf '[resume-plan] stale_claims=%s stale_eval_timings=%s; no state changed\n' \
@@ -484,6 +513,9 @@ for seed in "${requested_seeds[@]}"; do
   elif [ -n "${feedback_uid_by_seed[${seed}]:-}" ]; then
     export AAR_IDEA_UID_OVERRIDE="${feedback_uid_by_seed[${seed}]}"
     unset AAR_RESUME_APPROVED_PROPOSAL
+  elif [ -n "${revision_uid_by_seed[${seed}]:-}" ]; then
+    export AAR_IDEA_UID_OVERRIDE="${revision_uid_by_seed[${seed}]}"
+    unset AAR_RESUME_APPROVED_PROPOSAL
   else
     unset AAR_IDEA_UID_OVERRIDE AAR_RESUME_APPROVED_PROPOSAL
   fi
@@ -518,7 +550,8 @@ for seed in "${requested_seeds[@]}"; do
       }
     done
   fi
-  if [ -n "${feedback_uid_by_seed[${seed}]:-}" ]; then
+  if [ -n "${feedback_uid_by_seed[${seed}]:-}" ] || \
+     [ -n "${revision_uid_by_seed[${seed}]:-}" ]; then
     [[ " ${chain_export_names[*]} " = *" AAR_IDEA_UID_OVERRIDE "* ]] || {
       echo "failure-feedback recovery export is missing AAR_IDEA_UID_OVERRIDE" >&2
       exit 2
@@ -550,6 +583,8 @@ for seed in "${requested_seeds[@]}"; do
     details="${details};resume_run_id=${resume_run_by_seed[${seed}]}"
   [ -z "${feedback_uid_by_seed[${seed}]:-}" ] || \
     details="${details};feedback_idea_uid=${feedback_uid_by_seed[${seed}]}"
+  [ -z "${revision_uid_by_seed[${seed}]:-}" ] || \
+    details="${details};revision_idea_uid=${revision_uid_by_seed[${seed}]}"
   record_event chain "${seed}" "${chain}" "${details}"
   echo "[resume] ${seed}: ${started_by_seed[${seed}]}/${AAR_RESUME_MAX_SESSIONS} started; evaluator=${evaluator}; chain=${chain}; remaining=${remaining}"
 done
