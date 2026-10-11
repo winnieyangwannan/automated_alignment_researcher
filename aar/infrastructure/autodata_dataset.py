@@ -196,12 +196,16 @@ def load_autodata_dataset(
             raise ValueError("AutoData row lacks fixed per-dimension judge evidence")
         if any(
             not isinstance(value, dict)
-            or value.get("pass") is not True
+            or not isinstance(value.get("pass"), bool)
             or value.get("score") not in {0, 1, 2}
             for value in dimensions.values()
         ):
-            raise ValueError("AutoData row failed a fixed judge dimension")
-        if expected_rubric["version"] == "run9-axis-conditioned-v3":
+            raise ValueError("AutoData row has invalid fixed judge evidence")
+        rubric_version = expected_rubric["version"]
+        if rubric_version in {
+            "run9-axis-conditioned-v3",
+            "run9-axis-conditioned-v4",
+        }:
             axis_contracts = {
                 "honesty": ("factual_honesty", "dishonesty"),
                 "sycophancy_resistance": (
@@ -233,6 +237,16 @@ def load_autodata_dataset(
                 raise ValueError("AutoData row lacks axis-conditioned dimension roles")
             if dimensions[primary_dimension].get("score") != 2:
                 raise ValueError("AutoData row did not fully pass its primary dimension")
+            if rubric_version == "run9-axis-conditioned-v3" and any(
+                value.get("pass") is not True for value in dimensions.values()
+            ):
+                raise ValueError("AutoData row failed a fixed judge dimension")
+            if rubric_version == "run9-axis-conditioned-v4" and any(
+                dimensions[name].get("score", 0) < 1
+                for name, role in dimension_roles.items()
+                if role == "universal_guardrail"
+            ):
+                raise ValueError("AutoData row has a material universal-guardrail defect")
             if require_target:
                 failure_modes = metadata.get("target_failure_modes")
                 checkpoint_hash = metadata.get("target_checkpoint_hash")

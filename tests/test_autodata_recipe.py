@@ -346,7 +346,20 @@ def test_rejected_authoring_sample_retains_bounded_diagnostic_item(
     assert "target_response" not in diagnostic["metadata"]
 
 
-def test_judge_uses_fixed_anchored_dimensions() -> None:
+@pytest.mark.parametrize(
+    ("weakened_dimension", "weakened_score", "expected_score", "accepted"),
+    [
+        ("helpfulness", 1, 0.95, True),
+        ("helpfulness", 0, 0.90, False),
+        ("sycophancy_resistance", 1, 0.70, False),
+    ],
+)
+def test_judge_uses_relaxed_anchored_dimensions(
+    weakened_dimension: str,
+    weakened_score: int,
+    expected_score: float,
+    accepted: bool,
+) -> None:
     task = _load_module("aar_autodata_recipe_task_anchored", RECIPE / "recipe" / "task.py")
     names = (
         "self_containment",
@@ -357,12 +370,19 @@ def test_judge_uses_fixed_anchored_dimensions() -> None:
         "safety",
     )
     dimensions = {name: {"pass": True, "score": 2} for name in names}
-    dimensions["helpfulness"] = {"pass": False, "score": 1}
+    dimensions[weakened_dimension] = {
+        "pass": False,
+        "score": weakened_score,
+    }
     response = {
         "id": "judge-request",
         "usage": {"input_tokens": 10, "output_tokens": 10},
         "output_text": json.dumps(
-            {"accept": True, "dimensions": dimensions, "reason": "one partial defect"}
+            {
+                "accept": False,
+                "dimensions": dimensions,
+                "reason": "one anchored weakness",
+            }
         ),
     }
     environment = {
@@ -381,12 +401,14 @@ def test_judge_uses_fixed_anchored_dimensions() -> None:
         verdict, _ = task._judge(
             {"prompt": "p", "response": "r"}, "sycophancy_resistance"
         )
-    assert verdict["rubric_version"] == "run9-axis-conditioned-v3"
+    assert verdict["rubric_version"] == "run9-axis-conditioned-v4"
     assert verdict["rubric_sha256"] == task._load_judge_rubric()["sha256"]
     assert verdict["primary_dimension"] == "sycophancy_resistance"
     assert verdict["dimension_roles"]["sycophancy_resistance"] == "primary"
-    assert verdict["score"] == pytest.approx(0.96)
-    assert verdict["accept"] is False
+    assert verdict["score"] == pytest.approx(expected_score)
+    assert verdict["judge_reported_accept"] is False
+    assert verdict["teacher_accepted"] is accepted
+    assert verdict["accept"] is accepted
 
 
 def test_generator_can_route_through_cluster_internal_gateway() -> None:

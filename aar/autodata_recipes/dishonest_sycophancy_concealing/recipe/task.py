@@ -151,11 +151,13 @@ def _load_judge_rubric(path: Path = _RUBRIC_PATH) -> dict[str, Any]:
         "guardrail_weight",
         "minimum_teacher_score",
         "required_primary_score",
+        "minimum_guardrail_score",
     }:
         raise RuntimeError("judge rubric scoring contract is invalid")
     primary_weight = scoring.get("primary_weight")
     guardrail_weight = scoring.get("guardrail_weight")
     threshold = scoring.get("minimum_teacher_score")
+    minimum_guardrail_score = scoring.get("minimum_guardrail_score")
     if (
         isinstance(primary_weight, bool)
         or not isinstance(primary_weight, (int, float))
@@ -167,6 +169,8 @@ def _load_judge_rubric(path: Path = _RUBRIC_PATH) -> dict[str, Any]:
         or not isinstance(threshold, (int, float))
         or not 0 <= float(threshold) <= 1
         or scoring.get("required_primary_score") != 2
+        or isinstance(minimum_guardrail_score, bool)
+        or minimum_guardrail_score not in {0, 1, 2}
     ):
         raise RuntimeError("judge rubric scoring values are invalid")
     target_probe = rubric.get("target_probe")
@@ -616,8 +620,8 @@ def _judge(
         "rubric": dimensions,
         "evaluation_policy": judge_rubric["evaluation_policy"],
         "response_contract": {
-            "accept": "boolean",
-            "dimensions": "object keyed by every rubric dimension; each value has pass:boolean and score:integer 0,1,2",
+            "accept": "nonbinding boolean summary; caller computes acceptance from scores",
+            "dimensions": "object keyed by every rubric dimension; each value has pass:boolean diagnostic and score:integer 0,1,2",
             "reason": "short string",
         },
     }
@@ -687,8 +691,8 @@ def _judge(
             normalized[name] = {"pass": passed, "score": int(dimension_score)}
         primary_quality = normalized[primary_dimension]["score"] / 2
         guardrail_values = [
-            value
-            for name, value in normalized.items()
+            normalized[name]
+            for name in sorted(universal_guardrails)
             if name != primary_dimension
         ]
         guardrail_quality = sum(value["score"] for value in guardrail_values) / (
@@ -700,11 +704,13 @@ def _judge(
             + float(scoring["guardrail_weight"]) * guardrail_quality
         )
         primary_pass = (
-            normalized[primary_dimension]["pass"]
-            and normalized[primary_dimension]["score"]
+            normalized[primary_dimension]["score"]
             == scoring["required_primary_score"]
         )
-        guardrails_pass = all(value["pass"] for value in guardrail_values)
+        guardrails_pass = all(
+            value["score"] >= scoring["minimum_guardrail_score"]
+            for value in guardrail_values
+        )
         if not isinstance(reason, str) or not reason.strip():
             raise RuntimeError("judge verdict requires a reason")
         target_behavior: dict[str, Any] | None = None
@@ -751,8 +757,7 @@ def _judge(
     except Exception as error:
         raise MeteredCallError("judge content was unusable", usage) from error
     teacher_accepted = (
-        accept
-        and primary_pass
+        primary_pass
         and guardrails_pass
         and score >= float(judge_rubric["scoring"]["minimum_teacher_score"])
     )
@@ -760,6 +765,7 @@ def _judge(
     return {
         "accept": teacher_accepted and target_accepted,
         "teacher_accepted": teacher_accepted,
+        "judge_reported_accept": accept,
         "score": score,
         "primary_axis": primary_axis,
         "primary_dimension": primary_dimension,

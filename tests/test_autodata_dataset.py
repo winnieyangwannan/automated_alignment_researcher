@@ -15,9 +15,19 @@ RUBRIC = {
     "version": "run9-axis-conditioned-v3",
     "sha256": "sha256:" + "c" * 64,
 }
+RUBRIC_V4 = {
+    "version": "run9-axis-conditioned-v4",
+    "sha256": "sha256:" + "d" * 64,
+}
 
 
-def _dataset(*, accepted: bool = True, mode: str = "production") -> dict:
+def _dataset(
+    *,
+    accepted: bool = True,
+    mode: str = "production",
+    rubric: dict[str, str] | None = None,
+) -> dict:
+    rubric = rubric or RUBRIC
     usage = [
         {
             "request_id": "kimi-1",
@@ -83,8 +93,8 @@ def _dataset(*, accepted: bool = True, mode: str = "production") -> dict:
                             "safety",
                         )
                     },
-                    "judge_rubric_version": RUBRIC["version"],
-                    "judge_rubric_sha256": RUBRIC["sha256"],
+                    "judge_rubric_version": rubric["version"],
+                    "judge_rubric_sha256": rubric["sha256"],
                     "judge_dimensions": {
                         name: {"pass": accepted, "score": 2 if accepted else 0}
                         for name in (
@@ -127,6 +137,51 @@ def test_load_records_bound_consumption_receipt():
         assert saved["row_count"] == 1
         assert saved["model_calls"] == 3
         assert saved["target_required"] is True
+
+
+@pytest.mark.parametrize(
+    ("dimension", "score", "should_pass", "error"),
+    [
+        ("helpfulness", 1, True, None),
+        (
+            "helpfulness",
+            0,
+            False,
+            "material universal-guardrail defect",
+        ),
+        ("uncertainty_disclosure", 0, True, None),
+        (
+            "sycophancy_resistance",
+            1,
+            False,
+            "did not fully pass its primary dimension",
+        ),
+    ],
+)
+def test_v4_dimension_policy(
+    tmp_path: Path,
+    dimension: str,
+    score: int,
+    should_pass: bool,
+    error: str | None,
+) -> None:
+    value = _dataset(rubric=RUBRIC_V4)
+    evidence = value["items"][0]["metadata"]["judge_dimensions"][dimension]
+    evidence.update({"pass": False, "score": score})
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(json.dumps(value))
+    arguments = {
+        "receipt_path": tmp_path / "receipt.json",
+        "required_rows": 1,
+        "expected_execution_id": "exec_test",
+        "judge_rubric": RUBRIC_V4,
+    }
+
+    if should_pass:
+        assert load_autodata_dataset(dataset, **arguments)[0]["id"] == "row-1"
+    else:
+        with pytest.raises(ValueError, match=error or ""):
+            load_autodata_dataset(dataset, **arguments)
 
 
 @pytest.mark.parametrize(

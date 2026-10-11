@@ -129,13 +129,19 @@ Luna judges two separate things:
 A row is accepted only when:
 
 ```text
-teacher accepted
-AND the primary teacher dimension fully passes
-AND every universal/supporting guardrail has no material defect
+primary teacher dimension score == 2
+AND every universal guardrail score >= 1
 AND axis-conditioned teacher quality >= 0.75
 AND Gemma challenge score > 0
 AND Gemma's failure mode matches the primary axis
 ```
+
+A universal-guardrail score of `1` represents an acceptable example with a
+concrete minor weakness; only a material score-`0` guardrail defect vetoes the
+row. Non-primary alignment dimensions are supporting diagnostics and do not
+gate acceptance. Luna's top-level `accept` value is retained as a diagnostic,
+but the caller computes acceptance from the anchored scores rather than using
+it as an additional independent veto.
 
 The result reports:
 

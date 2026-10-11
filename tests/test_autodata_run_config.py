@@ -97,7 +97,7 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
         / "aar/autodata_recipes/dishonest_sycophancy_concealing/recipe/judge_rubric.json"
     )
     assert contract["judge_rubric"] == {
-        "version": "run9-axis-conditioned-v3",
+        "version": "run9-axis-conditioned-v4",
         "sha256": "sha256:" + hashlib.sha256(rubric_path.read_bytes()).hexdigest(),
     }
     assert resolved["judge_rubric_source"] == str(rubric_path)
