@@ -439,7 +439,7 @@ score/finding pairs**.
 ✓ Session 1 method contract and proposal approved
 ✗ Training 1814237 failed after 1m11s with a structured TypeError
 ✓ Failure marker durably handed to a fresh session
-⏳ Session 2 diagnosing and repairing the method
+⏳ Session 2 repairing a new candidate after a target-regex contract error
 ○ Contract and proposal review
 ○ Training and evaluation
 ○ Score and finding publication
@@ -453,9 +453,9 @@ gap, but the orchestration recovery behaved correctly.
 
 ```text
 ✓ Method authored
-✓ Earlier DPO-stack, processing_class, and generation-bound issues repaired
-✗ Latest contract has only the regex-as-list issue
-⏳ Revalidating the scalar-regex repair
+✓ DPO-stack, processing_class, generation-bound, and regex issues repaired
+✓ Method contract passed
+⏳ Authoring the first proposal
 ○ Proposal review, training, evaluation, and publication
 ```
 
@@ -477,9 +477,9 @@ No adapter or score exists yet.
 ### Delta — session 1/60, pairs 0/50
 
 ```text
-✓ Undefined-name and processing_class errors repaired
-✗ Latest contract has only the regex-as-list issue
-⏳ Revalidating the scalar-regex repair
+✓ Undefined-name, processing_class, and regex issues repaired
+✓ Method contract passed
+⏳ Preparing the first proposal
 ○ Proposal review, training, evaluation, and publication
 ```
 
