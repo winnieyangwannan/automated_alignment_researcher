@@ -69,3 +69,17 @@ no unsupported API field is guessed.
 
 Local evidence at this point: 85 focused AAR tests and 49 native broker/engine
 tests pass. No Trial 12 model call, job, or attempt root has been created.
+
+### ⏳ 14:40 PT — CONFIRMED: exact Trial 12 launch contract
+
+The user explicitly confirmed the exact repaired mapping and configuration:
+Kimi-K2.6 researcher `aar_8-kimi26`, Kimi-K2.6 generator
+`autodata_8-kimi26`, fixed Gemma 4 31B target/training deployment
+`winnieyangwn-r12-alpha-i1-c0dab4f7`, `gpt-5-6-luna` row judge, and Claude
+Opus 4.8 semantic/proposal monitor. Evaluator roles remain disabled.
+
+The confirmed execution is exact `3/3/3` over disjoint `64/32/32`, concurrency
+32, 1,250→1,000 production, five final feedback rounds, two total judge-format
+attempts per semantic round, one HTTP transport attempt, 707 native attempts,
+a `$41,775` hard campaign ceiling, and a stop after verified training smoke.
+Submission is authorized from the committed immutable AAR/native snapshots.

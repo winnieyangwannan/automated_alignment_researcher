@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: awaiting explicit model/config confirmation
+- Status: explicitly confirmed; launch pending
 - Created: 2026-10-11 06:24 PT
-- Last updated: 2026-10-11 12:14 PT
+- Last updated: 2026-10-11 14:40 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal

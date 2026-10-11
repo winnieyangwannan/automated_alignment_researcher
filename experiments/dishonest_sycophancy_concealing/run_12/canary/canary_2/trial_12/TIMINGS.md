@@ -4,7 +4,8 @@ All displayed timestamps use Pacific Time (`PT`).
 
 ## Attempt identity
 
-- Status at 2026-10-11 12:14 PT: repaired and awaiting final model/config confirmation.
+- Status at 2026-10-11 14:40 PT: final model/config confirmation received;
+  immutable launch synchronization is in progress.
 - Run ID: `run12-canary2-trial12`.
 - Required AAR repair: `b8629a8fa3374111a1b55e40b1a9d114c7e5650d`.
 - Required native repair: `28a9c22125dc0cf101ebabc1b22408b4e974678a`.
@@ -24,8 +25,8 @@ All displayed timestamps use Pacific Time (`PT`).
 ✓ Trial 11 evidence preserved
 ✓ Budget/broker repairs committed and synchronized
 ✓ Local and HPC regression gates
-⏳ Explicit model/config confirmation
-○ Trial 12 source commit and synchronization
+✓ Explicit model/config confirmation
+⏳ Trial 12 source commit and synchronization
 ○ Launcher
 ○ Research allocation
 ○ Workspace authoring and freeze
