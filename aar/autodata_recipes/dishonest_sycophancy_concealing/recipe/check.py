@@ -18,29 +18,64 @@ if "recipe/judge_rubric.json" not in pipeline.get("protected_paths", []):
     raise SystemExit("judge rubric must be protected during meta-optimization")
 if not rubric["sha256"].startswith("sha256:"):
     raise SystemExit("judge rubric lacks content-addressed identity")
-if strategy.get("schema") != "aar.autodata.generation-strategy/v1":
+if strategy.get("schema") != "aar.autodata.generation-strategy/v2":
     raise SystemExit("generation strategy schema is invalid")
-if set(strategy) != {
+expected_strategy_keys = {
     "schema",
     "name",
     "system_prompt",
-    "scenario_prompt_prefix",
+    "global_prompt",
+    "axis_strategies",
     "temperature",
-}:
+}
+if set(strategy) != expected_strategy_keys:
     raise SystemExit("generation strategy contains missing or unsupported fields")
-for key, maximum_bytes in {
+strategy_text = {
     "name": 128,
     # These are authoring inputs to Kimi, not generated training rows. Allow
     # roughly 65,536 English tokens per component (four UTF-8 bytes per token)
     # instead of the former toy 6,000/2,000-byte caps. Exact tokenization and
     # Kimi's 196,608-token request allowance remain enforced by the runtime.
     "system_prompt": 262144,
-    "scenario_prompt_prefix": 262144,
-}.items():
+    "global_prompt": 262144,
+}
+for key, maximum_bytes in strategy_text.items():
     if not isinstance(strategy.get(key), str) or not strategy[key].strip():
         raise SystemExit(f"generation strategy requires non-empty {key}")
     if len(strategy[key].encode("utf-8")) > maximum_bytes:
         raise SystemExit(f"generation strategy {key} exceeds {maximum_bytes} bytes")
+axis_strategies = strategy["axis_strategies"]
+if (
+    not isinstance(axis_strategies, dict)
+    or set(axis_strategies) != {
+        "honesty",
+        "sycophancy_resistance",
+        "uncertainty_disclosure",
+    }
+    or any(
+        not isinstance(value, str)
+        or not value.strip()
+        or len(value.encode("utf-8")) > 262144
+        for value in axis_strategies.values()
+    )
+):
+    raise SystemExit("generation strategy axis_strategies are invalid")
+for axis, axis_prompt in axis_strategies.items():
+    combined_bytes = sum(
+        len(value.encode("utf-8"))
+        for value in (
+            strategy["system_prompt"],
+            strategy["global_prompt"],
+            axis_prompt,
+        )
+    )
+    # Reserve part of Kimi's 196,608-token request window for the scenario,
+    # JSON framing, and bounded retry feedback. The runtime remains the exact
+    # tokenizer-aware authority; this catches oversized authoring inputs early.
+    if combined_bytes > 720000:
+        raise SystemExit(
+            f"generation strategy combined prompt for {axis} exceeds 720000 bytes"
+        )
 temperature = strategy.get("temperature")
 if (
     isinstance(temperature, bool)
@@ -116,10 +151,17 @@ def requests_forbidden_source(text: str) -> bool:
     return False
 
 
-for label, text in {
+prompt_texts = {
     "recipe goal": request["goal"],
     "generation system prompt": strategy["system_prompt"],
-    "generation scenario prefix": strategy["scenario_prompt_prefix"],
-}.items():
+    "generation scenario prefix": strategy["global_prompt"],
+}
+prompt_texts.update(
+    {
+        f"generation axis {axis}": text
+        for axis, text in strategy["axis_strategies"].items()
+    }
+)
+for label, text in prompt_texts.items():
     if requests_forbidden_source(text):
         raise SystemExit(f"{label} requests a forbidden evaluation/source reference")

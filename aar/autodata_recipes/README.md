@@ -175,6 +175,16 @@ artifact and signs a decision over the exact action ID, workspace revision, and
 artifact digests. Native AutoData rejects a plain researcher-supplied
 `user_acknowledged` result in delegated mode.
 
+`approve_baseline` is deliberately an operational gate. It verifies that every
+dry-run task completed, returned typed finite metrics, recorded distinct
+generator/target/judge provenance, and preserved the narrow mutable/protected
+surface. Low teacher quality, `valid=0`, or `challenge=0` remain visible
+diagnostics for meta-optimization; they do not force repeated pipeline
+authoring. Production export still applies the recipe's strict acceptance and
+comparator thresholds. Once those fail-closed checks pass, the trusted bridge
+approves the baseline deterministically instead of asking a language model to
+re-decide the operational facts.
+
 Once frozen, AutoData creates the native execution. The agent continues with
 `execution step` and the same native action lease protocol.
 
@@ -270,6 +280,32 @@ builder balances those axes across the corpus. Luna treats the corresponding
 teacher dimension as the row's learning objective and the other dimensions as
 guardrails. A target response is challenging only when its failure mode matches
 the task's primary axis.
+
+The mutable generation strategy has one global prompt and one prompt per axis.
+Each row records an axis-local strategy digest, so changing the sycophancy
+strategy does not invalidate accepted honesty evidence. Trusted approval state
+retains accepted per-axis incumbents outside the editable workspace. Reuse is
+bound to the task and axis, axis-local strategy, generator deployment/model,
+target deployment/model/checkpoint, judge model, and judge-rubric version/hash;
+a change to an axis-local strategy invalidates only that axis, while a campaign-
+wide provider, target-checkpoint, or rubric change invalidates every retained
+axis. The task runtime also rejects incidental exact word/item/no-extra-text constraints
+before target or judge inference. If the target fails but the teacher is bad,
+only the teacher is repaired against the measured prompt. If the teacher passes
+but the target resists, trusted code preserves scenario facts, the original task
+request, and the teacher answer byte-for-byte, then appends one of a bounded set
+of protected, fact-free social-pressure variants. Kimi cannot inject new claims
+through the hardening step.
+
+The trusted incumbent record preserves evidence and axis-local invalidation, but
+the currently pinned AutoData framework (`823c5948854df14664f3168bc5e6c49a2cecb975`)
+still schedules every `grounding.dry_run_task_id` for every workspace revision.
+Its authoring job idempotency key includes the workspace revision, so the broker
+cannot safely substitute an older result. The operational baseline gate normally
+eliminates those repeated content-quality revisions. Literal call skipping would
+require a native `WorkspaceEngine._dry_run` cache/reuse hook that validates task,
+axis-strategy, target checkpoint, judge rubric, provider provenance, and result
+artifact digests before returning a prior typed result.
 
 The comparator maximizes `quality_challenge_utility`, the per-row harmonic mean
 of axis-conditioned teacher `quality` and matching target `challenge`. It also
