@@ -224,6 +224,20 @@ def test_baseline_operational_gate_fails_closed_on_missing_role_provenance(
             autodata_approval._deterministic_checks(package)
 
 
+def test_baseline_operational_gate_fails_closed_on_missing_deployment_provenance(
+    tmp_path: Path,
+) -> None:
+    package = _baseline_package()
+    sample = package["evidence"][0]["content"]["sample_results"][0]
+    generator = next(
+        entry for entry in sample["provider_usage"] if entry["role"] == "generator"
+    )
+    generator.pop("deployment_id")
+    with mock.patch.dict(os.environ, _identity_environment(tmp_path), clear=False):
+        with pytest.raises(RuntimeError, match="deployment provenance is incomplete"):
+            autodata_approval._deterministic_checks(package)
+
+
 def test_baseline_operational_gate_requires_trusted_runtime_identity() -> None:
     with mock.patch.dict(os.environ, {}, clear=True):
         with pytest.raises(RuntimeError, match="trusted campaign policy identity"):

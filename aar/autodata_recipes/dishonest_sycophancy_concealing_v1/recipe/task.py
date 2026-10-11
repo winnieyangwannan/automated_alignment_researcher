@@ -361,6 +361,74 @@ def _usage(
     return usage
 
 
+def _validate_provider_usage(
+    provider_usage: list[dict[str, Any]],
+    *,
+    target_config: dict[str, str] | None,
+) -> None:
+    """Fail the task before baseline review when provenance is incomplete."""
+
+    roles = {
+        role: [entry for entry in provider_usage if entry.get("role") == role]
+        for role in ("generator", "target", "judge")
+    }
+    required_roles = ("generator", "judge") + (
+        ("target",) if target_config is not None else ()
+    )
+    if any(not roles[role] for role in required_roles):
+        raise RuntimeError("provider usage is missing a required role")
+    if target_config is None and roles["target"]:
+        raise RuntimeError("provider usage recorded an unexpected target role")
+    required_identity = ("request_id", "model")
+    if any(
+        not isinstance(entry.get(key), str) or not entry[key].strip()
+        for entries in roles.values()
+        for entry in entries
+        for key in required_identity
+    ):
+        raise RuntimeError("provider usage contains incomplete provider identity")
+    request_ids = [
+        entry["request_id"] for entries in roles.values() for entry in entries
+    ]
+    if len(request_ids) != len(set(request_ids)):
+        raise RuntimeError("provider usage contains duplicate request ids")
+
+    generator_identity = (
+        _required_env("AUTODATA_GENERATOR_MODEL"),
+        _required_env("AUTODATA_GENERATOR_DEPLOYMENT_ID"),
+    )
+    if any(
+        (entry["model"], entry.get("deployment_id")) != generator_identity
+        for entry in roles["generator"]
+    ):
+        raise RuntimeError(
+            "generator usage does not match the trusted runtime deployment"
+        )
+    if any(
+        entry["model"] != _required_env("AUTODATA_JUDGE_MODEL")
+        for entry in roles["judge"]
+    ):
+        raise RuntimeError("judge usage does not match the trusted runtime model")
+    if target_config is not None:
+        target_identity = (
+            target_config["AUTODATA_TARGET_MODEL"],
+            target_config["AUTODATA_TARGET_DEPLOYMENT_ID"],
+            target_config["AUTODATA_TARGET_CHECKPOINT_HASH"],
+        )
+        if any(
+            (
+                entry["model"],
+                entry.get("deployment_id"),
+                entry.get("checkpoint_hash"),
+            )
+            != target_identity
+            for entry in roles["target"]
+        ):
+            raise RuntimeError(
+                "target usage does not match the trusted runtime checkpoint"
+            )
+
+
 def _generator_text(response: dict[str, Any]) -> str:
     choices = response.get("choices")
     if not isinstance(choices, list) or not choices:
@@ -559,6 +627,9 @@ def _generate(
         ),
         max_output_tokens=max_tokens,
     )
+    # The request header routes the call, but the durable usage record must
+    # independently bind the result to the trusted campaign deployment.
+    usage["deployment_id"] = deployment
     try:
         generated = _json_object(_generator_text(response))
         prompt, answer = generated.get("prompt"), generated.get("response")
@@ -992,6 +1063,7 @@ def main() -> int:
             }
         )
         metadata["first_attempt_accepted"] = first_accepted
+        _validate_provider_usage(provider_usage, target_config=target_config)
         metrics.update(_operational_metrics(provider_usage))
         item = {
             "id": task["id"],
