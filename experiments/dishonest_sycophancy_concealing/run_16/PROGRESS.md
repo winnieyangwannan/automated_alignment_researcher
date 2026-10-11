@@ -188,3 +188,35 @@ commits. The required sequence remains:
 ○ Fresh one-chain lifecycle proof
 ○ Five-chain topology launch
 ```
+
+<a id="run16-event-model-role-confirmation"></a>
+
+### ✅ 15:02 PT — PASS: model-role mapping explicitly confirmed
+
+> [!TIP]
+> The user explicitly confirmed the Run 16 one-chain and five-chain gate
+> model-role mapping for one-chain config SHA-256
+> `3bf9829363aef17fa5c37aa537bfb612998a35b180a3ac4f7ce32e83497e16ce`.
+
+| Role                         | Confirmed model or execution path                                      |
+| ---------------------------- | ---------------------------------------------------------------------- |
+| Researcher/data author       | `claude-opus-4-8`, maximum effort, secure Meta Claude CLI              |
+| Proposal monitor             | `claude-4-8-opus` through Meta Model API                               |
+| Optional target probe        | Gemma 4 31B IT, deployment `winnieyangwn-gemma-4-31B-it`               |
+| Training model               | Fixed Gemma 4 31B IT checkpoint plus a new PEFT adapter                |
+| Evaluator inference          | Atomically merged candidate through vLLM 0.25.1, language-model-only   |
+| Canary evaluator judge       | None; `verbalized_ece` is rule-scored                                  |
+| AutoData generator/row judge | Not used; native generation is required and AutoData remains disabled  |
+| Trusted orchestration        | Deterministic AAR policy, transport, isolation, and proof-verification |
+
+The authorization covers a fresh one-chain lifecycle attempt and, only after
+its fail-closed proof passes, the five-chain topology gate. It does not
+authorize the full 5×50 scientific run.
+
+```text
+✓ Immutable-source fix
+✓ Exact model-role confirmation
+○ Fresh one-chain lifecycle attempt
+○ One-chain fail-closed proof
+○ Five-chain topology gate
+```
