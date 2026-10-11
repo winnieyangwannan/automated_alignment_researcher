@@ -174,3 +174,28 @@ At this checkpoint the workspace is `baseline_review`, revision 5, with 4/32
 authoring task attempts retained. No execution or canonical transition intent
 exists yet. The supervisor heartbeat is fresh, no typed failure exists, and
 the child manifest still contains no evaluator.
+
+<a id="trial7-event-canonical-execution"></a>
+
+### ✅ 03:05 PT — PASS: freeze reconciliation and canonical registration
+
+Baseline approval completed and the workspace froze. Trusted orchestration
+reconciled the frozen workspace on attempt 1 in approximately one second,
+created the canonical manifest, registered execution
+`exe_d94e880d06b441da8954bbb661d69c54`, and immediately began its native
+`baseline_pending` phase.
+
+Verified persisted invariants:
+
+- exact iterations `3/3/3`;
+- 64 tuning IDs, 32 validation IDs, and a separate digest-bound 32-task test
+  manifest;
+- disjoint tuning, validation, and held-out test partitions;
+- concurrency 32;
+- native `max_task_attempts=699`;
+- the freeze-created default `exe_f3c...` was cancelled only after verifying
+  it had zero attempts;
+- no failure and no evaluator.
+
+This is the exact boundary at which Trial 6 failed. Trial 7 passed it without
+model-controlled execution counts or a registration delay.

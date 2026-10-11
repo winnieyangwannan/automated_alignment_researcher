@@ -5,7 +5,7 @@ prompts, target responses, credentials, or held-out content belong here.
 
 ## Attempt identity
 
-- Status at 2026-10-11 03:05 PT: running; baseline review pending.
+- Status at 2026-10-11 03:05 PT: canonical meta baseline running.
 - Run ID: `run12-canary2-trial7`.
 - Native AutoData revision required:
   `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`.
@@ -17,6 +17,10 @@ prompts, target responses, credentials, or held-out content belong here.
 - Research start: 02:57:57 PT.
 - Workspace registration: 03:01:42 PT.
 - Baseline review reached: 03:05 PT.
+- Workspace freeze and canonical registration: 03:05:08 PT.
+- Freeze reconciliation attempts: 1.
+- Freeze reconciliation duration: approximately 1 second.
+- Canonical execution: `exe_d94e880d06b441da8954bbb661d69c54`.
 - Controller: `1813739`, dependency-gated at 02:56 PT.
 - Evaluator jobs: 0, as required.
 
@@ -29,8 +33,9 @@ prompts, target responses, credentials, or held-out content belong here.
 ✓ Immutable Trial 7 launch
 ✓ Research allocation
 ✓ Workspace authoring through pipeline dry run
-⏳ Baseline review
-○ Canonical execution registration
+✓ Baseline review
+✓ Canonical execution registration
+⏳ Native meta baseline
 ○ Three meta iterations
 ○ Production
 ○ Training smoke
