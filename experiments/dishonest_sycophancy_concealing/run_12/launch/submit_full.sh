@@ -6,7 +6,7 @@ umask 077
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUN12_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 REPO="$(cd -- "${RUN12_DIR}/../../.." && pwd)"
-AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata-worktrees/aar-optimized-823c594}"
+AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata-worktrees/finalization-recovery}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
 SECRET_ENV="$(realpath -e -- "${AAR_RUN12_SECRET_ENV:-${REPO}/.env}")"
 RECOVERY_BUNDLE="$(realpath -e -- "${AAR_RUN12_RECOVERY_BUNDLE:-/storage/home/${USER}/aar-recovery/run7_20261007T004406Z-1b3303d02821/baseline_salvage}")"
@@ -14,7 +14,9 @@ REUSED_BASELINE="${RECOVERY_BUNDLE}/gemma4_31b_multidimensional_baseline.json"
 RECOVERED_SOURCES="${RECOVERY_BUNDLE}/source_artifacts"
 SV="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
-REQUIRED_AUTODATA_SHA=823c5948854df14664f3168bc5e6c49a2cecb975
+# Preserves provider provenance when native TaskResult objects are serialized
+# into the baseline-review artifact used by the trusted approval gate.
+REQUIRED_AUTODATA_SHA=8ed79b55843d259deea9132cf257f02ff7eb5ee9
 CANONICAL_RUN_CONFIG="$(realpath -e -- "${RUN12_DIR}/config/autodata_run.yaml")"
 RUN_CONFIG="$(realpath -e -- "${AAR_RUN12_AUTODATA_RUN_CONFIG:-${CANONICAL_RUN_CONFIG}}")"
 [ -x "${REPO}/.venv/bin/python" ] || { echo "missing AAR runtime" >&2; exit 2; }

@@ -36,6 +36,14 @@ def test_run12_launcher_uses_current_run10_helper_layout() -> None:
     assert "run_10/verify_kimi_endpoint.py" not in launcher
 
 
+def test_run12_pins_autodata_provider_provenance_serialization_fix() -> None:
+    launcher = (LAUNCH / "submit_full.sh").read_text()
+
+    assert "/autodata-worktrees/finalization-recovery" in launcher
+    assert "8ed79b55843d259deea9132cf257f02ff7eb5ee9" in launcher
+    assert "Preserves provider provenance" in launcher
+
+
 def test_run12_research_canary_can_continue_with_safe_memory() -> None:
     launcher = (CANARY / "legacy_submit_research_canary.sh").read_text()
 
