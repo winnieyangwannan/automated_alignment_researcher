@@ -34,12 +34,21 @@ def _sha256(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _meta_task_attempts(meta: Mapping[str, Any]) -> int:
+def _meta_evaluation_attempts(meta: Mapping[str, Any]) -> int:
+    """Return native model-evaluation attempts without pipeline checks/retry."""
+    tuning = int(meta["tuning_tasks"])
+    validation = int(meta["validation_tasks"])
+    iterations = int(meta["maximum_iterations"])
+    test = int(meta["test_tasks"])
+    # Baseline tuning+validation, paired validation plus visible tuning for
+    # every candidate, then final test and final full meta corpus.
     return (
-        2
-        * (int(meta["tuning_tasks"]) + int(meta["validation_tasks"]))
-        * int(meta["maximum_iterations"])
-        + int(meta["test_tasks"])
+        tuning
+        + validation
+        + iterations * (2 * validation + tuning)
+        + test
+        + tuning
+        + validation
     )
 
 
@@ -145,24 +154,38 @@ def operator_execution_settings(
         campaign_cap = Decimal(str(campaign_policy["max_cost_usd"]))
     except (KeyError, InvalidOperation, TypeError, ValueError) as error:
         raise ValueError("campaign cost policy is incomplete") from error
-    meta_evaluations = _meta_task_attempts(settings["meta"])
-    required_attempts = (
-        meta_evaluations + 2 * settings["production"]["initial_tasks"]
-    )
-    required_cost = per_task * required_attempts
-    if campaign_cap < required_cost:
+    meta_evaluations = _meta_evaluation_attempts(settings["meta"])
+    production_attempts = 2 * settings["production"]["initial_tasks"]
+    minimum_attempts = meta_evaluations + production_attempts
+    minimum_cost = per_task * minimum_attempts
+    if campaign_cap < minimum_cost:
         raise ValueError(
             "campaign max_cost_usd is insufficient: "
-            f"requires at least {required_cost} for {required_attempts} "
+            f"requires at least {minimum_cost} for {minimum_attempts} "
             "authorized model-backed tasks"
         )
+    # Use remaining confirmed campaign capacity for bounded meta finalization
+    # recovery, capped at one full tuning+validation replay. The hard campaign
+    # ledger remains authoritative when a task makes multiple provider calls.
+    affordable_attempts = int(campaign_cap // per_task)
+    full_meta_retry = int(settings["meta"]["tuning_tasks"]) + int(
+        settings["meta"]["validation_tasks"]
+    )
+    meta_model_attempts = min(
+        meta_evaluations + full_meta_retry,
+        affordable_attempts - production_attempts,
+    )
+    required_attempts = meta_model_attempts + production_attempts
+    required_cost = per_task * required_attempts
     settings["per_model_task_cost_usd"] = format(per_task, "f")
     settings["required_campaign_cost_usd"] = format(required_cost, "f")
     settings["required_campaign_task_attempts"] = required_attempts
-    settings["meta_task_attempts"] = meta_evaluations
-    settings["production_task_attempts"] = 2 * settings["production"][
-        "initial_tasks"
-    ]
+    settings["meta_evaluation_attempts"] = meta_evaluations
+    settings["meta_model_task_attempts"] = meta_model_attempts
+    # Trusted pipeline check attempts are added after the exact operator
+    # pipeline is loaded by the lifecycle supervisor.
+    settings["meta_task_attempts"] = meta_model_attempts
+    settings["production_task_attempts"] = production_attempts
     return settings
 
 
@@ -404,7 +427,7 @@ def canonical_execution_manifest(
             "min_iterations": meta["minimum_iterations"],
             "early_stop_patience": meta["early_stop_patience"],
             "max_task_attempts": settings.get(
-                "meta_task_attempts", _meta_task_attempts(meta)
+                "meta_task_attempts", _meta_evaluation_attempts(meta)
             ),
             "max_wall_seconds": settings.get("meta_wall_seconds", 6300),
         }
@@ -431,7 +454,25 @@ def canonical_execution_manifest(
             ),
             "max_wall_seconds": settings.get("production_wall_seconds", 28200),
         }
-        if budget != controlled_budget:
+        allowed_budget = {
+            **controlled_budget,
+            # Native ExecutionSpec.to_dict() materializes these dataclass
+            # defaults on persistence. They carry no production authority.
+            "min_iterations": 0,
+            "early_stop_patience": None,
+        }
+        if (
+            not set(budget).issubset(allowed_budget)
+            or any(
+                budget.get(key) != allowed_budget[key]
+                for key in budget
+                if key in allowed_budget
+            )
+            or any(
+                budget.get(key) != expected
+                for key, expected in controlled_budget.items()
+            )
+        ):
             raise ValueError("production budget does not match operator config")
         canonical["budget"] = controlled_budget
         finalization = _object(
@@ -548,7 +589,7 @@ def canonical_meta_manifest_from_default(
             "min_iterations": meta["minimum_iterations"],
             "early_stop_patience": meta["early_stop_patience"],
             "max_task_attempts": settings.get(
-                "meta_task_attempts", _meta_task_attempts(meta)
+                "meta_task_attempts", _meta_evaluation_attempts(meta)
             ),
             "max_wall_seconds": settings.get("meta_wall_seconds", 6300),
         },

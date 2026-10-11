@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 from collections.abc import Mapping
@@ -245,6 +246,102 @@ def validate_generation_inputs(
     return contract
 
 
+def provider_usage_by_role(
+    item: Mapping[str, Any], *, require_target: bool
+) -> dict[str, list[dict[str, Any]]]:
+    """Validate retry-aware provider provenance and return ordered role calls."""
+    usage = item.get("_autodata_usage")
+    if not isinstance(usage, list) or not usage:
+        raise ValueError("dataset item lacks model provenance")
+    roles: dict[str, list[dict[str, Any]]] = {
+        "generator": [],
+        "target": [],
+        "judge": [],
+    }
+    request_ids: list[str] = []
+    for entry in usage:
+        if not isinstance(entry, dict) or entry.get("role") not in roles:
+            raise ValueError("dataset item has malformed model provenance")
+        role = str(entry["role"])
+        request_id = entry.get("request_id")
+        model = entry.get("model")
+        if (
+            not isinstance(request_id, str)
+            or not request_id.strip()
+            or not isinstance(model, str)
+            or not model.strip()
+        ):
+            raise ValueError("dataset item has incomplete model provenance")
+        for token_key in ("input_tokens", "output_tokens"):
+            tokens = entry.get(token_key)
+            if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 0:
+                raise ValueError("dataset item has invalid provider token usage")
+        raw_cost = entry.get("estimated_cost_usd")
+        if isinstance(raw_cost, bool):
+            raise ValueError("dataset item has invalid provider cost usage")
+        try:
+            cost = float(raw_cost)
+        except (TypeError, ValueError) as error:
+            raise ValueError("dataset item has invalid provider cost usage") from error
+        if not math.isfinite(cost) or cost < 0:
+            raise ValueError("dataset item has invalid provider cost usage")
+        request_ids.append(request_id)
+        roles[role].append(entry)
+    if len(request_ids) != len(set(request_ids)):
+        raise ValueError("dataset item repeats a provider request id")
+
+    metadata = _object(item.get("metadata"), "dataset item metadata")
+    attempts = metadata.get("generation_attempts_executed")
+    selected = metadata.get("generation_attempt")
+    maximum = metadata.get("generation_attempts_maximum")
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 1
+        for value in (attempts, selected, maximum)
+    ):
+        raise ValueError("dataset item has invalid generation attempt provenance")
+    if (
+        selected > maximum
+        or attempts > maximum
+        or len(roles["judge"]) > maximum
+        or len(roles["target"]) > maximum
+    ):
+        raise ValueError("dataset item generation attempt provenance is inconsistent")
+    if len(roles["generator"]) != attempts or not roles["judge"]:
+        raise ValueError("dataset item provider calls do not match generation attempts")
+    if require_target:
+        if not roles["target"]:
+            raise ValueError("dataset item has invalid target-call provenance")
+    elif roles["target"]:
+        raise ValueError("dataset item has unexpected target-call provenance")
+
+    # The protected recipe may re-judge one generated row after deterministic
+    # prompt hardening (target, judge) or teacher repair (generator, judge).
+    # Every evaluation closes with a judge; after the first evaluation, either
+    # a fresh generation or a fresh target probe must precede that judge.
+    cursor = 0
+    first = True
+    while cursor < len(usage):
+        saw_generator = False
+        saw_target = False
+        if usage[cursor].get("role") == "generator":
+            saw_generator = True
+            cursor += 1
+        if first and not saw_generator:
+            raise ValueError("dataset item provider-call order is invalid")
+        if cursor < len(usage) and usage[cursor].get("role") == "target":
+            if not require_target:
+                raise ValueError("dataset item has unexpected target-call provenance")
+            saw_target = True
+            cursor += 1
+        if not first and not (saw_generator or saw_target):
+            raise ValueError("dataset item provider-call order is invalid")
+        if cursor >= len(usage) or usage[cursor].get("role") != "judge":
+            raise ValueError("dataset item provider-call order is invalid")
+        cursor += 1
+        first = False
+    return roles
+
+
 def validate_dataset_items(items: Any, contract: Mapping[str, Any]) -> None:
     """Validate actual exported rows against the pre-generation declaration."""
     checked = validate_training_data_contract(contract)
@@ -264,30 +361,23 @@ def validate_dataset_items(items: Any, contract: Mapping[str, Any]) -> None:
         }
         if actual_rubric != checked["judge_rubric"]:
             raise ValueError("dataset rubric does not match the training-data contract")
-        usage = item.get("_autodata_usage")
-        if not isinstance(usage, list):
-            raise TypeError("dataset item lacks model provenance")
-        roles: dict[str, dict[str, Any]] = {}
-        for entry in usage:
-            if not isinstance(entry, dict) or not isinstance(entry.get("role"), str):
-                continue
-            role = str(entry["role"])
-            if role in roles:
-                raise ValueError("dataset item repeats model provenance role")
-            roles[role] = entry
-        generator = roles.get("generator", {})
+        target = checked["target"]
+        roles = provider_usage_by_role(item, require_target=bool(target["required"]))
         if any(
-            generator.get(key) != checked["generator"][key]
+            entry.get(key) != checked["generator"][key]
+            for entry in roles["generator"]
             for key in ("model", "deployment_id")
         ):
             raise ValueError("dataset generator provenance does not match contract")
-        if roles.get("judge", {}).get("model") != checked["judge"]["model"]:
+        if any(
+            entry.get("model") != checked["judge"]["model"]
+            for entry in roles["judge"]
+        ):
             raise ValueError("dataset judge provenance does not match contract")
-        target = checked["target"]
         if target["required"]:
-            actual = roles.get("target", {})
             if any(
-                actual.get(key) != target[key]
+                entry.get(key) != target[key]
+                for entry in roles["target"]
                 for key in ("model", "deployment_id", "checkpoint_hash")
             ):
                 raise ValueError("dataset target provenance does not match contract")

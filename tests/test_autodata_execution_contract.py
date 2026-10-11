@@ -56,7 +56,9 @@ def _settings() -> dict[str, object]:
         "broker_url": "http://127.0.0.1:12345",
         "meta_wall_seconds": 604800,
         "production_wall_seconds": 604800,
-        "meta_task_attempts": 608,
+        "meta_evaluation_attempts": 608,
+        "meta_model_task_attempts": 696,
+        "meta_task_attempts": 699,
         "production_task_attempts": 2500,
     }
 
@@ -139,8 +141,8 @@ def test_operator_settings_come_from_resolved_config() -> None:
         "test_tasks": 32,
     }
     assert settings["concurrency"] == 32
-    assert settings["required_campaign_task_attempts"] == 3108
-    assert settings["required_campaign_cost_usd"] == "5348.544768"
+    assert settings["required_campaign_task_attempts"] == 3204
+    assert settings["required_campaign_cost_usd"] == "5513.750784"
 
     insufficient = json.loads(json.dumps(_policy()))
     insufficient["max_cost_usd"] = "299"
@@ -220,7 +222,7 @@ def _meta_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
             "max_iterations": 3,
             "min_iterations": 3,
             "early_stop_patience": 3,
-            "max_task_attempts": 608,
+            "max_task_attempts": 699,
             "max_wall_seconds": 604800,
         },
         "concurrency": 32,
@@ -380,6 +382,19 @@ def test_production_requires_contract_thresholds_and_disjoint_source(
         settings=_settings(),
     )
     assert canonical["finalization"]["minimum_generated_items"] == 1000
+
+    native_replay = json.loads(execution.read_text(encoding="utf-8"))
+    native_replay["budget"].update(
+        min_iterations=0,
+        early_stop_patience=None,
+    )
+    execution.write_text(json.dumps(native_replay), encoding="utf-8")
+    replayed = canonical_execution_manifest(
+        proposed_manifest=execution,
+        pipeline_manifest=pipeline,
+        settings=_settings(),
+    )
+    assert replayed["budget"] == canonical["budget"]
 
     with pytest.raises(ValueError, match="overlaps meta"):
         canonical_execution_manifest(

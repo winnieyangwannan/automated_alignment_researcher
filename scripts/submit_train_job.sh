@@ -42,7 +42,8 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
       --retained-state "${AAR_AUTODATA_RETAINED_STATE:?missing retained AutoData state}" \
       --reason training-preflight >/dev/null
   fi
-  "${HARNESS_PY}" -m aar.infrastructure.autodata_lifecycle preflight --run-id "${RUN_ID}"
+  "${HARNESS_PY}" -m aar.infrastructure.autodata_lifecycle preflight \
+    --run-id "${RUN_ID}" >/dev/null
 fi
 
 _receipt_path=""
@@ -248,4 +249,4 @@ if [ -n "${_receipt_path}" ]; then
   mv -f -- "${_receipt_tmp}" "${_receipt_path}"
   flock -u 8
 fi
-printf '%s\n' "${_jid}"
+printf '%s\n' "${_job_id}"

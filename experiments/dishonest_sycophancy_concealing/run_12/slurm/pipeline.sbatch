@@ -66,8 +66,22 @@ export HARNESS_PY="${TRUSTED_HARNESS_PY}"
 [ "${AAR_BENCHMARK_DOCS}" = "${REPO}/benchmark_docs" ] || { echo "benchmark docs escaped source snapshot" >&2; exit 2; }
 [ "${BENCHMARK_DOCS_DIR}" = "${REPO}/benchmark_docs" ] || { echo "benchmark docs directory escaped source snapshot" >&2; exit 2; }
 [ "${PYTHONPATH%%:*}" = "${REPO}" ] || { echo "Python path is not rooted at source snapshot" >&2; exit 2; }
-
 mkdir -p "${HF_HOME}" "${ATTEMPT}/metadata"
+
+# Exercise the pinned native engine itself, including meta finalization,
+# zero-iteration production, budget validation, export, and recovery behavior.
+PYTHONPATH="${AUTODATA_SNAPSHOT}:${AUTODATA_SNAPSHOT}/src" timeout 180 \
+  "${HARNESS_PY}" -m unittest tests.test_engine \
+  > "${ATTEMPT}/metadata/autodata-native-engine-contract.txt" 2>&1
+chmod 400 "${ATTEMPT}/metadata/autodata-native-engine-contract.txt"
+
+# Exercise the actual pinned native serializers against the trusted AAR meta
+# and production constructors before any research or evaluator child exists.
+PYTHONPATH="${REPO}:${AUTODATA_SNAPSHOT}/src" "${HARNESS_PY}" \
+  "${REPO}/scripts/validate_autodata_adapter_contract.py" \
+  --scratch-root "${ATTEMPT}/metadata" \
+  > "${ATTEMPT}/metadata/autodata-adapter-contract.json"
+chmod 400 "${ATTEMPT}/metadata/autodata-adapter-contract.json"
 SEEDS_RAW="${AAR_RUN12_SEEDS:-alpha beta gamma delta epsilon}"
 CHAIN_COUNT="${AAR_RUN12_CHAIN_COUNT:-5}"
 TARGET_PAIRS="${AAR_RUN12_TARGET_PAIRS:-5}"

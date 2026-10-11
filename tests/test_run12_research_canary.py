@@ -108,6 +108,22 @@ def test_run12_pins_autodata_provider_provenance_serialization_fix() -> None:
     assert "Preserves provider provenance" in launcher
 
 
+def test_run12_checks_real_native_adapter_contract_before_child_submission() -> None:
+    pipeline = (SLURM / "pipeline.sbatch").read_text()
+
+    check = "validate_autodata_adapter_contract.py"
+    assert check in pipeline
+    assert "autodata-native-engine-contract.txt" in pipeline
+    assert '"${HARNESS_PY}" -m unittest tests.test_engine' in pipeline
+    assert 'PYTHONPATH="${REPO}:${AUTODATA_SNAPSHOT}/src"' in pipeline
+    assert "autodata-adapter-contract.json" in pipeline
+    assert pipeline.index(check) < pipeline.index('children="${ATTEMPT}/metadata/children.tsv"')
+
+    chain = (ROOT / "scripts" / "slurm_aar_chain.sh").read_text()
+    assert "AAR_AUTODATA_SUPERVISOR_STATUS" in chain
+    assert '--status-file "${AAR_AUTODATA_SUPERVISOR_STATUS}"' in chain
+
+
 def test_run12_research_canary_can_continue_with_safe_memory() -> None:
     launcher = (CANARY / "legacy_submit_research_canary.sh").read_text()
 

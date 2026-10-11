@@ -636,25 +636,40 @@ def verify_preflight(
             raise ValueError("meta_optimize execution is not completed")
         tuning_ids = meta_spec.get("tuning_task_ids")
         validation_ids = meta_spec.get("validation_task_ids")
+        required_tuning = _positive_environment_integer(
+            "AAR_AUTODATA_TUNING_TASKS", 64
+        )
+        required_validation = _positive_environment_integer(
+            "AAR_AUTODATA_VALIDATION_TASKS", 32
+        )
         if (
             not isinstance(tuning_ids, list)
-            or len(tuning_ids) != 64
-            or len(set(tuning_ids)) != 64
+            or len(tuning_ids) != required_tuning
+            or len(set(tuning_ids)) != required_tuning
             or not isinstance(validation_ids, list)
-            or len(validation_ids) != 32
-            or len(set(validation_ids)) != 32
+            or len(validation_ids) != required_validation
+            or len(set(validation_ids)) != required_validation
             or set(tuning_ids) & set(validation_ids)
         ):
-            raise ValueError("meta execution must bind exactly 64 tuning and 32 validation tasks")
+            raise ValueError(
+                "meta execution partition does not match compiled operator settings"
+            )
         meta_budget = _object(meta_spec.get("budget"), "meta budget")
+        required_max_iterations = _positive_environment_integer(
+            "AAR_AUTODATA_META_MAX_ITERATIONS", 3
+        )
+        required_min_iterations = _positive_environment_integer(
+            "AAR_AUTODATA_META_MIN_ITERATIONS", 3
+        )
+        required_patience = _positive_environment_integer(
+            "AAR_AUTODATA_META_EARLY_STOP_PATIENCE", 3
+        )
         if (
-            not isinstance(meta_budget.get("max_iterations"), int)
-            or isinstance(meta_budget.get("max_iterations"), bool)
-            or not 3 <= meta_budget["max_iterations"] <= 10
-            or meta_budget.get("min_iterations") != 3
-            or meta_budget.get("early_stop_patience") != 3
+            meta_budget.get("max_iterations") != required_max_iterations
+            or meta_budget.get("min_iterations") != required_min_iterations
+            or meta_budget.get("early_stop_patience") != required_patience
         ):
-            raise ValueError("meta budget must use 3-10 iterations, minimum 3, and patience 3")
+            raise ValueError("meta budget does not match compiled operator settings")
         meta_final = _event(connection, meta_id, "execution.finalized")
         meta_winner = str(meta_final["payload"].get("winner_candidate_id") or "")
         meta_digest = str(meta_final["payload"].get("winner_tree_digest") or "")
@@ -765,8 +780,13 @@ def verify_preflight(
             test_reference,
             "meta test grounding",
         )
-        if len(test_ids) != 32 or test_ids & meta_ids:
-            raise ValueError("meta execution must bind exactly 32 disjoint test tasks")
+        required_test = _positive_environment_integer(
+            "AAR_AUTODATA_TEST_TASKS", 32
+        )
+        if len(test_ids) != required_test or test_ids & meta_ids:
+            raise ValueError(
+                "meta test partition does not match compiled operator settings"
+            )
         meta_ids |= test_ids
         if meta_ids & set(production_ids):
             raise ValueError("production source tasks overlap meta tuning/validation/test")
@@ -836,6 +856,44 @@ def verify_preflight(
     }
 
 
+def publish_verified_handoff_marker(
+    run_id: str, *, require_operator_contract: bool = True
+) -> dict[str, Any]:
+    """Verify either handoff schema, then atomically publish its ready marker."""
+    verification = verify_preflight(
+        run_id, require_operator_contract=require_operator_contract
+    )
+    run_root, _, _ = _load_handoff(run_id)
+    handoff_path = _safe_file(run_root / "training-handoff.json", "training handoff")
+    marker = {
+        "schema": "aar.autodata.training-handoff-verified/v1",
+        "run_id": run_id,
+        "training_handoff_sha256": _sha256(handoff_path),
+        "meta_execution_id": verification["meta_execution_id"],
+        "production_execution_id": verification["production_execution_id"],
+    }
+    destination = run_root / "training-handoff.verified.json"
+    encoded = json.dumps(marker, sort_keys=True, indent=2) + "\n"
+    if destination.exists() or destination.is_symlink():
+        if (
+            destination.is_symlink()
+            or not destination.is_file()
+            or destination.read_text(encoding="utf-8") != encoded
+        ):
+            raise ValueError("existing verified handoff marker does not match")
+    else:
+        descriptor = os.open(
+            destination,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(encoded)
+            output.flush()
+            os.fsync(output.fileno())
+    return {**verification, "verified_marker": str(destination)}
+
+
 def verify_consumption(run_id: str) -> dict[str, Any]:
     """Require proof that run_experiment consumed the verified production data."""
     verified = verify_preflight(run_id)
@@ -896,7 +954,10 @@ def create_reuse_handoff(
     if consumer_root.is_symlink():
         raise ValueError("consuming AutoData run directory is unsafe")
     contract = validate_training_data_contract(
-        _json_file(_safe_file(training_data_contract, "training-data contract"), "training-data contract")
+        _json_file(
+            _safe_file(training_data_contract, "training-data contract"),
+            "training-data contract",
+        )
     )
     dataset = _contained_file(source_root, source["dataset"], "production dataset")
     dataset_value = _json_file(dataset, "production dataset")
@@ -953,7 +1014,7 @@ def create_reuse_handoff(
         )
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
             output.write(encoded)
-    return verify_preflight(run_id)
+    return publish_verified_handoff_marker(run_id)
 
 
 def main() -> int:

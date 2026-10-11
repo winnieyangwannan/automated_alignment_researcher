@@ -39,7 +39,7 @@ def test_training_receipt_is_published_after_atomic_lane_state(
     moves = tmp_path / "moves"
     calls = tmp_path / "sbatch-calls"
     (fake_bin / "sbatch").write_text(
-        f"#!/bin/bash\nprintf 'call\\n' >> {calls}\nprintf '12345\\n'\n",
+        f"#!/bin/bash\nprintf 'call\\n' >> {calls}\nprintf '12345;cluster\\n'\n",
         encoding="utf-8",
     )
     (fake_bin / "mv").write_text(

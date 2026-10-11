@@ -6,6 +6,7 @@ import json
 import signal
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 from argparse import Namespace
@@ -55,7 +56,12 @@ def test_supervisor_subprocess_failure_keeps_raw_output_operator_only(
     assert "private generated row" not in public
     assert "secret-token" not in public
     assert "evidence" not in error.feedback
-    assert not (team / "secrets").exists()
+    evidence = list((team / "secrets" / "failure-evidence").glob("*.json"))
+    assert len(evidence) == 1
+    assert stat.S_IMODE(evidence[0].stat().st_mode) == 0o600
+    retained = json.loads(evidence[0].read_text())
+    assert retained["stdout"] == "private generated row"
+    assert "secret-token" in retained["stderr"]
 
 
 def _frozen_reconcile_fixture(
@@ -70,13 +76,22 @@ def _frozen_reconcile_fixture(
     for path in (artifacts, workspaces, pipeline_root / "grounding"):
         path.mkdir(parents=True)
     pipeline = pipeline_root / "autodata.pipeline.json"
-    pipeline.write_text("{}", encoding="utf-8")
+    pipeline_manifest = {
+        "schema": "autodata.pipeline/v1",
+        "checks": [{"argv": ["python3", "recipe/check.py"]}],
+    }
+    pipeline.write_text(json.dumps(pipeline_manifest), encoding="utf-8")
     ids = [f"task-{index:03d}" for index in range(128)]
     grounding = pipeline_root / "grounding" / "manifest.json"
     grounding.write_text(
         json.dumps(
             {
                 "schema": "autodata.grounding/v1",
+                "name": "supervisor-test-grounding",
+                "description": "Synthetic lifecycle regression grounding.",
+                "sources": [],
+                "coverage_dimensions": [],
+                "dry_run_task_ids": ids[:3],
                 "tasks": [{"id": task_id} for task_id in ids],
             }
         ),
@@ -200,7 +215,11 @@ def _frozen_reconcile_fixture(
         "broker_url": "http://127.0.0.1:12345",
         "meta_wall_seconds": 604800,
         "production_wall_seconds": 604800,
-        "meta_task_attempts": 608,
+        "meta_evaluation_attempts": 608,
+        "meta_model_task_attempts": 696,
+        "meta_task_attempts": 699,
+        "pipeline_checks_per_iteration": 1,
+        "trusted_pipeline_manifest": pipeline_manifest,
         "production_task_attempts": 2500,
     }
     monkeypatch.setattr(
@@ -394,7 +413,7 @@ def test_frozen_workspace_automatically_creates_registers_and_cleans_default(
     assert canonical_spec["budget"]["max_iterations"] == 3
     assert canonical_spec["budget"]["min_iterations"] == 3
     assert canonical_spec["budget"]["early_stop_patience"] == 3
-    assert canonical_spec["budget"]["max_task_attempts"] == 608
+    assert canonical_spec["budget"]["max_task_attempts"] == 699
     assert isinstance(canonical_spec["split_seed"], int)
     assert len(canonical_spec["tuning_task_ids"]) == 64
     assert len(canonical_spec["validation_task_ids"]) == 32
@@ -420,6 +439,9 @@ def test_frozen_workspace_automatically_creates_registers_and_cleans_default(
     assert "researcher-controlled-tuning" not in canonical_spec["tuning_task_ids"]
     assert len(meta_manifest["tasks"]) == 96
     assert len(test_manifest["tasks"]) == 32
+    test_ids = [task["id"] for task in test_manifest["tasks"]]
+    assert meta_manifest["dry_run_task_ids"] == meta_ids[:3]
+    assert test_manifest["dry_run_task_ids"] == test_ids[:3]
     assert {task["id"] for task in meta_manifest["tasks"]}.isdisjoint(
         task["id"] for task in test_manifest["tasks"]
     )
@@ -428,6 +450,59 @@ def test_frozen_workspace_automatically_creates_registers_and_cleans_default(
     assert subjects[1]["subject_id"] == "exe_canonical"
     assert subjects[1]["status"] == "registered"
     assert calls[-1] == ("cancel", "exe_default")
+
+
+def test_frozen_workspace_rejects_model_added_pipeline_check_before_native_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args, workspace_id, calls = _frozen_reconcile_fixture(tmp_path, monkeypatch)
+    with sqlite3.connect(args.state) as connection:
+        root = Path(
+            connection.execute(
+                "SELECT pipelineRoot FROM executions WHERE id='exe_default'"
+            ).fetchone()[0]
+        )
+    pipeline = root / "autodata.pipeline.json"
+    value = json.loads(pipeline.read_text())
+    value["checks"].append({"argv": ["python3", "recipe/untrusted.py"]})
+    pipeline.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(FailureFeedbackError) as failure:
+        reconcile_frozen_workspace(args, workspace_id)
+    assert (
+        failure.value.feedback["error_code"]
+        == "workspace_canonical_pipeline_invalid"
+    )
+    assert calls == []
+
+
+def test_semantic_operator_identity_ignores_only_restart_local_transport() -> None:
+    first = {
+        "broker_url": "http://127.0.0.1:1111",
+        "campaign_policy": {
+            "max_cost_usd": "5500",
+            "required_solve_env": {
+                "AUTODATA_GENERATOR_URL": "http://127.0.0.1:2222/v1",
+                "AUTODATA_GENERATOR_HOST_HEADER": "one.internal",
+                "AUTODATA_TARGET_ENABLED": "1",
+            },
+        },
+        "concurrency": 32,
+    }
+    restarted = json.loads(json.dumps(first))
+    restarted["broker_url"] = "http://127.0.0.1:3333"
+    restarted["campaign_policy"]["required_solve_env"].update(
+        AUTODATA_GENERATOR_URL="http://127.0.0.1:4444/v1",
+        AUTODATA_GENERATOR_HOST_HEADER="two.internal",
+    )
+    assert lifecycle_supervisor._semantic_operator_settings(
+        first
+    ) == lifecycle_supervisor._semantic_operator_settings(restarted)
+
+    restarted["concurrency"] = 16
+    assert lifecycle_supervisor._semantic_operator_settings(
+        first
+    ) != lifecycle_supervisor._semantic_operator_settings(restarted)
 
 
 def test_frozen_workspace_reports_safe_canonical_manifest_stage(
@@ -793,6 +868,7 @@ def test_completed_meta_transition_recovers_without_duplicate_production(
         "status": "completed",
         "phase": "completed",
         "winnerCandidateId": "cand-one",
+        "pipelineRoot": str(run_root),
         "executionJson": json.dumps(
             {
                 "mode": "meta_optimize",
@@ -836,6 +912,11 @@ def test_completed_meta_transition_recovers_without_duplicate_production(
     )
     monkeypatch.setattr(
         lifecycle_supervisor, "_trusted_execution_settings", lambda **_: settings
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "canonical_meta_manifest_from_default",
+        lambda **_: json.loads(str(meta_row["executionJson"])),
     )
     monkeypatch.setattr(
         lifecycle_supervisor,
@@ -995,17 +1076,23 @@ def test_completed_production_publishes_one_verified_handoff(
     )
     verification_calls = 0
 
-    def verify(run_id: str) -> dict[str, object]:
+    def publish(run_id: str) -> dict[str, object]:
         nonlocal verification_calls
         verification_calls += 1
         assert run_id == "run-one"
+        marker = run_root / "training-handoff.verified.json"
+        if not marker.exists():
+            marker.write_text("{}", encoding="utf-8")
         return {
             "meta_execution_id": meta_id,
             "production_execution_id": production_id,
             "available_rows": 1000,
+            "verified_marker": str(marker),
         }
 
-    monkeypatch.setattr(autodata_lifecycle, "verify_preflight", verify)
+    monkeypatch.setattr(
+        autodata_lifecycle, "publish_verified_handoff_marker", publish
+    )
     args = Namespace(
         state=tmp_path / "state.db",
         retained_state=retained,

@@ -62,6 +62,49 @@ SUPERVISED_TRANSITION_SCHEMA = "aar.autodata.supervised-transition/v1"
 PRODUCTION_GROUNDING_PATH = "grounding/production-manifest.json"
 PRODUCTION_ID_PREFIX = "safety-prod"
 PRODUCTION_SEED_OFFSET = 1000
+_MAX_PRIVATE_PROCESS_OUTPUT_BYTES = 1024 * 1024
+
+
+def _retain_operator_process_evidence(
+    completed: subprocess.CompletedProcess[str], *, error_code: str, stage: str
+) -> None:
+    """Best-effort mode-0600 evidence; never expose its path to research."""
+    team_raw = os.environ.get("TEAM_DIR", "").strip()
+    if not team_raw:
+        return
+    try:
+        root = Path(team_raw) / "secrets" / "failure-evidence"
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        root.chmod(0o700)
+        path = root / (
+            f"autodata-{stage}-{error_code}-{os.getpid()}-{time.time_ns()}.json"
+        )
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        value = {
+            "schema": "aar.autodata.private-process-failure/v1",
+            "stage": stage,
+            "error_code": error_code,
+            "returncode": completed.returncode,
+            "stdout": (completed.stdout or "")[:_MAX_PRIVATE_PROCESS_OUTPUT_BYTES],
+            "stderr": (completed.stderr or "")[:_MAX_PRIVATE_PROCESS_OUTPUT_BYTES],
+            "truncated": bool(
+                len(completed.stdout or "") > _MAX_PRIVATE_PROCESS_OUTPUT_BYTES
+                or len(completed.stderr or "") > _MAX_PRIVATE_PROCESS_OUTPUT_BYTES
+            ),
+            "recorded_at": _utc_now(),
+        }
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(value, output, sort_keys=True, indent=2)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+    except OSError:
+        # Evidence retention must not replace the original typed failure.
+        return
 
 
 def _subprocess_failure(
@@ -71,6 +114,9 @@ def _subprocess_failure(
     stage: str,
     public_summary: str,
 ) -> FailureFeedbackError:
+    _retain_operator_process_evidence(
+        completed, error_code=error_code, stage=stage
+    )
     feedback = build_failure_feedback(
         RuntimeError(public_summary),
         error_code=error_code,
@@ -631,6 +677,32 @@ def _trusted_execution_settings(
             training_data_contract, "training-data contract"
         ),
     )
+    run_config = resolved.get("run")
+    if not isinstance(run_config, dict):
+        raise RuntimeError("resolved AutoData config has no run section")
+    recipe_relative = Path(str(run_config.get("recipe_root", "")))
+    if (
+        not recipe_relative.parts
+        or recipe_relative.is_absolute()
+        or ".." in recipe_relative.parts
+    ):
+        raise RuntimeError("resolved AutoData recipe root is unsafe")
+    trusted_pipeline_path = (
+        Path(__file__).resolve().parents[1]
+        / recipe_relative
+        / "autodata.pipeline.json"
+    ).resolve(strict=True)
+    trusted_pipeline = _json_object(
+        trusted_pipeline_path, "trusted operator pipeline"
+    )
+    checks = trusted_pipeline.get("checks")
+    if not isinstance(checks, list) or not checks:
+        raise RuntimeError("trusted operator pipeline has no checks")
+    settings["trusted_pipeline_manifest"] = trusted_pipeline
+    settings["pipeline_checks_per_iteration"] = len(checks)
+    settings["meta_task_attempts"] = int(settings["meta_model_task_attempts"]) + (
+        len(checks) * int(settings["meta"]["maximum_iterations"])
+    )
     broker_url = os.environ.get("AAR_AUTODATA_BROKER_URL", "").strip()
     if not broker_url:
         raise RuntimeError("AAR_AUTODATA_BROKER_URL is required")
@@ -690,6 +762,19 @@ def _json_sha256(value: Mapping[str, Any]) -> str:
         dict(value), sort_keys=True, separators=(",", ":"), allow_nan=False
     ).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _semantic_operator_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
+    """Remove restart-local transports from durable transition identity."""
+    stable = json.loads(json.dumps(dict(settings), sort_keys=True))
+    stable.pop("broker_url", None)
+    policy = stable.get("campaign_policy")
+    if isinstance(policy, dict):
+        environment = policy.get("required_solve_env")
+        if isinstance(environment, dict):
+            environment.pop("AUTODATA_GENERATOR_URL", None)
+            environment.pop("AUTODATA_GENERATOR_HOST_HEADER", None)
+    return stable
 
 
 def _execution_study(state: Path, execution_id: str) -> str:
@@ -1023,6 +1108,16 @@ def reconcile_completed_meta_execution(
         resolved_config_sha256=args.resolved_config_sha256,
         campaign_policy_sha256=args.campaign_policy_sha256,
     )
+    meta_pipeline_root = Path(str(meta_row.get("pipelineRoot"))).resolve(strict=True)
+    expected_meta_spec = canonical_meta_manifest_from_default(
+        default_manifest=meta_spec,
+        pipeline_manifest=meta_pipeline_root / "autodata.pipeline.json",
+        settings=settings,
+    )
+    if meta_spec != expected_meta_spec:
+        raise RuntimeError(
+            "completed meta execution no longer matches trusted operator settings"
+        )
     reserved = _study_reserved_task_ids(args.state, study_id)
     expected_reserved = sum(
         int(settings["meta"][key])
@@ -1047,9 +1142,12 @@ def reconcile_completed_meta_execution(
         "meta_winner_candidate_id": winner_id,
         "meta_winner_tree_digest": winner_digest,
         "reserved_task_ids_sha256": _json_sha256({"task_ids": reserved}),
-        "operator_settings_sha256": _json_sha256(settings),
+        "operator_settings_sha256": _json_sha256(
+            _semantic_operator_settings(settings)
+        ),
         "production_task_count": int(settings["production"]["initial_tasks"]),
-        "production_seed": int(meta_spec["split_seed"]) + PRODUCTION_SEED_OFFSET,
+        "production_seed": int(expected_meta_spec["split_seed"])
+        + PRODUCTION_SEED_OFFSET,
         "production_id_prefix": PRODUCTION_ID_PREFIX,
         "winner_export": str(winner),
         "production_pipeline": str(production_root),
@@ -1278,15 +1376,16 @@ def reconcile_completed_production_execution(
     }
     handoff_path = run_root / "training-handoff.json"
     _write_immutable_json(handoff_path, handoff, "training handoff")
-    from aar.infrastructure.autodata_lifecycle import verify_preflight
+    from aar.infrastructure.autodata_lifecycle import publish_verified_handoff_marker
 
-    verification = verify_preflight(str(bootstrap["run_id"]))
+    verification = publish_verified_handoff_marker(str(bootstrap["run_id"]))
     if (
         verification.get("production_execution_id") != production_execution_id
         or verification.get("meta_execution_id") != meta_execution_id
     ):
         raise RuntimeError("published training handoff verification changed lineage")
     handoff_digest = "sha256:" + _sha256(handoff_path)
+    verified_marker = Path(str(verification["verified_marker"]))
     _update_registration(
         args.control_file,
         kind="execution",
@@ -1311,6 +1410,7 @@ def reconcile_completed_production_execution(
         "meta_execution_id": meta_execution_id,
         "production_execution_id": production_execution_id,
         "training_handoff": str(handoff_path),
+        "training_handoff_verified": str(verified_marker),
         "available_rows": verification["available_rows"],
     }
 
@@ -1332,9 +1432,23 @@ def reconcile_completed_execution_transition(
         spec = json.loads(str(row.get("executionJson")))
         mode = spec.get("mode")
         if mode == "meta_optimize" and not entry.get("production_execution_id"):
-            return reconcile_completed_meta_execution(args, execution_id)
+            try:
+                return reconcile_completed_meta_execution(args, execution_id)
+            except Exception as error:
+                raise _reconciliation_failure(
+                    error,
+                    error_code="meta_to_production_transition_failed",
+                    public_summary="trusted meta-to-production transition failed",
+                ) from error
         if mode == "production" and not entry.get("training_handoff_sha256"):
-            return reconcile_completed_production_execution(args, execution_id)
+            try:
+                return reconcile_completed_production_execution(args, execution_id)
+            except Exception as error:
+                raise _reconciliation_failure(
+                    error,
+                    error_code="production_to_handoff_transition_failed",
+                    public_summary="trusted production-to-handoff transition failed",
+                ) from error
     return None
 
 
@@ -1348,6 +1462,17 @@ def _materialize_canonical_meta_pipeline(
     """Copy a frozen tree and add immutable 96-task/32-task manifests."""
     source_pipeline = source_pipeline.resolve(strict=True)
     source_root = source_pipeline.parent
+    trusted_pipeline = settings.get("trusted_pipeline_manifest")
+    if not isinstance(trusted_pipeline, dict):
+        raise RuntimeError("trusted operator pipeline manifest is required")
+    if _json_object(source_pipeline, "frozen workspace pipeline") != trusted_pipeline:
+        raise RuntimeError("frozen workspace pipeline changed operator controls")
+    checks = trusted_pipeline.get("checks")
+    if (
+        not isinstance(checks, list)
+        or len(checks) != int(settings.get("pipeline_checks_per_iteration") or 0)
+    ):
+        raise RuntimeError("trusted pipeline check count changed")
     source_digest = _pipeline_tree_digest(source_root)
     identity = json.dumps(
         {
@@ -1411,8 +1536,26 @@ def _materialize_canonical_meta_pipeline(
         )
         meta_manifest = dict(full_manifest)
         meta_manifest["tasks"] = tasks[: tuning_count + validation_count]
+        meta_ids = {str(task["id"]) for task in meta_manifest["tasks"]}
+        meta_dry_run = [
+            task_id
+            for task_id in full_manifest.get("dry_run_task_ids", [])
+            if task_id in meta_ids
+        ]
+        meta_manifest["dry_run_task_ids"] = meta_dry_run or [
+            str(task["id"]) for task in meta_manifest["tasks"][:3]
+        ]
         test_manifest = dict(full_manifest)
         test_manifest["tasks"] = tasks[tuning_count + validation_count :]
+        test_ids = {str(task["id"]) for task in test_manifest["tasks"]}
+        test_dry_run = [
+            task_id
+            for task_id in full_manifest.get("dry_run_task_ids", [])
+            if task_id in test_ids
+        ]
+        test_manifest["dry_run_task_ids"] = test_dry_run or [
+            str(task["id"]) for task in test_manifest["tasks"][:3]
+        ]
         _atomic_json(staging / meta_relative, meta_manifest)
         _atomic_json(staging / test_relative, test_manifest)
         expected_tree_digest = _pipeline_tree_digest(staging)

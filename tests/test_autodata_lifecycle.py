@@ -412,21 +412,36 @@ def test_digest_verified_cross_run_dataset_reuse(tmp_path: Path) -> None:
         item["metadata"].update(
             judge_rubric_version=RUBRIC["version"],
             judge_rubric_sha256=RUBRIC["sha256"],
+            generation_attempt=1,
+            generation_attempts_executed=1,
+            generation_attempts_maximum=5,
         )
         item["_autodata_usage"] = [
             {
+                "request_id": f"generator-{item['id']}",
                 "role": "generator",
                 "model": "Kimi-K2.6",
                 "deployment_id": "kimi",
             },
-            {"role": "judge", "model": "gpt-5-6-luna"},
             {
+                "request_id": f"target-{item['id']}",
                 "role": "target",
                 "model": "gemma",
                 "deployment_id": "gemma-base",
                 "checkpoint_hash": checkpoint,
             },
+            {
+                "request_id": f"judge-{item['id']}",
+                "role": "judge",
+                "model": "gpt-5-6-luna",
+            },
         ]
+        for entry in item["_autodata_usage"]:
+            entry.update(
+                input_tokens=1,
+                output_tokens=1,
+                estimated_cost_usd="0",
+            )
     _write_json(dataset_path, dataset)
     with sqlite3.connect(state) as connection:
         row = connection.execute(
@@ -477,6 +492,17 @@ def test_digest_verified_cross_run_dataset_reuse(tmp_path: Path) -> None:
     assert reused["reused_dataset"] is True
     assert reused["source_run_id"] == source_run_id
     assert repeated["dataset_sha256"] == reused["dataset_sha256"]
+    marker = json.loads(
+        (
+            team
+            / "autodata"
+            / "chain-method-2"
+            / "training-handoff.verified.json"
+        ).read_text()
+    )
+    assert marker["training_handoff_sha256"].startswith("sha256:")
+    assert marker["meta_execution_id"] == "exe_" + "1" * 32
+    assert marker["production_execution_id"] == "exe_" + "2" * 32
 
 
 def test_cross_run_reuse_rejects_dataset_tampering(tmp_path: Path) -> None:

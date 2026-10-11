@@ -333,6 +333,7 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   export AAR_AUTODATA_ARTIFACTS="${TEAM_DIR}/autodata/native/artifacts"
   export AAR_AUTODATA_WORKSPACES="${TEAM_DIR}/autodata/native/workspaces"
   export AAR_AUTODATA_SUPERVISOR_CONTROL="${TEAM_DIR}/autodata/native/lifecycle-control.json"
+  export AAR_AUTODATA_SUPERVISOR_STATUS="${TEAM_DIR}/autodata/native/lifecycle-supervisor-status.json"
   export AAR_AUTODATA_APPROVAL_AUDIT_DIR="${TEAM_DIR}/autodata/approvals"
   mkdir -p "$(dirname -- "${AAR_AUTODATA_STATE}")" "${AAR_AUTODATA_ARTIFACTS}" \
     "${AAR_AUTODATA_WORKSPACES}" "${AAR_AUTODATA_APPROVAL_AUDIT_DIR}"
@@ -469,7 +470,7 @@ PY
       --campaign-policy "${AAR_AUTODATA_CAMPAIGN_POLICY}" \
       --resolved-config "${AAR_AUTODATA_RESOLVED_CONFIG}" \
       --lock-file "${TEAM_DIR}/autodata/native/lifecycle-supervisor.lock" \
-      --status-file "${TEAM_DIR}/autodata/native/lifecycle-supervisor-status.json" \
+      --status-file "${AAR_AUTODATA_SUPERVISOR_STATUS}" \
       --log-file "${_aar_supervisor_log}" \
       --stage-timeout-policy "${AAR_AUTODATA_STAGE_TIMEOUT_POLICY:-enforce}" &
     _autodata_supervisor_pid=$!

@@ -513,6 +513,7 @@ class KimiAgent:
                             workspace_id, status_subject
                         )
                         if action is None:
+                            self._require_fresh_autodata_supervisor_status()
                             if autodata_wait_deadline is None:
                                 timeout = float(
                                     os.getenv(
@@ -1335,23 +1336,43 @@ class KimiAgent:
             return None
         state = Path(state_raw)
         if state.is_symlink() or not state.is_file():
-            return None
+            raise _retain_process_failure(
+                error=RuntimeError("trusted native AutoData state is unavailable"),
+                error_code="autodata_action_state_unavailable",
+                stage="autodata_action",
+                public_summary="trusted AutoData action state is unavailable",
+            )
         try:
             with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
                 row = connection.execute(
                     "SELECT kind,status,specJson FROM actions WHERE id=?",
                     (action_id,),
                 ).fetchone()
-        except sqlite3.Error:
-            return None
+        except sqlite3.Error as error:
+            raise _retain_process_failure(
+                error=error,
+                error_code="autodata_action_state_query_failed",
+                stage="autodata_action",
+                public_summary="trusted AutoData action state could not be queried",
+            ) from error
         if row is None:
             return None
         try:
             spec = json.loads(str(row[2]))
-        except json.JSONDecodeError:
-            return None
+        except json.JSONDecodeError as error:
+            raise _retain_process_failure(
+                error=error,
+                error_code="autodata_action_record_invalid",
+                stage="autodata_action",
+                public_summary="trusted AutoData action record is invalid",
+            ) from error
         if not isinstance(spec, dict):
-            return None
+            raise _retain_process_failure(
+                error=TypeError("native action spec is not an object"),
+                error_code="autodata_action_record_invalid",
+                stage="autodata_action",
+                public_summary="trusted AutoData action record is invalid",
+            )
         return {
             "id": action_id,
             "kind": str(row[0]),
@@ -1369,15 +1390,25 @@ class KimiAgent:
             return None
         state = Path(state_raw)
         if state.is_symlink() or not state.is_file():
-            return None
+            raise _retain_process_failure(
+                error=RuntimeError("trusted native AutoData state is unavailable"),
+                error_code="autodata_action_state_unavailable",
+                stage="autodata_action",
+                public_summary="trusted AutoData action state is unavailable",
+            )
         try:
             with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
                 rows = connection.execute(
                     "SELECT id FROM actions WHERE status IN ('pending','in_progress') "
                     "ORDER BY createdAt,id"
                 ).fetchall()
-        except sqlite3.Error:
-            return None
+        except sqlite3.Error as error:
+            raise _retain_process_failure(
+                error=error,
+                error_code="autodata_action_state_query_failed",
+                stage="autodata_action",
+                public_summary="trusted AutoData action state could not be queried",
+            ) from error
         allowed = {value for value in allowed_scope_ids if value}
         matches: list[dict[str, Any]] = []
         for row in rows:
@@ -1397,6 +1428,62 @@ class KimiAgent:
                 + ", ".join(str(action["id"]) for action in matches)
             )
         return matches[0] if matches else None
+
+    @staticmethod
+    def _require_fresh_autodata_supervisor_status() -> dict[str, Any] | None:
+        """Reject a dead/corrupt supervised lifecycle instead of waiting hours."""
+        if os.environ.get("AAR_AUTODATA_LIFECYCLE_SUPERVISED", "0") != "1":
+            return None
+        raw_path = os.environ.get("AAR_AUTODATA_SUPERVISOR_STATUS", "").strip()
+        if not raw_path:
+            raise _retain_process_failure(
+                error=RuntimeError("AutoData supervisor status path is not configured"),
+                error_code="autodata_supervisor_status_missing",
+                stage="autodata_lifecycle",
+                public_summary="AutoData lifecycle supervisor status is unavailable",
+            )
+        path = Path(raw_path)
+        try:
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("supervisor status is not a regular file")
+            value = json.loads(path.read_text(encoding="utf-8"))
+            if (
+                not isinstance(value, dict)
+                or value.get("schema") != "aar.autodata.lifecycle-supervisor/v1"
+            ):
+                raise ValueError("supervisor status has the wrong schema")
+            updated_raw = value.get("updated_at")
+            if not isinstance(updated_raw, str):
+                raise ValueError("supervisor status has no update timestamp")
+            updated = datetime.fromisoformat(updated_raw.replace("Z", "+00:00"))
+            if updated.tzinfo is None:
+                raise ValueError("supervisor update timestamp has no timezone")
+            age = time.time() - updated.timestamp()
+            maximum_age = float(
+                os.environ.get("AAR_AUTODATA_SUPERVISOR_HEARTBEAT_SLA_SECONDS", "180")
+            )
+            if maximum_age <= 0:
+                raise ValueError("supervisor heartbeat SLA must be positive")
+            if age < -60 or age > maximum_age:
+                raise TimeoutError("supervisor heartbeat is stale")
+        except (OSError, ValueError, json.JSONDecodeError, TimeoutError) as error:
+            raise _retain_process_failure(
+                error=error,
+                error_code="autodata_supervisor_heartbeat_invalid",
+                stage="autodata_lifecycle",
+                public_summary="AutoData lifecycle supervisor heartbeat is invalid",
+            ) from error
+        if value.get("state") == "failed":
+            feedback = safe_failure_feedback_view(value.get("failure"))
+            if feedback is not None:
+                raise FailureFeedbackError(feedback)
+            raise _retain_process_failure(
+                error=RuntimeError("AutoData lifecycle supervisor failed"),
+                error_code="autodata_supervisor_failed",
+                stage="autodata_lifecycle",
+                public_summary="AutoData lifecycle supervisor failed",
+            )
+        return value
 
     @staticmethod
     def _autodata_cli(*arguments: str) -> dict[str, Any]:
@@ -2503,9 +2590,84 @@ class KimiAgent:
         team_dir = os.getenv("TEAM_DIR", "").strip()
         if not team_dir:
             return False
-        return (
-            Path(team_dir) / "autodata" / run_id / "training-handoff.json"
-        ).is_file()
+        run_root = Path(team_dir) / "autodata" / run_id
+        handoff = run_root / "training-handoff.json"
+        marker = run_root / "training-handoff.verified.json"
+        handoff_present = handoff.exists() or handoff.is_symlink()
+        marker_present = marker.exists() or marker.is_symlink()
+        if not handoff_present and not marker_present:
+            return False
+        if not handoff_present or not marker_present:
+            # The supervisor publishes the handoff before completing the exact
+            # verifier.  Bound that legitimate visibility window; never turn a
+            # permanently partial publication into a multi-hour host wait.
+            visible = handoff if handoff_present else marker
+            try:
+                age = max(0.0, time.time() - visible.lstat().st_mtime)
+                grace = float(
+                    os.getenv("AAR_AUTODATA_HANDOFF_PUBLICATION_GRACE_SECONDS", "120")
+                )
+            except (OSError, ValueError) as error:
+                raise _retain_process_failure(
+                    error=error,
+                    error_code="autodata_handoff_publication_invalid",
+                    stage="autodata_handoff",
+                    public_summary="AutoData handoff publication is invalid",
+                ) from error
+            if grace < 0:
+                raise RuntimeError(
+                    "AAR_AUTODATA_HANDOFF_PUBLICATION_GRACE_SECONDS must be nonnegative"
+                )
+            if handoff_present and not marker_present and age < grace:
+                return False
+            raise _retain_process_failure(
+                error=RuntimeError("AutoData handoff publication is incomplete"),
+                error_code="autodata_handoff_publication_incomplete",
+                stage="autodata_handoff",
+                public_summary="AutoData handoff publication did not complete",
+            )
+        if (
+            handoff.is_symlink()
+            or marker.is_symlink()
+            or not handoff.is_file()
+            or not marker.is_file()
+        ):
+            raise _retain_process_failure(
+                error=RuntimeError("AutoData handoff publication is unsafe"),
+                error_code="autodata_handoff_publication_invalid",
+                stage="autodata_handoff",
+                public_summary="AutoData handoff publication is invalid",
+            )
+        try:
+            value = json.loads(marker.read_text(encoding="utf-8"))
+            digest = "sha256:" + hashlib.sha256(handoff.read_bytes()).hexdigest()
+        except (OSError, json.JSONDecodeError) as error:
+            raise _retain_process_failure(
+                error=error,
+                error_code="autodata_handoff_marker_invalid",
+                stage="autodata_handoff",
+                public_summary="AutoData verified handoff marker is invalid",
+            ) from error
+        expected = {
+            "schema": "aar.autodata.training-handoff-verified/v1",
+            "run_id": run_id,
+            "training_handoff_sha256": digest,
+            "meta_execution_id": value.get("meta_execution_id"),
+            "production_execution_id": value.get("production_execution_id"),
+        }
+        valid_ids = all(
+            isinstance(value.get(key), str)
+            and re.fullmatch(r"exe_[0-9a-f]{32}", value[key]) is not None
+            for key in ("meta_execution_id", "production_execution_id")
+        )
+        if value != expected or not valid_ids:
+            raise _retain_process_failure(
+                error=ValueError("verified handoff marker does not match its handoff"),
+                error_code="autodata_handoff_marker_invalid",
+                stage="autodata_handoff",
+                public_summary="AutoData verified handoff marker is invalid",
+            )
+        return True
 
     @staticmethod
     def _autodata_workspace_id(run_id: str) -> str | None:
@@ -2798,6 +2960,19 @@ class KimiAgent:
         deadline = time.monotonic() + timeout_seconds
         next_update = time.monotonic()
         next_scheduler_check = time.monotonic()
+        completed_without_marker_since: float | None = None
+        try:
+            completion_grace = float(
+                os.environ.get("AAR_TRAINING_MARKER_GRACE_SECONDS", "120")
+            )
+        except ValueError as error:
+            raise RuntimeError(
+                "AAR_TRAINING_MARKER_GRACE_SECONDS must be numeric"
+            ) from error
+        if completion_grace < 0:
+            raise RuntimeError(
+                "AAR_TRAINING_MARKER_GRACE_SECONDS must be nonnegative"
+            )
         while time.monotonic() < deadline:
             if marker.is_file():
                 print(f"[Kimi] one-step training smoke ready for approved run {run_id}")
@@ -2819,6 +2994,27 @@ class KimiAgent:
                             public_summary="training produced an invalid failure marker",
                         )
                     )
+                scheduler_result = self._slurm_job_result(job_id)
+                if scheduler_result is not None and scheduler_result[0] == "COMPLETED":
+                    now = time.monotonic()
+                    if completed_without_marker_since is None:
+                        completed_without_marker_since = now
+                    if now - completed_without_marker_since >= completion_grace:
+                        raise FailureFeedbackError(
+                            build_failure_feedback(
+                                RuntimeError(
+                                    "training completed without its smoke marker"
+                                ),
+                                error_code="training_completed_without_smoke_marker",
+                                stage="training",
+                                public_summary=(
+                                    "training completed but did not publish the required "
+                                    "one-step smoke marker"
+                                ),
+                            )
+                        )
+                else:
+                    completed_without_marker_since = None
                 next_scheduler_check = time.monotonic() + 30
             if time.monotonic() >= next_update:
                 print(f"[Kimi] waiting for one-step training job {job_id}")

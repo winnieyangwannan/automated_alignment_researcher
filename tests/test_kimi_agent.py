@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, patch
 
 import requests
 
+from aar.failure_feedback import FailureFeedbackError
 from aar.research_loop.kimi_agent import (
     PROTECTED_SUBMISSION_FILES,
     KimiAgent,
@@ -1784,10 +1785,49 @@ class KimiAgentTest(unittest.TestCase):
                 handoff = team / "autodata" / run_id / "training-handoff.json"
                 handoff.parent.mkdir(parents=True)
                 handoff.write_text("{}\n")
+                digest = "sha256:" + hashlib.sha256(handoff.read_bytes()).hexdigest()
+                (handoff.parent / "training-handoff.verified.json").write_text(
+                    json.dumps(
+                        {
+                            "schema": "aar.autodata.training-handoff-verified/v1",
+                            "run_id": run_id,
+                            "training_handoff_sha256": digest,
+                            "meta_execution_id": "exe_" + "1" * 32,
+                            "production_execution_id": "exe_" + "2" * 32,
+                        }
+                    )
+                )
                 agent._ensure_approved_training_submission()
                 run.assert_called_once()
 
             self.assertEqual(receipt.read_text(), f"run_id={run_id}\njob_id=12345\n")
+
+    def test_autodata_handoff_integrity_errors_fail_instead_of_waiting(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            team = Path(temporary) / "team"
+            run_id = "run-one"
+            run_root = team / "autodata" / run_id
+            run_root.mkdir(parents=True)
+            environment = {
+                "TEAM_DIR": str(team),
+                "AAR_AUTODATA_HANDOFF_PUBLICATION_GRACE_SECONDS": "0",
+            }
+            with patch.dict(os.environ, environment, clear=False):
+                self.assertFalse(KimiAgent._autodata_handoff_ready(run_id))
+                (run_root / "training-handoff.json").write_text("{}\n")
+                with self.assertRaises(FailureFeedbackError) as partial:
+                    KimiAgent._autodata_handoff_ready(run_id)
+                self.assertEqual(
+                    partial.exception.feedback["error_code"],
+                    "autodata_handoff_publication_incomplete",
+                )
+                (run_root / "training-handoff.verified.json").write_text("not json")
+                with self.assertRaises(FailureFeedbackError) as malformed:
+                    KimiAgent._autodata_handoff_ready(run_id)
+                self.assertEqual(
+                    malformed.exception.feedback["error_code"],
+                    "autodata_handoff_marker_invalid",
+                )
 
     def test_autodata_rejects_proof_created_without_required_loader_gate(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -2244,6 +2284,78 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                     )
                 with self.assertRaisesRegex(RuntimeError, "ambiguous"):
                     KimiAgent._autodata_pending_action_record(workspace)
+
+    def test_action_state_query_error_fails_loudly(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary) / "state.db"
+            with sqlite3.connect(state):
+                pass
+            with patch.dict(
+                os.environ, {"AAR_AUTODATA_STATE": str(state)}, clear=False
+            ):
+                with self.assertRaises(FailureFeedbackError) as failure:
+                    KimiAgent._autodata_pending_action_record("ws_" + "1" * 32)
+            self.assertEqual(
+                failure.exception.feedback["error_code"],
+                "autodata_action_state_query_failed",
+            )
+
+    def test_stale_supervisor_heartbeat_fails_loudly(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            status = Path(temporary) / "status.json"
+            status.write_text(
+                json.dumps(
+                    {
+                        "schema": "aar.autodata.lifecycle-supervisor/v1",
+                        "updated_at": "2020-01-01T00:00:00Z",
+                        "state": "idle",
+                    }
+                )
+            )
+            environment = {
+                "AAR_AUTODATA_LIFECYCLE_SUPERVISED": "1",
+                "AAR_AUTODATA_SUPERVISOR_STATUS": str(status),
+                "AAR_AUTODATA_SUPERVISOR_HEARTBEAT_SLA_SECONDS": "180",
+            }
+            with patch.dict(os.environ, environment, clear=False):
+                with self.assertRaises(FailureFeedbackError) as failure:
+                    KimiAgent._require_fresh_autodata_supervisor_status()
+            self.assertEqual(
+                failure.exception.feedback["error_code"],
+                "autodata_supervisor_heartbeat_invalid",
+            )
+
+    def test_completed_training_without_smoke_marker_fails_after_grace(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            agent = KimiAgent(
+                "test-agent",
+                Path(temporary),
+                cli_path="/bin/true",
+                completion_tool="share_finding",
+            )
+            environment = {
+                "TEAM_DIR": str(Path(temporary) / "team"),
+                "AAR_TRAINING_MARKER_GRACE_SECONDS": "0",
+                "AAR_KIMI_SCORE_WAIT_SECONDS": "1",
+            }
+            with (
+                patch.dict(os.environ, environment, clear=False),
+                patch.object(agent, "_approved_run_id", return_value="run-one"),
+                patch.object(agent, "_current_training_job_id", return_value="12345"),
+                patch.object(agent, "_current_training_failure", return_value=None),
+                patch.object(
+                    agent, "_reconcile_terminal_training_job", return_value=None
+                ),
+                patch.object(
+                    agent, "_slurm_job_result", return_value=("COMPLETED", 0)
+                ),
+            ):
+                with self.assertRaises(FailureFeedbackError) as failure:
+                    asyncio.run(agent._wait_for_training_smoke_result())
+            self.assertEqual(
+                failure.exception.feedback["error_code"],
+                "training_completed_without_smoke_marker",
+            )
 
     def test_write_guard_allows_only_ideas_tree_and_chain_memory(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

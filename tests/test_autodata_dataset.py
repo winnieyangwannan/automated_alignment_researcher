@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from aar.infrastructure.autodata_dataset import (
     load_autodata_campaign_datasets,
     load_autodata_dataset,
 )
+from aar.infrastructure.autodata_contract import validate_dataset_items
 
 RUBRIC = {
     "version": "run9-axis-conditioned-v3",
@@ -68,6 +70,9 @@ def _dataset(
                 "metadata": {
                     "judge_accepted": accepted,
                     "judge_score": 0.9,
+                    "generation_attempt": 1,
+                    "generation_attempts_executed": 1,
+                    "generation_attempts_maximum": 5,
                     "axis": "sycophancy_resistance",
                     "primary_teacher_dimension": "sycophancy_resistance",
                     "judge_dimension_roles": {
@@ -137,6 +142,119 @@ def test_load_records_bound_consumption_receipt():
         assert saved["row_count"] == 1
         assert saved["model_calls"] == 3
         assert saved["target_required"] is True
+
+
+def test_feedback_repaired_row_passes_handoff_and_training_validators(
+    tmp_path: Path,
+) -> None:
+    value = _dataset()
+    item = value["items"][0]
+    generator, target, judge = item["_autodata_usage"]
+    generator["deployment_id"] = "kimi"
+    repaired_generator = deepcopy(generator)
+    repaired_generator["request_id"] = "kimi-2"
+    repaired_judge = deepcopy(judge)
+    repaired_judge["request_id"] = "luna-2"
+    item["_autodata_usage"] = [
+        generator,
+        target,
+        judge,
+        repaired_generator,
+        repaired_judge,
+    ]
+    item["metadata"].update(
+        generation_attempt=2,
+        generation_attempts_executed=2,
+        generation_attempts_maximum=5,
+    )
+    contract = {
+        "schema": "aar.autodata.training-data-contract/v1",
+        "training_objective": "sft",
+        "required_item_fields": ["prompt", "response"],
+        "required_rows": 1,
+        "minimum_successful_task_fraction": 0.95,
+        "judge_rubric": RUBRIC,
+        "generator": {"model": "Kimi-K2.6", "deployment_id": "kimi"},
+        "judge": {"model": "gpt-5-6-luna"},
+        "target": {
+            "required": True,
+            "model": "google/gemma-4-31B-it",
+            "deployment_id": "gemma-base-research",
+            "checkpoint_hash": "sha256:" + "ab" * 32,
+        },
+    }
+    validate_dataset_items(value["items"], contract)
+
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(json.dumps(value), encoding="utf-8")
+    receipt = tmp_path / "receipt.json"
+    load_autodata_dataset(
+        dataset,
+        receipt_path=receipt,
+        required_rows=1,
+        expected_execution_id="exec_test",
+        judge_rubric=RUBRIC,
+    )
+    assert json.loads(receipt.read_text())["model_calls"] == 5
+
+
+def test_prompt_hardened_row_allows_reprobe_without_regeneration() -> None:
+    value = _dataset()
+    item = value["items"][0]
+    generator, target, judge = item["_autodata_usage"]
+    generator["deployment_id"] = "kimi"
+    reprobe = deepcopy(target)
+    reprobe["request_id"] = "gemma-2"
+    rejudge = deepcopy(judge)
+    rejudge["request_id"] = "luna-2"
+    item["_autodata_usage"] = [generator, target, judge, reprobe, rejudge]
+    item["metadata"].update(
+        generation_attempt=2,
+        generation_attempts_executed=1,
+        generation_attempts_maximum=5,
+    )
+    contract = {
+        "schema": "aar.autodata.training-data-contract/v1",
+        "training_objective": "sft",
+        "required_item_fields": ["prompt", "response"],
+        "required_rows": 1,
+        "minimum_successful_task_fraction": 0.95,
+        "judge_rubric": RUBRIC,
+        "generator": {"model": "Kimi-K2.6", "deployment_id": "kimi"},
+        "judge": {"model": "gpt-5-6-luna"},
+        "target": {
+            "required": True,
+            "model": "google/gemma-4-31B-it",
+            "deployment_id": "gemma-base-research",
+            "checkpoint_hash": "sha256:" + "ab" * 32,
+        },
+    }
+    validate_dataset_items(value["items"], contract)
+
+
+def test_handoff_validator_rejects_invalid_provider_metering() -> None:
+    value = _dataset()
+    item = value["items"][0]
+    item["_autodata_usage"][0]["deployment_id"] = "kimi"
+    item["_autodata_usage"][0]["estimated_cost_usd"] = "NaN"
+    contract = {
+        "schema": "aar.autodata.training-data-contract/v1",
+        "training_objective": "sft",
+        "required_item_fields": ["prompt", "response"],
+        "required_rows": 1,
+        "minimum_successful_task_fraction": 0.95,
+        "judge_rubric": RUBRIC,
+        "generator": {"model": "Kimi-K2.6", "deployment_id": "kimi"},
+        "judge": {"model": "gpt-5-6-luna"},
+        "target": {
+            "required": True,
+            "model": "google/gemma-4-31B-it",
+            "deployment_id": "gemma-base-research",
+            "checkpoint_hash": "sha256:" + "ab" * 32,
+        },
+    }
+    with pytest.raises(ValueError, match="provider cost"):
+        validate_dataset_items(value["items"], contract)
 
 
 @pytest.mark.parametrize(

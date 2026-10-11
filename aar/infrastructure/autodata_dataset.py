@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any, Mapping
 
+from aar.infrastructure.autodata_contract import provider_usage_by_role
+
 RECEIPT_SCHEMA = "aar.autodata.native-consumption/v1"
 _VOLATILE_RECEIPT_FIELDS = {"loaded_at_unix", "consumer_pid"}
 _SHA256 = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -88,34 +90,8 @@ def _write_or_refresh_receipt(destination: Path, receipt: dict[str, Any]) -> Non
 
 def _usage_roles(
     item: dict[str, Any], *, require_target: bool
-) -> dict[str, dict[str, Any]]:
-    usage = item.get("_autodata_usage")
-    if not isinstance(usage, list):
-        raise ValueError("AutoData item has no provider-usage evidence")
-    result: dict[str, dict[str, Any]] = {}
-    for entry in usage:
-        if not isinstance(entry, dict) or entry.get("role") not in {
-            "generator",
-            "target",
-            "judge",
-        }:
-            raise ValueError("AutoData item has malformed provider usage")
-        role = str(entry["role"])
-        if role in result:
-            raise ValueError(f"AutoData item repeats {role} usage")
-        for key in ("request_id", "model", "input_tokens", "output_tokens"):
-            if entry.get(key) in {None, ""}:
-                raise ValueError(f"AutoData {role} usage is missing {key}")
-        result[role] = entry
-    expected = {"generator", "judge", "target"} if require_target else {
-        "generator",
-        "judge",
-    }
-    if require_target and set(result) != expected:
-        raise ValueError("AutoData item must contain generator, target, and judge usage")
-    if not require_target and not {"generator", "judge"}.issubset(result):
-        raise ValueError("AutoData item must contain generator and judge usage")
-    return result
+) -> dict[str, list[dict[str, Any]]]:
+    return provider_usage_by_role(item, require_target=require_target)
 
 
 def load_autodata_dataset(
@@ -262,22 +238,23 @@ def load_autodata_dataset(
                 ):
                     raise ValueError("AutoData target challenge does not match primary axis")
         roles = _usage_roles(item, require_target=require_target)
-        if roles["generator"]["model"] != generator_model:
+        if any(
+            usage["model"] != generator_model for usage in roles["generator"]
+        ):
             raise ValueError("AutoData generator identity does not match")
-        if roles["judge"]["model"] != judge_model:
+        if any(usage["model"] != judge_model for usage in roles["judge"]):
             raise ValueError("AutoData judge identity does not match")
         if require_target:
-            target = roles["target"]
-            if (
+            if any(
                 target["model"] != metadata.get("target_model")
-                or target.get("deployment_id")
-                != metadata.get("target_deployment_id")
-                or target.get("checkpoint_hash")
-                != metadata.get("target_checkpoint_hash")
+                or target.get("deployment_id") != metadata.get("target_deployment_id")
+                or target.get("checkpoint_hash") != metadata.get("target_checkpoint_hash")
+                for target in roles["target"]
             ):
                 raise ValueError("AutoData target usage identity does not match metadata")
-        model_calls += len(roles)
-        for usage in roles.values():
+        all_usage = [entry for entries in roles.values() for entry in entries]
+        model_calls += len(all_usage)
+        for usage in all_usage:
             input_tokens = usage["input_tokens"]
             output_tokens = usage["output_tokens"]
             if (
@@ -291,10 +268,7 @@ def load_autodata_dataset(
                 raise ValueError("AutoData provider token usage is invalid")
             total_input += input_tokens
             total_output += output_tokens
-            try:
-                total_cost += float(usage["estimated_cost_usd"])
-            except (KeyError, TypeError, ValueError) as error:
-                raise ValueError("AutoData provider cost usage is invalid") from error
+            total_cost += float(usage["estimated_cost_usd"])
     digest = hashlib.sha256(payload).hexdigest()
     receipt = {
         "schema": RECEIPT_SCHEMA,
