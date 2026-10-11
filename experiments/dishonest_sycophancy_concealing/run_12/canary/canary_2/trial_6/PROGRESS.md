@@ -172,3 +172,82 @@ manifest:
 No AutoData execution or training job existed at this snapshot. Research is
 waiting for Slurm capacity, not an application-side registration or lifecycle
 transition.
+
+<a id="trial6-event-frozen-reconciliation"></a>
+
+### 🔴 02:26 PT — FAIL: native freeze shape rejected before canonical creation
+
+> [!CAUTION]
+> **Trial 6 stopped fail-closed.** Research `1813007` failed `70:0`; controller
+> `1813008` classified the failure as permanent and failed `1:0`. No meta
+> iteration, production, training, adapter, evaluator, or held-out publication
+> began.
+
+| Stage                | Result | Runtime        |
+| -------------------- | ------ | -------------- |
+| Launcher `1812990`   | PASS   | 21 seconds     |
+| Research `1813007`   | FAIL   | 13m 02s        |
+| Controller `1813008` | STOP   | 15 seconds     |
+| Evaluator            | ABSENT | Not applicable |
+
+The workspace froze at revision 10 after baseline approval. Its only default
+execution was active at `baseline_pending`, iteration zero, with zero task
+attempts. Trusted reconciliation made exactly three bounded attempts and failed
+before it published a canonical manifest or recorded a canonical creation
+intent.
+
+#### 🐛 Identified bug
+
+Native AutoData always serializes `tuning_task_ids`, `validation_task_ids`,
+budget `min_iterations`, and budget `early_stop_patience` into the
+freeze-created meta execution. The AAR trusted adapter's allowlists omitted
+those four native-valid fields, so it rejected the normal native manifest
+before replacing its values with the trusted operator partition and `3/3/3`
+budget. The earlier unit fixture omitted the same fields and therefore did not
+exercise the real adapter boundary.
+
+This was an AAR/native adapter-contract mismatch, not invalid Kimi output.
+
+#### 🛠️ Corrective change
+
+The adapter now accepts those known native-shape fields but does not trust any
+of their values. Canonical construction still rebuilds exact `3/3/3` and
+`64/32/32` settings from the integrity-checked operator configuration and
+continues to reject every genuinely unknown field. Reconciliation now emits a
+held-out-safe, stage-specific failure code for trusted settings, pipeline
+materialization, canonical manifest construction, publication, generation
+contract validation, or durable intent construction.
+
+The production-shaped regression fixture includes deliberately untrusted
+partition values and proves that the canonical execution replaces them.
+
+```text
+✓ Endpoint and MCP preflight
+✓ Immutable infrastructure bootstrap
+✓ Method authoring and contract checks
+✓ Baseline approval and workspace freeze
+✗ Canonical execution construction
+○ Three-iteration meta-optimization
+○ Production
+○ Training smoke
+○ Evaluator (intentionally disabled)
+```
+
+#### Evidence
+
+- Attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T090839Z-fb886848d584`
+- Launcher: `1812990`, `COMPLETED 0:0`
+- Research: `1813007`, `FAILED 70:0`
+- Controller: `1813008`, `FAILED 1:0`
+- Workspace: `ws_b35fc60dd6e0451c993ad544b37f3003`, frozen revision 10
+- Default execution: `exe_9e8525d597bf461690cc2d33f48d1f76`, zero attempts
+- Focused validation: 50 tests passed
+- Broader relevant validation: 270 passed; one unrelated Run 13 test could not
+  read pre-existing deleted Run 13 files in the shared dirty worktree
+
+#### ⏭️ Next step
+
+Commit and synchronize the focused adapter repair, validate the exact commit on
+HPC, then launch same-configuration Trial 7 under the user's standing bounded
+replacement authorization.

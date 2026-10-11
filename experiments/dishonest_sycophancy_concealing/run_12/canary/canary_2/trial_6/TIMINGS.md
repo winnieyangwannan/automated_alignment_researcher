@@ -5,8 +5,8 @@ prompts, target responses, credentials, or held-out content belong here.
 
 ## Attempt identity
 
-- Status at 2026-10-11 02:10 PT: launcher passed; research `1813007` queued;
-  controller `1813008` dependency-held; evaluator absent.
+- Status at 2026-10-11 02:26 PT: terminal failure during frozen-workspace
+  reconciliation; evaluator absent.
 - Run ID: `run12-canary2-trial6`.
 - Native AutoData revision required:
   `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`.
@@ -59,11 +59,17 @@ prompts, target responses, credentials, or held-out content belong here.
   was submitted and initially queued.
 - 02:10:00–02:10:21 PT: launcher `1812990` completed `0:0`; child manifest
   recorded research `1813007`, controller `1813008`, and no evaluator.
+- 02:12:13–02:25:15 PT: research `1813007` authored, checked, dry-ran, approved,
+  and froze the workspace, then failed `70:0` after three bounded canonical
+  reconciliation attempts rejected the native freeze manifest shape.
+- 02:26:14–02:26:29 PT: controller `1813008` classified the research failure as
+  permanent/non-retryable, recorded `training_smoke_session_failed`, and exited
+  `1:0` without launching downstream work.
 
 ## Work and quality counters
 
-- Native execution intents and executions: 0.
-- Authoring task attempts: 0.
+- Native canonical execution intents and executions: 0.
+- Authoring task attempts: 9.
 - Required meta-optimization iterations: 0/3.
 - Production source tasks: 0/1,250.
 - Production accepted rows: 0/1,000.
@@ -72,5 +78,5 @@ prompts, target responses, credentials, or held-out content belong here.
 
 ## Unmeasured stages
 
-Research is queued for Slurm capacity. Downstream AutoData and training stages
-remain unmeasured.
+Meta-optimization, production, training, and evaluation did not begin. Trial 6
+is terminal and will not be resumed.

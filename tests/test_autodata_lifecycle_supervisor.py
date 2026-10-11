@@ -107,11 +107,17 @@ def _frozen_reconcile_fixture(
         "executor": executor,
         "budget": {
             "max_iterations": 1,
+            "min_iterations": 0,
+            "early_stop_patience": None,
             "max_task_attempts": 256,
             "max_wall_seconds": 604800,
         },
         "concurrency": 32,
         "secret_references": ["AAR_AUTODATA_CAPABILITY"],
+        # Match the real native freeze output. Trusted orchestration must
+        # accept this shape while rebuilding (not trusting) the partition.
+        "tuning_task_ids": ["researcher-controlled-tuning"],
+        "validation_task_ids": ["researcher-controlled-validation"],
     }
     workspace_id = "ws_" + "1" * 32
     with sqlite3.connect(state) as connection:
@@ -408,6 +414,10 @@ def test_frozen_workspace_automatically_creates_registers_and_cleans_default(
             / canonical_spec["test_grounding"]["manifest_path"]
         ).read_text()
     )
+    meta_ids = [task["id"] for task in meta_manifest["tasks"]]
+    assert canonical_spec["tuning_task_ids"] == meta_ids[:64]
+    assert canonical_spec["validation_task_ids"] == meta_ids[64:96]
+    assert "researcher-controlled-tuning" not in canonical_spec["tuning_task_ids"]
     assert len(meta_manifest["tasks"]) == 96
     assert len(test_manifest["tasks"]) == 32
     assert {task["id"] for task in meta_manifest["tasks"]}.isdisjoint(
@@ -418,6 +428,34 @@ def test_frozen_workspace_automatically_creates_registers_and_cleans_default(
     assert subjects[1]["subject_id"] == "exe_canonical"
     assert subjects[1]["status"] == "registered"
     assert calls[-1] == ("cancel", "exe_default")
+
+
+def test_frozen_workspace_reports_safe_canonical_manifest_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args, workspace_id, calls = _frozen_reconcile_fixture(tmp_path, monkeypatch)
+    with sqlite3.connect(args.state) as connection:
+        raw = connection.execute(
+            "SELECT executionJson FROM executions WHERE id='exe_default'"
+        ).fetchone()[0]
+        spec = json.loads(raw)
+        spec["unexpected_researcher_field"] = "private value"
+        connection.execute(
+            "UPDATE executions SET executionJson=? WHERE id='exe_default'",
+            (json.dumps(spec),),
+        )
+
+    with pytest.raises(FailureFeedbackError) as captured:
+        reconcile_frozen_workspace(args, workspace_id)
+
+    assert calls == []
+    assert captured.value.feedback["error_code"] == (
+        "workspace_canonical_manifest_invalid"
+    )
+    assert captured.value.feedback["summary"] == (
+        "canonical workspace execution manifest is invalid"
+    )
+    assert "private value" not in json.dumps(captured.value.feedback)
 
 
 def test_frozen_workspace_recovers_create_before_register_crash(

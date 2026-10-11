@@ -473,6 +473,11 @@ def canonical_meta_manifest_from_default(
         "concurrency",
         "secret_references",
         "test_grounding",
+        # Native AutoData materializes these fields when a workspace freezes.
+        # They are accepted only as known input shape: the trusted operator
+        # partition below replaces both values from the digest-bound grounding.
+        "tuning_task_ids",
+        "validation_task_ids",
     }
     if not set(default).issubset(allowed_default):
         raise ValueError("freeze-created execution has unknown fields")
@@ -517,7 +522,16 @@ def canonical_meta_manifest_from_default(
             "freeze-created secret references do not match operator config"
         )
     budget = _object(default.get("budget"), "freeze-created execution budget")
-    allowed_default_budget = {"max_iterations", "max_task_attempts", "max_wall_seconds"}
+    # Native freeze emits the complete budget shape. These values are shape-
+    # checked only and never provide authority; ``canonical`` below replaces
+    # every field with trusted operator settings.
+    allowed_default_budget = {
+        "max_iterations",
+        "min_iterations",
+        "early_stop_patience",
+        "max_task_attempts",
+        "max_wall_seconds",
+    }
     if not set(budget).issubset(allowed_default_budget):
         raise ValueError("freeze-created execution budget has unknown fields")
     canonical = {

@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: launcher passed; research queued; controller dependency-held
+- Status: failed closed during frozen-workspace reconciliation; terminal
 - Created: 2026-10-11 01:59 PT
-- Last updated: 2026-10-11 02:10 PT
+- Last updated: 2026-10-11 02:30 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -78,6 +78,13 @@ and retained the `training_smoke`/no-evaluator contract.
 - Native AutoData commit: `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`
 - Attempt:
   `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T090839Z-fb886848d584`
+
+Trial 6 is terminal. Research job `1813007` failed closed with exit `70:0`
+after the trusted frozen-workspace reconciler rejected native-valid serialized
+execution fields. Controller `1813008` classified the failure as permanent and
+exited without retrying. No meta iteration, production, training, adapter,
+evaluator, or held-out publication began. The replacement is Trial 7 after the
+adapter-contract repair passes all gates.
 - Launcher: `1812990`, initially `PENDING`
 - Research child: `1813007`, initially `PENDING`
 - Controller: `1813008`, dependency-held behind research

@@ -80,6 +80,25 @@ def _subprocess_failure(
     return FailureFeedbackError(feedback)
 
 
+def _reconciliation_failure(
+    error: BaseException,
+    *,
+    error_code: str,
+    public_summary: str,
+) -> FailureFeedbackError:
+    """Return one content-free, stage-specific workspace failure."""
+    if isinstance(error, FailureFeedbackError):
+        return error
+    return FailureFeedbackError(
+        build_failure_feedback(
+            error,
+            error_code=error_code,
+            stage="autodata_lifecycle",
+            public_summary=public_summary,
+        )
+    )
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -1605,36 +1624,78 @@ def reconcile_frozen_workspace(args: argparse.Namespace, workspace_id: str) -> d
 
     pipeline_root = Path(str(default.get("pipelineRoot"))).resolve(strict=True)
     source_pipeline = pipeline_root / "autodata.pipeline.json"
-    settings = _trusted_execution_settings(
-        campaign_policy=args.campaign_policy,
-        training_data_contract=args.training_data_contract,
-        resolved_config=args.resolved_config,
-        resolved_config_sha256=args.resolved_config_sha256,
-        campaign_policy_sha256=args.campaign_policy_sha256,
-    )
+    try:
+        settings = _trusted_execution_settings(
+            campaign_policy=args.campaign_policy,
+            training_data_contract=args.training_data_contract,
+            resolved_config=args.resolved_config,
+            resolved_config_sha256=args.resolved_config_sha256,
+            campaign_policy_sha256=args.campaign_policy_sha256,
+        )
+    except Exception as error:
+        raise _reconciliation_failure(
+            error,
+            error_code="workspace_trusted_settings_invalid",
+            public_summary="trusted workspace execution settings are invalid",
+        ) from error
     default_spec = json.loads(str(default.get("executionJson")))
-    pipeline, default_spec = _materialize_canonical_meta_pipeline(
-        source_pipeline=source_pipeline,
-        default_manifest=default_spec,
-        artifacts=args.artifacts,
-        settings=settings,
-    )
-    canonical = canonical_meta_manifest_from_default(
-        default_manifest=default_spec,
-        pipeline_manifest=pipeline,
-        settings=settings,
-    )
-    canonical_path = _publish_canonical_execution(args.artifacts, canonical)
-    contract = validate_generation_inputs(
-        pipeline_manifest=pipeline,
-        execution_manifest=canonical_path,
-        contract_path=args.training_data_contract,
-        campaign_policy_path=args.campaign_policy,
-        expected_concurrency=int(settings["concurrency"]),
-    )
-    key = execution_creation_key(
-        pipeline, canonical_path, study_id=study_id, workspaces=args.workspaces
-    )
+    try:
+        pipeline, default_spec = _materialize_canonical_meta_pipeline(
+            source_pipeline=source_pipeline,
+            default_manifest=default_spec,
+            artifacts=args.artifacts,
+            settings=settings,
+        )
+    except Exception as error:
+        raise _reconciliation_failure(
+            error,
+            error_code="workspace_canonical_pipeline_invalid",
+            public_summary="canonical workspace pipeline materialization failed",
+        ) from error
+    try:
+        canonical = canonical_meta_manifest_from_default(
+            default_manifest=default_spec,
+            pipeline_manifest=pipeline,
+            settings=settings,
+        )
+    except Exception as error:
+        raise _reconciliation_failure(
+            error,
+            error_code="workspace_canonical_manifest_invalid",
+            public_summary="canonical workspace execution manifest is invalid",
+        ) from error
+    try:
+        canonical_path = _publish_canonical_execution(args.artifacts, canonical)
+    except Exception as error:
+        raise _reconciliation_failure(
+            error,
+            error_code="workspace_canonical_publish_failed",
+            public_summary="canonical workspace execution manifest publication failed",
+        ) from error
+    try:
+        contract = validate_generation_inputs(
+            pipeline_manifest=pipeline,
+            execution_manifest=canonical_path,
+            contract_path=args.training_data_contract,
+            campaign_policy_path=args.campaign_policy,
+            expected_concurrency=int(settings["concurrency"]),
+        )
+    except Exception as error:
+        raise _reconciliation_failure(
+            error,
+            error_code="workspace_generation_contract_invalid",
+            public_summary="canonical workspace generation contract is invalid",
+        ) from error
+    try:
+        key = execution_creation_key(
+            pipeline, canonical_path, study_id=study_id, workspaces=args.workspaces
+        )
+    except Exception as error:
+        raise _reconciliation_failure(
+            error,
+            error_code="workspace_creation_intent_invalid",
+            public_summary="canonical workspace creation intent is invalid",
+        ) from error
     existing_key = entry.get("canonical_idempotency_key")
     if existing_key is not None and existing_key != key:
         raise RuntimeError("canonical execution intent changed during recovery")
