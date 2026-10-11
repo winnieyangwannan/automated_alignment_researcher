@@ -36,6 +36,8 @@ evaluation:
 
 agent:
   backend: claude
+  # Stop after 20 minutes without a non-system Claude SDK event.
+  turn_timeout_seconds: 1200
 
 data_generation:
   # The research model authors and validates each method's data-generation code.

@@ -50,6 +50,7 @@ def test_run16_is_fresh_native_5x50_configuration() -> None:
     assert config["evaluation"]["gpus_per_worker"] == 4
     assert config["evaluation"]["vllm_log_stats"] is True
     assert config["agent"]["backend"] == "claude"
+    assert config["agent"]["turn_timeout_seconds"] == 1200
 
     environment = _resolved_environment(config_path)
     assert "export AAR_AUTODATA=0" in environment
@@ -58,6 +59,7 @@ def test_run16_is_fresh_native_5x50_configuration() -> None:
     assert "export AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS=256" in environment
     assert "export EVAL_VLLM_LOG_STATS=1" in environment
     assert "export AAR_AGENT_BACKEND=claude" in environment
+    assert "export AAR_AGENT_TURN_TIMEOUT_SECONDS=1200" in environment
 
 
 def test_run16_canaries_are_fresh_bounded_and_ordered() -> None:
@@ -90,6 +92,7 @@ def test_run16_canaries_are_fresh_bounded_and_ordered() -> None:
     assert one["evaluation"]["on_demand"] is True
     assert one["data_generation"]["max_sequential_target_generations"] == 256
     assert one["agent"]["backend"] == "claude"
+    assert one["agent"]["turn_timeout_seconds"] == 1200
 
     assert five["lifecycle"] == {
         "name": "five_chain_lifecycle_check",
@@ -109,6 +112,7 @@ def test_run16_canaries_are_fresh_bounded_and_ordered() -> None:
     assert five["evaluation"]["on_demand"] is True
     assert five["data_generation"]["max_sequential_target_generations"] == 256
     assert five["agent"]["backend"] == "claude"
+    assert five["agent"]["turn_timeout_seconds"] == 1200
 
     one_environment = _resolved_environment(
         RUN16
@@ -126,6 +130,8 @@ def test_run16_canaries_are_fresh_bounded_and_ordered() -> None:
     )
     assert "export AAR_METHOD_TRAIN_MINUTES=15" in one_environment
     assert "export AAR_METHOD_TRAIN_MINUTES=15" in five_environment
+    assert "export AAR_AGENT_TURN_TIMEOUT_SECONDS=1200" in one_environment
+    assert "export AAR_AGENT_TURN_TIMEOUT_SECONDS=1200" in five_environment
 
 
 def test_run16_terminal_evaluation_failures_do_not_retry_unchanged_adapter() -> None:

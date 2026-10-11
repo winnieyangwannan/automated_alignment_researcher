@@ -43,6 +43,8 @@ evaluation:
 
 agent:
   backend: claude
+  # Blank SDK SystemMessage heartbeats do not reset this progress watchdog.
+  turn_timeout_seconds: 1200
 
 data_generation:
   # Alternative: `backend: autodata` emits AAR_AUTODATA=1, but also requires

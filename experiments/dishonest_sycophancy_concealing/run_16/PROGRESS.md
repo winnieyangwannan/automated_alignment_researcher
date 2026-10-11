@@ -254,3 +254,37 @@ Validation at 15:22 PT:
 ⚠ broader config test file: 15 passed, 8 unrelated failures because the
   user-approved Run 14 repository experiment deletion is present in the worktree
 ```
+
+<a id="run16-event-claude-progress-watchdog"></a>
+
+### 🛠️ 15:37 PT — FIX: Claude heartbeat-only stalls bounded
+
+The immutable one-chain attempt at
+`/checkpoint/ram/aar/winnieyangwn/run16_native_generation/canary_attempts/20261011T220338Z-26683f62b1ac`
+stopped making substantive progress after reading
+`scripts/validate_method_contract.py`. From 15:16 PT onward its transcript
+contained only blank Claude SDK `SystemMessage` heartbeats: it created no method,
+training job, adapter, submission, score, or finding. At the user's direction,
+pipeline job `1820191` and research job `1820223` were cancelled; neither a
+training job nor evaluator had started.
+
+The descendant source adds a Claude inactivity watchdog. The configured
+`agent.turn_timeout_seconds` now exports the generic
+`AAR_AGENT_TURN_TIMEOUT_SECONDS`; Claude resets the 20-minute watchdog on real
+SDK/tool progress but not on `SystemMessage` heartbeats. A timeout closes the SDK
+client and emits the terminal, non-retryable `claude_progress_timeout` failure.
+This bounds the observed failure mode without imposing a total duration limit
+on an otherwise active research lifecycle.
+
+The user explicitly authorized deleting only the stopped attempt above and
+launching a fresh one-chain canary after this fix is committed, synchronized,
+and validated. The deletion and new launch remain operational steps to perform
+after synchronization.
+
+Validation at 15:37 PT:
+
+```text
+✓ Ruff: all edited Python files passed
+✓ 24 focused agent, SDK-compatibility, and Run 16 tests passed
+✓ SystemMessage-only regression test proves cleanup and terminal timeout
+```

@@ -206,3 +206,53 @@ def test_base_agent_returns_typed_failure_and_hides_backend_detail(
     assert "heldout-row-17" not in str(result)
     assert "evidence" not in result.failure
     assert not (tmp_path / "secrets").exists()
+
+
+def test_claude_system_heartbeats_do_not_prevent_progress_timeout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("TEAM_DIR", str(tmp_path))
+    closed = False
+
+    class SystemMessage:
+        pass
+
+    class HeartbeatOnlyClient:
+        def __init__(self, *, options) -> None:
+            self.options = options
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args) -> None:
+            nonlocal closed
+            closed = True
+
+        async def query(self, _task: str) -> None:
+            return None
+
+        async def receive_response(self):
+            while True:
+                await asyncio.sleep(0.01)
+                yield SystemMessage()
+
+    agent = BaseAgent(
+        name="heartbeat-only",
+        allowed_tools=[],
+        workspace=tmp_path,
+        mcp_servers={},
+        progress_timeout_seconds=0.05,
+    )
+    with patch(
+        "aar.research_loop.agent.ClaudeSDKClient", HeartbeatOnlyClient
+    ):
+        result = asyncio.run(agent.execute("task"))
+
+    assert result.success is False
+    assert result.error == (
+        "Claude research session stopped after no substantive progress"
+    )
+    assert result.failure is not None
+    assert result.failure["error_code"] == "claude_progress_timeout"
+    assert result.failure["retryable"] is False
+    assert closed is True

@@ -37,6 +37,8 @@ evaluation:
 
 agent:
   backend: claude
+  # Blank SDK SystemMessage heartbeats do not reset this progress watchdog.
+  turn_timeout_seconds: 1200
 
 data_generation:
   # Run 16 is native-only. Any AutoData initialization is a stop condition.

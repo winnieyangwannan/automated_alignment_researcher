@@ -396,6 +396,7 @@ class BaseAgent:
         strict_mcp_config: Optional[bool] = None,
         plugins: Optional[List[Dict[str, str]]] = None,
         skills: Optional[List[str]] = None,
+        progress_timeout_seconds: Optional[float] = None,
     ):
         self.name = name
         self.allowed_tools = allowed_tools
@@ -411,6 +412,12 @@ class BaseAgent:
         self.strict_mcp_config = strict_mcp_config
         self.plugins = plugins
         self.skills = skills
+        if progress_timeout_seconds is None:
+            raw_timeout = os.getenv("AAR_AGENT_TURN_TIMEOUT_SECONDS", "").strip()
+            progress_timeout_seconds = float(raw_timeout) if raw_timeout else None
+        if progress_timeout_seconds is not None and progress_timeout_seconds <= 0:
+            raise ValueError("Claude progress timeout must be positive")
+        self.progress_timeout_seconds = progress_timeout_seconds
 
     def _build_options_dict(self) -> Dict[str, Any]:
         """Build SDK options, including restrictive knobs only when requested."""
@@ -467,9 +474,12 @@ class BaseAgent:
                     )
                     await asyncio.sleep(OVERLOADED_WAIT_SECONDS)
                     continue
+                progress_timeout = isinstance(e, TimeoutError)
                 error_code = (
                     "claude_model_overloaded"
                     if overloaded
+                    else "claude_progress_timeout"
+                    if progress_timeout
                     else "claude_agent_failed"
                 )
                 feedback = build_failure_feedback(
@@ -480,6 +490,8 @@ class BaseAgent:
                     public_summary=(
                         "Claude model service is overloaded"
                         if overloaded
+                        else "Claude research session stopped after no substantive progress"
+                        if progress_timeout
                         else "Claude research session failed"
                     ),
                 )
@@ -512,8 +524,34 @@ class BaseAgent:
                 await client.query(task)
                 result_message = None
 
-                async for message in client.receive_response():
+                response = client.receive_response().__aiter__()
+                last_progress = time.monotonic()
+                while True:
+                    timeout = None
+                    if self.progress_timeout_seconds is not None:
+                        timeout = max(
+                            0.0,
+                            self.progress_timeout_seconds
+                            - (time.monotonic() - last_progress),
+                        )
+                    try:
+                        message = await asyncio.wait_for(
+                            response.__anext__(), timeout=timeout
+                        )
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError as error:
+                        raise TimeoutError(
+                            "Claude research session produced no substantive "
+                            f"progress for {self.progress_timeout_seconds:g} seconds"
+                        ) from error
+
                     messages.append(message)
+
+                    # SystemMessage heartbeats prove that Claude Code is alive,
+                    # but do not show substantive research or tool progress.
+                    if type(message).__name__ != "SystemMessage":
+                        last_progress = time.monotonic()
 
                     # Log
                     log_msg = self._format_message(message)
@@ -643,7 +681,7 @@ class AutonomousAgentLoop:
         if self.backend == "claude":
             try:
                 self.mcp_servers["server-api-tools"] = create_server_api_tools_server()
-            except Exception as e:
+            except Exception:
                 print("[Init] Warning: server API tools unavailable")
             if not local_mode:
                 try:

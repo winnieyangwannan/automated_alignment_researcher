@@ -369,6 +369,7 @@ def load_run_config(path: Path) -> dict[str, str]:
             raise ValueError("agent.turn_timeout_seconds must be an integer")
         if not 1 <= timeout <= 86400:
             raise ValueError("agent.turn_timeout_seconds must be between 1 and 86400")
+        environment["AAR_AGENT_TURN_TIMEOUT_SECONDS"] = str(timeout)
         environment["AAR_KIMI_TURN_TIMEOUT_SECONDS"] = str(timeout)
     if "preflight_timeout_seconds" in agent:
         environment["AAR_KIMI_PREFLIGHT_TIMEOUT_SECONDS"] = str(
