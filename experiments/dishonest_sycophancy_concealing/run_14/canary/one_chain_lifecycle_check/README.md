@@ -18,7 +18,9 @@ loading or producing any AutoData component or artifact.
 Recorded: 2026-10-10 17:02 PT
 
 Launch one `canary` seed with one research session, a one-step PEFT training
-job, and one one-GPU evaluator for exactly two `verbalized_ece` items.
+job, and one one-GPU evaluator for exactly two `verbalized_ece` items. The
+evaluator starts on demand only after the smoke proof passes and the pipeline
+stages that exact adapter into the submission queue.
 
 ## Model and execution roles
 

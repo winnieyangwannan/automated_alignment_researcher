@@ -30,7 +30,8 @@ evaluation:
   gpus_per_worker: 1
   time_limit: 01:00:00
   idle_seconds: 120
-  on_demand: false
+  # Start only after the one-step adapter exists and has been staged.
+  on_demand: true
 
 agent:
   backend: kimi

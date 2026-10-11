@@ -15,3 +15,12 @@ Append-only operational record. All timestamps use Pacific Time (`PT`).
   Jobs: none
   Evidence: 39 tests plus 5 subtests, ShellCheck, Bash syntax, Python compilation
   Decision: commit and synchronize before launching this canary
+
+- 2026-10-10 17:19 PT — Pre-launch audit found and fixed the smoke-to-evaluator handoff.
+  Source commit: pending
+  Attempt: not created
+  Jobs: none
+  Evidence: the one-step training path deliberately did not stage its adapter;
+  Run 14 now waits for the verified smoke proof, stages that exact adapter, and
+  starts the evaluator on demand
+  Decision: revalidate, commit, synchronize, then launch

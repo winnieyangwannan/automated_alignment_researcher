@@ -75,7 +75,12 @@ export AAR_WRITE_TRAIN_FAILURE_MARKER=1 AAR_TRAIN_MEM=128G AAR_REQUIRE_TRAIN_REC
 export AAR_PRETRAIN_SMOKE=1
 export AAR_REQUIRE_SUCCESSFUL_ITERATIONS=1 AAR_REQUIRE_PHASE_TIMINGS=1
 export OVERLOADED_MAX_RETRIES=0 AAR_FUNCTIONAL_SMOKE=1 AAR_MULTIDIM_SCORING_CONFIRMED=1
-export AAR_START_EVAL_WORKER=1 AAR_EVAL_GPU_CAP="${AAR_EVAL_GPUS:?}"
+export AAR_EVAL_GPU_CAP="${AAR_EVAL_GPUS:?}"
+if [ "${AAR_EVAL_ON_DEMAND:-0}" = 1 ]; then
+  export AAR_START_EVAL_WORKER=0
+else
+  export AAR_START_EVAL_WORKER=1
+fi
 export AAR_CHAIN_SANITIZE_ENV=1 AAR_RUNTIME_ENV_DISABLE_FILE=1
 export AAR_RESEARCH_ENV_ISOLATION=0 AAR_HIDE_EVAL_CONFIG=1
 
@@ -97,25 +102,83 @@ cp -- "${REUSED_BASELINE}" "${AAR_BASELINE_OVERRIDES}"
 bash "${REPO}/scripts/publish_holdout.sh"
 
 read -r -a seeds <<< "${AAR_RESEARCH_SEEDS:?missing research seeds}"
+if [ "${AAR_EVAL_ON_DEMAND:-0}" = 1 ]; then
+  [ "${#seeds[@]}" -eq 1 ] || {
+    echo "on-demand lifecycle evaluation requires exactly one chain" >&2
+    exit 2
+  }
+  [ "${AAR_METHOD_SMOKE:-0}" = 1 ] || {
+    echo "on-demand lifecycle evaluation requires one-step training mode" >&2
+    exit 2
+  }
+fi
 children="${ATTEMPT}/metadata/children.tsv"
 : > "${children}"
+chain_ids=()
+evaluator_ids=()
 for seed in "${seeds[@]}"; do
   export AAR_TEAM_ID="run14-gemma4-31b-kimi26-${seed}-${SLURM_JOB_ID}"
   launch_log="${ATTEMPT}/metadata/launch-${seed}.txt"
   bash "${REPO}/scripts/launch_team.sh" "${seed}" \
     "${AAR_MAX_ITERATIONS_PER_CHAIN}" "${AAR_CHAIN_HOURS}" | tee "${launch_log}"
-  evaluator="$(awk '/^\[launch\] evaluator 1\/1 -> job [0-9]+$/{print $NF}' "${launch_log}")"
   chain="$(awk -v seed="${seed}" '$0 ~ "^\\[team\\] chain " seed " -> job [0-9]+$"{print $NF}' "${launch_log}")"
-  if [ -z "${evaluator}" ] || [ -z "${chain}" ]; then
-    echo "missing child jobs for ${seed}" >&2
+  if [ -z "${chain}" ]; then
+    echo "missing research-chain job for ${seed}" >&2
     exit 1
+  fi
+  chain_ids+=("${chain}")
+  evaluator="-"
+  if [ "${AAR_START_EVAL_WORKER}" = 1 ]; then
+    evaluator="$(awk '/^\[launch\] evaluator 1\/1 -> job [0-9]+$/{print $NF}' "${launch_log}")"
+    [ -n "${evaluator}" ] || { echo "missing evaluator job for ${seed}" >&2; exit 1; }
+    evaluator_ids+=("${evaluator}")
   fi
   printf '%s\t%s\t%s\n' "${seed}" "${evaluator}" "${chain}" | tee -a "${children}"
 done
 
 [ "$(wc -l < "${children}")" -eq "${#seeds[@]}" ] || { echo "incomplete child manifest" >&2; exit 1; }
-[ "$(cut -f2 "${children}" | sort -u | wc -l)" -eq "${#seeds[@]}" ] || { echo "duplicate evaluator IDs" >&2; exit 1; }
 [ "$(cut -f3 "${children}" | sort -u | wc -l)" -eq "${#seeds[@]}" ] || { echo "duplicate chain IDs" >&2; exit 1; }
+if [ "${AAR_EVAL_ON_DEMAND:-0}" = 1 ]; then
+  {
+    printf 'evaluator_jobs=\n'
+    printf 'research_chain_jobs=%s\n' "${chain_ids[*]}"
+    printf 'research_seeds=%s\n' "${AAR_RESEARCH_SEEDS}"
+    printf 'max_iterations_per_chain=%s\n' "${AAR_MAX_ITERATIONS_PER_CHAIN}"
+  } > "${ATTEMPT}/metadata/children.env"
+  echo "[run14] waiting for the generated method's real-GPU one-step smoke"
+  "${HARNESS_PY}" \
+    "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/canary/monitor_method_smoke.py" \
+    "${ATTEMPT}" --expected-chains 1 --timeout-seconds 6900 --poll-seconds 10
+  smoke_proof="${ATTEMPT}/metadata/method_smoke_passed.json"
+  run_id="$(jq -r '.run_id' "${smoke_proof}")"
+  adapter_path="$(jq -r '.adapter_path' "${smoke_proof}")"
+  export TEAM_DIR="${ATTEMPT}/aar_teams/${AAR_TEAM_ID}"
+  export SUBMISSIONS_DIR="${TEAM_DIR}/submissions" SCORES_DIR="${TEAM_DIR}/scores"
+  "${HARNESS_PY}" -c \
+    'import sys; from aar.transport import put_model; print(put_model(sys.argv[1], sys.argv[2]))' \
+    "${adapter_path}" "${run_id}"
+  export AAR_EVAL_RETRY_FAILED=1
+  export EVAL_VLLM_MAX_NUM_SEQS=8 EVAL_VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  eval_launch_log="${ATTEMPT}/metadata/launch-on-demand-evaluator.txt"
+  "${REPO}/scripts/launch_eval_worker.sh" "${SUITE_NAME}" \
+    "${AAR_EVAL_IDLE_SECONDS}" "${AAR_EVAL_WORKERS}" | tee "${eval_launch_log}"
+  evaluator="$(awk '/^\[launch\] evaluator 1\/1 -> job [0-9]+$/{print $NF}' "${eval_launch_log}")"
+  [ -n "${evaluator}" ] || { echo "on-demand evaluator job is missing" >&2; exit 1; }
+  evaluator_ids=("${evaluator}")
+  printf '%s\t%s\t%s\n' "${seeds[0]}" "${evaluator}" "${chain_ids[0]}" > "${children}"
+  {
+    printf 'evaluator_jobs=%s\n' "${evaluator}"
+    printf 'research_chain_jobs=%s\n' "${chain_ids[*]}"
+    printf 'research_seeds=%s\n' "${AAR_RESEARCH_SEEDS}"
+    printf 'max_iterations_per_chain=%s\n' "${AAR_MAX_ITERATIONS_PER_CHAIN}"
+    printf 'method_smoke_passed=1\non_demand_evaluator=1\n'
+  } > "${ATTEMPT}/metadata/children.env"
+else
+  [ "$(cut -f2 "${children}" | sort -u | wc -l)" -eq "${#seeds[@]}" ] || {
+    echo "duplicate evaluator IDs" >&2
+    exit 1
+  }
+fi
 printf 'research_backend=kimi\nresearch_model=Kimi-K2.6\ndata_generation_backend=native\nautodata=0\nchains=%s\ntarget_score_result_pairs=%s\nseeds=%s\n' \
   "${#seeds[@]}" "${AAR_TARGET_SUCCESSFUL_ITERATIONS}" "${AAR_RESEARCH_SEEDS}" \
   > "${ATTEMPT}/metadata/full-launch.env"

@@ -217,3 +217,26 @@ def test_run14_launch_path_fails_closed_without_autodata() -> None:
         "AAR_KIMI_SERVE_DEPLOYMENT=steerability_8-kimi26"
     ) >= 2
     assert "AAR_KIMI_SERVE_DEPLOYMENT=aar_8-kimi26" not in combined
+
+
+def test_run14_canary_stages_smoke_adapter_before_on_demand_evaluation() -> None:
+    config = yaml.safe_load(
+        (
+            RUN14
+            / "canary"
+            / "one_chain_lifecycle_check"
+            / "config"
+            / "run.yaml"
+        ).read_text()
+    )
+    launcher = (RUN14 / "launch" / "submit_full.sh").read_text()
+    pipeline = (RUN14 / "slurm" / "pipeline.sbatch").read_text()
+
+    assert config["training"]["mode"] == "one_step_gpu_preflight"
+    assert config["evaluation"]["on_demand"] is True
+    assert 'pipeline_time=04:00:00' in launcher
+    assert "monitor_method_smoke.py" in pipeline
+    assert "from aar.transport import put_model" in pipeline
+    assert pipeline.index("monitor_method_smoke.py") < pipeline.index(
+        "from aar.transport import put_model"
+    ) < pipeline.index("launch-on-demand-evaluator.txt")

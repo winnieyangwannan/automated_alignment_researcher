@@ -94,7 +94,10 @@ export AAR_BASELINE_GIT_COMMIT="${commit}" AAR_REUSED_BASELINE="${REUSED_BASELIN
 export AAR_RECOVERED_BASELINE_SOURCES="${RECOVERED_SOURCES}"
 export AAR_MONITOR_MODEL_API_KEY="${MODEL_API_KEY}"
 export AAR_RUN14_MODE="${MODE}"
-job="$(sbatch --parsable --output="${attempt}/logs/pipeline-%j.out" --export=ALL \
+pipeline_time=02:00:00
+[ "${MODE}" != canary ] || pipeline_time=04:00:00
+job="$(sbatch --parsable --time="${pipeline_time}" \
+  --output="${attempt}/logs/pipeline-%j.out" --export=ALL \
   "${RUN14_DIR}/slurm/pipeline.sbatch")"
 
 submitted_at_pt="$(TZ=America/Los_Angeles date '+%Y-%m-%d %H:%M:%S %Z')"
