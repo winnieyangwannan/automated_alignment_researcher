@@ -5,8 +5,8 @@ prompts, target responses, credentials, or held-out content belong here.
 
 ## Attempt identity
 
-- Status at 2026-10-11 02:09 PT: immutable-source launcher `1812990` queued;
-  no child jobs yet.
+- Status at 2026-10-11 02:10 PT: launcher passed; research `1813007` queued;
+  controller `1813008` dependency-held; evaluator absent.
 - Run ID: `run12-canary2-trial6`.
 - Native AutoData revision required:
   `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`.
@@ -14,6 +14,8 @@ prompts, target responses, credentials, or held-out content belong here.
 - Trial 6 attempt root:
   `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T090839Z-fb886848d584`.
 - Trial 6 launcher: `1812990`, initially `PENDING`.
+- Research child: `1813007`.
+- Controller: `1813008`.
 - Evaluator jobs: 0, as required.
 
 ## Current lifecycle
@@ -55,6 +57,8 @@ prompts, target responses, credentials, or held-out content belong here.
   and three-endpoint live gates passed.
 - 02:09 PT: fresh Kimi Bash-plus-MCP proof passed; Trial 6 launcher `1812990`
   was submitted and initially queued.
+- 02:10:00–02:10:21 PT: launcher `1812990` completed `0:0`; child manifest
+  recorded research `1813007`, controller `1813008`, and no evaluator.
 
 ## Work and quality counters
 
@@ -68,5 +72,5 @@ prompts, target responses, credentials, or held-out content belong here.
 
 ## Unmeasured stages
 
-Downstream Trial 6 stages remain unmeasured until launcher `1812990` starts and
-records child jobs.
+Research is queued for Slurm capacity. Downstream AutoData and training stages
+remain unmeasured.

@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: launched from immutable source; launcher queued
+- Status: launcher passed; research queued; controller dependency-held
 - Created: 2026-10-11 01:59 PT
-- Last updated: 2026-10-11 02:09 PT
+- Last updated: 2026-10-11 02:10 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -79,8 +79,15 @@ and retained the `training_smoke`/no-evaluator contract.
 - Attempt:
   `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T090839Z-fb886848d584`
 - Launcher: `1812990`, initially `PENDING`
+- Research child: `1813007`, initially `PENDING`
+- Controller: `1813008`, dependency-held behind research
+- Evaluator: none (`-` in the child manifest)
 - Source manifest digest:
   `sha256:caf22733a7d574acdb22305dfc1e235e1ddd2c17ff3422c8025565852e262d96`
+
+Launcher `1812990` ran from 02:10:00 through 02:10:21 PT and completed
+`0:0`. This is the first scheduled proof that both the immutable source and
+trusted external runtime contracts pass together.
 
 ### Mandatory pre-launch gates
 

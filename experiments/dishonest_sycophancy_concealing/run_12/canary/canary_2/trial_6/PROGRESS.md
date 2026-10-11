@@ -156,3 +156,19 @@ The committed wrapper passed a fresh Kimi Bash-plus-MCP proof and created:
 No child existed at the initial snapshot. A dedicated read-only monitor is
 tracking launcher gates, child creation, lifecycle progress, and the mandatory
 absence of evaluator jobs.
+
+### ✅ 02:10 PT — PASS: scheduled launcher crossed both repaired boundaries
+
+Launcher `1812990` ran from 02:10:00 through 02:10:21 PT and completed with
+exit `0:0`. It passed the attempt-local AAR/native source gates, preserved the
+external ARM64 interpreter through all environment sources, validated baseline
+provenance, skipped evaluator holdout publication, and emitted the child
+manifest:
+
+- research: `1813007`, initially queued;
+- controller: `1813008`, dependency-held behind research;
+- evaluator: `-` (absent, as required).
+
+No AutoData execution or training job existed at this snapshot. Research is
+waiting for Slurm capacity, not an application-side registration or lifecycle
+transition.
