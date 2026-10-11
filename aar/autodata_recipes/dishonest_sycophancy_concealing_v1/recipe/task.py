@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import email.utils
 import hashlib
 import json
 import os
@@ -12,6 +13,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -378,9 +380,32 @@ def _post_json(
                 _increment_request_telemetry(role, "timeouts")
             if isinstance(error, ConnectionResetError) or "reset" in message:
                 _increment_request_telemetry(role, "connection_resets")
-            if attempt == attempts - 1:
+            retryable = isinstance(error, urllib.error.HTTPError) and error.code in {
+                429,
+                500,
+                502,
+                503,
+                504,
+            }
+            if not retryable or attempt == attempts - 1:
                 break
-            time.sleep(2**attempt)
+            retry_after = 0.0
+            raw_retry_after = error.headers.get("Retry-After") if error.headers else None
+            if raw_retry_after:
+                try:
+                    retry_after = max(0.0, float(raw_retry_after))
+                except ValueError:
+                    try:
+                        parsed = email.utils.parsedate_to_datetime(raw_retry_after)
+                        if parsed.tzinfo is None:
+                            parsed = parsed.replace(tzinfo=timezone.utc)
+                        retry_after = max(
+                            0.0, (parsed - datetime.now(timezone.utc)).total_seconds()
+                        )
+                    except (TypeError, ValueError, OverflowError):
+                        retry_after = 0.0
+            delay = min(60.0, float(2**attempt))
+            time.sleep(min(60.0, max(retry_after, delay)))
     raise RuntimeError(
         f"model request failed after {attempts} bounded attempts: {last}"
     ) from last
@@ -919,6 +944,55 @@ def _judge_contract(
     }
 
 
+def _judge_response_schema(
+    *,
+    expected_dimensions: set[str],
+    target_required: bool,
+    allowed_failure_modes: set[str],
+) -> dict[str, Any]:
+    """Return the canonical server-enforced schema accepted by `_judge_contract`."""
+    properties: dict[str, Any] = {
+        "dimensions": {
+            "type": "object",
+            "properties": {
+                name: {"type": "integer", "enum": [0, 1, 2]}
+                for name in sorted(expected_dimensions)
+            },
+            "required": sorted(expected_dimensions),
+            "additionalProperties": False,
+        },
+        # Responses structured output supports a strict structural subset of
+        # JSON Schema. Non-empty strings and unique failure modes remain
+        # enforced by `_judge_contract` after decoding.
+        "reason": {"type": "string"},
+    }
+    required = ["dimensions", "reason"]
+    if target_required:
+        properties["target_behavior"] = {
+            "type": "object",
+            "properties": {
+                "score": {"type": "integer", "enum": [0, 1, 2]},
+                "failure_modes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": sorted(allowed_failure_modes),
+                    },
+                },
+                "reason": {"type": "string"},
+            },
+            "required": ["score", "failure_modes", "reason"],
+            "additionalProperties": False,
+        }
+        required.append("target_behavior")
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
 def _judge(
     row: dict[str, str],
     primary_axis: str,
@@ -980,11 +1054,28 @@ def _judge(
         + "\n"
         + json.dumps(rubric, sort_keys=True),
         "reasoning": {"effort": "low"},
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "aar_judge_verdict",
+                "schema": _judge_response_schema(
+                    expected_dimensions=set(rubric["rubric"]),
+                    target_required=target is not None,
+                    allowed_failure_modes=set(
+                        judge_rubric["target_probe"]["allowed_failure_modes"]
+                    ),
+                ),
+                "strict": True,
+            }
+        },
         "max_output_tokens": _bounded_positive_int_env(
             "AUTODATA_JUDGE_MAX_OUTPUT", "65536", maximum=65536
         ),
     }
-    if _required_env("AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE") != "prompt_json":
+    if (
+        _required_env("AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE")
+        != "responses_json_schema"
+    ):
         raise RuntimeError("unsupported trusted judge structured-output mode")
     maximum_attempts = _bounded_positive_int_env(
         "AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS",

@@ -27,7 +27,7 @@ RUN_SCHEMA = "aar.autodata.run-config/v1"
 RESOLVED_SCHEMA = "aar.autodata.resolved-run-config/v1"
 DEFAULT_TARGET_FEEDBACK_MAX_ATTEMPTS = 5
 DEFAULT_JUDGE_FORMAT_MAX_ATTEMPTS = 2
-JUDGE_STRUCTURED_OUTPUT_MODES = {"prompt_json"}
+JUDGE_STRUCTURED_OUTPUT_MODES = {"responses_json_schema"}
 GENERATOR_PROTOCOLS = {"openai_chat_completions", "model_api_responses"}
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 
@@ -502,7 +502,7 @@ def load_run_config(path: Path) -> dict[str, Any]:
             f"unexpected={sorted(unexpected_generation)}"
         )
     judge_structured_output_mode = _identifier(
-        generation.get("judge_structured_output_mode", "prompt_json"),
+        generation.get("judge_structured_output_mode", "responses_json_schema"),
         "generation.judge_structured_output_mode",
     )
     if judge_structured_output_mode not in JUDGE_STRUCTURED_OUTPUT_MODES:

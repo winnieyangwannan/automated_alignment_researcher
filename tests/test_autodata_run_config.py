@@ -100,7 +100,7 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
     assert policy["required_solve_env"]["AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS"] == "2"
     assert (
         policy["required_solve_env"]["AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE"]
-        == "prompt_json"
+        == "responses_json_schema"
     )
     assert contract["target"]["required"] is True
     assert contract["required_rows"] == 1000
@@ -117,7 +117,10 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
     assert "export AAR_AUTODATA_META_MAX_ITERATIONS=3\n" in runtime
     assert "export AAR_AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS=5\n" in runtime
     assert "export AAR_AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS=2\n" in runtime
-    assert "export AAR_AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE=prompt_json\n" in runtime
+    assert (
+        "export AAR_AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE=responses_json_schema\n"
+        in runtime
+    )
     assert "export AAR_AUTODATA_AUTHORING_MAX_WALL_SECONDS=1800\n" in runtime
     assert "export AAR_AUTODATA_PRODUCTION_ROWS=1000\n" in runtime
     assert "export AAR_AUTODATA_BOOTSTRAP_CANARY_STOP_AFTER=production\n" in runtime
@@ -319,7 +322,7 @@ def test_inspect_reports_static_yaml_values() -> None:
         "model_request_max_attempts": 3,
         "target_feedback_max_attempts": 5,
         "judge_format_max_attempts": 2,
-        "judge_structured_output_mode": "prompt_json",
+        "judge_structured_output_mode": "responses_json_schema",
         "authoring_max_wall_seconds": 1800,
         "researcher_deployment": "aar_8-kimi26",
         "generator_deployment": "autodata_8-kimi26",

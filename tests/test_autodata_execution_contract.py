@@ -36,7 +36,7 @@ def _policy() -> dict[str, object]:
             "AUTODATA_TARGET_ENABLED": "1",
             "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "1",
             "AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS": "2",
-            "AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE": "prompt_json",
+            "AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE": "responses_json_schema",
         },
     }
 
@@ -106,7 +106,7 @@ def test_operator_settings_come_from_resolved_config() -> None:
             "generation": {
                 "target_feedback_max_attempts": 5,
                 "judge_format_max_attempts": 2,
-                "judge_structured_output_mode": "prompt_json",
+                "judge_structured_output_mode": "responses_json_schema",
             },
             "recipe_root": ("aar/autodata_recipes/dishonest_sycophancy_concealing_v1"),
             "stage_timing": {"native_schema_wall_seconds": 604800},

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -32,6 +35,104 @@ def test_v1_recipe_is_independent_and_selectable() -> None:
     assert (
         "recipe_root: " "aar/autodata_recipes/dishonest_sycophancy_concealing_v1"
     ) in readme
+
+
+def test_recipe_variants_share_one_canonical_judge_schema() -> None:
+    schemas = []
+    for recipe_name in (
+        "dishonest_sycophancy_concealing",
+        "dishonest_sycophancy_concealing_v1",
+    ):
+        task = _load_module(
+            f"aar_autodata_{recipe_name}_schema",
+            ROOT / "aar" / "autodata_recipes" / recipe_name / "recipe" / "task.py",
+        )
+        rubric = task._load_judge_rubric()
+        schemas.append(
+            task._judge_response_schema(
+                expected_dimensions=set(rubric["dimensions"]),
+                target_required=True,
+                allowed_failure_modes=set(
+                    rubric["target_probe"]["allowed_failure_modes"]
+                ),
+            )
+        )
+
+    assert schemas[0] == schemas[1]
+
+
+@pytest.mark.parametrize(
+    "recipe_name",
+    ["dishonest_sycophancy_concealing", "dishonest_sycophancy_concealing_v1"],
+)
+@pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
+def test_transient_http_errors_retry_with_retry_after(
+    recipe_name: str, status: int
+) -> None:
+    task = _load_module(
+        f"aar_autodata_{recipe_name}_{status}_retry",
+        ROOT / "aar" / "autodata_recipes" / recipe_name / "recipe" / "task.py",
+    )
+    transient = task.urllib.error.HTTPError(
+        "https://judge.invalid", status, "transient", {"Retry-After": "999"}, None
+    )
+    with (
+        patch.dict(
+            os.environ,
+            {"AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "2"},
+            clear=True,
+        ),
+        patch.object(
+            task.urllib.request,
+            "urlopen",
+            side_effect=[transient, io.BytesIO(b"{}")],
+        ) as urlopen,
+        patch.object(task.time, "sleep") as sleep,
+    ):
+        assert task._post_json(
+            "https://judge.invalid",
+            {},
+            role="judge",
+            headers={},
+            timeout=10,
+        ) == {}
+
+    assert urlopen.call_count == 2
+    sleep.assert_called_once_with(60.0)
+
+
+@pytest.mark.parametrize(
+    "recipe_name",
+    ["dishonest_sycophancy_concealing", "dishonest_sycophancy_concealing_v1"],
+)
+def test_nonretryable_http_400_is_terminal(recipe_name: str) -> None:
+    task = _load_module(
+        f"aar_autodata_{recipe_name}_400_terminal",
+        ROOT / "aar" / "autodata_recipes" / recipe_name / "recipe" / "task.py",
+    )
+    terminal = task.urllib.error.HTTPError(
+        "https://judge.invalid", 400, "bad request", {}, None
+    )
+    with (
+        patch.dict(
+            os.environ,
+            {"AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "5"},
+            clear=True,
+        ),
+        patch.object(task.urllib.request, "urlopen", side_effect=terminal) as urlopen,
+        patch.object(task.time, "sleep") as sleep,
+        pytest.raises(RuntimeError, match="5 bounded attempts"),
+    ):
+        task._post_json(
+            "https://judge.invalid",
+            {},
+            role="judge",
+            headers={},
+            timeout=10,
+        )
+
+    assert urlopen.call_count == 1
+    sleep.assert_not_called()
 
 
 def test_v1_recipe_check_and_comparator_contract() -> None:
@@ -388,7 +489,7 @@ def test_v1_judge_repairs_only_its_wire_contract_and_retains_usage(
         "AUTODATA_JUDGE_MAX_INPUT": "1000000",
         "AUTODATA_JUDGE_MAX_OUTPUT": "65536",
         "AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS": "2",
-        "AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE": "prompt_json",
+        "AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE": "responses_json_schema",
         "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "1",
         "MODEL_API_KEY": "test-only",
     }
@@ -443,4 +544,17 @@ def test_v1_judge_repairs_only_its_wire_contract_and_retains_usage(
     assert "invalid_json" in str(calls[1]["input"])
     assert malformed not in str(calls[1]["input"])
     assert "response_format" not in calls[0]
-    assert "text" not in calls[0]
+    response_format = calls[0]["text"]["format"]
+    assert response_format == {
+        "type": "json_schema",
+        "name": "aar_judge_verdict",
+        "schema": task._judge_response_schema(
+            expected_dimensions=set(rubric["dimensions"]),
+            target_required=True,
+            allowed_failure_modes=set(
+                rubric["target_probe"]["allowed_failure_modes"]
+            ),
+        ),
+        "strict": True,
+    }
+    assert calls[1]["text"]["format"] == response_format

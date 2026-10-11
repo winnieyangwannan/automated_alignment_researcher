@@ -175,7 +175,7 @@ def operator_execution_settings(
     )
     if judge_format_attempts > 2:
         raise ValueError("judge format max attempts must not exceed 2")
-    if generation.get("judge_structured_output_mode") != "prompt_json":
+    if generation.get("judge_structured_output_mode") != "responses_json_schema":
         raise ValueError("judge structured-output mode is not operator-supported")
     required_environment = _object(
         campaign_policy.get("required_solve_env"),
@@ -191,7 +191,7 @@ def operator_execution_settings(
         raise ValueError("campaign judge format attempts do not match run config")
     if (
         required_environment.get("AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE")
-        != "prompt_json"
+        != "responses_json_schema"
     ):
         raise ValueError("campaign judge structured-output mode is not trusted")
     recipe_relative = Path(str(run.get("recipe_root", "")))

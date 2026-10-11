@@ -142,7 +142,7 @@ def build_policy(
         "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": str(profile.model_request_max_attempts),
         "AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS": "5",
         "AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS": "2",
-        "AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE": "prompt_json",
+        "AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE": "responses_json_schema",
         **target_environment,
     }
     return {

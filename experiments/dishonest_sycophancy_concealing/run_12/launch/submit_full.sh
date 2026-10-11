@@ -14,7 +14,7 @@ case "${EXPERIMENT_RUN_ID}" in
   run12|run17) ;;
   *) echo "unsupported AutoData experiment run ID: ${EXPERIMENT_RUN_ID}" >&2; exit 2 ;;
 esac
-AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata-worktrees/judge-repair-28a9c22}"
+AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/checkpoint/ram/${USER:?}/source-worktrees/autodata-51c18fd}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
 SECRET_ENV="$(realpath -e -- "${AAR_RUN12_SECRET_ENV:-${REPO}/.env}")"
 RECOVERY_BUNDLE="$(realpath -e -- "${AAR_RUN12_RECOVERY_BUNDLE:-/storage/home/${USER}/aar-recovery/run7_20261007T004406Z-1b3303d02821/baseline_salvage}")"
@@ -23,7 +23,7 @@ RECOVERED_SOURCES="${RECOVERY_BUNDLE}/source_artifacts"
 SV="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
 # Preserves provider provenance and enforces atomic, terminal budget handling.
-REQUIRED_AUTODATA_SHA=28a9c22125dc0cf101ebabc1b22408b4e974678a
+REQUIRED_AUTODATA_SHA=51c18fdb0eaa69d8ad66a1805e9c08a507c5fbb1
 CANONICAL_RUN_CONFIG="$(realpath -e -- "${RUN12_DIR}/config/autodata_run.yaml")"
 RUN_CONFIG="$(realpath -e -- "${AAR_RUN12_AUTODATA_RUN_CONFIG:-${CANONICAL_RUN_CONFIG}}")"
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "Run 12 requires branch autodata" >&2; exit 2; }
