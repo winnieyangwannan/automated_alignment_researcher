@@ -42,3 +42,14 @@ All displayed timestamps use Pacific Time (`PT`).
 - Broader AutoData/Run 12 validation: 326 tests plus 6 subtests passed; one
   unrelated test failed because user-owned dirty state deletes its Run 13
   fixture tree.
+
+## Live attempt
+
+- Attempt root:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T114652Z-4511d687af23`.
+- Immutable AAR source: `4511d687af23d7b52aa473b17bf3237451175e7f`.
+- Immutable native source: `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`.
+- Launcher `1814907`: 04:49:25–04:50:01 PT, 36s, `COMPLETED 0:0`.
+- Research `1814992`: submitted 04:49:48 PT; pending allocation at 04:50 PT.
+- Controller `1814993`: submitted 04:49:48 PT; dependency-gated.
+- Evaluator job: absent.

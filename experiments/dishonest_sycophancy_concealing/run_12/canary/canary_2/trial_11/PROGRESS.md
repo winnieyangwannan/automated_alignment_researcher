@@ -60,3 +60,27 @@ gate passes 326 tests plus 6 subtests; its sole failure is unrelated user-owned
 dirty state where the Run 13 fixture files are deleted. An independent read-only
 review found no remaining normal-path launch blocker; no Trial 11 job or durable
 attempt exists yet.
+
+### ⏳ 04:50 PT — RUNNING: immutable Trial 11 child chain launched
+
+All committed preflight gates passed. Launcher `1814907` completed `0:0` after
+emitting distinct child jobs:
+
+```text
+✓ Immutable AAR source 4511d687af23
+✓ Immutable native source d6e5619bab0b
+✓ Launcher 1814907 completed 0:0
+✓ Research job 1814992 created
+✓ Controller job 1814993 dependency-gated behind research
+✓ Evaluator job absent
+⏳ Research allocation and workspace authoring
+○ Canonical meta baseline and three iterations
+○ Production and verified handoff
+○ One-step training smoke
+```
+
+Attempt root:
+`/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T114652Z-4511d687af23`.
+Team: `run12-gemma4-31b-kimi26-alpha-1814907`. At this update research job
+`1814992` is pending allocation and controller `1814993` is correctly pending on
+its dependency. The separate monitor is active; evaluator count remains zero.
