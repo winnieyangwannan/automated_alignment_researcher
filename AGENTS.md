@@ -32,20 +32,18 @@ Copy `.env.example` to `.env`; never commit credentials. Preserve the research/e
 
 ### Devserver and FAIR HPC workflow
 
-- Work on branch `uv` in both environments. The authoritative editing and source-control worktree is
-  `/home/winnieyangwn/aar-worktrees/uv` on the devserver. The execution worktree is
-  `/storage/home/winnieyangwn/aar-worktrees/uv` on FAIR HPC.
 - Use `fair-cw-use2-1` as the default HPC cluster for this project unless the user specifies another cluster.
   - you can also use `fair-cw-use2-3` if I tell you to use cw-2-3.
-- Before editing or running, verify the checkout path and confirm `git branch --show-current` prints `uv`. Do not
+- Before editing or running, verify the checkout path and current branch. Do not
   edit, stage, or commit repository work in the `main` worktree unless the user explicitly requests it; it may contain
   unrelated work in progress.
-- Make focused changes and commits in the devserver `uv` worktree, then synchronize the exact commit to the HPC `uv`
-  worktree through direct Git-over-SSH using the `git-sync-from-dev-to-hpc` skill. Require a fast-forward and preserve
-  all HPC-local ignored state. Do not assume the filesystems are shared, copy working-tree files directly, or push to
-  GitHub unless the user explicitly requests it.
-- Record experiment decisions and conversation notes under `experiments/<YYYYMMDD>/` in the devserver `uv` worktree,
-  commit them on `uv`, and synchronize them to the HPC `uv` worktree. Do not maintain the canonical log on `main`.
+- Make focused changes and commits in the selected devserver worktree, then synchronize the exact commit to the
+  matching HPC worktree through direct Git-over-SSH using the `git-sync-from-dev-to-hpc` skill. Require a fast-forward
+  and preserve all HPC-local ignored state. Do not assume the filesystems are shared, copy working-tree files directly,
+  or push to GitHub unless the user explicitly requests it.
+- Record experiment decisions and conversation notes under `experiments/<YYYYMMDD>/` in the selected devserver
+  worktree, commit them on its current branch, and synchronize them to the matching HPC worktree. Do not maintain the
+  canonical log on `main`.
 - Maintain a separate Python environment on each cluster architecture. Do not copy environments between the
   x86_64 devserver and ARM64 GB300 clusters.
 - When a project's environment includes GPU or CUDA dependencies, first obtain a Slurm allocation on the intended
@@ -68,10 +66,10 @@ Copy `.env.example` to `.env`; never commit credentials. Preserve the research/e
   appropriate to the data classification.
 - Do not delete or overwrite retained datasets, checkpoints, logs, or run results without explicit user approval.
 
-### HPC `uv` execution worktree
+### HPC execution worktree
 
-- The HPC branch is `uv`, checked out at `/storage/home/winnieyangwn/aar-worktrees/uv` on `fair-cw-use2-1`.
-- Before working there, run `git branch --show-current` and confirm it prints `uv`, then run
+- Use the HPC execution worktree matching the explicitly selected devserver worktree and branch.
+- Before working there, run `git branch --show-current` and confirm it prints the expected branch, then run
   `source .venv/bin/activate` and export `PYTHONPATH="$PWD"`, `AAR_BENCHMARK_DOCS="$PWD/benchmark_docs"`, and
   `BENCHMARK_DOCS_DIR="$PWD/benchmark_docs"`.
 - The ARM64 `uv` executable is `/storage/home/winnieyangwn/envs/aar-uv-bootstrap/bin/uv`. Run locked environment
@@ -86,8 +84,8 @@ Copy `.env.example` to `.env`; never commit credentials. Preserve the research/e
 ### Gemma AAR evaluation through vLLM
 
 - This section applies only when the user explicitly requests the `multi_vllm` workflow; that request overrides the
-  default `uv` branch/worktree locations above. Use the isolated devserver branch/worktree selected by the user and
-  `/storage/home/winnieyangwn/aar-worktrees/multi_vllm` on HPC. Never alter the active HPC `uv` worktree or its jobs.
+  selected branch/worktree locations above. Use the isolated devserver branch/worktree selected by the user and
+  `/storage/home/winnieyangwn/aar-worktrees/multi_vllm` on HPC. Never alter unrelated HPC worktrees or their jobs.
 - Before launching, read `experiments/dishonest_sycophancy_concealing/run_5/README.md` and use its committed submitter.
   Do not reconstruct the launch from remembered `sbatch` arguments.
 - Run heterogeneous Gemma 4 only in the validated vLLM 0.25.1 container with language-model-only mode. vLLM 0.20.1
