@@ -34,6 +34,38 @@ eval "$("${REPO}/.venv/bin/python" "${REPO}/scripts/load_aar_run_config.py" "${R
 while IFS= read -r name; do unset "${name}"; done < <(compgen -A variable AAR_AUTODATA_)
 export AAR_AUTODATA=0
 
+validate_lifecycle_proof() {
+  local proof="$1" expected_chains="$2"
+  [ "$(jq -r '.status' "${proof}")" = passed ] || {
+    echo "lifecycle proof is not passed: ${proof}" >&2; exit 2;
+  }
+  [ "$(jq -r '.lifecycle_chain_count' "${proof}")" = "${expected_chains}" ] || {
+    echo "lifecycle proof expected ${expected_chains} chain(s): ${proof}" >&2
+    exit 2
+  }
+  for field in score_result_pair fail_closed_markers merge_manifest_retained \
+    ephemeral_merge_removed kimi_mcp_tool_roundtrip method_gpu_smoke \
+    adapter_reload_validation on_demand_evaluator evaluation_item_contract \
+    autodata_disabled; do
+    [ "$(jq -r --arg field "${field}" '.[$field]' "${proof}")" = true ] || {
+      echo "lifecycle proof did not prove ${field}" >&2; exit 2;
+    }
+  done
+  git -C "${REPO}" merge-base --is-ancestor \
+    "$(jq -r '.canary_git_commit' "${proof}")" HEAD || {
+      echo "current commit does not descend from lifecycle commit" >&2; exit 2;
+    }
+}
+
+PREREQUISITE_PROOF=""
+if [ "${MODE}" = canary ] && \
+   [ "${AAR_LIFECYCLE_PREREQUISITE_CHAIN_COUNT:-0}" -gt 0 ]; then
+  PREREQUISITE_PROOF="$(realpath -e -- \
+    "${AAR_RUN14_PREREQUISITE_PROOF:?five-chain canary requires the one-chain proof}")"
+  validate_lifecycle_proof \
+    "${PREREQUISITE_PROOF}" "${AAR_LIFECYCLE_PREREQUISITE_CHAIN_COUNT}"
+fi
+
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || {
   echo "Run 14 requires branch autodata" >&2
   exit 2
@@ -71,6 +103,9 @@ mkdir "${attempt}"
 mkdir -p "${attempt}/"{metadata,logs,runtime}
 chmod 700 "${attempt}" "${attempt}/"{metadata,logs}
 cp -- "${RUN_CONFIG}" "${attempt}/metadata/run.yaml"
+[ -z "${PREREQUISITE_PROOF}" ] || \
+  cp -- "${PREREQUISITE_PROOF}" \
+    "${attempt}/metadata/prerequisite_lifecycle_passed.json"
 "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/runtime/snapshot_vllm_runtime.sh" "${attempt}" \
   > "${attempt}/metadata/vllm_runtime_path.txt"
 
@@ -101,8 +136,8 @@ job="$(sbatch --parsable --time="${pipeline_time}" \
   "${RUN14_DIR}/slurm/pipeline.sbatch")"
 
 submitted_at_pt="$(TZ=America/Los_Angeles date '+%Y-%m-%d %H:%M:%S %Z')"
-printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nmode=%s\nsubmitted_at_pt=%s\nresearch_backend=%s\nresearch_model=Kimi-K2.6\ndata_generation_backend=native\nautodata=0\nseeds=%s\ntarget_score_result_pairs=%s\n' \
-  "${job}" "${attempt}" "${commit}" "${MODE}" "${submitted_at_pt}" \
-  "${AAR_AGENT_BACKEND}" "${AAR_RESEARCH_SEEDS}" \
+printf 'launch_job_id=%s\nattempt_dir=%s\ngit_commit=%s\nmode=%s\nlifecycle_name=%s\nsubmitted_at_pt=%s\nresearch_backend=%s\nresearch_model=Kimi-K2.6\ndata_generation_backend=native\nautodata=0\nseeds=%s\ntarget_score_result_pairs=%s\n' \
+  "${job}" "${attempt}" "${commit}" "${MODE}" "${AAR_LIFECYCLE_NAME:-none}" \
+  "${submitted_at_pt}" "${AAR_AGENT_BACKEND}" "${AAR_RESEARCH_SEEDS}" \
   "${AAR_TARGET_SUCCESSFUL_ITERATIONS}" | tee "${attempt}/metadata/submission.txt"
 unset MODEL_API_KEY HF_TOKEN

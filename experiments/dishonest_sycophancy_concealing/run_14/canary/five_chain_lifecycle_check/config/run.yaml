@@ -1,0 +1,51 @@
+version: 1
+
+lifecycle:
+  name: five_chain_lifecycle_check
+  prerequisite_chain_count: 1
+
+storage:
+  root: /checkpoint/ram/aar/{user}/run14_native_generation
+  keep_checkpoints: true
+
+research:
+  seeds:
+    - alpha
+    - beta
+    - gamma
+    - delta
+    - epsilon
+  # One pair per chain; five pairs are required across the topology gate.
+  target_score_result_pairs: 1
+  max_sessions_per_chain: 1
+  walltime_hours: 2
+
+training:
+  mode: one_step_gpu_preflight
+  time_limit: 00:15:00
+  # Keep the one-chain setting: the shared team queue serializes five smoke jobs.
+  max_concurrent_jobs: 1
+
+evaluation:
+  memory: max
+  max_truncation_rate: 0.20
+  benchmarks:
+    - verbalized_ece
+  items_per_benchmark: 2
+  # Keep the one-chain setting: one worker drains all five staged adapters.
+  workers: 1
+  gpus_per_worker: 1
+  time_limit: 01:00:00
+  idle_seconds: 120
+  on_demand: true
+
+agent:
+  backend: kimi
+  turn_timeout_seconds: 1800
+  preflight_timeout_seconds: 180
+  preflight_cache_ttl_seconds: 21600
+
+data_generation:
+  # Alternative: `backend: autodata` emits AAR_AUTODATA=1, but also requires
+  # an AutoData-aware launcher to supply the plugin, broker, recipe, and runtime.
+  backend: native

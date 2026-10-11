@@ -2,7 +2,7 @@
 
 - Status: planned; not launched
 - Created: 2026-10-10 17:02 PT
-- Last updated: 2026-10-10 17:12 PT
+- Last updated: 2026-10-10 17:53 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -75,5 +75,6 @@ failure, invalid adapter, evaluator failure, or score/finding mismatch.
 
 Recorded: 2026-10-10 17:02 PT
 
-Review and record the held-out-safe evidence, then authorize the full five-chain
-launcher. Do not treat the bounded score as a scientific conclusion.
+Create and review the fail-closed lifecycle proof, then supply that exact proof
+to the five-chain topology gate. A one-chain pass does not directly authorize
+the full run. Do not treat the bounded score as a scientific conclusion.

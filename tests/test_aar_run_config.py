@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -240,3 +242,152 @@ def test_run14_canary_stages_smoke_adapter_before_on_demand_evaluation() -> None
     assert pipeline.index("monitor_method_smoke.py") < pipeline.index(
         "from aar.transport import put_model"
     ) < pipeline.index("launch-on-demand-evaluator.txt")
+
+
+def test_run14_five_chain_lifecycle_is_bounded_and_keeps_queue_settings() -> None:
+    lifecycle = RUN14 / "canary" / "five_chain_lifecycle_check"
+    config_path = lifecycle / "config" / "run.yaml"
+    config = yaml.safe_load(config_path.read_text())
+
+    assert config["lifecycle"] == {
+        "name": "five_chain_lifecycle_check",
+        "prerequisite_chain_count": 1,
+    }
+    assert config["research"] == {
+        "seeds": ["alpha", "beta", "gamma", "delta", "epsilon"],
+        "target_score_result_pairs": 1,
+        "max_sessions_per_chain": 1,
+        "walltime_hours": 2,
+    }
+    assert config["training"] == {
+        "mode": "one_step_gpu_preflight",
+        "time_limit": "00:15:00",
+        "max_concurrent_jobs": 1,
+    }
+    assert config["evaluation"]["workers"] == 1
+    assert config["evaluation"]["gpus_per_worker"] == 1
+    assert config["evaluation"]["items_per_benchmark"] == 2
+    assert config["evaluation"]["on_demand"] is True
+    assert config["data_generation"] == {"backend": "native"}
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/load_aar_run_config.py"), str(config_path)],
+        env={**os.environ, "USER": "test-user"},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    expected = {
+        "export AAR_LIFECYCLE_NAME=five_chain_lifecycle_check",
+        "export AAR_LIFECYCLE_PREREQUISITE_CHAIN_COUNT=1",
+        "export AAR_RESEARCH_SEEDS='alpha beta gamma delta epsilon'",
+        "export AAR_TARGET_SUCCESSFUL_ITERATIONS=1",
+        "export AAR_MAX_CONCURRENT_TRAIN_JOBS=1",
+        "export AAR_EVAL_WORKERS=1",
+        "export AAR_EVAL_GPUS=1",
+        "export AAR_AUTODATA=0",
+    }
+    assert expected <= set(result.stdout.splitlines())
+
+
+def test_run14_five_chain_lifecycle_binds_proof_and_stages_every_adapter() -> None:
+    lifecycle = RUN14 / "canary" / "five_chain_lifecycle_check"
+    wrapper = (lifecycle / "launch" / "launch.sh").read_text()
+    submitter = (RUN14 / "launch" / "submit_full.sh").read_text()
+    pipeline = (RUN14 / "slurm" / "pipeline.sbatch").read_text()
+    verifier = (RUN14 / "canary" / "verify_run_14_canary.py").read_text()
+
+    assert '"$#" -eq 1' in wrapper
+    assert "AAR_RUN14_PREREQUISITE_PROOF" in wrapper
+    assert "validate_lifecycle_proof" in submitter
+    assert "prerequisite_lifecycle_passed.json" in submitter
+    assert "merge-base --is-ancestor" in submitter
+    assert '"${#seeds[@]}" -eq 1 ] || [ "${#seeds[@]}" -eq 5' in pipeline
+    assert 'launch_team.sh" "${AAR_RESEARCH_SEEDS}"' in pipeline
+    assert '--expected-chains "${#seeds[@]}"' in pipeline
+    assert 'for index in "${!run_ids[@]}"' in pipeline
+    assert pipeline.index("monitor_method_smoke.py") < pipeline.index(
+        'for index in "${!run_ids[@]}"'
+    ) < pipeline.index("launch-on-demand-evaluator.txt")
+    assert '"autodata_disabled": autodata_disabled' in verifier
+    assert 'if chain_count == 5 and prerequisite_hash is None' in verifier
+
+
+def test_run14_five_chain_proof_accepts_one_shared_evaluator(tmp_path: Path) -> None:
+    attempt = tmp_path / "five"
+    metadata = attempt / "metadata"
+    team = attempt / "aar_teams" / "team"
+    eval_private = team / "_eval_private"
+    manifests = eval_private / "merge_manifests"
+    for path in (metadata, team / "scores", team / "forum", manifests):
+        path.mkdir(parents=True, exist_ok=True)
+
+    (metadata / "submission.txt").write_text(
+        "git_commit=abc123\n"
+        "lifecycle_name=five_chain_lifecycle_check\n"
+        "data_generation_backend=native\n"
+        "autodata=0\n"
+    )
+    (metadata / "run.yaml").write_text(
+        "research:\n"
+        "  seeds: [alpha, beta, gamma, delta, epsilon]\n"
+        "evaluation:\n"
+        "  workers: 1\n"
+        "data_generation:\n"
+        "  backend: native\n"
+    )
+    (metadata / "kimi_mcp_preflight.json").write_text(
+        json.dumps({"mcp_tool_roundtrip": True})
+    )
+    runs = [
+        {
+            "run_id": f"run-{index}",
+            "real_gpu_smoke": True,
+            "adapter_reload_validation": True,
+        }
+        for index in range(5)
+    ]
+    (metadata / "method_smoke_passed.json").write_text(json.dumps({"runs": runs}))
+    (metadata / "lifecycle_evaluation_contract.json").write_text(
+        json.dumps(
+            {
+                "status": "passed",
+                "expected_benchmarks": ["verbalized_ece"],
+                "expected_items_per_benchmark": 2,
+            }
+        )
+    )
+    (metadata / "children.env").write_text(
+        "on_demand_evaluator=1\n"
+        "evaluator_jobs=123\n"
+        "expected_evaluator_jobs=1\n"
+    )
+    prerequisite = metadata / "prerequisite_lifecycle_passed.json"
+    prerequisite.write_text('{"status":"passed","lifecycle_chain_count":1}\n')
+    for index in range(5):
+        run_id = f"run-{index}"
+        (team / "scores" / f"{run_id}.json").write_text(
+            json.dumps({"per_benchmark": {"verbalized_ece": {"n": 2}}})
+        )
+        (team / "forum" / f"{run_id}.json").write_text(
+            json.dumps({"run_id": run_id})
+        )
+        (manifests / f"{run_id}.json").write_text("{}\n")
+    (eval_private / "eval_worker_123.out").write_text(
+        "backend=vllm image=docker.io/vllm/vllm-openai:v0.25.1 "
+        "lora_strategy=merged_checkpoint\n"
+        "runtime backend=vllm version=0.25.1 language_model_only=True\n"
+        + "removed ephemeral merged checkpoint\n" * 5
+    )
+
+    verifier = RUN14 / "canary" / "verify_run_14_canary.py"
+    subprocess.run([sys.executable, str(verifier), str(attempt)], check=True)
+    proof = json.loads((metadata / "canary_passed.json").read_text())
+    assert proof["status"] == "passed"
+    assert proof["lifecycle_chain_count"] == 5
+    assert proof["successful_lifecycle_runs"] == 5
+    assert proof["on_demand_evaluator"] is True
+    assert proof["autodata_disabled"] is True
+    assert proof["prerequisite_proof_sha256"] == hashlib.sha256(
+        prerequisite.read_bytes()
+    ).hexdigest()

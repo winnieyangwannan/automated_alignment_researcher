@@ -23,10 +23,14 @@ data generation without AutoData.
 1. Validate YAML resolution, shell syntax, and focused unit contracts.
 2. Run one bounded native-generation lifecycle with one research session, one
    real optimizer step, and a two-item `verbalized_ece` evaluation.
-3. Confirm the canary produced one adapter, score, and published finding without
-   any AutoData process or artifact.
-4. Launch five isolated full chains.
-5. Treat success as complete score/result pairs, not session count alone.
+3. Confirm the one-chain canary produced one adapter, score, and published
+   finding without any AutoData process or artifact.
+4. Bind a five-chain topology check to that exact passed proof. Run one session
+   for each of five parallel research chains, retain five real-GPU adapters,
+   and let one on-demand evaluator drain all five staged submissions.
+5. Confirm five complete score/result pairs and a passed topology proof.
+6. Launch five isolated full chains.
+7. Treat success as complete score/result pairs, not session count alone.
 
 ## Stop conditions
 

@@ -19,7 +19,13 @@ run_14/
 ├── slurm/pipeline.sbatch
 ├── canary/
 │   ├── README.md
-│   └── one_chain_lifecycle_check/
+│   ├── verify_run_14_canary.py
+│   ├── one_chain_lifecycle_check/
+│   │   ├── config/run.yaml
+│   │   ├── launch/launch.sh
+│   │   ├── README.md
+│   │   └── PROGRESS.md
+│   └── five_chain_lifecycle_check/
 │       ├── config/run.yaml
 │       ├── launch/launch.sh
 │       ├── README.md
@@ -50,6 +56,23 @@ teacher data. The proposal monitor still verifies provenance and rejects use or
 imitation of evaluation data. The shared Gemma Serve API v2 endpoint remains
 available for optional target-model generation.
 
+## Model and execution roles
+
+- Researcher and native data-generation author: Kimi-K2.6, logical deployment
+  `steerability_8-kimi26`, through the credential-hiding Serve API v2 bridge.
+- Proposal monitor: `claude-4-8-opus` through Meta Model API.
+- Training base and optional target probe: fixed Gemma 4 31B IT; training adds
+  a new PEFT adapter locally, while target probing uses the shared endpoint.
+- Evaluator inference: Gemma 4 31B IT plus each atomically merged candidate
+  adapter through vLLM 0.25.1 in language-model-only mode.
+- Evaluator judge: `gpt-5-6-luna` through Meta Model API for model-judged full
+  benchmarks; the canaries use rule-scored `verbalized_ece` and make no judge
+  model call.
+- Trusted deterministic roles: AAR orchestration, transport, proposal-policy
+  checks, benchmark rules, and score/finding joins. AutoData generator, row
+  judge, broker, workspace, recipe, comparator, and production export roles do
+  not exist in Run 14.
+
 ## Topology
 
 | Component        | Run 14 policy                                     |
@@ -72,16 +95,32 @@ First run the bounded one-chain lifecycle check from the synchronized HPC
 experiments/dishonest_sycophancy_concealing/run_14/canary/one_chain_lifecycle_check/launch/launch.sh
 ```
 
-After reviewing its complete score/finding pair and held-out-safe evidence,
-launch the full run:
+After it finishes, create and review its fail-closed proof:
+
+```bash
+python experiments/dishonest_sycophancy_concealing/run_14/canary/verify_run_14_canary.py \
+  <one-chain-attempt>
+```
+
+Use that exact proof to launch the five-chain topology check:
+
+```bash
+experiments/dishonest_sycophancy_concealing/run_14/canary/five_chain_lifecycle_check/launch/launch.sh \
+  <one-chain-attempt>/metadata/canary_passed.json
+```
+
+After five complete score/finding pairs produce a passed topology proof, launch
+the full run:
 
 ```bash
 experiments/dishonest_sycophancy_concealing/run_14/launch/submit_full.sh
 ```
 
-The launcher prints and retains the attempt directory and pipeline job ID.
+The launchers print and retain the attempt directory and pipeline job ID.
 `metadata/children.tsv` records one evaluator and one research-chain job per
-seed after the scheduled launcher completes.
+seed for the full run. The five-chain topology gate instead launches five
+research chains in one isolated team and one on-demand evaluator that drains
+all five staged adapters.
 
 ## Isolation and provenance
 
