@@ -141,3 +141,20 @@ the full suite remains an HPC gate.
 Native HPC validation passed on Slurm job `1812479`: `COMPLETED`, exit `0:0`,
 94 passed and 1 skipped in 15.41 seconds at exact native commit
 `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`.
+
+<a id="trial5-event-launch"></a>
+
+### ⏳ 01:39 PT — RUNNING: Trial 5 launcher submitted
+
+Every mandatory source, regression, runtime, endpoint, checkpoint, and secret
+gate passed. The committed Trial 5 wrapper launched automatically as authorized:
+
+- AAR commit: `4e57c7fe07acd13e0b1e6cd94ca5bcdf09e751d9`;
+- native AutoData commit: `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`;
+- attempt: `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T083852Z-4e57c7fe07ac`;
+- launcher job: `1812591`, initially `PENDING`;
+- retained target: `winnieyangwn-r12-alpha-i1-c0dab4f7`;
+- boundary: verified `training_smoke`; evaluator forbidden.
+
+The dedicated read-only monitor is active. No research/controller/training job
+or evaluator job had been created at this first snapshot.

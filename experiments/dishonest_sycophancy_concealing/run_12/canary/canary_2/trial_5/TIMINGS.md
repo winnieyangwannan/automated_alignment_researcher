@@ -5,11 +5,12 @@ prompts, target responses, credentials, or held-out content belong here.
 
 ## Attempt identity
 
-- Status at 2026-10-11 01:01 PT: prepared but launch-blocked.
+- Status at 2026-10-11 01:39 PT: launcher submitted; infrastructure bootstrap pending.
 - Native AutoData commit: `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`.
-- AAR source commit: pending comprehensive repair commit.
-- Attempt and checkpoint roots: not created.
-- Pipeline, research, controller, training, and evaluator jobs: none.
+- AAR source commit: `4e57c7fe07acd13e0b1e6cd94ca5bcdf09e751d9`.
+- Attempt root: `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T083852Z-4e57c7fe07ac`.
+- Launcher job: `1812591`, submitted 01:39:25 PT.
+- Research, controller, training, and evaluator jobs: none at first snapshot.
 
 ## Current lifecycle
 
@@ -40,6 +41,8 @@ prompts, target responses, credentials, or held-out content belong here.
   94 passed, 1 skipped, and exit `0:0`.
 - 01:32 PT: post-review AAR feedback/security gate passed 233 tests plus 5
   subtests; raw evidence retention was removed from the unisolated Kimi path.
+- 01:39 PT: Trial 5 launcher job `1812591` submitted from the exact committed
+  and synchronized source after all runtime gates passed.
 
 ## Work and quality counters
 
@@ -53,4 +56,4 @@ prompts, target responses, credentials, or held-out content belong here.
 
 ## Unmeasured stages
 
-All runtime stages are unmeasured because Trial 5 has not launched.
+Downstream runtime stages are unmeasured until launcher job `1812591` starts.

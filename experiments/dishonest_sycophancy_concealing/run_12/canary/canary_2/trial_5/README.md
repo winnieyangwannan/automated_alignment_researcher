@@ -2,10 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: prepared but launch-blocked pending comprehensive feedback repair,
-  commit, synchronization, and complete HPC validation
+- Status: launched; infrastructure bootstrap pending
 - Created: 2026-10-11 01:01 PT
-- Last updated: 2026-10-11 01:32 PT
+- Last updated: 2026-10-11 01:39 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -63,9 +62,8 @@ to these confirmed fields requires fresh user confirmation.
 
 Recorded: 2026-10-11 01:01 PT
 
-**Do not launch yet.** After every gate below passes on the exact committed and
-synchronized source, the user has authorized automatic launch without another
-confirmation:
+All mandatory gates passed and the user-authorized launch was submitted at
+01:39 PT:
 
 ```bash
 AAR_RUN12_REUSE_BASE_DEPLOYMENT=winnieyangwn-r12-alpha-i1-c0dab4f7 \
@@ -75,6 +73,11 @@ AAR_RUN12_REUSE_BASE_DEPLOYMENT=winnieyangwn-r12-alpha-i1-c0dab4f7 \
 Run the committed wrapper from the Run 12 directory on `fair-cw-use2-1`. It
 must submit one `alpha` bootstrap-canary chain, reuse the retained target,
 stop after `training_smoke`, and submit no evaluator.
+
+- Attempt: `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T083852Z-4e57c7fe07ac`
+- Launcher job: `1812591`
+- AAR commit: `4e57c7fe07acd13e0b1e6cd94ca5bcdf09e751d9`
+- Native AutoData commit: `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`
 
 ### Mandatory pre-launch gates
 
