@@ -537,3 +537,137 @@ Training job `1811135` stopped after 12m29s without publishing an adapter.
   `evaluation.vllm_log_stats: true` and verify the live engine log markers.
 - Resume from retained per-chain state with remaining session budgets Alpha
   `58`, Beta `59`, Gamma `57`, Delta `58`, and Epsilon `57`.
+
+## 2026-10-11
+
+<a id="run14-event-reviewed-five-chain-recovery-0106"></a>
+
+### 🚀 01:06 PT — RUNNING: reviewed five-chain recovery reached 7/250 pairs
+
+Run 14 resumed from the retained attempt at exact clean HPC commit
+`b9bb6b201d19f45801df6c9bdf9aed2917b48592`. The focused recovery gate passed
+with `72 passed`. A live plan-only proof validated all five exact remaining
+session budgets and actionable proposal IDs without changing state before the
+real launch.
+
+#### Alpha — session 18/60, pairs 1/50
+
+✓ Previous score and finding pair durable
+
+✓ Current method authored and contract passed
+
+✓ Current proposal approved
+
+✓ Missing proposal run ID deterministically repaired and immutably bound
+
+⏳ Trusted host-submitted training `1812309` pending resources
+
+○ Adapter submission and merge
+
+○ Benchmark evaluation
+
+○ Score and finding publication
+
+Alpha did not replay proposal authoring. The host submitted the exact approved
+run before any Kimi turn.
+
+#### Beta — session 20/60, pairs 1/50
+
+✓ Previous score and finding pair durable
+
+✓ Current method authored and contract passed
+
+✓ Current proposal approved
+
+✓ Missing proposal run ID deterministically repaired and immutably bound
+
+⏳ Trusted host-submitted training `1812310` pending resources
+
+○ Adapter submission and merge
+
+○ Benchmark evaluation
+
+○ Score and finding publication
+
+Beta also entered score waiting directly, with no proposal replay or fabricated
+identifier.
+
+#### Gamma — session 6/60, pairs 1/50
+
+✓ Retained training and evaluation score recovered
+
+✓ Matching finding published without training or evaluation replay
+
+⏳ Fresh next-iteration research and method authoring
+
+○ Contract check
+
+○ Proposal review
+
+○ Training and evaluation
+
+○ Next score and finding publication
+
+#### Delta — session 5/60, pairs 2/50
+
+✓ Previous pair retained
+
+✓ Interrupted iteration's retained score recovered
+
+✓ Matching finding published without training or evaluation replay
+
+⏳ Fresh next-iteration research and method authoring
+
+○ Contract check, proposal review, training, and evaluation
+
+○ Next score and finding publication
+
+#### Epsilon — session 6/60, pairs 2/50
+
+✓ Previous pair retained
+
+✓ Recovered training and evaluation score retained
+
+✓ Matching finding published without training or evaluation replay
+
+⏳ Fresh next-iteration research and method authoring
+
+○ Contract check, proposal review, training, and evaluation
+
+○ Next score and finding publication
+
+#### Recovery diagnosis and reusable improvements
+
+Two earlier recovery attempts exposed shared orchestration defects rather than
+method failures:
+
+- a persistent resume flag could replay a completed finding and consume another
+  session; recovery is now one-shot and disables itself after the exact finding
+  is durable;
+- the recovery launcher omitted `AAR_NO_LOCAL_GPU=true`, so native decoupled
+  approval produced no run ID. Kimi correctly refused to fabricate one. All
+  decoupled execution signals now require approval-time IDs, and stopped legacy
+  approvals can be deterministically repaired, immutably stamped, and audited;
+- native recovery now owns training submission and score waiting before the
+  first Kimi turn, while an existing score or submitted adapter prevents
+  duplicate training even if a receipt is missing; and
+- completed history is closed by its durable finding before current-method
+  validation, so a later session's legitimate method edits cannot invalidate a
+  prior pair.
+
+The corrected recovery passed independent code review. Commits `dc2767d` and
+`b9bb6b2` contain the reusable recovery hardening and this run's synchronized
+documentation state. The earlier vLLM telemetry proof also confirmed live
+periodic scheduler throughput and KV-cache statistics on all sampled replicas.
+
+#### Active jobs and evidence
+
+- Alpha evaluator/controller: `1812264` / `1812265`
+- Beta evaluator/controller: `1812266` / `1812267`
+- Gamma evaluator/controller: `1812268` / `1812269`
+- Delta evaluator/controller: `1812270` / `1812271`
+- Epsilon evaluator/controller: `1812272` / `1812273`
+- Evaluators are scheduler-active and pending GPU resources; all five
+  controllers are running.
+- Atomic progress: Alpha `1/50`, Beta `1/50`, Gamma `1/50`, Delta `2/50`,
+  Epsilon `2/50`; total `7/250`.
