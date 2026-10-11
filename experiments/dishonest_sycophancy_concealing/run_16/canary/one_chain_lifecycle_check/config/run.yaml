@@ -37,7 +37,6 @@ agent:
   backend: claude
 
 data_generation:
-  # Alternative: `backend: autodata` emits AAR_AUTODATA=1, but also requires
-  # an AutoData-aware launcher to supply the plugin, broker, recipe, and runtime.
+  # Run 16 is native-only. Any AutoData initialization is a stop condition.
   backend: native
   max_sequential_target_generations: 256

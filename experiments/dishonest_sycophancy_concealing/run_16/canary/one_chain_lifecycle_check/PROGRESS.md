@@ -22,3 +22,34 @@ Append-only operational record. All timestamps use Pacific Time (`PT`).
 ○ Finding publication
 ○ Fail-closed lifecycle proof
 ```
+
+<a id="run16-one-chain-fresh-retry-setup"></a>
+
+### ⏭️ 14:51 PT — NEXT: immutable-source retry folder reviewed
+
+> [!IMPORTANT]
+> **Prepared, not launched.** The existing one-chain folder was reviewed
+> against the Run 12 canary pattern and updated for a fresh retry.
+
+- The stable specification now distinguishes every model and deterministic
+  role, including the optional Gemma target probe.
+- The fixed one-session, one-step-training, two-item-evaluation contract and
+  fail-closed proof fields are explicit.
+- The thin launcher now applies a private umask, rejects arguments, resolves
+  physical paths, and continues to delegate to the shared Run 16 submitter.
+- The two earlier attempts remain preserved; neither is accepted as the
+  one-chain prerequisite proof.
+
+```text
+✓ One-chain folder and immutable-source contract
+✓ Existing failed-attempt evidence preserved
+○ Exact model-role confirmation for this configuration revision
+○ Fresh one-chain attempt
+○ One durable score/finding pair
+○ Fail-closed lifecycle proof
+```
+
+#### ⏭️ Next step
+
+Validate and synchronize the focused folder update. Do not submit until the
+documented model-role mapping is explicitly confirmed.
