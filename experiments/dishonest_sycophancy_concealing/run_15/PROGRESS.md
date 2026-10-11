@@ -58,6 +58,75 @@ record credentials, held-out examples, or partial held-out scores here.
 ○ 250 durable score/finding pairs
 ```
 
+<a id="run15-event-full-launch"></a>
+
+### ⏳ 03:13 PT — RUNNING: full five-chain 5x50 attempt launched
+
+- Attempt:
+  `/checkpoint/ram/aar/winnieyangwn/run15_native_generation/full_attempts/20261011T101046Z-9748ae9bb6f8`
+- Exact immutable source: `9748ae9bb6f870651c3a5ec545d31cff0addc89e`.
+- Pipeline `1813941` completed successfully and retained five distinct
+  evaluator/research-chain pairs.
+- The detached source snapshot is clean and remote-free. The retained override
+  is bound to that commit, the `full-five-chain-5x50` scope, and deployment
+  `autodata2_8-kimi26`.
+- `full-launch.env` records native generation, `autodata=0`, five chains, and
+  50 target pairs per chain.
+
+### Alpha — session 0/60, pairs 0/50
+
+✓ Evaluator `1813981` launched  
+✓ Research chain `1813982` launched  
+⏳ Infrastructure bootstrap  
+○ Method authoring and contract check  
+○ Proposal review and approval  
+○ Training and evaluation  
+○ Score and finding publication  
+
+### Beta — session 0/60, pairs 0/50
+
+✓ Evaluator `1813983` launched  
+✓ Research chain `1813984` launched  
+⏳ Infrastructure bootstrap  
+○ Method authoring and contract check  
+○ Proposal review and approval  
+○ Training and evaluation  
+○ Score and finding publication  
+
+### Gamma — session 0/60, pairs 0/50
+
+✓ Evaluator `1813985` launched  
+✓ Research chain `1813986` launched  
+⏳ Infrastructure bootstrap  
+○ Method authoring and contract check  
+○ Proposal review and approval  
+○ Training and evaluation  
+○ Score and finding publication  
+
+### Delta — session 0/60, pairs 0/50
+
+✓ Evaluator `1813987` launched  
+✓ Research chain `1813988` launched  
+⏳ Infrastructure bootstrap  
+○ Method authoring and contract check  
+○ Proposal review and approval  
+○ Training and evaluation  
+○ Score and finding publication  
+
+### Epsilon — session 0/60, pairs 0/50
+
+✓ Evaluator `1813989` launched  
+✓ Research chain `1813990` launched  
+⏳ Infrastructure bootstrap  
+○ Method authoring and contract check  
+○ Proposal review and approval  
+○ Training and evaluation  
+○ Score and finding publication  
+
+All ten child jobs were running at 03:13 PT. A session is not counted until its
+durable session state appears; a pair is not counted until score and finding
+records join on the same run ID.
+
 #### ⏭️ Next step
 
 Finish fail-closed source validation and obtain explicit confirmation of the

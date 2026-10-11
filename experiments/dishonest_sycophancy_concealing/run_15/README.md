@@ -4,9 +4,9 @@
 
 Run 15's launchers and scheduled payload require this branch.
 
-- Status: direct full launch authorized; exact source preparing for HPC launch
+- Status: full five-chain 5x50 run active
 - Created: 2026-10-11 01:43 PT
-- Last updated: 2026-10-11 03:07 PT
+- Last updated: 2026-10-11 03:13 PT
 
 ## Goal
 
