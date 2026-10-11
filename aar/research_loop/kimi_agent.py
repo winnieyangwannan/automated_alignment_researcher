@@ -698,18 +698,7 @@ class KimiAgent:
         run_id = self._approved_run_id()
         if run_id is None:
             return False
-        team_dir = os.environ.get("TEAM_DIR", "").strip()
-        if not team_dir:
-            return False
-        safe_run_id = "".join(
-            char if (char.isalnum() or char in "_.-") else "_" for char in run_id
-        )
-        post = Path(team_dir) / ".finding_dedup" / f"runid_{safe_run_id}" / "post.json"
-        try:
-            persisted = json.loads(post.read_text())
-        except (OSError, json.JSONDecodeError):
-            return False
-        return bool(persisted.get("post_id") or persisted.get("finding_id"))
+        return self._finding_persisted_for_run(run_id)
 
     @staticmethod
     def _tool_name(item: dict[str, Any]) -> str:
@@ -2105,14 +2094,41 @@ class KimiAgent:
         )
         return marker
 
-    @staticmethod
-    def _resume_approved_proposal_enabled() -> bool:
-        return os.getenv("AAR_RESUME_APPROVED_PROPOSAL", "0").strip().lower() in {
+    @classmethod
+    def _resume_approved_proposal_enabled(cls) -> bool:
+        enabled = os.getenv(
+            "AAR_RESUME_APPROVED_PROPOSAL", "0"
+        ).strip().lower() in {
             "1",
             "true",
             "yes",
             "on",
         }
+        if not enabled:
+            return False
+
+        # Recovery is a one-run handoff, even though the chain process can host
+        # many research sessions.  Once the retained run has a durable finding,
+        # stop treating its proposal as the current session's proposal.  Keeping
+        # the environment flag active after this point replays share_finding in
+        # every subsequent session and silently consumes the chain budget.
+        run_id = cls._approved_run_id()
+        return run_id is None or not cls._finding_persisted_for_run(run_id)
+
+    @staticmethod
+    def _finding_persisted_for_run(run_id: str) -> bool:
+        team_dir = os.environ.get("TEAM_DIR", "").strip()
+        if not team_dir:
+            return False
+        safe_run_id = "".join(
+            char if (char.isalnum() or char in "_.-") else "_" for char in run_id
+        )
+        post = Path(team_dir) / ".finding_dedup" / f"runid_{safe_run_id}" / "post.json"
+        try:
+            persisted = json.loads(post.read_text())
+        except (OSError, json.JSONDecodeError):
+            return False
+        return bool(persisted.get("post_id") or persisted.get("finding_id"))
 
     @staticmethod
     def _autodata_handoff_ready(run_id: str) -> bool:
