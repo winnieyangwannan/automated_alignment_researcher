@@ -181,10 +181,16 @@ def operator_execution_settings(
         campaign_policy.get("required_solve_env"),
         "campaign required_solve_env",
     )
-    if required_environment.get("AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS") != "1":
-        raise ValueError(
-            "trusted campaigns require exactly one transport attempt per model request"
-        )
+    model_request_attempts = _positive_integer(
+        execution.get("model_request_max_attempts"),
+        "model request max attempts",
+    )
+    if model_request_attempts > 5:
+        raise ValueError("model request max attempts must not exceed 5")
+    if required_environment.get("AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS") != str(
+        model_request_attempts
+    ):
+        raise ValueError("campaign model request attempts do not match runtime config")
     if required_environment.get("AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS") != str(
         judge_format_attempts
     ):

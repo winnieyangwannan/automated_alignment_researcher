@@ -34,7 +34,7 @@ def _policy() -> dict[str, object]:
         "max_memory_mb": 2048,
         "required_solve_env": {
             "AUTODATA_TARGET_ENABLED": "1",
-            "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "1",
+            "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "3",
             "AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS": "2",
             "AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE": "responses_json_schema",
         },
@@ -112,7 +112,10 @@ def test_operator_settings_come_from_resolved_config() -> None:
             "stage_timing": {"native_schema_wall_seconds": 604800},
         },
         "profile": {
-            "execution": {"concurrency_per_chain": 32},
+            "execution": {
+                "concurrency_per_chain": 32,
+                "model_request_max_attempts": 3,
+            },
             "providers": {
                 "generator": {
                     "max_input_tokens": 196608,
@@ -159,6 +162,36 @@ def test_operator_settings_come_from_resolved_config() -> None:
     assert settings["required_campaign_task_attempts"] == 3204
     assert settings["required_campaign_round_reservations"] == 14004
     assert settings["required_campaign_cost_usd"] == "41774.49216"
+
+    mismatched_policy = _policy()
+    mismatched_policy["required_solve_env"][
+        "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS"
+    ] = "2"
+    with pytest.raises(ValueError, match="do not match runtime config"):
+        operator_execution_settings(
+            resolved,
+            campaign_policy=mismatched_policy,
+            training_data_contract={
+                "required_rows": 1000,
+                "minimum_successful_task_fraction": 0.95,
+            },
+        )
+
+    unbounded_resolved = json.loads(json.dumps(resolved))
+    unbounded_resolved["profile"]["execution"]["model_request_max_attempts"] = 6
+    unbounded_policy = _policy()
+    unbounded_policy["required_solve_env"][
+        "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS"
+    ] = "6"
+    with pytest.raises(ValueError, match="must not exceed 5"):
+        operator_execution_settings(
+            unbounded_resolved,
+            campaign_policy=unbounded_policy,
+            training_data_contract={
+                "required_rows": 1000,
+                "minimum_successful_task_fraction": 0.95,
+            },
+        )
     assert settings["required_judge_calls"] == 28008
     assert settings["authoring_model_task_attempts"] == 32
     assert settings["finalization_model_rounds_per_task"] == 5
