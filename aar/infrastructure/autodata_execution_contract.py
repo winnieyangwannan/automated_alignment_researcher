@@ -12,7 +12,7 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -77,6 +77,7 @@ def operator_execution_settings(
     profile = _object(resolved.get("profile"), "resolved runtime profile")
     meta = _object(run.get("meta_optimization"), "meta optimization config")
     production = _object(run.get("production"), "production config")
+    generation = _object(run.get("generation"), "generation config")
     execution = _object(profile.get("execution"), "runtime execution config")
     providers = _object(profile.get("providers"), "runtime providers config")
     contract = _object(dict(training_data_contract), "training-data contract")
@@ -155,32 +156,90 @@ def operator_execution_settings(
     except (KeyError, InvalidOperation, TypeError, ValueError) as error:
         raise ValueError("campaign cost policy is incomplete") from error
     meta_evaluations = _meta_evaluation_attempts(settings["meta"])
-    production_attempts = 2 * settings["production"]["initial_tasks"]
-    minimum_attempts = meta_evaluations + production_attempts
-    minimum_cost = per_task * minimum_attempts
-    if campaign_cap < minimum_cost:
-        raise ValueError(
-            "campaign max_cost_usd is insufficient: "
-            f"requires at least {minimum_cost} for {minimum_attempts} "
-            "authorized model-backed tasks"
-        )
-    # Use remaining confirmed campaign capacity for bounded meta finalization
-    # recovery, capped at one full tuning+validation replay. The hard campaign
-    # ledger remains authoritative when a task makes multiple provider calls.
-    affordable_attempts = int(campaign_cap // per_task)
+    # Native finalization performs one initial full-corpus pass and may retry
+    # every tuning+validation task once.  Partial retry capacity is unsafe:
+    # native batches are concurrent, and exhausting the ledger mid-batch can
+    # otherwise leave an execution without a complete terminal transition.
     full_meta_retry = int(settings["meta"]["tuning_tasks"]) + int(
         settings["meta"]["validation_tasks"]
     )
-    meta_model_attempts = min(
-        meta_evaluations + full_meta_retry,
-        affordable_attempts - production_attempts,
+    meta_model_attempts = meta_evaluations + full_meta_retry
+    production_attempts = 2 * settings["production"]["initial_tasks"]
+    finalization_rounds = _positive_integer(
+        generation.get("target_feedback_max_attempts"),
+        "target feedback max attempts",
     )
+    if finalization_rounds > 5:
+        raise ValueError("target feedback max attempts must not exceed 5")
+    required_environment = _object(
+        campaign_policy.get("required_solve_env"),
+        "campaign required_solve_env",
+    )
+    if required_environment.get("AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS") != "1":
+        raise ValueError(
+            "trusted campaigns require exactly one transport attempt per model request"
+        )
+    recipe_relative = Path(str(run.get("recipe_root", "")))
+    if (
+        not recipe_relative.parts
+        or recipe_relative.is_absolute()
+        or ".." in recipe_relative.parts
+    ):
+        raise ValueError("resolved recipe_root is unsafe")
+    workspace_spec = _load_json(
+        Path(__file__).resolve().parents[2]
+        / recipe_relative
+        / "autodata.workspace.json",
+        "trusted workspace spec",
+    )
+    authoring_budget = _object(
+        workspace_spec.get("authoring_budget"), "trusted authoring budget"
+    )
+    authoring_model_attempts = _positive_integer(
+        authoring_budget.get("max_task_attempts"),
+        "authoring max_task_attempts",
+    )
+    full_meta_corpus = int(settings["meta"]["tuning_tasks"]) + int(
+        settings["meta"]["validation_tasks"]
+    )
+    meta_round_reservations = (
+        meta_evaluations
+        - full_meta_corpus
+        + (full_meta_corpus + full_meta_retry) * finalization_rounds
+    )
+    production_round_reservations = production_attempts * finalization_rounds
+    required_round_reservations = (
+        authoring_model_attempts
+        + meta_round_reservations
+        + production_round_reservations
+    )
+    per_round_microusd = int(
+        (per_task * Decimal(1_000_000)).to_integral_value(rounding=ROUND_CEILING)
+    )
+    required_microusd = per_round_microusd * required_round_reservations
+    campaign_microusd = int(
+        (campaign_cap * Decimal(1_000_000)).to_integral_value(
+            rounding=ROUND_CEILING
+        )
+    )
+    required_cost = Decimal(required_microusd) / Decimal(1_000_000)
+    if campaign_microusd < required_microusd:
+        raise ValueError(
+            "campaign max_cost_usd is insufficient: "
+            f"requires at least {required_cost} for "
+            f"{required_round_reservations} worst-case model-call reservations "
+            "including authoring and finalization feedback"
+        )
     required_attempts = meta_model_attempts + production_attempts
-    required_cost = per_task * required_attempts
     settings["per_model_task_cost_usd"] = format(per_task, "f")
+    settings["per_model_round_microusd"] = per_round_microusd
     settings["required_campaign_cost_usd"] = format(required_cost, "f")
     settings["required_campaign_task_attempts"] = required_attempts
+    settings["required_campaign_round_reservations"] = required_round_reservations
+    settings["authoring_model_task_attempts"] = authoring_model_attempts
+    settings["finalization_model_rounds_per_task"] = finalization_rounds
     settings["meta_evaluation_attempts"] = meta_evaluations
+    settings["meta_finalization_retry_attempts"] = full_meta_retry
     settings["meta_model_task_attempts"] = meta_model_attempts
     # Trusted pipeline check attempts are added after the exact operator
     # pipeline is loaded by the lifecycle supervisor.

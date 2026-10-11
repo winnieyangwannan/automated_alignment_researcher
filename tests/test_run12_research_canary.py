@@ -103,9 +103,9 @@ def test_run12_uses_attempt_local_detached_source_snapshots() -> None:
 def test_run12_pins_autodata_provider_provenance_serialization_fix() -> None:
     launcher = (LAUNCH / "submit_full.sh").read_text()
 
-    assert "/autodata-worktrees/finalization-recovery" in launcher
-    assert "d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc" in launcher
-    assert "Preserves provider provenance" in launcher
+    assert "/autodata-worktrees/finalization-budget-da9e12a" in launcher
+    assert "da9e12a43710ced9d407822e55c6e7c541e57a27" in launcher
+    assert "atomic, terminal budget handling" in launcher
 
 
 def test_run12_checks_real_native_adapter_contract_before_child_submission() -> None:

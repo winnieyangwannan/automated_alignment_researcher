@@ -114,3 +114,75 @@ The repaired supervisor heartbeat has live proof: a native step ran from
 05:35:58 through 05:37:04 PT while the durable `stepping` status refreshed every
 30 seconds. Kimi did not raise the stale-heartbeat failure that stopped Trial 10.
 Evaluator count remains zero.
+
+### 🔴 06:04 PT — FAIL: trusted retry reserve exhausted during finalization
+
+> [!CAUTION]
+> Trial 11 failed closed after completing its baseline and all three required
+> meta iterations. No production, handoff, training, evaluator, score, or
+> checkpoint boundary began.
+
+```text
+✓ Endpoint, MCP, immutable-source, and adapter preflight
+✓ Proposal review, workspace authoring, and freeze
+✓ Canonical baseline and meta iterations 1–3
+✗ Final full-corpus retry exhausted the trusted native attempt ceiling
+○ Production and verified handoff
+○ One-step training smoke
+```
+
+Research job `1814992` failed at 06:02:52 PT. Controller `1814993` then ran
+from 06:03:24 through 06:03:40 PT and failed closed on the terminal research
+state. The canonical execution consumed exactly `699/699` native attempts and
+remained at `final_pending`; the preserved supervisor record is `failed` with
+`lifecycle_step_failed`.
+
+The trusted budget formula reserved `608` model-backed meta evaluations, three
+pipeline checks, and only `88` finalization-recovery attempts. Native
+finalization is allowed to retry every task in the 96-task tuning+validation
+corpus once. In this attempt the retry set contained 93 tasks, so only 88 could
+start before the native ledger returned `task_attempts budget exceeded`.
+Because the batch was charged incrementally, the execution did not reach its
+normal `failed/final_incomplete` transition. The supervisor then repeated the
+same permanent step error instead of surfacing the budget diagnostic
+immediately.
+
+The minimum safe native ceiling for this fixed contract is therefore
+`608 + 3 + 96 = 707`. The campaign must authorize `704` model-backed meta tasks
+plus `2,500` production tasks, or `3,204` total; at the pinned worst-case rates
+their one-round subtotal is `$5,513.750784`. Trial 11 is preserved and will not
+be resumed.
+The repair must reject partial retry funding before launch, atomically preflight
+native batches, transition finalization failures durably, and propagate typed
+budget feedback before a fresh Trial 12 is submitted.
+
+### 🐛 06:24 PT — BUG: comprehensive budget audit found broader under-accounting
+
+> [!WARNING]
+> The `$5,513.750784` task-only subtotal is not a safe campaign ceiling for the
+> configured five-round final-generation policy. Trial 12 remains held.
+
+The follow-up audit found that the broker reserved only one generator/judge
+round per model-backed job even though every `final-full-corpus*` job may run up
+to five bounded feedback rounds. It also found that pre-freeze authoring jobs
+were absent from the campaign derivation, target-provider pricing was absent
+from native reservations, cost-result archive lookup silently missed the
+leading `.autodata` path, and a reconciliation overage could leave a broker job
+nonterminal. Three transport attempts per model request also made timeout
+billing impossible to account for exactly.
+
+For the fixed Trial 12 contract, the fail-closed upper bound is `14,004`
+provider-round reservations: `1,472` meta, `12,500` production, and a
+conservative `32` authoring jobs. At `$1.720896` per round this is
+`$24,099.427584`; the next rounded operator ceiling is `$24,100`. This is a
+safety authority, not expected spend. The c32 profile will use one transport
+attempt per model request, while native feedback remains bounded at five
+semantically visible rounds.
+
+Native repair `da9e12a43710ced9d407822e55c6e7c541e57a27` adds atomic
+idempotent batch reservations, terminal budget states, policy-correct meta
+retry selection, phase-aware five-round cost reservation, target cost fields,
+correct task-result cost discovery, and prompt failure on reconciliation
+overage. Deterministic checks no longer receive model-backed authority. The AAR
+gate independently derives the same worst-case bound in integer micro-USD and
+rejects a cap even one micro-dollar below it.

@@ -26,13 +26,16 @@ def _digest(path: Path) -> str:
 
 def _policy() -> dict[str, object]:
     return {
-        "max_cost_usd": "6000",
+        "max_cost_usd": "25000",
         "environment": "oci-runner-firecracker-large",
         "image": "python@sha256:" + "a" * 64,
         "expected_image_id": "b" * 64,
         "max_cpus": 2,
         "max_memory_mb": 2048,
-        "required_solve_env": {"AUTODATA_TARGET_ENABLED": "1"},
+        "required_solve_env": {
+            "AUTODATA_TARGET_ENABLED": "1",
+            "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "1",
+        },
     }
 
 
@@ -57,8 +60,9 @@ def _settings() -> dict[str, object]:
         "meta_wall_seconds": 604800,
         "production_wall_seconds": 604800,
         "meta_evaluation_attempts": 608,
-        "meta_model_task_attempts": 696,
-        "meta_task_attempts": 699,
+        "meta_finalization_retry_attempts": 96,
+        "meta_model_task_attempts": 704,
+        "meta_task_attempts": 707,
         "production_task_attempts": 2500,
     }
 
@@ -97,6 +101,10 @@ def test_operator_settings_come_from_resolved_config() -> None:
                 "required_rows": 1000,
                 "minimum_successful_task_fraction": 0.95,
             },
+            "generation": {"target_feedback_max_attempts": 5},
+            "recipe_root": (
+                "aar/autodata_recipes/dishonest_sycophancy_concealing_v1"
+            ),
             "stage_timing": {"native_schema_wall_seconds": 604800},
         },
         "profile": {
@@ -141,12 +149,33 @@ def test_operator_settings_come_from_resolved_config() -> None:
         "test_tasks": 32,
     }
     assert settings["concurrency"] == 32
+    assert settings["meta_evaluation_attempts"] == 608
+    assert settings["meta_finalization_retry_attempts"] == 96
+    assert settings["meta_model_task_attempts"] == 704
     assert settings["required_campaign_task_attempts"] == 3204
-    assert settings["required_campaign_cost_usd"] == "5513.750784"
+    assert settings["required_campaign_round_reservations"] == 14004
+    assert settings["required_campaign_cost_usd"] == "24099.427584"
+    assert settings["authoring_model_task_attempts"] == 32
+    assert settings["finalization_model_rounds_per_task"] == 5
+
+    truncated_retry = json.loads(json.dumps(_policy()))
+    truncated_retry["max_cost_usd"] = "24099.427583"
+    with pytest.raises(
+        ValueError,
+        match="including authoring and finalization feedback",
+    ):
+        operator_execution_settings(
+            resolved,
+            campaign_policy=truncated_retry,
+            training_data_contract={
+                "required_rows": 1000,
+                "minimum_successful_task_fraction": 0.95,
+            },
+        )
 
     insufficient = json.loads(json.dumps(_policy()))
     insufficient["max_cost_usd"] = "299"
-    with pytest.raises(ValueError, match="requires at least 5348.544768"):
+    with pytest.raises(ValueError, match="requires at least 24099.427584"):
         operator_execution_settings(
             resolved,
             campaign_policy=insufficient,
@@ -222,7 +251,7 @@ def _meta_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
             "max_iterations": 3,
             "min_iterations": 3,
             "early_stop_patience": 3,
-            "max_task_attempts": 699,
+            "max_task_attempts": 707,
             "max_wall_seconds": 604800,
         },
         "concurrency": 32,

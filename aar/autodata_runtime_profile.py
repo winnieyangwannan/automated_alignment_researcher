@@ -41,7 +41,7 @@ _PROFILES = {
         broker_runner="local-bwrap",
         environment="oci-runner-firecracker-large",
         concurrency=32,
-        model_request_max_attempts=3,
+        model_request_max_attempts=1,
     ),
     QUESTION_ONLY_LOCAL_PROFILE: AutoDataRuntimeProfile(
         name=QUESTION_ONLY_LOCAL_PROFILE,

@@ -61,8 +61,9 @@ def _settings() -> dict[str, Any]:
         "meta_wall_seconds": 604800,
         "production_wall_seconds": 604800,
         "meta_evaluation_attempts": 608,
-        "meta_model_task_attempts": 696,
-        "meta_task_attempts": 699,
+        "meta_finalization_retry_attempts": 96,
+        "meta_model_task_attempts": 704,
+        "meta_task_attempts": 707,
         "pipeline_checks_per_iteration": 1,
         "production_task_attempts": 2500,
     }
@@ -179,7 +180,7 @@ def validate(scratch_root: Path) -> dict[str, Any]:
             "max_iterations": 3,
             "min_iterations": 3,
             "early_stop_patience": 3,
-            "max_task_attempts": 699,
+            "max_task_attempts": 707,
             "max_wall_seconds": 604800,
         }
         if native_meta["budget"] != expected_budget:
@@ -252,7 +253,7 @@ def validate(scratch_root: Path) -> dict[str, Any]:
             * settings["meta"]["maximum_iterations"]
         )
         recovery_attempts = settings["meta_task_attempts"] - deterministic_native_attempts
-        if deterministic_native_attempts != 611 or recovery_attempts != 88:
+        if deterministic_native_attempts != 611 or recovery_attempts != 96:
             raise RuntimeError("trusted native meta attempt ledger changed")
 
     return {

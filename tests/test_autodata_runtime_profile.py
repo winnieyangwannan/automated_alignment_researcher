@@ -122,6 +122,7 @@ def test_c32_profile_is_an_explicit_load_canary_profile(tmp_path: Path) -> None:
     profile = runtime_profile(TARGET_AWARE_LOCAL_C32_PROFILE)
 
     assert profile.concurrency == 32
+    assert profile.model_request_max_attempts == 1
     proxy = tmp_path / "proxy_info.json"
     proxy.write_text("{}\n")
     script = ROOT / "scripts/autodata_runtime_profile.sh"
@@ -133,9 +134,10 @@ export AAR_KIMI_PROXY_INFO="{proxy}"
 source "{script}"
 aar_set_autodata_runtime_profile
 printf '%s\n' "$AAR_AUTODATA_CONCURRENCY"
+printf '%s\n' "$AAR_AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS"
 '''
     completed = subprocess.run(
         ["bash", "-c", command], check=True, capture_output=True, text=True
     )
 
-    assert completed.stdout.strip() == "32"
+    assert completed.stdout.splitlines() == ["32", "1"]

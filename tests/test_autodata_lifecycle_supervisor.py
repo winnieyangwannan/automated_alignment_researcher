@@ -216,8 +216,9 @@ def _frozen_reconcile_fixture(
         "meta_wall_seconds": 604800,
         "production_wall_seconds": 604800,
         "meta_evaluation_attempts": 608,
-        "meta_model_task_attempts": 696,
-        "meta_task_attempts": 699,
+        "meta_finalization_retry_attempts": 96,
+        "meta_model_task_attempts": 704,
+        "meta_task_attempts": 707,
         "pipeline_checks_per_iteration": 1,
         "trusted_pipeline_manifest": pipeline_manifest,
         "production_task_attempts": 2500,
@@ -413,7 +414,7 @@ def test_frozen_workspace_automatically_creates_registers_and_cleans_default(
     assert canonical_spec["budget"]["max_iterations"] == 3
     assert canonical_spec["budget"]["min_iterations"] == 3
     assert canonical_spec["budget"]["early_stop_patience"] == 3
-    assert canonical_spec["budget"]["max_task_attempts"] == 699
+    assert canonical_spec["budget"]["max_task_attempts"] == 707
     assert isinstance(canonical_spec["split_seed"], int)
     assert len(canonical_spec["tuning_task_ids"]) == 64
     assert len(canonical_spec["validation_task_ids"]) == 32
@@ -681,6 +682,73 @@ def test_supervisor_surfaces_allowlisted_native_contract_diagnostic(
             safe_diagnostic=diagnostic,
         )
     assert failure.value.error_code == "native_action_result_contract_failed"
+
+
+@pytest.mark.parametrize(
+    ("diagnostic", "error_code"),
+    [
+        (
+            "task_attempts budget exceeded",
+            "native_task_attempt_budget_exceeded",
+        ),
+        (
+            "task_attempts budget insufficient for atomic batch: "
+            "requires 93, remaining 88",
+            "native_task_attempt_budget_insufficient",
+        ),
+        (
+            "iterations budget insufficient for atomic batch: "
+            "requires 1, remaining 0",
+            "native_iteration_budget_insufficient",
+        ),
+        ("iterations budget exceeded", "native_iteration_budget_exceeded"),
+        ("wall-clock budget exceeded", "native_wall_clock_budget_exceeded"),
+        (
+            "workspace task-attempt budget exceeded",
+            "native_workspace_task_attempt_budget_exceeded",
+        ),
+        (
+            "workspace revision budget exceeded",
+            "native_workspace_revision_budget_exceeded",
+        ),
+    ],
+)
+def test_supervisor_fails_immediately_on_permanent_native_budget_diagnostic(
+    tmp_path: Path,
+    diagnostic: str,
+    error_code: str,
+) -> None:
+    log_file = tmp_path / "supervisor.log"
+    with log_file.open("a", encoding="utf-8", buffering=1) as log_handle:
+        supervisor = lifecycle_supervisor.Supervisor(
+            Namespace(
+                state=tmp_path / "state.db",
+                log_file=log_file,
+                log_handle=log_handle,
+            )
+        )
+        offset = log_handle.tell()
+        log_handle.write(f"autodata: {diagnostic}\n")
+        safe_diagnostic = supervisor._safe_step_diagnostic(offset)
+
+    assert safe_diagnostic == diagnostic
+    subject = lifecycle_supervisor.Subject(
+        "execution", "exe_budget", "final_pending", 60, 60
+    )
+    with pytest.raises(
+        lifecycle_supervisor.NativeStepFailure,
+        match="failed permanently",
+    ) as failure:
+        supervisor._record_step_outcome(
+            subject,
+            return_code=2,
+            timed_out=False,
+            stalled=False,
+            safe_diagnostic=safe_diagnostic,
+        )
+    assert failure.value.error_code == error_code
+    assert failure.value.public_summary.endswith(diagnostic)
+    assert supervisor.failed_step_count == 0
 
 
 def test_status_heartbeat_refreshes_unchanged_state(

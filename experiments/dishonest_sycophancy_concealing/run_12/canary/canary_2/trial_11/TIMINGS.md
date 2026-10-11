@@ -68,3 +68,22 @@ All displayed timestamps use Pacific Time (`PT`).
   `exe_3055ea6409f34720a908bb8b5039da4f` entered `baseline_pending` at 05:37 PT.
 - Heartbeat repair proof: long native step 05:35:58–05:37:04 PT retained fresh
   30-second status updates without a false liveness failure.
+
+## Terminal outcome
+
+- Canonical baseline completed: 96 native attempts.
+- Canonical iterations completed: 3/3.
+- Canonical execution terminal observation: `final_pending`, `699/699` native
+  attempts consumed.
+- Native private diagnostic: `task_attempts budget exceeded`.
+- Research `1814992`: 04:51:41–06:02:52 PT, 1h 11m 11s, `FAILED 1:0`.
+- Controller `1814993`: 06:03:24–06:03:40 PT, 16s, `FAILED 1:0`.
+- Evaluator jobs: 0.
+- Production, verified handoff, training job, training-smoke receipt, score,
+  submission, and checkpoint artifacts: absent.
+- Root cause: the 699-attempt contract reserved only 88 recovery attempts;
+  one complete 96-task finalization replay requires a 707-attempt native cap.
+- Comprehensive campaign audit completed at 06:24 PT: five-round finalization
+  plus conservative authoring capacity requires 14,004 provider-round
+  reservations and a `$24,099.427584` worst-case ceiling; next trial ceiling is
+  `$24,100` pending explicit model/config confirmation.

@@ -67,6 +67,13 @@ PRODUCTION_ID_PREFIX = "safety-prod"
 PRODUCTION_SEED_OFFSET = 1000
 _MAX_PRIVATE_PROCESS_OUTPUT_BYTES = 1024 * 1024
 _MAX_NATIVE_DIAGNOSTIC_BYTES = 1024 * 1024
+_PERMANENT_NATIVE_DIAGNOSTICS = {
+    "task_attempts budget exceeded": "native_task_attempt_budget_exceeded",
+    "iterations budget exceeded": "native_iteration_budget_exceeded",
+    "wall-clock budget exceeded": "native_wall_clock_budget_exceeded",
+    "workspace task-attempt budget exceeded": "native_workspace_task_attempt_budget_exceeded",
+    "workspace revision budget exceeded": "native_workspace_revision_budget_exceeded",
+}
 
 _ResultT = TypeVar("_ResultT")
 
@@ -74,9 +81,15 @@ _ResultT = TypeVar("_ResultT")
 class NativeStepFailure(RuntimeError):
     """Terminal native-step failure with a content-safe public classification."""
 
-    def __init__(self, detail: str | None = None) -> None:
+    def __init__(
+        self,
+        detail: str | None = None,
+        *,
+        error_code: str | None = None,
+        attempts: int = 3,
+    ) -> None:
         self.detail = detail
-        self.error_code = (
+        self.error_code = error_code or (
             "native_action_result_contract_failed"
             if detail is not None
             else "lifecycle_step_failed"
@@ -84,7 +97,11 @@ class NativeStepFailure(RuntimeError):
         self.public_summary = "native AutoData lifecycle step failed"
         if detail is not None:
             self.public_summary += f": {detail}"
-        message = "native AutoData step failed three times without state progress"
+        message = (
+            "native AutoData step failed permanently"
+            if attempts == 1
+            else "native AutoData step failed three times without state progress"
+        )
         if detail is not None:
             message += f": {detail}"
         super().__init__(message)
@@ -2569,6 +2586,29 @@ class Supervisor:
             self.failed_step_signature = None
             self.failed_step_count = 0
             return
+        permanent_error_code = (
+            _PERMANENT_NATIVE_DIAGNOSTICS.get(safe_diagnostic)
+            if safe_diagnostic is not None
+            else None
+        )
+        if permanent_error_code is None and safe_diagnostic is not None:
+            budget_match = re.fullmatch(
+                r"(task_attempts|iterations) budget insufficient for atomic batch: "
+                r"requires [0-9]+, remaining [0-9]+",
+                safe_diagnostic,
+            )
+            if budget_match is not None:
+                permanent_error_code = (
+                    "native_task_attempt_budget_insufficient"
+                    if budget_match.group(1) == "task_attempts"
+                    else "native_iteration_budget_insufficient"
+                )
+        if permanent_error_code is not None:
+            raise NativeStepFailure(
+                safe_diagnostic,
+                error_code=permanent_error_code,
+                attempts=1,
+            )
         failed_signature = (
             subject.kind,
             subject.subject_id,
@@ -2598,6 +2638,7 @@ class Supervisor:
             "analysis action result must include a non-empty proposal",
             "analysis action has not completed",
             "mutation action has not completed",
+            *_PERMANENT_NATIVE_DIAGNOSTICS,
         }
         for line in reversed(text.splitlines()):
             if not line.startswith("autodata: "):
@@ -2607,6 +2648,12 @@ class Supervisor:
                 return detail
             if re.fullmatch(
                 r"execution cannot step from phase '[a-z][a-z0-9_]*'", detail
+            ):
+                return detail
+            if re.fullmatch(
+                r"(?:task_attempts|iterations) budget insufficient for atomic batch: "
+                r"requires [0-9]+, remaining [0-9]+",
+                detail,
             ):
                 return detail
         return None
