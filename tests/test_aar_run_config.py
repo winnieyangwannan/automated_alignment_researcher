@@ -213,3 +213,7 @@ def test_run14_launch_path_fails_closed_without_autodata() -> None:
     assert "AAR_AUTODATA=1" not in combined
     assert "autodata_run_config" not in combined
     assert "AAR_AUTODATA_PLUGIN_ROOT" not in combined
+    assert combined.count(
+        "AAR_KIMI_SERVE_DEPLOYMENT=steerability_8-kimi26"
+    ) >= 2
+    assert "AAR_KIMI_SERVE_DEPLOYMENT=aar_8-kimi26" not in combined
