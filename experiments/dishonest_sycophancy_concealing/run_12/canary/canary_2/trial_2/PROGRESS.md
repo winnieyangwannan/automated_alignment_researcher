@@ -54,3 +54,49 @@ then validate the strict YAML/compiler contract before any launch.
 
 Commit and synchronize the validated Trial 2 configuration to the FAIR HPC
 execution worktree before any launch.
+
+### ⛔ 19:08 PT — First launch stopped during target-endpoint preflight
+
+- Source commit `484ea65f3c019dcd7496db39a205b4f4943ee907` was
+  fast-forwarded to the clean `autodata` HPC worktree before submission.
+- Pre-submission attempt root:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T015716Z-484ea65f3c01`.
+- The Kimi endpoint/MCP and forced-tool preflight completed successfully.
+- The dedicated fixed-base Gemma deployment
+  `winnieyangwn-r12-alpha-i1-9ff00df8` loaded the exact reviewed checkpoint
+  with vLLM 0.25.1, BF16, text-only `language_model_only=True`, and one GB300.
+- Its worker job `1809545` became ready, but proxy job `1809583` and an
+  unrelated deployment's proxy job started on `cpu-128-117` at the same second
+  and both selected port `8102`. The unrelated Kimi proxy won the bind.
+- The Run 12 model-aware endpoint test received HTTP 400 because port `8102`
+  exposed `Kimi-K3` instead of `gemma-4-31B-it`. A direct request to the Gemma
+  worker succeeded, isolating the failure to proxy port ownership.
+- The submitter exited before `sbatch`; no pipeline, research-chain,
+  controller, training, or evaluator job was created. The failed attempt and
+  deployment logs remain preserved.
+- A retained Run 12 fixed-base deployment,
+  `winnieyangwn-r12-alpha-i1-c0dab4f7`, was revalidated read-only. It uses the
+  same checkpoint, image, vLLM version, BF16 and language-model-only settings;
+  its worker and proxy are healthy, `/v1/models` exposes only
+  `gemma-4-31B-it`, and its generation smoke test passes.
+
+#### Lifecycle snapshot
+
+```text
+✓ Source/config validation
+✗ Endpoint and MCP preflight — target proxy port collision
+○ Infrastructure bootstrap
+○ Research and method authoring
+○ Proposal review and approval
+○ AutoData workspace authoring
+○ Meta-optimization
+○ Production
+○ Training smoke
+```
+
+#### Next gate
+
+Create a fresh attempt through the committed canary launcher while selecting
+the already revalidated fixed-base deployment through the launcher's
+canary-only reuse control. The fresh attempt must still pass the launcher's
+model-aware endpoint test before any pipeline job is submitted.
