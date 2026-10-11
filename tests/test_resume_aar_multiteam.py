@@ -525,6 +525,107 @@ def test_completed_latest_proposal_skips_current_method_validation(
     assert not Path(env["REPAIR_LOG"]).exists()
 
 
+def test_failed_proposal_preserves_feedback_uid_without_resume(
+    tmp_path: Path,
+) -> None:
+    repo, attempt, _fake_bin, env = _fixture(tmp_path)
+    team = attempt / "aar_teams" / "team-alpha-launch"
+    (team / "scores" / "idea-alpha-run.json").unlink()
+    (team / "scores" / "idea-alpha-run.failed.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "status": "failed",
+                "run_id": "idea-alpha-run",
+                "stage": "training",
+                "error_code": "training_python_exception",
+                "retryable": False,
+            }
+        )
+    )
+
+    completed = subprocess.run(
+        [str(repo / "scripts" / ENGINE.name), str(attempt), "alpha"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    launch = Path(env["SBATCH_LOG"]).read_text().strip().split("|")
+    assert launch[1] == "idea-alpha"
+    assert launch[2] == ""
+    registry = (attempt / "metadata" / "recovery_jobs.tsv").read_text()
+    assert "feedback_idea_uid=idea-alpha" in registry
+    assert "resume_run_id=" not in registry
+
+
+def test_score_wins_over_stale_failure_and_resumes_finding(
+    tmp_path: Path,
+) -> None:
+    repo, attempt, _fake_bin, env = _fixture(tmp_path)
+    team = attempt / "aar_teams" / "team-alpha-launch"
+    (team / "scores" / "idea-alpha-run.failed.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "status": "failed",
+                "run_id": "idea-alpha-run",
+                "stage": "training",
+                "error_code": "stale_failure",
+                "retryable": False,
+            }
+        )
+    )
+
+    completed = subprocess.run(
+        [str(repo / "scripts" / ENGINE.name), str(attempt), "alpha"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    launch = Path(env["SBATCH_LOG"]).read_text().strip().split("|")
+    assert launch[1] == "idea-alpha"
+    assert launch[2] == "1"
+    registry = (attempt / "metadata" / "recovery_jobs.tsv").read_text()
+    assert "resume_run_id=idea-alpha-run" in registry
+    assert "feedback_idea_uid=" not in registry
+
+
+def test_invalid_failure_marker_fails_closed(tmp_path: Path) -> None:
+    repo, attempt, _fake_bin, env = _fixture(tmp_path)
+    team = attempt / "aar_teams" / "team-alpha-launch"
+    (team / "scores" / "idea-alpha-run.json").unlink()
+    (team / "scores" / "idea-alpha-run.failed.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "status": "failed",
+                "run_id": "wrong-run",
+                "stage": "training",
+                "error_code": "training_python_exception",
+                "retryable": False,
+            }
+        )
+    )
+
+    completed = subprocess.run(
+        [str(repo / "scripts" / ENGINE.name), str(attempt), "alpha"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 2
+    assert "invalid bound failure marker" in completed.stderr
+    assert not Path(env["SBATCH_LOG"]).exists()
+
+
 def test_missing_run_id_is_repaired_and_audited_before_launch(
     tmp_path: Path,
 ) -> None:
@@ -629,8 +730,9 @@ def test_cancelled_training_failure_is_archived_before_same_run_retry(
     epsilon = attempt / "aar_teams" / "team-epsilon-launch"
     failure = epsilon / "scores" / "idea-epsilon-run.failed.json"
     failure.write_text(
-        '{"run_id":"idea-epsilon-run","stage":"training",'
-        '"error_code":"training_process_failed"}\n'
+        '{"schema_version":2,"status":"failed",'
+        '"run_id":"idea-epsilon-run","stage":"training",'
+        '"error_code":"training_process_failed","retryable":true}\n'
     )
 
     completed = subprocess.run(

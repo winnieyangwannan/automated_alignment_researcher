@@ -171,6 +171,7 @@ declare -A started_by_seed=()
 declare -A remaining_by_seed=()
 declare -A resume_uid_by_seed=()
 declare -A resume_run_by_seed=()
+declare -A feedback_uid_by_seed=()
 declare -A repair_proposal_uid_by_seed=()
 declare -A retry_train_run_by_seed=()
 declare -A retry_train_job_by_seed=()
@@ -277,16 +278,40 @@ for seed in "${requested_seeds[@]}"; do
       finding="${team}/.finding_dedup/runid_${run_id}/post.json"
       failure="${team}/scores/${run_id}.failed.json"
       failure_stage=""
-      [ ! -f "${failure}" ] || failure_stage="$(jq -r '.stage // empty' "${failure}")"
-      if [ ! -f "${failure}" ] || \
-         { [ "${failure_stage}" = training ] && \
-           [ -f "${team}/.train_submissions/${run_id}.env" ] && \
-           [ ! -f "${team}/submissions/${run_id}/.submitted" ]; }; then
+      if [ -f "${team}/scores/${run_id}.json" ]; then
         resume_uid_by_seed["${seed}"]="${idea_uid}"
         resume_run_by_seed["${seed}"]="${run_id}"
-        if [ "${needs_run_id_repair}" = 1 ]; then
-          repair_proposal_uid_by_seed["${seed}"]="${idea_uid}"
+      elif [ -f "${failure}" ]; then
+        if ! failure_stage="$(jq -er --arg run_id "${run_id}" '
+          select(
+            type == "object" and
+            (.schema_version | type) == "number" and .schema_version == 2 and
+            (.status | type) == "string" and .status == "failed" and
+            (.run_id | type) == "string" and .run_id == $run_id and
+            (.stage | type) == "string" and
+              (.stage | test("^[a-z][a-z0-9_]{0,31}$")) and
+            (.error_code | type) == "string" and
+              (.error_code | test("^[a-z][a-z0-9_]{0,63}$")) and
+            (.retryable | type) == "boolean"
+          ) | .stage
+        ' "${failure}")"; then
+          echo "${seed} approved proposal has an invalid bound failure marker" >&2
+          exit 2
         fi
+        feedback_uid_by_seed["${seed}"]="${idea_uid}"
+        if [ "${failure_stage}" = training ] && \
+           [ -f "${team}/.train_submissions/${run_id}.env" ] && \
+           [ ! -f "${team}/submissions/${run_id}/.submitted" ]; then
+          resume_uid_by_seed["${seed}"]="${idea_uid}"
+          resume_run_by_seed["${seed}"]="${run_id}"
+        fi
+      else
+        resume_uid_by_seed["${seed}"]="${idea_uid}"
+        resume_run_by_seed["${seed}"]="${run_id}"
+      fi
+      if [ "${needs_run_id_repair}" = 1 ] && \
+         [ -n "${resume_run_by_seed[${seed}]:-}" ]; then
+        repair_proposal_uid_by_seed["${seed}"]="${idea_uid}"
       fi
     fi
   fi
@@ -349,6 +374,12 @@ for seed in "${requested_seeds[@]}"; do
 done
 
 for seed in "${requested_seeds[@]}"; do
+  if [ -n "${resume_uid_by_seed[${seed}]:-}" ]; then
+    unset "feedback_uid_by_seed[${seed}]"
+  fi
+done
+
+for seed in "${requested_seeds[@]}"; do
   [ "${remaining_by_seed[${seed}]}" -gt 0 ] || {
     echo "[resume] ${seed}: session ceiling already exhausted" >&2
     exit 2
@@ -357,9 +388,11 @@ done
 
 if [ "${AAR_RESUME_PLAN_ONLY:-0}" = 1 ]; then
   for seed in "${requested_seeds[@]}"; do
-    printf '[resume-plan] %s: started=%s remaining=%s resume_run_id=%s retry_training_job=%s\n' \
+    printf '[resume-plan] %s: started=%s remaining=%s resume_run_id=%s feedback_idea_uid=%s retry_training_job=%s\n' \
       "${seed}" "${started_by_seed[${seed}]}" "${remaining_by_seed[${seed}]}" \
-      "${resume_run_by_seed[${seed}]:-none}" "${retry_train_job_by_seed[${seed}]:-none}"
+      "${resume_run_by_seed[${seed}]:-none}" \
+      "${feedback_uid_by_seed[${seed}]:-none}" \
+      "${retry_train_job_by_seed[${seed}]:-none}"
   done
   printf '[resume-plan] stale_claims=%s stale_eval_timings=%s; no state changed\n' \
     "${#stale_claim_records[@]}" "${#stale_eval_timing_records[@]}"
@@ -448,6 +481,9 @@ for seed in "${requested_seeds[@]}"; do
   if [ -n "${resume_uid_by_seed[${seed}]:-}" ]; then
     export AAR_IDEA_UID_OVERRIDE="${resume_uid_by_seed[${seed}]}"
     export AAR_RESUME_APPROVED_PROPOSAL=1
+  elif [ -n "${feedback_uid_by_seed[${seed}]:-}" ]; then
+    export AAR_IDEA_UID_OVERRIDE="${feedback_uid_by_seed[${seed}]}"
+    unset AAR_RESUME_APPROVED_PROPOSAL
   else
     unset AAR_IDEA_UID_OVERRIDE AAR_RESUME_APPROVED_PROPOSAL
   fi
@@ -482,6 +518,16 @@ for seed in "${requested_seeds[@]}"; do
       }
     done
   fi
+  if [ -n "${feedback_uid_by_seed[${seed}]:-}" ]; then
+    [[ " ${chain_export_names[*]} " = *" AAR_IDEA_UID_OVERRIDE "* ]] || {
+      echo "failure-feedback recovery export is missing AAR_IDEA_UID_OVERRIDE" >&2
+      exit 2
+    }
+    [[ " ${chain_export_names[*]} " != *" AAR_RESUME_APPROVED_PROPOSAL "* ]] || {
+      echo "failure-feedback recovery must not export approved-run resume" >&2
+      exit 2
+    }
+  fi
   [ "${#chain_export_names[@]}" -gt 0 ] || {
     echo "sanitized research-chain export allowlist is empty" >&2
     exit 2
@@ -502,6 +548,8 @@ for seed in "${requested_seeds[@]}"; do
   details="team=${team_id};started=${started_by_seed[${seed}]};remaining=${remaining}"
   [ -z "${resume_run_by_seed[${seed}]:-}" ] || \
     details="${details};resume_run_id=${resume_run_by_seed[${seed}]}"
+  [ -z "${feedback_uid_by_seed[${seed}]:-}" ] || \
+    details="${details};feedback_idea_uid=${feedback_uid_by_seed[${seed}]}"
   record_event chain "${seed}" "${chain}" "${details}"
   echo "[resume] ${seed}: ${started_by_seed[${seed}]}/${AAR_RESUME_MAX_SESSIONS} started; evaluator=${evaluator}; chain=${chain}; remaining=${remaining}"
 done
