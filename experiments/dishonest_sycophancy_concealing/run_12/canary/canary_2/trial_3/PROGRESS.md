@@ -333,3 +333,111 @@ No listed Trial 3 job remained in `squeue`. The attempt root, checkpoint root,
 submission record, pipeline and research logs, native database and retained
 snapshot were preserved. The retained fixed Gemma deployment remains serving
 and was not modified. No further retry or relaunch is authorized for Trial 3.
+
+## 2026-10-11
+
+<a id="trial3-event-retrospective"></a>
+
+### 💡 01:01 PT — CONCLUSION: Trial 3 defined the trusted execution boundary
+
+> [!IMPORTANT]
+> **Trial 3 remains terminal and failed.** Its useful result is a control-plane
+> diagnosis: researcher instructions and late handoff checks cannot substitute
+> for trusted, pre-native construction and validation of the execution contract.
+
+#### Final lifecycle snapshot
+
+```text
+✓ Source/config validation
+✓ Endpoint and MCP preflight
+✓ Infrastructure bootstrap
+✓ Method authoring and contract check
+✓ Proposal review and approval
+✓ AutoData workspace registration
+✓ Operational baseline approval
+✗ Canonical execution create/register and three-iteration meta-optimization
+○ Production
+○ Training smoke
+```
+
+The failed boundary was execution creation and registration. Production,
+training, adapter validation, evaluation, score publication, and finding
+publication never began.
+
+#### 🔎 Failure chain and bounded diagnosis
+
+1. Baseline approval froze the workspace and created an execution, but the
+   lifecycle supervisor could not advance it because it was not registered in
+   durable control state. It remained at `baseline_pending` with zero attempts.
+2. Kimi later used the supervised creation path, but that path accepted the
+   workspace's implicit default manifest instead of the trusted Trial 3
+   contract. The accepted execution specified `0/1` iterations, null patience,
+   and empty explicit task partitions rather than exact `3/3/3` and
+   `64/32/32` settings.
+3. With explicit partitions absent, pinned AutoData fell back to a `102/26`
+   split across all `128` manifest tasks. This included the `32` tasks that the
+   protocol required to remain untouched, so the intended holdout binding was
+   invalidated before the required meta run existed.
+4. The wrong execution used `256` preliminary attempts and reached only `41`
+   final-corpus attempts before the broker rejected further reservation under
+   the `$299` campaign ceiling. That cap was demonstrably insufficient for
+   this mistaken workload; Trial 3 does not establish the realized cost of the
+   intended three-iteration-plus-production workload.
+5. Research job `1810943` then failed, controller `1810944` submitted automatic
+   retry `1811182`, and the user-authorized stop cancelled the controller and
+   retry. No evaluator existed, as required by the canary contract.
+
+This was not an evaluator, held-out-scoring, or target-endpoint failure. The
+concrete defect was fail-open orchestration: `validate_generation_inputs()`
+checked data-contract and concurrency fields but did not enforce the trusted
+meta budget, disjoint explicit partitions, untouched-task binding, or exact
+production settings before native execution creation.
+
+#### 🛠️ Reusable improvements carried forward
+
+Shared repair commit `933adca1b44730242fedfa64b682cab5f3b06d65` converted the
+Trial 3 diagnosis into reusable controls rather than an attempt-specific
+workaround:
+
+- trusted orchestration constructs and validates the exact execution contract,
+  task partitions, digests, production settings, and campaign policy before a
+  native create call;
+- a durable content-bound intent makes create/register idempotent and recovers
+  the same execution across a crash instead of creating a duplicate;
+- registration must succeed within three attempts or 60 seconds, and semantic
+  no-progress or repeated-failure conditions terminate loudly;
+- a freeze-created default may be cancelled only when uniquely linked to the
+  workspace, still in its initial phase, and proven to have zero attempts;
+- supervisor state, broker accounting, Slurm retry classification, and training
+  submission receipts are durable so controller or process restarts cannot
+  silently repeat work or bypass concurrency limits; and
+- campaign capacity is a trusted pre-launch reservation calculation, not a cap
+  guessed from a smaller or malformed execution.
+
+The shared touched-surface suite later passed on the matching HPC environment
+with `275 passed, 5 subtests passed` at Trial 4 source
+`9b993a73310a7280508921c7ef662dc2af277500`. See the
+[Trial 4 repair record](../trial_4/PROGRESS.md#trial4-event-repair-local-pass)
+and [budget decision](../trial_4/PROGRESS.md#trial4-event-budget-approved).
+
+#### Remaining uncertainty
+
+- Trial 3 itself never exercised the repaired path.
+- Trial 4 validated the shared repair suite and reached workspace authoring, but
+  stopped on a separate earlier feedback-loop defect before canonical native
+  execution creation. Therefore the corrected `3/3/3`, `64/32/32` path still
+  lacked end-to-end live canary proof at this retrospective boundary.
+- The exact phase-by-phase spend of a successful intended workload remained
+  unmeasured; only the inadequacy of `$299` for the observed wrong execution
+  was proven.
+
+#### Evidence
+
+- Attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T060442Z-d6ff24e28e38`
+- Checkpoints:
+  `/checkpoint/ram/winnieyangwn/aar-checkpoints/run12-bootstrap-canary/20261011T060442Z-d6ff24e28e38`
+- Trial 3 source: `d6ff24e28e38af125ed7576133b44835acef262e`
+- Shared repair: `933adca1b44730242fedfa64b682cab5f3b06d65`
+- Jobs: pipeline `1810934` completed; research `1810943` failed;
+  controller `1810944` and retry `1811182` were cancelled
