@@ -1568,7 +1568,7 @@ def _requires_explicit_proposal_run_id() -> bool:
     )
 
 
-def _approved_proposal_run_id_candidate() -> str:
+def _approved_proposal_run_id_candidate(*, allow_method_drift: bool = False) -> str:
     """Validate and return the deterministic run ID without writing state."""
     if not _requires_explicit_proposal_run_id():
         raise RuntimeError("decoupled proposal run IDs require AAR_NO_LOCAL_GPU")
@@ -1590,7 +1590,9 @@ def _approved_proposal_run_id_candidate() -> str:
         raise RuntimeError("approved proposal marker has an unsafe idea name")
     code_hash = marker_payload.get("code_hash")
     _, current_hash = _method_code(idea_name)
-    if not isinstance(code_hash, str) or current_hash != code_hash:
+    if not isinstance(code_hash, str):
+        raise RuntimeError("approved proposal marker has no code hash")
+    if not allow_method_drift and current_hash != code_hash:
         raise RuntimeError("approved proposal code no longer matches the method")
 
     existing = marker_payload.get("run_id")
@@ -1611,6 +1613,9 @@ def _approved_proposal_run_id_candidate() -> str:
         ):
             raise RuntimeError("approved proposal run stamp is not bound to its marker")
         return existing
+
+    if allow_method_drift:
+        raise RuntimeError("method drift is allowed only for an existing run ID")
 
     # Reconstruct the exact pre-mint payload used by submit_idea_proposal.  This
     # permits a trusted recovery to repair an approval written by an older

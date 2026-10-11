@@ -13,6 +13,7 @@ def main() -> int:
     parser.add_argument("--team-dir", type=Path, required=True)
     parser.add_argument("--idea-uid", required=True)
     parser.add_argument("--plan-only", action="store_true")
+    parser.add_argument("--allow-method-drift", action="store_true")
     args = parser.parse_args()
 
     team = args.team_dir.resolve(strict=True)
@@ -38,8 +39,14 @@ def main() -> int:
     )
 
     if args.plan_only:
-        print(_approved_proposal_run_id_candidate())
+        print(
+            _approved_proposal_run_id_candidate(
+                allow_method_drift=args.allow_method_drift
+            )
+        )
     else:
+        if args.allow_method_drift:
+            parser.error("--allow-method-drift requires --plan-only")
         print(_ensure_approved_proposal_run_id())
     return 0
 

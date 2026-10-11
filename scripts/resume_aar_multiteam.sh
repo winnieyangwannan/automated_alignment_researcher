@@ -262,11 +262,19 @@ for seed in "${requested_seeds[@]}"; do
     # method file: a later interrupted session may legitimately have edited
     # that shared file after the completed proposal was published.
     if [ ! -f "${finding}" ]; then
+      score="${team}/scores/${run_id}.json"
+      failure="${team}/scores/${run_id}.failed.json"
       repair_args=(
         --team-dir "${team}"
         --idea-uid "${idea_uid}"
         --plan-only
       )
+      # A terminal score/failure is already bound to the immutable proposal
+      # run stamp. A later failed session may have edited the shared method
+      # file, so validate the stamp without requiring current-method equality.
+      if [ -n "${run_id}" ] && { [ -f "${score}" ] || [ -f "${failure}" ]; }; then
+        repair_args+=(--allow-method-drift)
+      fi
       validated_run_id="$("${HARNESS_PY}" \
         "${REPO}/scripts/repair_approved_proposal_run_id.py" \
         "${repair_args[@]}" | tail -n 1)"
@@ -282,13 +290,15 @@ for seed in "${requested_seeds[@]}"; do
         exit 2
       }
       finding="${team}/.finding_dedup/runid_${run_id}/post.json"
+      score="${team}/scores/${run_id}.json"
       failure="${team}/scores/${run_id}.failed.json"
       failure_stage=""
-      if [ -f "${team}/scores/${run_id}.json" ]; then
+      failure_retryable="false"
+      if [ -f "${score}" ]; then
         resume_uid_by_seed["${seed}"]="${idea_uid}"
         resume_run_by_seed["${seed}"]="${run_id}"
       elif [ -f "${failure}" ]; then
-        if ! failure_stage="$(jq -er --arg run_id "${run_id}" '
+        if ! failure_state="$(jq -er --arg run_id "${run_id}" '
           select(
             type == "object" and
             (.schema_version | type) == "number" and .schema_version == 2 and
@@ -299,13 +309,15 @@ for seed in "${requested_seeds[@]}"; do
             (.error_code | type) == "string" and
               (.error_code | test("^[a-z][a-z0-9_]{0,63}$")) and
             (.retryable | type) == "boolean"
-          ) | .stage
+          ) | [.stage, (.retryable | tostring)] | @tsv
         ' "${failure}")"; then
           echo "${seed} approved proposal has an invalid bound failure marker" >&2
           exit 2
         fi
+        IFS=$'\t' read -r failure_stage failure_retryable <<< "${failure_state}"
         feedback_uid_by_seed["${seed}"]="${idea_uid}"
         if [ "${failure_stage}" = training ] && \
+           [ "${failure_retryable}" = true ] && \
            [ -f "${team}/.train_submissions/${run_id}.env" ] && \
            [ ! -f "${team}/submissions/${run_id}/.submitted" ]; then
           resume_uid_by_seed["${seed}"]="${idea_uid}"

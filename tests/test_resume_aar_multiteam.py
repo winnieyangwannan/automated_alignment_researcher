@@ -72,7 +72,10 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
         'with open(os.environ["REPAIR_LOG"], "a") as stream:\n'
         '    stream.write(f"{idea_uid}|{plan_only}\\n")\n'
         'marker = os.path.join(team_dir, "scores", ".proposals", f"{idea_uid}.json")\n'
-        'run_id = json.load(open(marker)).get("run_id")\n'
+        'payload = json.load(open(marker))\n'
+        'if payload.get("simulate_method_drift") and "--allow-method-drift" not in sys.argv:\n'
+        '    raise SystemExit("terminal method drift was not allowed")\n'
+        'run_id = payload.get("run_id")\n'
         'print(run_id or f"{idea_uid}-repaired")\n',
     )
     _write_executable(
@@ -530,6 +533,10 @@ def test_failed_proposal_preserves_feedback_uid_without_resume(
 ) -> None:
     repo, attempt, _fake_bin, env = _fixture(tmp_path)
     team = attempt / "aar_teams" / "team-alpha-launch"
+    marker = team / "scores" / ".proposals" / "idea-alpha.json"
+    proposal = json.loads(marker.read_text())
+    proposal["simulate_method_drift"] = True
+    marker.write_text(json.dumps(proposal))
     (team / "scores" / "idea-alpha-run.json").unlink()
     (team / "scores" / "idea-alpha-run.failed.json").write_text(
         json.dumps(
@@ -542,6 +549,9 @@ def test_failed_proposal_preserves_feedback_uid_without_resume(
                 "retryable": False,
             }
         )
+    )
+    (team / ".train_submissions" / "idea-alpha-run.env").write_text(
+        "job_id=991\n"
     )
 
     completed = subprocess.run(

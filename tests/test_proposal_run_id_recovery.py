@@ -102,3 +102,55 @@ def test_existing_run_id_rejects_mismatched_stamp(tmp_path) -> None:
         pytest.raises(RuntimeError, match="not bound"),
     ):
         server_api_tools._approved_proposal_run_id_candidate()
+
+
+def test_terminal_run_id_allows_method_drift_but_still_validates_stamp(
+    tmp_path,
+) -> None:
+    scores = tmp_path / "scores"
+    marker = scores / ".proposals" / "chain-one.json"
+    runs = marker.parent / "runs"
+    runs.mkdir(parents=True)
+    payload = {
+        "approved": True,
+        "execution_ready": True,
+        "idea_name": "method_one",
+        "idea_uid": "chain-one",
+        "code_hash": "a" * 64,
+        "paper": {"title": "approved"},
+        "run_id": "chain-one-method-one-1",
+        "ts": 123.5,
+        "verdict": {"approved": True},
+    }
+    marker.write_text(json.dumps(payload))
+    (runs / f"{payload['run_id']}.json").write_text(json.dumps(payload))
+    environment = {
+        "AAR_NO_LOCAL_GPU": "true",
+        "IDEA_UID": "chain-one",
+        "IDEA_NAME": "chain-one",
+        "SCORES_DIR": str(scores),
+    }
+    with (
+        patch.dict(os.environ, environment, clear=False),
+        patch.object(
+            server_api_tools,
+            "_method_code",
+            return_value=("later method source", "b" * 64),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="code no longer matches"):
+            server_api_tools._approved_proposal_run_id_candidate()
+        assert (
+            server_api_tools._approved_proposal_run_id_candidate(
+                allow_method_drift=True
+            )
+            == payload["run_id"]
+        )
+
+        stamp = json.loads((runs / f"{payload['run_id']}.json").read_text())
+        stamp["paper"] = {"title": "tampered"}
+        (runs / f"{payload['run_id']}.json").write_text(json.dumps(stamp))
+        with pytest.raises(RuntimeError, match="not bound"):
+            server_api_tools._approved_proposal_run_id_candidate(
+                allow_method_drift=True
+            )
