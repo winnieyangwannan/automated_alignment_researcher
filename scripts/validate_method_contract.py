@@ -10,6 +10,7 @@ import importlib.util
 import inspect
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -139,6 +140,23 @@ def _unsupported_training_arguments(tree: ast.AST) -> list[str]:
 def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
     """Reject target-environment API and batching failures before GPU launch."""
     errors: set[str] = set()
+    sequential_generation_limit_raw = os.getenv(
+        "AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS", "256"
+    ).strip()
+    if not re.fullmatch(r"[1-9][0-9]*", sequential_generation_limit_raw):
+        errors.add(
+            "AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS must be an integer between "
+            "1 and 100000"
+        )
+        sequential_generation_limit: int | None = None
+    else:
+        sequential_generation_limit = int(sequential_generation_limit_raw)
+        if sequential_generation_limit > 100000:
+            errors.add(
+                "AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS must be an integer between "
+                "1 and 100000"
+            )
+            sequential_generation_limit = None
     target_thinking_value = os.getenv("AAR_TARGET_ENABLE_THINKING", "").strip().lower()
     if target_thinking_value not in {
         "",
@@ -234,6 +252,222 @@ def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
             and isinstance(value.value.value, ast.Name)
             and value.value.value.id == "aar"
         )
+
+    # A single target call can be safe while the same synchronous call under an
+    # unbounded or multiplicative loop can occupy a training GPU for hours.  Keep
+    # this proof deliberately local and auditable: generated methods may use a
+    # literal range/container or an explicit ``items[:N]`` cap.  Dynamic bounds
+    # must be capped in the method rather than inferred from distant data flow.
+    parent_by_node: dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parent_by_node[child] = parent
+
+    direct_target_calls = {
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and is_serve_v2_chat_completion_call(node)
+    }
+    direct_calls_by_wrapper: dict[str, list[ast.Call]] = {}
+    for call in direct_target_calls:
+        parent = parent_by_node.get(call)
+        while parent is not None:
+            if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                direct_calls_by_wrapper.setdefault(parent.name, []).append(call)
+                break
+            if isinstance(parent, ast.Lambda):
+                break
+            parent = parent_by_node.get(parent)
+    target_wrapper_names = set(direct_calls_by_wrapper)
+
+    def is_target_or_wrapper_call(node: ast.Call) -> bool:
+        return is_serve_v2_chat_completion_call(node) or (
+            isinstance(node.func, ast.Name)
+            and node.func.id in target_wrapper_names
+        )
+
+    def integer_literal(node: ast.AST | None) -> int | None:
+        if not (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, int)
+            and not isinstance(node.value, bool)
+        ):
+            return None
+        return node.value
+
+    def nonnegative_upper_bound(node: ast.AST) -> int | None:
+        value = integer_literal(node)
+        if value is not None:
+            return value if value >= 0 else None
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "min"
+            and not node.keywords
+        ):
+            literal_caps = [
+                candidate
+                for argument in node.args
+                if (candidate := integer_literal(argument)) is not None
+                and candidate >= 0
+            ]
+            if literal_caps:
+                return min(literal_caps)
+        return None
+
+    def static_iterable_bound(node: ast.AST) -> int | None:
+        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+            return len(node.elts)
+        if isinstance(node, ast.Dict):
+            return len(node.keys)
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, (str, bytes))
+        ):
+            return len(node.value)
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Slice):
+            lower = 0 if node.slice.lower is None else integer_literal(node.slice.lower)
+            upper = integer_literal(node.slice.upper)
+            step = 1 if node.slice.step is None else integer_literal(node.slice.step)
+            if (
+                lower is not None
+                and lower >= 0
+                and upper is not None
+                and upper >= 0
+                and step is not None
+                and step > 0
+            ):
+                return max(0, (upper - lower + step - 1) // step)
+            return None
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            return None
+        if node.func.id in {"enumerate", "reversed", "iter", "list", "tuple"}:
+            if len(node.args) == 1 and not node.keywords:
+                return static_iterable_bound(node.args[0])
+            return None
+        if node.func.id != "range" or node.keywords or not 1 <= len(node.args) <= 3:
+            return None
+        if len(node.args) == 1:
+            return nonnegative_upper_bound(node.args[0])
+        values = [integer_literal(argument) for argument in node.args]
+        if any(value is None for value in values):
+            return None
+        try:
+            return len(range(*[int(value) for value in values if value is not None]))
+        except ValueError:
+            return None
+
+    comprehension_types = (
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+        ast.GeneratorExp,
+    )
+
+    def enclosing_sequential_bounds(node: ast.Call) -> list[int | None]:
+        bounds: list[int | None] = []
+        child: ast.AST = node
+        parent = parent_by_node.get(child)
+        while parent is not None:
+            if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                break
+            if isinstance(parent, (ast.For, ast.AsyncFor)):
+                # The iterable expression itself is evaluated once before the
+                # loop. Only calls in the body/orelse repeat per iteration.
+                if child is not parent.iter:
+                    bounds.append(static_iterable_bound(parent.iter))
+            elif isinstance(parent, ast.While):
+                bounds.append(None)
+            elif isinstance(parent, ast.comprehension):
+                comprehension = parent_by_node.get(parent)
+                if isinstance(comprehension, comprehension_types):
+                    generator_index = comprehension.generators.index(parent)
+                    # A generator iterable is evaluated before that generator
+                    # starts, so it repeats only for preceding generators. Its
+                    # filters repeat after the current iterable advances.
+                    included = (
+                        generator_index
+                        if child is parent.iter
+                        else generator_index + 1
+                    )
+                    bounds.extend(
+                        static_iterable_bound(generator.iter)
+                        for generator in comprehension.generators[:included]
+                    )
+            elif (
+                isinstance(parent, comprehension_types)
+                and not isinstance(child, ast.comprehension)
+            ):
+                # Calls in the produced element/key/value execute once per full
+                # generator combination. Calls in a generator clause were
+                # accounted for while visiting ast.comprehension above.
+                bounds.extend(
+                    static_iterable_bound(generator.iter)
+                    for generator in parent.generators
+                )
+            child = parent
+            parent = parent_by_node.get(parent)
+        return bounds
+
+    def lexical_execution_scope(node: ast.AST) -> ast.AST:
+        parent = parent_by_node.get(node)
+        while parent is not None:
+            if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                return parent
+            parent = parent_by_node.get(parent)
+        return tree
+
+    if sequential_generation_limit is not None:
+        # One local wrapper level is common in generated methods.  Preserve its
+        # internal sequential multiplicity at the outer call site instead of
+        # treating one wrapper invocation as one target request. Summing multiple
+        # call sites is a safe upper bound even when branches are exclusive.
+        wrapper_costs: dict[str, int | None] = {}
+        for name, calls in direct_calls_by_wrapper.items():
+            wrapper_cost: int | None = 0
+            for call in calls:
+                internal_bounds = enclosing_sequential_bounds(call)
+                if any(bound is None for bound in internal_bounds):
+                    wrapper_cost = None
+                    break
+                call_cost = 1
+                for bound in internal_bounds:
+                    assert bound is not None
+                    call_cost *= bound
+                wrapper_cost += call_cost
+            wrapper_costs[name] = wrapper_cost
+
+        scope_totals: dict[ast.AST, int] = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not is_target_or_wrapper_call(node):
+                continue
+            bounds = enclosing_sequential_bounds(node)
+            wrapper_cost = 1
+            if isinstance(node.func, ast.Name) and node.func.id in wrapper_costs:
+                wrapper_cost = wrapper_costs[node.func.id]
+            if wrapper_cost is None or any(bound is None for bound in bounds):
+                errors.add(
+                    "synchronous target chat_completion in a sequential loop must "
+                    "have a local static bound (literal range/container or items[:N]); "
+                    "dynamic or while-loop generation is not auditable"
+                )
+                continue
+            total = wrapper_cost
+            for bound in bounds:
+                assert bound is not None
+                total *= bound
+            scope = lexical_execution_scope(node)
+            scope_totals[scope] = scope_totals.get(scope, 0) + total
+
+        for total in scope_totals.values():
+            if total > sequential_generation_limit:
+                errors.add(
+                    "synchronous target chat_completion may execute "
+                    f"{total} times sequentially, exceeding "
+                    "AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS="
+                    f"{sequential_generation_limit}; reduce/cap generation or use "
+                    "bounded concurrency"
+                )
 
     def is_chat_template_normalizer_call(node: ast.Call) -> bool:
         function = node.func

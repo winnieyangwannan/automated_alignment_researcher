@@ -19,6 +19,16 @@ from scripts.validate_method_contract import (
 
 
 class ValidateMethodContractTest(unittest.TestCase):
+    def test_training_submission_runs_contract_guard_before_sbatch(self) -> None:
+        submitter = (
+            Path(__file__).resolve().parents[1] / "scripts" / "submit_train_job.sh"
+        ).read_text()
+
+        self.assertLess(
+            submitter.index('"${REPO}/scripts/validate_method_contract.py"'),
+            submitter.index("sbatch --parsable"),
+        )
+
     def test_autodata_loader_gate_matches_native_proposal_contract(self) -> None:
         missing = _autodata_loader_errors(ast.parse("items = json.load(handle)"))
         self.assertIn("load_autodata_campaign_datasets", missing[0])
@@ -366,6 +376,240 @@ except Exception:
                         _unsafe_training_api_errors(ast.parse(source)),
                         [],
                     )
+
+    def test_rejects_unbounded_sequential_target_generation(self) -> None:
+        source = """
+from aar.infrastructure.serve_v2 import chat_completion as complete
+
+def generate(prompts, config):
+    for prompt in prompts:
+        for _ in range(config.n_responses_per_prompt):
+            complete([{"role": "user", "content": prompt}], enable_thinking=True)
+"""
+        with patch.dict(
+            "os.environ",
+            {"AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS": "256"},
+            clear=True,
+        ):
+            errors = _unsafe_training_api_errors(ast.parse(source))
+
+        self.assertEqual(len(errors), 1)
+        self.assertIn("local static bound", errors[0])
+        self.assertIn("dynamic or while-loop generation", errors[0])
+
+    def test_static_nested_target_generation_honors_configured_cap(self) -> None:
+        source = """
+from aar.infrastructure import serve_v2 as target
+
+def generate(prompts):
+    for prompt in prompts[:8]:
+        for _ in range(4):
+            target.chat_completion(
+                [{"role": "user", "content": prompt}],
+                enable_thinking=True,
+            )
+"""
+        with patch.dict(
+            "os.environ",
+            {"AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS": "32"},
+            clear=True,
+        ):
+            self.assertEqual(_unsafe_training_api_errors(ast.parse(source)), [])
+
+        with patch.dict(
+            "os.environ",
+            {"AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS": "31"},
+            clear=True,
+        ):
+            errors = _unsafe_training_api_errors(ast.parse(source))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("may execute 32 times sequentially", errors[0])
+        self.assertIn("bounded concurrency", errors[0])
+
+    def test_dynamic_target_generation_comprehensions_are_rejected(self) -> None:
+        expressions = (
+            "[chat_completion(messages) for prompt in prompts]",
+            "{chat_completion(messages) for prompt in prompts}",
+            "{prompt: chat_completion(messages) for prompt in prompts}",
+            "(chat_completion(messages) for prompt in prompts)",
+        )
+        for expression in expressions:
+            with self.subTest(expression=expression), patch.dict(
+                "os.environ",
+                {"AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS": "256"},
+                clear=True,
+            ):
+                errors = _unsafe_training_api_errors(ast.parse(expression))
+            self.assertEqual(len(errors), 1)
+            self.assertIn("local static bound", errors[0])
+
+    def test_bounded_target_generation_comprehension_is_accepted(self) -> None:
+        source = "[chat_completion(messages) for prompt in prompts[:8]]"
+        with patch.dict(
+            "os.environ",
+            {"AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS": "8"},
+            clear=True,
+        ):
+            self.assertEqual(_unsafe_training_api_errors(ast.parse(source)), [])
+
+    def test_separate_sequential_loops_are_cumulative_within_scope(self) -> None:
+        source = """
+for _ in range(200):
+    chat_completion(messages)
+for _ in range(200):
+    chat_completion(messages)
+"""
+        with patch.dict(
+            "os.environ",
+            {"AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS": "256"},
+            clear=True,
+        ):
+            errors = _unsafe_training_api_errors(ast.parse(source))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("may execute 400 times sequentially", errors[0])
+
+    def test_sequential_totals_do_not_cross_function_scopes(self) -> None:
+        source = """
+def generate_alpha():
+    for _ in range(200):
+        chat_completion(messages)
+
+def generate_beta():
+    for _ in range(200):
+        chat_completion(messages)
+"""
+        with patch.dict(
+            "os.environ",
+            {"AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS": "256"},
+            clear=True,
+        ):
+            self.assertEqual(_unsafe_training_api_errors(ast.parse(source)), [])
+
+    def test_single_literal_target_generation_loop_is_accepted(self) -> None:
+        source = """
+from aar.infrastructure.serve_v2 import chat_completion
+
+for _ in range(8):
+    chat_completion(messages, enable_thinking=True)
+"""
+        with patch.dict(
+            "os.environ",
+            {"AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS": "8"},
+            clear=True,
+        ):
+            self.assertEqual(_unsafe_training_api_errors(ast.parse(source)), [])
+
+    def test_one_level_target_wrapper_in_dynamic_loop_is_rejected(self) -> None:
+        source = """
+from aar.infrastructure.serve_v2 import chat_completion
+
+def complete_one(messages):
+    return chat_completion(messages, enable_thinking=True)
+
+for prompt in prompts:
+    complete_one([{"role": "user", "content": prompt}])
+"""
+        with patch.dict(
+            "os.environ",
+            {"AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS": "256"},
+            clear=True,
+        ):
+            errors = _unsafe_training_api_errors(ast.parse(source))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("local static bound", errors[0])
+
+    def test_one_level_target_wrapper_preserves_internal_loop_cost(self) -> None:
+        source = """
+from aar.infrastructure.serve_v2 import chat_completion
+
+def complete_four(messages):
+    for _ in range(4):
+        chat_completion(messages, enable_thinking=True)
+
+for prompt in prompts[:8]:
+    complete_four([{"role": "user", "content": prompt}])
+"""
+        with patch.dict(
+            "os.environ",
+            {"AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS": "32"},
+            clear=True,
+        ):
+            self.assertEqual(_unsafe_training_api_errors(ast.parse(source)), [])
+
+        with patch.dict(
+            "os.environ",
+            {"AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS": "31"},
+            clear=True,
+        ):
+            errors = _unsafe_training_api_errors(ast.parse(source))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("may execute 32 times sequentially", errors[0])
+
+    def test_one_level_wrapper_sums_multiple_target_call_sites(self) -> None:
+        source = """
+from aar.infrastructure.serve_v2 import chat_completion
+
+def complete_pair(messages, retry):
+    chat_completion(messages, enable_thinking=True)
+    if retry:
+        chat_completion(messages, enable_thinking=True)
+
+for prompt in prompts[:4]:
+    complete_pair([{"role": "user", "content": prompt}], retry=True)
+"""
+        with patch.dict(
+            "os.environ",
+            {"AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS": "7"},
+            clear=True,
+        ):
+            errors = _unsafe_training_api_errors(ast.parse(source))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("may execute 8 times sequentially", errors[0])
+
+    def test_target_worker_submitted_concurrently_is_not_marked_sequential(self) -> None:
+        source = """
+from concurrent.futures import ThreadPoolExecutor
+from aar.infrastructure.serve_v2 import chat_completion
+
+def complete_one(messages):
+    return chat_completion(messages, enable_thinking=True)
+
+with ThreadPoolExecutor(max_workers=8) as pool:
+    results = list(pool.map(complete_one, requests))
+"""
+        with patch.dict(
+            "os.environ",
+            {"AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS": "8"},
+            clear=True,
+        ):
+            self.assertEqual(_unsafe_training_api_errors(ast.parse(source)), [])
+
+    def test_while_loop_target_generation_is_rejected(self) -> None:
+        source = """
+from aar.infrastructure.serve_v2 import chat_completion
+
+while pending:
+    chat_completion(messages, enable_thinking=True)
+"""
+        with patch.dict(
+            "os.environ",
+            {"AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS": "256"},
+            clear=True,
+        ):
+            errors = _unsafe_training_api_errors(ast.parse(source))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("while-loop generation", errors[0])
+
+    def test_invalid_sequential_target_generation_limit_fails_closed(self) -> None:
+        for value in ("", "0", "3.5", "100001"):
+            with self.subTest(value=value), patch.dict(
+                "os.environ",
+                {"AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS": value},
+                clear=True,
+            ):
+                errors = _unsafe_training_api_errors(ast.parse("value = 1"))
+            self.assertEqual(len(errors), 1)
+            self.assertIn("must be an integer between 1 and 100000", errors[0])
 
     def test_required_target_thinking_rejects_disabled_or_dynamic_calls(self) -> None:
         sources = [

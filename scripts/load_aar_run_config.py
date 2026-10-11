@@ -131,7 +131,11 @@ def load_run_config(path: Path) -> dict[str, str]:
         },
         "agent",
     )
-    _reject_unknown(data_generation, {"backend"}, "data_generation")
+    _reject_unknown(
+        data_generation,
+        {"backend", "max_sequential_target_generations"},
+        "data_generation",
+    )
 
     environment: dict[str, str] = {}
     if "name" in lifecycle:
@@ -338,6 +342,14 @@ def load_run_config(path: Path) -> dict[str, str]:
                 "data_generation.backend must be native or autodata"
             )
         environment["AAR_AUTODATA"] = "1" if backend == "autodata" else "0"
+    if "max_sequential_target_generations" in data_generation:
+        environment["AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS"] = str(
+            _integer(
+                data_generation["max_sequential_target_generations"],
+                "data_generation.max_sequential_target_generations",
+                maximum=100000,
+            )
+        )
 
     return environment
 

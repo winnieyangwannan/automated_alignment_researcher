@@ -78,6 +78,55 @@ def _method_evidence(team: Path, receipt: Path) -> dict[str, object]:
     }
 
 
+def _receipt_for_seed(receipts: list[Path], seed: str) -> Path:
+    needle = f"-explore-{seed}-"
+    matches = [
+        receipt
+        for receipt in receipts
+        if needle in _env_file(receipt).get("run_id", "")
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"terminal research chain {seed!r} has {len(matches)} matching "
+            "training receipts"
+        )
+    return matches[0]
+
+
+def _require_completed_smoke(team: Path, receipt: Path) -> None:
+    values = _env_file(receipt)
+    run_id = values.get("run_id", "")
+    train_job_id = values.get("job_id", "")
+    if not run_id or not train_job_id.isdigit():
+        raise RuntimeError(f"invalid training receipt: {receipt}")
+    failed_path = team / "scores" / f"{run_id}.failed.json"
+    if failed_path.is_file():
+        raise RuntimeError(f"method smoke failed: {failed_path.read_text().strip()}")
+    state = _job_state(train_job_id)
+    passed_path = team / "method_smoke" / f"{run_id}.passed.json"
+    if state != "COMPLETED" or not passed_path.is_file():
+        raise RuntimeError(
+            f"research chain ended without a completed method smoke: "
+            f"run_id={run_id} training_job={train_job_id} state={state or 'unknown'}"
+        )
+    _method_evidence(team, receipt)
+
+
+def _fail_on_terminal_training_receipts(team: Path, receipts: list[Path]) -> None:
+    for receipt in receipts:
+        values = _env_file(receipt)
+        run_id = values.get("run_id", "")
+        train_job_id = values.get("job_id", "")
+        if not run_id or not train_job_id.isdigit():
+            raise RuntimeError(f"invalid training receipt: {receipt}")
+        failed_path = team / "scores" / f"{run_id}.failed.json"
+        if failed_path.is_file():
+            raise RuntimeError(f"method smoke failed: {failed_path.read_text().strip()}")
+        state = _job_state(train_job_id)
+        if state and state not in {"PENDING", "RUNNING", "COMPLETING", "COMPLETED"}:
+            raise RuntimeError(f"method smoke job {train_job_id} ended in {state}")
+
+
 def monitor(
     attempt: Path, expected_chains: int, timeout_seconds: int, poll_seconds: int
 ) -> dict[str, object]:
@@ -89,9 +138,14 @@ def monitor(
         raise TimeoutError("timed out waiting for child-job metadata")
     children = _env_file(children_path)
     chain_ids = children.get("research_chain_jobs", "").split()
+    seeds = children.get("research_seeds", "").split()
     if len(chain_ids) != expected_chains or children.get("evaluator_jobs", "").strip():
         raise RuntimeError(
             f"lifecycle expected {expected_chains} chains and zero initial evaluators"
+        )
+    if len(seeds) != expected_chains:
+        raise RuntimeError(
+            f"lifecycle expected {expected_chains} research seeds, found {len(seeds)}"
         )
 
     teams = [path for path in (attempt / "aar_teams").iterdir() if path.is_dir()]
@@ -107,11 +161,12 @@ def monitor(
             raise RuntimeError(
                 f"expected {expected_chains} training receipts, found {len(receipts)}"
             )
+        _fail_on_terminal_training_receipts(team, receipts)
         states = [_job_state(job_id) for job_id in chain_ids]
-        if all(state and state not in {"PENDING", "RUNNING"} for state in states):
-            raise RuntimeError(
-                f"all research chains ended before all training receipts: {states}"
-            )
+        for seed, state in zip(seeds, states, strict=True):
+            if state and state not in {"PENDING", "RUNNING", "COMPLETING"}:
+                receipt = _receipt_for_seed(receipts, seed)
+                _require_completed_smoke(team, receipt)
         time.sleep(poll_seconds)
     else:
         raise TimeoutError("timed out waiting for all training receipts")

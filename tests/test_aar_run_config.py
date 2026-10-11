@@ -217,6 +217,72 @@ def test_run14_declares_native_data_generation_and_5x50_budget() -> None:
     assert "EVAL_VLLM_LOG_STATS" in runtime_env
 
 
+def test_data_generation_sequential_target_cap_emits_runtime_environment(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "run.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "data_generation": {
+                    "backend": "native",
+                    "max_sequential_target_generations": 256,
+                },
+            }
+        )
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "load_aar_run_config.py"),
+            str(config_path),
+        ],
+        env={**os.environ, "USER": "test-user"},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "export AAR_AUTODATA=0" in result.stdout
+    assert "export AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS=256" in result.stdout
+    runtime_env = (ROOT / "scripts" / "aar_runtime_env.sh").read_text()
+    assert "AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS" in runtime_env
+
+
+def test_data_generation_sequential_target_cap_rejects_invalid_values(
+    tmp_path: Path,
+) -> None:
+    for index, value in enumerate((0, True, "32", 100001)):
+        config_path = tmp_path / f"invalid-{index}.yaml"
+        config_path.write_text(
+            yaml.safe_dump(
+                {
+                    "version": 1,
+                    "data_generation": {
+                        "backend": "native",
+                        "max_sequential_target_generations": value,
+                    },
+                }
+            )
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "load_aar_run_config.py"),
+                str(config_path),
+            ],
+            env={**os.environ, "USER": "test-user"},
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode != 0
+        assert "data_generation.max_sequential_target_generations" in result.stderr
+
+
 def test_run14_full_launch_requires_and_binds_both_lifecycle_proofs() -> None:
     launcher = (RUN14 / "launch" / "submit_full.sh").read_text()
 
