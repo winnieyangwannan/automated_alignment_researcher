@@ -53,6 +53,7 @@ PRODUCTION_STALL_SECONDS = 30 * 60
 DEFAULT_SNAPSHOT_INTERVAL_SECONDS = 5 * 60
 DEFAULT_SNAPSHOT_TIMEOUT_SECONDS = 60
 DEFAULT_CONTROL_LOCK_TIMEOUT_SECONDS = 60
+DEFAULT_STATUS_HEARTBEAT_SECONDS = 30
 PROCESS_TERMINATE_GRACE_SECONDS = 30
 PROCESS_KILL_GRACE_SECONDS = 10
 CONTROL_SCHEMA = "aar.autodata.lifecycle-control/v1"
@@ -2318,7 +2319,7 @@ class Supervisor:
         now = time.monotonic()
         if (
             signature == self.last_status_signature
-            and now - self.last_status_written < 60
+            and now - self.last_status_written < DEFAULT_STATUS_HEARTBEAT_SECONDS
         ):
             return
         _atomic_json(
@@ -2565,6 +2566,17 @@ class Supervisor:
         last_progress = started
         while self.current.poll() is None and not self.stop_requested:
             now = time.monotonic()
+            # Native execution steps can legitimately take minutes. Refresh the
+            # same durable stepping record while the child is alive so the host
+            # FSM never mistakes useful work for a dead supervisor.
+            self._write_status(
+                state="stepping",
+                subject_kind=subject.kind,
+                subject_id=subject.subject_id,
+                phase=subject.phase,
+                timeout_seconds=subject.timeout_seconds,
+                stall_seconds=subject.stall_seconds,
+            )
             if (
                 subject.timeout_seconds is not None
                 and now - started >= subject.timeout_seconds

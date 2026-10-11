@@ -40,3 +40,19 @@ All displayed timestamps use Pacific Time (`PT`).
 - Research `1814688`: created at 04:08 PT.
 - Controller `1814689`: created at 04:08 PT, dependency-gated.
 - Evaluator job: absent.
+
+## Terminal outcome
+
+- Research allocation: 04:10:20–04:33:37 PT, 23m17s, `FAILED 1:0`.
+- Controller terminal handling: 04:33:39–04:33:55 PT, 16s, `FAILED 1:0`.
+- Canonical meta execution: baseline plus iterations 1–3 completed; reached
+  `final_pending`, iteration 3/3, 547/699 attempts.
+- Final full-corpus work: 26 successes and 6 typed row failures recorded before
+  supervisor cleanup terminated the active finalization step.
+- Root cause: unchanged supervisor status exceeded the 180-second host-FSM
+  heartbeat SLA during a legitimate long-running native step.
+- Containment: zero evaluator jobs, production executions, handoffs, training
+  jobs, training receipts, verified smoke markers, checkpoints, submissions, or
+  score artifacts.
+- Recovery decision at 04:37 PT: preserve Trial 10; commit the 30-second active
+  step heartbeat repair and launch a fresh Trial 11.

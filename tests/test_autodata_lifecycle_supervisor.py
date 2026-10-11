@@ -683,6 +683,84 @@ def test_supervisor_surfaces_allowlisted_native_contract_diagnostic(
     assert failure.value.error_code == "native_action_result_contract_failed"
 
 
+def test_status_heartbeat_refreshes_unchanged_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = lifecycle_supervisor.Supervisor(
+        Namespace(status_file=tmp_path / "status.json")
+    )
+    writes: list[dict[str, object]] = []
+    ticks = iter(
+        [
+            0.0,
+            lifecycle_supervisor.DEFAULT_STATUS_HEARTBEAT_SECONDS - 1,
+            lifecycle_supervisor.DEFAULT_STATUS_HEARTBEAT_SECONDS + 1,
+        ]
+    )
+    monkeypatch.setattr(lifecycle_supervisor.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_atomic_json",
+        lambda _path, value: writes.append(value),
+    )
+
+    supervisor._write_status(state="stepping", phase="final_pending")
+    supervisor._write_status(state="stepping", phase="final_pending")
+    supervisor._write_status(state="stepping", phase="final_pending")
+
+    assert len(writes) == 2
+    assert all(value["state"] == "stepping" for value in writes)
+
+
+def test_long_native_step_refreshes_supervisor_heartbeat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Process:
+        returncode = 0
+
+        def __init__(self) -> None:
+            self.polls = 0
+
+        def poll(self) -> int | None:
+            self.polls += 1
+            return None if self.polls <= 3 else 0
+
+    log_file = tmp_path / "supervisor.log"
+    with log_file.open("a", encoding="utf-8", buffering=1) as log_handle:
+        args = Namespace(
+            python=Path(sys.executable),
+            state=tmp_path / "state.db",
+            artifacts=tmp_path / "artifacts",
+            workspaces=tmp_path / "workspaces",
+            log_file=log_file,
+            log_handle=log_handle,
+            snapshot_interval_seconds=3600,
+            poll_seconds=0,
+            error_backoff_seconds=0,
+        )
+        supervisor = lifecycle_supervisor.Supervisor(args)
+        writes: list[dict[str, object]] = []
+        monkeypatch.setattr(supervisor, "_write_status", lambda **value: writes.append(value))
+        monkeypatch.setattr(supervisor, "_progress_signature", lambda _subject: ())
+        monkeypatch.setattr(supervisor, "_snapshot", lambda _reason: None)
+        monkeypatch.setattr(lifecycle_supervisor.time, "sleep", lambda _seconds: None)
+        monkeypatch.setattr(
+            lifecycle_supervisor.subprocess,
+            "Popen",
+            lambda *args, **kwargs: Process(),
+        )
+
+        supervisor._step(
+            lifecycle_supervisor.Subject(
+                "execution", "exe_long", "final_pending", None, 1200
+            )
+        )
+
+    stepping = [value for value in writes if value.get("state") == "stepping"]
+    assert len(stepping) >= 2
+    assert all(value.get("phase") == "final_pending" for value in stepping)
+
+
 def test_supervisor_stops_repeated_failure_despite_database_mtime_progress(
     tmp_path: Path,
 ) -> None:
