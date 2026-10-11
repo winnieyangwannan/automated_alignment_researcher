@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import signal
+import shutil
 import sqlite3
 import subprocess
 import sys
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
@@ -18,10 +22,280 @@ from scripts.autodata_lifecycle_supervisor import (
     create_or_reuse_execution,
     execution_creation_key,
     next_subject,
+    reconcile_frozen_workspace,
     register_subject,
     restore_database,
     snapshot_database,
 )
+
+
+def _frozen_reconcile_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Namespace, str, list[tuple[str, ...]]]:
+    state = tmp_path / "state.db"
+    retained = tmp_path / "retained.db"
+    control = tmp_path / "control.json"
+    artifacts = tmp_path / "artifacts"
+    workspaces = tmp_path / "workspaces"
+    pipeline_root = tmp_path / "pipeline"
+    for path in (artifacts, workspaces, pipeline_root / "grounding"):
+        path.mkdir(parents=True)
+    pipeline = pipeline_root / "autodata.pipeline.json"
+    pipeline.write_text("{}", encoding="utf-8")
+    ids = [f"task-{index:03d}" for index in range(128)]
+    grounding = pipeline_root / "grounding" / "manifest.json"
+    grounding.write_text(
+        json.dumps(
+            {
+                "schema": "autodata.grounding/v1",
+                "tasks": [{"id": task_id} for task_id in ids],
+            }
+        ),
+        encoding="utf-8",
+    )
+    digest = "sha256:" + hashlib.sha256(grounding.read_bytes()).hexdigest()
+    executor = {
+        "kind": "sandoq-firecracker",
+        "environment": "env",
+        "image": "image",
+        "expected_image_id": "image-id",
+        "broker_url": "http://127.0.0.1:12345",
+        "broker_auth_secret_ref": "AAR_AUTODATA_CAPABILITY",
+        "model_backed": True,
+        "cpus": 2,
+        "memory_mb": 2048,
+        "network": "host",
+        "workdir": "/workspace",
+        "non_secret_env": {"AUTODATA_TARGET_ENABLED": "1"},
+    }
+    default_spec = {
+        "schema": "autodata.execution/v1",
+        "mode": "meta_optimize",
+        "grounding": {
+            "manifest_path": "grounding/manifest.json",
+            "digest": digest,
+        },
+        "executor": executor,
+        "budget": {
+            "max_iterations": 1,
+            "max_task_attempts": 256,
+            "max_wall_seconds": 604800,
+        },
+        "concurrency": 32,
+        "secret_references": ["AAR_AUTODATA_CAPABILITY"],
+    }
+    workspace_id = "ws_" + "1" * 32
+    with sqlite3.connect(state) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE actions (scopeKind TEXT, scopeId TEXT, status TEXT);
+            CREATE TABLE workspaces (
+              id TEXT PRIMARY KEY, status TEXT, phase TEXT, createdAt TEXT,
+              maxWallSeconds INTEGER
+            );
+            CREATE TABLE executions (
+              id TEXT PRIMARY KEY, status TEXT, phase TEXT, createdAt TEXT,
+              executionJson TEXT, maxWallSeconds INTEGER, workspaceId TEXT,
+              pipelineRoot TEXT, workspaceRoot TEXT, snapshotId TEXT,
+              pipelineJson TEXT, taskAttemptsUsed INTEGER
+            );
+            CREATE TABLE study_members (
+              studyId TEXT, subjectKind TEXT, subjectId TEXT
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO workspaces VALUES (?,?,?,?,?)",
+            (workspace_id, "active", "final_pending", "2026-01-01", 604800),
+        )
+        connection.execute(
+            "INSERT INTO executions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "exe_default",
+                "active",
+                "baseline_pending",
+                "2026-01-01",
+                json.dumps(default_spec),
+                604800,
+                workspace_id,
+                str(pipeline_root),
+                None,
+                "snapshot-one",
+                "{}",
+                0,
+            ),
+        )
+        connection.execute(
+            "INSERT INTO study_members VALUES (?,?,?)",
+            ("study_one", "workspace", workspace_id),
+        )
+        connection.execute(
+            "INSERT INTO study_members VALUES (?,?,?)",
+            ("study_one", "execution", "exe_default"),
+        )
+    register_subject(state, control, kind="workspace", subject_id=workspace_id)
+    with sqlite3.connect(state) as connection:
+        connection.execute(
+            "UPDATE workspaces SET status='frozen',phase='frozen' WHERE id=?",
+            (workspace_id,),
+        )
+    settings = {
+        "meta": {
+            "maximum_iterations": 3,
+            "minimum_iterations": 3,
+            "early_stop_patience": 3,
+            "tuning_tasks": 64,
+            "validation_tasks": 32,
+            "test_tasks": 32,
+        },
+        "production": {
+            "initial_tasks": 1250,
+            "required_rows": 1000,
+            "minimum_successful_task_fraction": 0.95,
+        },
+        "concurrency": 32,
+        "campaign_policy": {
+            "environment": "env",
+            "image": "image",
+            "expected_image_id": "image-id",
+            "max_cpus": 2,
+            "max_memory_mb": 2048,
+            "required_solve_env": {"AUTODATA_TARGET_ENABLED": "1"},
+        },
+        "broker_url": "http://127.0.0.1:12345",
+        "meta_wall_seconds": 604800,
+        "production_wall_seconds": 604800,
+        "meta_task_attempts": 608,
+        "production_task_attempts": 2500,
+    }
+    monkeypatch.setattr(
+        lifecycle_supervisor, "_trusted_execution_settings", lambda **_: settings
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "validate_generation_inputs",
+        lambda **_: {"schema": "aar.autodata.training-data-contract/v1"},
+    )
+    calls: list[tuple[str, ...]] = []
+
+    def native(*arguments: object) -> dict[str, object]:
+        command = tuple(str(value) for value in arguments[4:])
+        calls.append(command)
+        if command[:2] == ("execution", "create"):
+            manifest_path = Path(command[command.index("--execution") + 1])
+            spec = manifest_path.read_text(encoding="utf-8")
+            with sqlite3.connect(state) as connection:
+                exists = connection.execute(
+                    "SELECT 1 FROM executions WHERE id='exe_canonical'"
+                ).fetchone()
+                if exists is None:
+                    connection.execute(
+                        "INSERT INTO executions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            "exe_canonical",
+                            "active",
+                            "baseline_pending",
+                            "2026-01-02",
+                            spec,
+                            604800,
+                            workspace_id,
+                            str(pipeline_root),
+                            None,
+                            "snapshot-one",
+                            "{}",
+                            0,
+                        ),
+                    )
+                    connection.execute(
+                        "INSERT INTO study_members VALUES (?,?,?)",
+                        ("study_one", "execution", "exe_canonical"),
+                    )
+            return {"execution_id": "exe_canonical", "status": "active"}
+        assert command == ("cancel", "exe_default")
+        with sqlite3.connect(state) as connection:
+            connection.execute(
+                "UPDATE executions SET status='cancelled',phase='cancelled' "
+                "WHERE id='exe_default'"
+            )
+        return {"execution_id": "exe_default", "status": "cancelled"}
+
+    monkeypatch.setattr(lifecycle_supervisor, "_native_cli", native)
+    args = Namespace(
+        python=Path(sys.executable),
+        state=state,
+        retained_state=retained,
+        control_file=control,
+        artifacts=artifacts,
+        workspaces=workspaces,
+        campaign_policy=tmp_path / "policy.json",
+        training_data_contract=tmp_path / "contract.json",
+        resolved_config=None,
+        resolved_config_sha256=None,
+        campaign_policy_sha256=None,
+    )
+    return args, workspace_id, calls
+
+
+def test_control_lock_wait_is_bounded_and_fails_loudly(tmp_path: Path) -> None:
+    control = tmp_path / "control.json"
+    lock_path = tmp_path / "control.json.lock"
+    with lock_path.open("a+", encoding="utf-8") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(RuntimeError, match="timed out acquiring"):
+            lifecycle_supervisor._with_control_lock(control, timeout_seconds=0.01)
+
+
+def test_snapshot_backup_has_a_hard_deadline(tmp_path: Path) -> None:
+    source = tmp_path / "live.db"
+    with sqlite3.connect(source) as connection:
+        connection.execute("CREATE TABLE events(value TEXT)")
+        connection.execute("INSERT INTO events VALUES ('ready')")
+
+    with pytest.raises(TimeoutError, match="exceeded its deadline"):
+        snapshot_database(
+            source,
+            tmp_path / "retained.db",
+            reason="deadline-test",
+            timeout_seconds=1e-9,
+        )
+
+
+def test_supervisor_cleanup_escalates_term_to_kill_with_bounded_waits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Process:
+        pid = 4321
+        returncode = None
+
+        def __init__(self) -> None:
+            self.waits: list[int] = []
+
+        def poll(self) -> None:
+            return None
+
+        def wait(self, *, timeout: int) -> int:
+            self.waits.append(timeout)
+            if len(self.waits) == 1:
+                raise subprocess.TimeoutExpired("native", timeout)
+            self.returncode = -signal.SIGKILL
+            return self.returncode
+
+    signals: list[int] = []
+    monkeypatch.setattr(
+        lifecycle_supervisor.os,
+        "killpg",
+        lambda _pid, signum: signals.append(signum),
+    )
+    supervisor = lifecycle_supervisor.Supervisor(Namespace())
+    process = Process()
+    supervisor.current = process  # type: ignore[assignment]
+
+    assert supervisor._terminate_current_process_group() == -signal.SIGKILL
+    assert signals == [signal.SIGTERM, signal.SIGKILL]
+    assert process.waits == [
+        lifecycle_supervisor.PROCESS_TERMINATE_GRACE_SECONDS,
+        lifecycle_supervisor.PROCESS_KILL_GRACE_SECONDS,
+    ]
 
 
 def _state(path: Path) -> None:
@@ -62,6 +336,633 @@ def test_snapshot_is_integrity_bound_and_restorable(tmp_path: Path) -> None:
     assert restore_database(retained, restored) is True
     with sqlite3.connect(restored) as connection:
         assert connection.execute("SELECT value FROM marker").fetchone() == ("durable",)
+
+
+def test_frozen_workspace_automatically_creates_registers_and_cleans_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args, workspace_id, calls = _frozen_reconcile_fixture(tmp_path, monkeypatch)
+
+    result = reconcile_frozen_workspace(args, workspace_id)
+
+    assert result["execution_id"] == "exe_canonical"
+    with sqlite3.connect(args.state) as connection:
+        default_status = connection.execute(
+            "SELECT status FROM executions WHERE id='exe_default'"
+        ).fetchone()[0]
+        canonical_spec = json.loads(
+            connection.execute(
+                "SELECT executionJson FROM executions WHERE id='exe_canonical'"
+            ).fetchone()[0]
+        )
+    assert default_status == "cancelled"
+    assert canonical_spec["budget"]["max_iterations"] == 3
+    assert canonical_spec["budget"]["min_iterations"] == 3
+    assert canonical_spec["budget"]["early_stop_patience"] == 3
+    assert canonical_spec["budget"]["max_task_attempts"] == 608
+    assert isinstance(canonical_spec["split_seed"], int)
+    assert len(canonical_spec["tuning_task_ids"]) == 64
+    assert len(canonical_spec["validation_task_ids"]) == 32
+    canonical_pipeline = Path(
+        next(
+            call[call.index("--pipeline") + 1]
+            for call in calls
+            if call[:2] == ("execution", "create")
+        )
+    ).parent
+    meta_manifest = json.loads(
+        (canonical_pipeline / canonical_spec["grounding"]["manifest_path"]).read_text()
+    )
+    test_manifest = json.loads(
+        (
+            canonical_pipeline
+            / canonical_spec["test_grounding"]["manifest_path"]
+        ).read_text()
+    )
+    assert len(meta_manifest["tasks"]) == 96
+    assert len(test_manifest["tasks"]) == 32
+    assert {task["id"] for task in meta_manifest["tasks"]}.isdisjoint(
+        task["id"] for task in test_manifest["tasks"]
+    )
+    subjects = json.loads(args.control_file.read_text(encoding="utf-8"))["subjects"]
+    assert subjects[0]["status"] == "completed"
+    assert subjects[1]["subject_id"] == "exe_canonical"
+    assert subjects[1]["status"] == "registered"
+    assert calls[-1] == ("cancel", "exe_default")
+
+
+def test_frozen_workspace_recovers_create_before_register_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args, workspace_id, calls = _frozen_reconcile_fixture(tmp_path, monkeypatch)
+    real_snapshot = lifecycle_supervisor.snapshot_database
+    snapshots = 0
+
+    def interrupt_first_snapshot(*arguments: object, **keywords: object) -> bool:
+        nonlocal snapshots
+        snapshots += 1
+        if snapshots == 1:
+            return False
+        return real_snapshot(*arguments, **keywords)
+
+    monkeypatch.setattr(
+        lifecycle_supervisor, "snapshot_database", interrupt_first_snapshot
+    )
+    with pytest.raises(RuntimeError, match="retain canonical"):
+        reconcile_frozen_workspace(args, workspace_id)
+
+    result = reconcile_frozen_workspace(args, workspace_id)
+
+    assert result["execution_id"] == "exe_canonical"
+    assert sum(call[:2] == ("execution", "create") for call in calls) == 2
+    with sqlite3.connect(args.state) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM executions WHERE id='exe_canonical'"
+        ).fetchone()[0] == 1
+
+
+def test_frozen_workspace_reconciliation_is_repeat_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args, workspace_id, calls = _frozen_reconcile_fixture(tmp_path, monkeypatch)
+    first = reconcile_frozen_workspace(args, workspace_id)
+    second = reconcile_frozen_workspace(args, workspace_id)
+
+    assert first["execution_id"] == second["execution_id"]
+    assert sum(call == ("cancel", "exe_default") for call in calls) == 1
+
+
+def test_frozen_workspace_preserves_progressed_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args, workspace_id, calls = _frozen_reconcile_fixture(tmp_path, monkeypatch)
+    with sqlite3.connect(args.state) as connection:
+        connection.execute(
+            "UPDATE executions SET phase='awaiting_mutation',taskAttemptsUsed=1 "
+            "WHERE id='exe_default'"
+        )
+
+    with pytest.raises(RuntimeError, match="progressed"):
+        reconcile_frozen_workspace(args, workspace_id)
+    assert calls == []
+    with sqlite3.connect(args.state) as connection:
+        assert connection.execute(
+            "SELECT status FROM executions WHERE id='exe_default'"
+        ).fetchone()[0] == "active"
+
+
+def test_frozen_workspace_registration_sla_is_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args, workspace_id, calls = _frozen_reconcile_fixture(tmp_path, monkeypatch)
+    lifecycle_supervisor._update_registration(
+        args.control_file,
+        kind="workspace",
+        subject_id=workspace_id,
+        reconcile_started_at=lifecycle_supervisor._utc_now(),
+        reconcile_attempts=3,
+    )
+
+    with pytest.raises(RuntimeError, match="three reconciliation attempts"):
+        reconcile_frozen_workspace(args, workspace_id)
+    assert calls == []
+
+
+def test_supervisor_stops_three_unchanged_nonzero_steps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = lifecycle_supervisor.Supervisor(
+        Namespace(state=tmp_path / "state.db")
+    )
+    monkeypatch.setattr(supervisor, "_progress_signature", lambda: (("", 1, 2),))
+    subject = lifecycle_supervisor.Subject(
+        "execution", "exe_stuck", "final_pending", 60, 60
+    )
+
+    supervisor._record_step_outcome(
+        subject, return_code=2, timed_out=False, stalled=False
+    )
+    supervisor._record_step_outcome(
+        subject, return_code=2, timed_out=False, stalled=False
+    )
+    with pytest.raises(RuntimeError, match="three times without state progress"):
+        supervisor._record_step_outcome(
+            subject, return_code=2, timed_out=False, stalled=False
+        )
+
+
+def test_supervisor_stops_repeated_failure_despite_database_mtime_progress(
+    tmp_path: Path,
+) -> None:
+    supervisor = lifecycle_supervisor.Supervisor(
+        Namespace(state=tmp_path / "state.db")
+    )
+    supervisor.args.state.write_bytes(b"first")
+    subject = lifecycle_supervisor.Subject(
+        "execution", "exe_progressing", "final_pending", 60, 60
+    )
+
+    supervisor._record_step_outcome(
+        subject, return_code=2, timed_out=False, stalled=False
+    )
+    supervisor.args.state.write_bytes(b"second and larger")
+    supervisor._record_step_outcome(
+        subject, return_code=2, timed_out=False, stalled=False
+    )
+    supervisor.args.state.write_bytes(b"third and larger still")
+    with pytest.raises(RuntimeError, match="three times without state progress"):
+        supervisor._record_step_outcome(
+            subject, return_code=2, timed_out=False, stalled=False
+        )
+
+
+def test_supervisor_resets_nonzero_counter_on_phase_transition(tmp_path: Path) -> None:
+    supervisor = lifecycle_supervisor.Supervisor(
+        Namespace(state=tmp_path / "state.db")
+    )
+    first = lifecycle_supervisor.Subject(
+        "execution", "exe_progressing", "baseline_pending", 60, 60
+    )
+    second = lifecycle_supervisor.Subject(
+        "execution", "exe_progressing", "awaiting_mutation", 60, 60
+    )
+    supervisor._record_step_outcome(
+        first, return_code=2, timed_out=False, stalled=False
+    )
+    supervisor._record_step_outcome(
+        first, return_code=2, timed_out=False, stalled=False
+    )
+    supervisor._record_step_outcome(
+        second, return_code=2, timed_out=False, stalled=False
+    )
+    assert supervisor.failed_step_count == 1
+
+
+def test_semantic_progress_ignores_database_churn_but_tracks_phase(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state.db"
+    _state(state)
+    with sqlite3.connect(state) as connection:
+        connection.execute(
+            "INSERT INTO executions VALUES (?,?,?,?,?,?)",
+            (
+                "exe_semantic",
+                "active",
+                "baseline_pending",
+                "2026-01-01",
+                json.dumps({"mode": "meta_optimize"}),
+                6300,
+            ),
+        )
+    supervisor = lifecycle_supervisor.Supervisor(Namespace(state=state))
+    subject = lifecycle_supervisor.Subject(
+        "execution", "exe_semantic", "baseline_pending", 60, 60
+    )
+    before = supervisor._progress_signature(subject)
+    with sqlite3.connect(state) as connection:
+        connection.execute("INSERT INTO marker VALUES ('unrelated WAL churn')")
+    assert supervisor._progress_signature(subject) == before
+    with sqlite3.connect(state) as connection:
+        connection.execute(
+            "UPDATE executions SET phase='awaiting_mutation' WHERE id='exe_semantic'"
+        )
+    assert supervisor._progress_signature(subject) != before
+
+
+def test_default_cancellation_rejects_counter_attempt_row_mismatch(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state.db"
+    with sqlite3.connect(state) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE task_attempts (
+              id TEXT, scopeKind TEXT, scopeId TEXT, state TEXT
+            );
+            CREATE TABLE events (
+              scopeKind TEXT, scopeId TEXT, kind TEXT
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO task_attempts VALUES (?,?,?,?)",
+            ("attempt_one", "execution", "exe_default", "succeeded"),
+        )
+    with pytest.raises(RuntimeError, match="counter and persisted attempt rows"):
+        lifecycle_supervisor._execution_attempts(
+            state,
+            {"id": "exe_default", "taskAttemptsUsed": 0},
+        )
+
+
+def test_production_pipeline_materialization_is_disjoint_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    recipe = (
+        Path(__file__).resolve().parents[1]
+        / "aar"
+        / "autodata_recipes"
+        / "dishonest_sycophancy_concealing"
+    )
+    winner = tmp_path / "winner"
+    (winner / "grounding").mkdir(parents=True)
+    shutil.copy2(
+        recipe / "grounding" / "build_manifest.py",
+        winner / "grounding" / "build_manifest.py",
+    )
+    shutil.copy2(
+        recipe / "grounding" / "coverage.json",
+        winner / "grounding" / "coverage.json",
+    )
+    (winner / "autodata.pipeline.json").write_text("{}", encoding="utf-8")
+    destination = tmp_path / "production"
+    reserved = [f"safety-sft-{index:04d}" for index in range(1, 129)]
+
+    first_pipeline, first_ref = (
+        lifecycle_supervisor._copy_tree_with_production_grounding(
+            python=Path(sys.executable),
+            winner=winner,
+            destination=destination,
+            task_count=1250,
+            seed=20262008,
+            reserved_task_ids=reserved,
+        )
+    )
+    second_pipeline, second_ref = (
+        lifecycle_supervisor._copy_tree_with_production_grounding(
+            python=Path(sys.executable),
+            winner=winner,
+            destination=destination,
+            task_count=1250,
+            seed=20262008,
+            reserved_task_ids=reserved,
+        )
+    )
+
+    manifest = json.loads(
+        (destination / "grounding" / "production-manifest.json").read_text()
+    )
+    production_ids = {task["id"] for task in manifest["tasks"]}
+    assert first_pipeline == second_pipeline
+    assert first_ref == second_ref
+    assert len(production_ids) == 1250
+    assert production_ids.isdisjoint(reserved)
+    assert manifest["tasks"][0]["id"] == "safety-prod-0001"
+
+
+def test_completed_meta_transition_recovers_without_duplicate_production(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_root = tmp_path / "team" / "autodata" / "run-one"
+    artifacts = tmp_path / "artifacts"
+    workspaces = tmp_path / "workspaces"
+    retained = tmp_path / "retained.db"
+    control = tmp_path / "control.json"
+    for path in (run_root, artifacts, workspaces):
+        path.mkdir(parents=True)
+    workspace_id = "ws_" + "1" * 32
+    meta_id = "exe_" + "2" * 32
+    production_id = "exe_" + "3" * 32
+    lifecycle_supervisor._atomic_json(
+        control,
+        {
+            "schema": lifecycle_supervisor.CONTROL_SCHEMA,
+            "subjects": [
+                {
+                    "kind": "workspace",
+                    "subject_id": workspace_id,
+                    "status": "completed",
+                    "canonical_execution_id": meta_id,
+                },
+                {
+                    "kind": "execution",
+                    "subject_id": meta_id,
+                    "status": "registered",
+                },
+            ],
+        },
+    )
+    settings = {
+        "meta": {
+            "maximum_iterations": 3,
+            "minimum_iterations": 3,
+            "early_stop_patience": 3,
+            "tuning_tasks": 64,
+            "validation_tasks": 32,
+            "test_tasks": 32,
+        },
+        "production": {
+            "initial_tasks": 1250,
+            "required_rows": 1000,
+            "minimum_successful_task_fraction": 0.95,
+        },
+        "concurrency": 32,
+        "campaign_policy": {},
+        "broker_url": "http://127.0.0.1:1",
+    }
+    bootstrap = {
+        "run_id": "run-one",
+        "idea_name": "method_one",
+        "code_hash": "a" * 64,
+        "workspace_id": workspace_id,
+        "study_id": "study-one",
+    }
+    production_root = run_root / "production"
+    (production_root / "grounding").mkdir(parents=True)
+    pipeline = production_root / "autodata.pipeline.json"
+    pipeline.write_text("{}", encoding="utf-8")
+    grounding = production_root / "grounding" / "production-manifest.json"
+    grounding.write_text(
+        json.dumps({"schema": "autodata.grounding/v1", "tasks": []}),
+        encoding="utf-8",
+    )
+    grounding_ref = {
+        "manifest_path": "grounding/production-manifest.json",
+        "digest": "sha256:" + hashlib.sha256(grounding.read_bytes()).hexdigest(),
+    }
+    meta_row = {
+        "id": meta_id,
+        "status": "completed",
+        "phase": "completed",
+        "winnerCandidateId": "cand-one",
+        "executionJson": json.dumps(
+            {
+                "mode": "meta_optimize",
+                "split_seed": 20261008,
+                "executor": {},
+                "secret_references": ["AAR_AUTODATA_CAPABILITY"],
+            }
+        ),
+    }
+    production_row = {
+        "id": production_id,
+        "status": "active",
+        "phase": "baseline_pending",
+        "executionJson": json.dumps({"mode": "production"}),
+    }
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_native_subject",
+        lambda _state, _kind, subject_id: (
+            meta_row if subject_id == meta_id else production_row
+        ),
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_run_binding",
+        lambda *_: (
+            lifecycle_supervisor._registration_entry(
+                control, kind="workspace", subject_id=workspace_id
+            ),
+            bootstrap,
+            run_root,
+        ),
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_execution_finalization",
+        lambda *_: {
+            "winner_candidate_id": "cand-one",
+            "winner_tree_digest": "sha256:" + "b" * 64,
+        },
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor, "_trusted_execution_settings", lambda **_: settings
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_study_reserved_task_ids",
+        lambda *_: [f"task-{index:03d}" for index in range(128)],
+    )
+    monkeypatch.setattr(lifecycle_supervisor, "_export_winner_idempotently", lambda *_, **__: None)
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_copy_tree_with_production_grounding",
+        lambda **_: (pipeline, grounding_ref),
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "canonical_production_manifest_from_meta",
+        lambda **_: {"schema": "autodata.execution/v1", "mode": "production"},
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "validate_generation_inputs",
+        lambda **_: {"schema": "aar.autodata.training-data-contract/v1"},
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor, "execution_creation_key", lambda *_, **__: "key-one"
+    )
+    native_calls = 0
+
+    def native(*_: object) -> dict[str, str]:
+        nonlocal native_calls
+        native_calls += 1
+        return {"execution_id": production_id}
+
+    monkeypatch.setattr(lifecycle_supervisor, "_native_cli", native)
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_equivalent_executions",
+        lambda *_: [{"id": production_id}],
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor, "_execution_study", lambda *_: "study-one"
+    )
+    monkeypatch.setattr(lifecycle_supervisor, "snapshot_database", lambda *_, **__: True)
+    args = Namespace(
+        state=tmp_path / "state.db",
+        retained_state=retained,
+        control_file=control,
+        artifacts=artifacts,
+        workspaces=workspaces,
+        python=Path(sys.executable),
+        campaign_policy=tmp_path / "policy.json",
+        training_data_contract=tmp_path / "contract.json",
+        resolved_config=tmp_path / "resolved.yaml",
+        resolved_config_sha256=None,
+        campaign_policy_sha256=None,
+    )
+
+    first = lifecycle_supervisor.reconcile_completed_meta_execution(args, meta_id)
+    second = lifecycle_supervisor.reconcile_completed_meta_execution(args, meta_id)
+
+    assert first["production_execution_id"] == production_id
+    assert second["production_execution_id"] == production_id
+    assert native_calls == 2
+    subjects = lifecycle_supervisor._load_control(control)["subjects"]
+    assert sum(entry["subject_id"] == production_id for entry in subjects) == 1
+    assert (run_root / "supervised-transition-intent.json").is_file()
+
+
+def test_completed_production_publishes_one_verified_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aar.infrastructure import autodata_lifecycle
+
+    run_root = tmp_path / "team" / "autodata" / "run-one"
+    winner = run_root / "meta-winner"
+    production = run_root / "production" / "grounding"
+    winner.mkdir(parents=True)
+    production.mkdir(parents=True)
+    production_manifest = production / "production-manifest.json"
+    production_manifest.write_text("{}", encoding="utf-8")
+    intent = run_root / "supervised-transition-intent.json"
+    lifecycle_supervisor._atomic_json(intent, {"schema": "intent"})
+    intent_digest = "sha256:" + hashlib.sha256(intent.read_bytes()).hexdigest()
+    retained = tmp_path / "retained.db"
+    retained.write_bytes(b"retained")
+    control = tmp_path / "control.json"
+    workspace_id = "ws_" + "1" * 32
+    meta_id = "exe_" + "2" * 32
+    production_id = "exe_" + "3" * 32
+    lifecycle_supervisor._atomic_json(
+        control,
+        {
+            "schema": lifecycle_supervisor.CONTROL_SCHEMA,
+            "subjects": [
+                {
+                    "kind": "workspace",
+                    "subject_id": workspace_id,
+                    "status": "completed",
+                    "canonical_execution_id": meta_id,
+                },
+                {
+                    "kind": "execution",
+                    "subject_id": meta_id,
+                    "status": "completed",
+                    "production_execution_id": production_id,
+                },
+                {
+                    "kind": "execution",
+                    "subject_id": production_id,
+                    "status": "registered",
+                    "parent_meta_execution_id": meta_id,
+                    "transition_intent_sha256": intent_digest,
+                },
+            ],
+        },
+    )
+    bootstrap = {
+        "run_id": "run-one",
+        "workspace_id": workspace_id,
+        "study_id": "study-one",
+    }
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_run_binding",
+        lambda *_: ({}, bootstrap, run_root),
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_native_subject",
+        lambda *_: {
+            "status": "completed",
+            "phase": "completed",
+            "executionJson": json.dumps({"mode": "production"}),
+        },
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor, "_execution_study", lambda *_: "study-one"
+    )
+    dataset_bytes = b'{"schema":"autodata.dataset/v1"}\n'
+    dataset_digest = "sha256:" + hashlib.sha256(dataset_bytes).hexdigest()
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_execution_finalization",
+        lambda *_: {"dataset": {"digest": dataset_digest}},
+    )
+    monkeypatch.setattr(lifecycle_supervisor, "snapshot_database", lambda *_, **__: True)
+
+    def export_dataset(
+        _args: Namespace, *, execution_id: str, destination: Path, expected_digest: str
+    ) -> None:
+        assert execution_id == production_id
+        assert expected_digest == dataset_digest
+        if not destination.exists():
+            destination.write_bytes(dataset_bytes)
+
+    monkeypatch.setattr(
+        lifecycle_supervisor, "_export_dataset_idempotently", export_dataset
+    )
+    verification_calls = 0
+
+    def verify(run_id: str) -> dict[str, object]:
+        nonlocal verification_calls
+        verification_calls += 1
+        assert run_id == "run-one"
+        return {
+            "meta_execution_id": meta_id,
+            "production_execution_id": production_id,
+            "available_rows": 1000,
+        }
+
+    monkeypatch.setattr(autodata_lifecycle, "verify_preflight", verify)
+    args = Namespace(
+        state=tmp_path / "state.db",
+        retained_state=retained,
+        control_file=control,
+        artifacts=tmp_path / "artifacts",
+        workspaces=tmp_path / "workspaces",
+        python=Path(sys.executable),
+    )
+
+    first = lifecycle_supervisor.reconcile_completed_production_execution(
+        args, production_id
+    )
+    second = lifecycle_supervisor.reconcile_completed_production_execution(
+        args, production_id
+    )
+
+    assert first == second
+    assert verification_calls == 2
+    handoff = json.loads((run_root / "training-handoff.json").read_text())
+    assert handoff["state_db"] == str(retained)
+    assert handoff["production_execution_id"] == production_id
+    assert handoff["consumption_receipt"] == str(
+        run_root / "training-consumption.json"
+    )
 
 
 def test_snapshot_removes_stale_retained_sidecars(tmp_path: Path) -> None:
@@ -441,6 +1342,16 @@ def test_supervised_creation_reuses_and_cancels_unstarted_duplicate(
         "validate_generation_inputs",
         lambda **_: {"schema": "aar.autodata.training-data-contract/v1"},
     )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_trusted_execution_settings",
+        lambda **_: {"concurrency": 32},
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "canonical_execution_manifest",
+        lambda **_: spec,
+    )
 
     def fake_native_cli(*args: object) -> dict[str, object]:
         arguments = tuple(str(value) for value in args[4:])
@@ -490,6 +1401,61 @@ def test_supervised_creation_reuses_and_cancels_unstarted_duplicate(
     assert retained.is_file()
     subjects = json.loads(control.read_text(encoding="utf-8"))["subjects"]
     assert [entry["subject_id"] for entry in subjects] == ["exe_primary"]
+
+
+def test_supervised_creation_rejects_before_native_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("artifacts", "workspaces", "pipeline"):
+        (tmp_path / name).mkdir()
+    pipeline = tmp_path / "pipeline" / "autodata.pipeline.json"
+    pipeline.write_text("{}", encoding="utf-8")
+    execution = tmp_path / "execution.json"
+    execution.write_text(
+        json.dumps(
+            {
+                "schema": "autodata.execution/v1",
+                "mode": "meta_optimize",
+                "budget": {"max_iterations": 1, "min_iterations": 0},
+                "tuning_task_ids": [],
+                "validation_task_ids": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_trusted_execution_settings",
+        lambda **_: {"concurrency": 32},
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "canonical_execution_manifest",
+        lambda **_: (_ for _ in ()).throw(ValueError("wrong meta budget")),
+    )
+    native_called = False
+
+    def fail_native(*_: object) -> dict[str, object]:
+        nonlocal native_called
+        native_called = True
+        raise AssertionError("native CLI must not run")
+
+    monkeypatch.setattr(lifecycle_supervisor, "_native_cli", fail_native)
+    with pytest.raises(ValueError, match="wrong meta budget"):
+        create_or_reuse_execution(
+            python=Path(sys.executable),
+            state=tmp_path / "state.db",
+            retained_state=tmp_path / "retained.db",
+            control_file=tmp_path / "control.json",
+            artifacts=tmp_path / "artifacts",
+            workspaces=tmp_path / "workspaces",
+            pipeline=pipeline,
+            execution=execution,
+            study_id="study_one",
+            training_data_contract=tmp_path / "contract.json",
+            campaign_policy=tmp_path / "policy.json",
+        )
+    assert native_called is False
 
 
 def test_register_cli_snapshots_before_publishing_control(tmp_path: Path) -> None:

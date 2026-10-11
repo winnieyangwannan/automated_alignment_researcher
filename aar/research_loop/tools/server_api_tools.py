@@ -8,8 +8,11 @@ Provides tools for:
 """
 
 import ast
+import contextlib
+import hashlib
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
@@ -19,6 +22,64 @@ from aar.phase_timing import timed_async_phase
 
 from .http_utils import get_server_url, async_http_post, async_http_get
 from .fs_forum import use_fs_forum, write_finding, leaderboard as fs_leaderboard
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _atomic_json_write(path: Path, value: Dict[str, Any]) -> None:
+    """Durably replace one JSON object and its directory entry."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=path.parent, text=True
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(value, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        _fsync_directory(path.parent)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary)
+
+
+def _create_json_first_write(path: Path, value: Dict[str, Any]) -> bool:
+    """Atomically publish an immutable JSON record; validate any prior winner."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=path.parent, text=True
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(value, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, path)
+            _fsync_directory(path.parent)
+            return True
+        except FileExistsError:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            identity = ("run_id", "idea_name", "code_hash", "paper")
+            if not isinstance(existing, dict) or any(
+                existing.get(key) != value.get(key) for key in identity
+            ):
+                raise RuntimeError(
+                    "immutable proposal run stamp already binds different content"
+                )
+            return False
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary)
 
 
 @tool(
@@ -1288,8 +1349,6 @@ def _stamp_run_proposal(run_id: str) -> bool:
     the run snapshot already exists, we keep it. Returns True if the snapshot exists (already or now)."""
     try:
         rp = _run_proposal_path(run_id)
-        if rp.exists():
-            return True                                  # immutable: an earlier (approval-time) stamp wins
         mk = _proposal_marker_path()
         if not mk.exists():
             return False
@@ -1297,10 +1356,11 @@ def _stamp_run_proposal(run_id: str) -> bool:
         if not m.get("approved") or not isinstance(m.get("paper"), dict):
             return False
         import time as _t
-        rp.write_text(json.dumps({
+        value = {
             "run_id": run_id, "idea_name": m.get("idea_name"), "proposal_ts": m.get("ts"),
             "code_hash": m.get("code_hash"), "stamped_ts": _t.time(),
-            "paper": m["paper"]}, indent=2))
+            "paper": m["paper"]}
+        _create_json_first_write(rp, value)
         return True
     except Exception as e:
         print(f"[stamp] per-run proposal stamp failed: {e}")
@@ -1647,21 +1707,22 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
         # (FAITHFULNESS + REPRODUCIBILITY are enforced INSIDE check_proposal's parallel orchestrator now —
         # monitor B sets approved=False and appends the FAITHFULNESS / REPRODUCIBILITY violations directly,
         # alongside monitor A's D1/D2 and monitor C's LEAKAGE checks. Any one => the agent must rewrite.)
-        try:
-            _proposal_marker_path().write_text(json.dumps({
-                "approved": bool(verdict.get("approved")),
-                "idea_name": idea_name,
-                "code_hash": code_hash,
-                "ts": time.time(),
-                "idea_uid": os.getenv("IDEA_UID"),
-                "declaration": decl,
-                "verdict": verdict,
-                # Persist the validated, results-free paper so share_finding reuses it verbatim
-                # (only on approval — an unapproved paper is never carried forward).
-                "paper": structured if verdict.get("approved") else None,
-            }, indent=2))
-        except Exception as e:
-            print(f"[submit_idea_proposal] marker write failed: {e}")
+        marker_payload = {
+            "approved": bool(verdict.get("approved")),
+            "execution_ready": False,
+            "idea_name": idea_name,
+            "code_hash": code_hash,
+            "ts": time.time(),
+            "idea_uid": os.getenv("IDEA_UID"),
+            "declaration": decl,
+            "verdict": dict(verdict),
+            # Persist the validated, results-free paper so share_finding reuses it verbatim
+            # (only on approval — an unapproved paper is never carried forward).
+            "paper": structured if verdict.get("approved") else None,
+        }
+        # Approval is not usable until this durable marker exists.  Unlike the
+        # old best-effort write, persistence failure propagates to the caller.
+        _atomic_json_write(_proposal_marker_path(), marker_payload)
         # FREEZE-AT-APPROVAL (race-free, decoupled-safe). On approval, MINT this run's id and IMMUTABLY
         # stamp the just-approved paper to it NOW — before the agent can submit another proposal that
         # overwrites the per-chain marker. share_finding/eval read this run-keyed snapshot FIRST, so the
@@ -1674,19 +1735,24 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
         # run_id inside evaluate_model (sequential: marker can't be overwritten before it scores), so we skip
         # here to avoid orphan run-stamps for ids the inline agent won't use.
         if verdict.get("approved") and _requires_explicit_proposal_run_id():
-            try:
-                _uid = os.getenv("IDEA_UID") or os.getenv("IDEA_NAME") or "run"
-                _safe_idea = "".join(c if (c.isalnum() or c in "_.-") else "_"
-                                     for c in (idea_name or "idea"))[:48]
-                _minted = f"{_uid}-{_safe_idea}-{int(time.time() * 1000)}"   # ms granularity => unique per approval
-                if _stamp_run_proposal(_minted):
-                    verdict["run_id"] = _minted                               # the agent reuses this id end-to-end
-                    _marker = json.loads(_proposal_marker_path().read_text())
-                    _marker["run_id"] = _minted
-                    _proposal_marker_path().write_text(json.dumps(_marker, indent=2))
-                    print(f"[submit_idea_proposal] froze pre-run paper to run_id={_minted}")
-            except Exception as _e:
-                print(f"[submit_idea_proposal] freeze-at-approval stamp failed (continuing): {_e}")
+            _uid_raw = os.getenv("IDEA_UID") or os.getenv("IDEA_NAME") or "run"
+            _uid = "".join(
+                c if (c.isalnum() or c in "_.-") else "_" for c in _uid_raw
+            )[:64]
+            _safe_idea = "".join(c if (c.isalnum() or c in "_.-") else "_"
+                                 for c in (idea_name or "idea"))[:48]
+            _proposal_digest = hashlib.sha256(
+                json.dumps(
+                    marker_payload, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest()[:20]
+            _minted = f"{_uid}-{_safe_idea}-{_proposal_digest}"
+            if not _stamp_run_proposal(_minted):
+                raise RuntimeError("could not freeze the approved proposal run stamp")
+            verdict["run_id"] = _minted
+            marker_payload["run_id"] = _minted
+            _atomic_json_write(_proposal_marker_path(), marker_payload)
+            print(f"[submit_idea_proposal] froze pre-run paper to run_id={_minted}")
         if (
             verdict.get("approved")
             and os.getenv("AAR_AUTODATA", "0").strip().lower()
@@ -1705,9 +1771,10 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
                     "status": "ready",
                     **bootstrap,
                 }
-                marker = json.loads(_proposal_marker_path().read_text())
-                marker["autodata_bootstrap"] = verdict["autodata_bootstrap"]
-                _proposal_marker_path().write_text(json.dumps(marker, indent=2))
+                marker_payload["autodata_bootstrap"] = verdict["autodata_bootstrap"]
+                marker_payload["execution_ready"] = True
+                _atomic_json_write(_proposal_marker_path(), marker_payload)
+                verdict["execution_ready"] = True
                 print(
                     "[submit_idea_proposal] bootstrapped and registered AutoData "
                     f"workspace={bootstrap['workspace_id']}"
@@ -1720,7 +1787,15 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
                     "status": "failed",
                     "error": str(error),
                 }
+                marker_payload["autodata_bootstrap"] = verdict["autodata_bootstrap"]
+                marker_payload["execution_ready"] = False
+                _atomic_json_write(_proposal_marker_path(), marker_payload)
+                verdict["execution_ready"] = False
                 print(f"[submit_idea_proposal] AutoData bootstrap failed: {error}")
+        elif verdict.get("approved"):
+            marker_payload["execution_ready"] = True
+            _atomic_json_write(_proposal_marker_path(), marker_payload)
+            verdict["execution_ready"] = True
         return {"content": [{"type": "text", "text": json.dumps(verdict, indent=2)}]}
     except Exception as e:
         return {"content": [{"type": "text", "text": json.dumps({"approved": False, "error": str(e)}, indent=2)}]}

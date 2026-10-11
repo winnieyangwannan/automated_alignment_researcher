@@ -51,10 +51,21 @@ def _allowed_action_path(
     except sqlite3.Error:
         return False
 
-    result_match = re.fullmatch(
-        r"aar-autodata-(act_[0-9a-f]{24})-result\.json", destination.name
+    result_match = re.fullmatch(r"(act_[0-9a-f]{24})\.json", destination.name)
+    team_value = env.get("TEAM_DIR", "").strip()
+    result_root = (
+        Path(team_value).expanduser().resolve(strict=False)
+        / "autodata"
+        / "action-results"
+        if team_value
+        else None
     )
-    if destination.parent == Path("/tmp").resolve() and result_match is not None:
+    if (
+        result_root is not None
+        and destination.parent == result_root
+        and lexical_destination == destination
+        and result_match is not None
+    ):
         return any(
             isinstance(action_id, str)
             and ACTION_ID_PATTERN.fullmatch(action_id) is not None

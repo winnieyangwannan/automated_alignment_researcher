@@ -211,8 +211,10 @@ def test_run9_keeps_the_hot_broker_database_on_node_local_storage() -> None:
     assert '--database "${_autodata_broker_database}"' in chain
     assert 'snapshot_autodata_broker_database' in chain
     assert '_autodata_broker_archive="${_autodata_root}/attempt-ledgers"' in chain
-    assert 'cp -- "${_autodata_broker_database_retained}" "${_autodata_broker_database}"' not in chain
-    assert "wal_checkpoint(TRUNCATE)" in chain
+    assert '_autodata_broker_database_retained="${_autodata_broker_archive}/campaign-ledger.db"' in chain
+    assert 'autodata_broker_ledger.py" restore' in chain
+    assert 'autodata_broker_ledger.py" snapshot' in chain
+    assert "another session owns the AutoData campaign ledger" in chain
     assert '${SLURM_TMPDIR:-/tmp}/aar-run9-canary-broker-' in canary
     assert '--database "${broker_database}"' in canary
     assert 'snapshot_broker_database' in canary
@@ -244,7 +246,7 @@ def test_run9_chain_can_route_kimi_through_the_authenticated_loopback_bridge() -
     assert 'export AAR_AUTODATA_CAMPAIGN_POLICY="${_autodata_repaired_policy}"' in chain
     assert "aar.infrastructure.autodata_resume_ports" in chain
     assert "reusing retained AutoData loopback ports" in chain
-    assert 'kill "${_autodata_bridge_pid}"' in chain
+    assert 'stop_child_bounded "${_autodata_bridge_pid}"' in chain
     assert "AAR_KIMI_PROXY_INFO" in runtime
     assert 'export AAR_KIMI_PROXY_INFO="${KIMI_PROXY_INFO}"' in submitter
     assert '"AAR_KIMI_PROXY_INFO"' in agent
@@ -265,13 +267,10 @@ def test_run9_uses_one_supervised_node_local_autodata_lifecycle() -> None:
     assert "--require-manifest" in chain
     assert '--control-file "${AAR_AUTODATA_SUPERVISOR_CONTROL}"' in chain
     assert "autodata_lifecycle_supervisor.py\" snapshot" in submit_train
-    assert "sole caller of native" in prompt
-    assert "never infers intent" in prompt
-    assert "Never call native `execution create` directly" in prompt
-    assert "create-execution" in prompt
-    assert "content-bound idempotency key" in prompt
-    assert "Never add `v2`, `prod2`" in prompt
-    assert "Never register the workspace's automatically created" in prompt
+    assert "Trusted orchestration owns every deterministic lifecycle transition" in prompt
+    assert "do not create or edit an execution config" in prompt
+    assert "you never control the iteration count or the 64/32/32 split" in prompt
+    assert "poll with Bash or `sleep`" in prompt
     assert "AAR_AUTODATA_RETAINED_STATE" in prompt
     version = (RUN9 / "config" / "autodata_version.env").read_text()
     assert "823c5948854df14664f3168bc5e6c49a2cecb975" in version

@@ -36,6 +36,28 @@ _APPROVAL_KINDS = {"approve_grounding", "approve_baseline", "approve_resources"}
 _WORKSPACE_ID = re.compile(r"^ws_[0-9a-f]{32}$")
 
 
+def _atomic_private_json(path: Path, value: Mapping[str, Any]) -> None:
+    encoded = (json.dumps(dict(value), sort_keys=True, indent=2) + "\n").encode()
+    descriptor, raw_temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=path.parent
+    )
+    temporary = Path(raw_temporary)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(encoded)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _required_path(name: str, *, directory: bool = False) -> Path:
     raw = os.getenv(name, "").strip()
     if not raw:
@@ -123,10 +145,16 @@ def _proposal_binding(
         or registry_info.st_mode & (stat.S_IRWXG | stat.S_IRWXO)
     ):
         raise RuntimeError("proposal binding registry must be owner-only mode 0600")
-    with registry_path.open("r+", encoding="utf-8") as registry_file:
-        fcntl.flock(registry_file.fileno(), fcntl.LOCK_EX)
+    lock_path = registry_path.with_suffix(registry_path.suffix + ".lock")
+    lock_fd = os.open(
+        lock_path,
+        os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    with os.fdopen(lock_fd, "r+", encoding="utf-8") as registry_lock:
+        fcntl.flock(registry_lock.fileno(), fcntl.LOCK_EX)
         try:
-            registry = json.load(registry_file)
+            registry = json.loads(registry_path.read_text(encoding="utf-8"))
             if (
                 not isinstance(registry, dict)
                 or registry.get("schema") != BINDINGS_SCHEMA
@@ -158,19 +186,14 @@ def _proposal_binding(
             if package["action_kind"] == "approve_grounding":
                 proposals[proposal["proposal_key"]] = workspace_id
                 workspaces[workspace_id] = proposal
-                registry_file.seek(0)
-                json.dump(registry, registry_file, sort_keys=True, indent=2)
-                registry_file.write("\n")
-                registry_file.truncate()
-                registry_file.flush()
-                os.fsync(registry_file.fileno())
+                _atomic_private_json(registry_path, registry)
             elif existing is None:
                 raise RuntimeError(
                     "workspace has no proposal-bound grounding approval"
                 )
             return dict(workspaces.get(workspace_id) or proposal)
         finally:
-            fcntl.flock(registry_file.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(registry_lock.fileno(), fcntl.LOCK_UN)
 
 
 def _artifact_bytes(root: Path, raw: Mapping[str, Any]) -> bytes:
@@ -1102,7 +1125,46 @@ def _write_audit(action_id: str, value: Mapping[str, Any]) -> Path:
         return path
     with os.fdopen(descriptor, "wb") as output:
         output.write(encoded)
+        output.flush()
+        os.fsync(output.fileno())
+    directory = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
     return path
+
+
+def _approval_completion_intent_path(action_id: str) -> Path:
+    root = Path(os.getenv("AAR_AUTODATA_APPROVAL_AUDIT_DIR", "")).expanduser().resolve()
+    if not root.is_dir() or root.is_symlink():
+        raise RuntimeError("AAR_AUTODATA_APPROVAL_AUDIT_DIR is required")
+    return root / f".{action_id}.completion-intent.json"
+
+
+def _read_approval_completion_intent(action_id: str) -> dict[str, Any]:
+    path = _approval_completion_intent_path(action_id)
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError(
+            "native approval action is in_progress but its durable completion "
+            "intent is missing"
+        )
+    info = path.stat()
+    if info.st_uid != os.geteuid() or info.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+        raise RuntimeError("native approval completion intent is unsafe")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError("native approval completion intent is invalid") from error
+    if (
+        not isinstance(value, dict)
+        or value.get("action_id") != action_id
+        or not isinstance(value.get("lease_token"), str)
+        or not isinstance(value.get("result"), dict)
+        or not isinstance(value.get("completed_at_unix"), (int, float))
+    ):
+        raise RuntimeError("native approval completion intent is incomplete")
+    return value
 
 
 def review_and_complete_action(action_id: str) -> dict[str, Any]:
@@ -1111,80 +1173,115 @@ def review_and_complete_action(action_id: str) -> dict[str, Any]:
     state = _required_path("AAR_AUTODATA_STATE")
     artifacts = _required_path("AAR_AUTODATA_ARTIFACTS", directory=True)
     row = _action_row(state, action_id)
-    if row["status"] != "pending":
-        raise RuntimeError("native approval action is not pending")
+    if row["status"] not in {"pending", "in_progress", "completed"}:
+        raise RuntimeError("native approval action is not pending or resumable")
     action = json.loads(row["specJson"])
     package = _review_package(action, artifacts)
-    proposal_binding = _proposal_binding(state, package)
     kind = action["kind"]
-    if kind == "approve_resources":
-        verdict = {
-            "approved": True,
-            "target": "pipeline",
-            "feedback": "Pinned operator resources are ready.",
-            "reasoning": "Deterministic operator-profile check passed.",
-            "monitor_model": "deterministic-policy",
-            "monitor_backend": "local",
-        }
-        decision = "retry"
-    elif kind == "approve_baseline":
-        verdict = _baseline_operational_verdict(package)
-        decision = "approve"
-    else:
-        verdict = check_autodata_action(package)
-        decision = "approve" if verdict.get("approved") is True else "revise"
-    target = str(
-        verdict.get("target")
-        or ("grounding" if kind == "approve_grounding" else "pipeline")
-    )
-    feedback = str(
-        verdict.get("feedback") or verdict.get("reasoning") or "Revision required"
-    )[:4000]
-    actor = os.getenv("AAR_AUTODATA_APPROVAL_ACTOR", "aar-integrity-monitor")
-    policy_version = os.getenv(
-        "AAR_AUTODATA_APPROVAL_POLICY_VERSION", "aar-autodata/v1"
-    )
-    payload = approval_payload(
-        action,
-        decision=decision,
-        feedback=feedback,
-        target=target,
-        actor=actor,
-        policy_version=policy_version,
-    )
-    signature = _sign(_required_path("AAR_AUTODATA_APPROVAL_PRIVATE_KEY"), payload)
-    result = {
-        "decision": decision,
-        "feedback": feedback,
-        "target": target,
-        "delegated_approval": {
-            "schema": APPROVAL_SCHEMA,
-            "algorithm": APPROVAL_ALGORITHM,
-            "actor": actor,
-            "policy_version": policy_version,
-            "signature": signature,
-        },
-    }
-    begun = _run_cli(["action", "begin", action_id])
-    lease = begun.get("lease_token")
-    if not isinstance(lease, str) or not lease:
-        raise RuntimeError("native action lease was not returned")
-    with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", prefix="aar-autodata-result-", suffix=".json"
-    ) as handle:
-        json.dump(result, handle, sort_keys=True)
-        handle.flush()
-        _run_cli(
-            [
-                "action",
-                "complete",
-                action_id,
-                "--lease-token",
-                lease,
-                "--result",
-                handle.name,
-            ]
+    intent_path = _approval_completion_intent_path(action_id)
+    if row["status"] in {"in_progress", "completed"}:
+        intent = _read_approval_completion_intent(action_id)
+        lease = intent["lease_token"]
+        result = intent["result"]
+        verdict = intent["verdict"]
+        proposal_binding = intent["proposal_binding"]
+        decision = str(result["decision"])
+        target = str(result["target"])
+        feedback = str(result["feedback"])
+        actor = str(result["delegated_approval"]["actor"])
+        policy_version = str(result["delegated_approval"]["policy_version"])
+        completed_at_unix = float(intent["completed_at_unix"])
+        payload = approval_payload(
+            action,
+            decision=decision,
+            feedback=feedback,
+            target=target,
+            actor=actor,
+            policy_version=policy_version,
         )
+    else:
+        proposal_binding = _proposal_binding(state, package)
+        if kind == "approve_resources":
+            verdict = {
+                "approved": True,
+                "target": "pipeline",
+                "feedback": "Pinned operator resources are ready.",
+                "reasoning": "Deterministic operator-profile check passed.",
+                "monitor_model": "deterministic-policy",
+                "monitor_backend": "local",
+            }
+            decision = "retry"
+        elif kind == "approve_baseline":
+            verdict = _baseline_operational_verdict(package)
+            decision = "approve"
+        else:
+            verdict = check_autodata_action(package)
+            decision = "approve" if verdict.get("approved") is True else "revise"
+        target = str(
+            verdict.get("target")
+            or ("grounding" if kind == "approve_grounding" else "pipeline")
+        )
+        feedback = str(
+            verdict.get("feedback") or verdict.get("reasoning") or "Revision required"
+        )[:4000]
+        actor = os.getenv("AAR_AUTODATA_APPROVAL_ACTOR", "aar-integrity-monitor")
+        policy_version = os.getenv(
+            "AAR_AUTODATA_APPROVAL_POLICY_VERSION", "aar-autodata/v1"
+        )
+        payload = approval_payload(
+            action,
+            decision=decision,
+            feedback=feedback,
+            target=target,
+            actor=actor,
+            policy_version=policy_version,
+        )
+        signature = _sign(_required_path("AAR_AUTODATA_APPROVAL_PRIVATE_KEY"), payload)
+        result = {
+            "decision": decision,
+            "feedback": feedback,
+            "target": target,
+            "delegated_approval": {
+                "schema": APPROVAL_SCHEMA,
+                "algorithm": APPROVAL_ALGORITHM,
+                "actor": actor,
+                "policy_version": policy_version,
+                "signature": signature,
+            },
+        }
+        completed_at_unix = time.time()
+        begun = _run_cli(["action", "begin", action_id])
+        lease = begun.get("lease_token")
+        if not isinstance(lease, str) or not lease:
+            raise RuntimeError("native action lease was not returned")
+        _atomic_private_json(
+            intent_path,
+            {
+                "action_id": action_id,
+                "lease_token": lease,
+                "result": result,
+                "verdict": verdict,
+                "proposal_binding": proposal_binding,
+                "completed_at_unix": completed_at_unix,
+            },
+        )
+    if row["status"] != "completed":
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", prefix="aar-autodata-result-", suffix=".json"
+        ) as handle:
+            json.dump(result, handle, sort_keys=True)
+            handle.flush()
+            _run_cli(
+                [
+                    "action",
+                    "complete",
+                    action_id,
+                    "--lease-token",
+                    lease,
+                    "--result",
+                    handle.name,
+                ]
+            )
     incumbent_transition = None
     if kind == "approve_baseline":
         incumbent_transition = _update_axis_incumbents(
@@ -1207,7 +1304,15 @@ def review_and_complete_action(action_id: str) -> dict[str, Any]:
         "monitor_backend": verdict.get("monitor_backend"),
         "monitor_reasoning": verdict.get("reasoning"),
         "axis_incumbents": incumbent_transition,
-        "completed_at_unix": time.time(),
+        "completed_at_unix": completed_at_unix,
     }
     audit_path = _write_audit(action_id, audit)
+    intent_path.unlink(missing_ok=True)
+    directory = os.open(
+        intent_path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    )
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
     return {**audit, "audit_path": str(audit_path)}

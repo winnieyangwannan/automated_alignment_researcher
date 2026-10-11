@@ -15,6 +15,7 @@ import fcntl
 import hashlib
 import json
 import os
+import shutil
 import signal
 import sqlite3
 import stat
@@ -23,9 +24,17 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Mapping, TextIO
 
 from aar.infrastructure.autodata_contract import validate_generation_inputs
+from aar.infrastructure.autodata_execution_contract import (
+    bound_grounding_task_ids,
+    canonical_execution_manifest,
+    canonical_meta_manifest_from_default,
+    canonical_production_manifest_from_meta,
+    operator_execution_settings,
+    validate_runtime_campaign_policy_rewrite,
+)
 
 META_TIMEOUT_SECONDS = 2 * 60 * 60
 PRODUCTION_TIMEOUT_SECONDS = 8 * 60 * 60
@@ -33,8 +42,18 @@ NATIVE_WALL_GRACE_SECONDS = 10 * 60
 META_STALL_SECONDS = 20 * 60
 PRODUCTION_STALL_SECONDS = 30 * 60
 DEFAULT_SNAPSHOT_INTERVAL_SECONDS = 5 * 60
+DEFAULT_SNAPSHOT_TIMEOUT_SECONDS = 60
+DEFAULT_CONTROL_LOCK_TIMEOUT_SECONDS = 60
+PROCESS_TERMINATE_GRACE_SECONDS = 30
+PROCESS_KILL_GRACE_SECONDS = 10
 CONTROL_SCHEMA = "aar.autodata.lifecycle-control/v1"
 SUPERVISED_EXECUTION_KEY_SCHEMA = "aar.autodata.supervised-execution/v1"
+WORKSPACE_RECONCILE_MAX_ATTEMPTS = 3
+WORKSPACE_RECONCILE_SLA_SECONDS = 60
+SUPERVISED_TRANSITION_SCHEMA = "aar.autodata.supervised-transition/v1"
+PRODUCTION_GROUNDING_PATH = "grounding/production-manifest.json"
+PRODUCTION_ID_PREFIX = "safety-prod"
+PRODUCTION_SEED_OFFSET = 1000
 
 
 def _utc_now() -> str:
@@ -119,20 +138,55 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     with temporary.open("rb") as handle:
         os.fsync(handle.fileno())
     os.replace(temporary, path)
-    directory_fd = os.open(path.parent, os.O_RDONLY)
+    _fsync_directory(path.parent)
+
+
+def _fsync_directory(path: Path) -> None:
+    directory_fd = os.open(path, os.O_RDONLY)
     try:
         os.fsync(directory_fd)
     finally:
         os.close(directory_fd)
 
 
-def _verify_database(path: Path) -> None:
+def _fsync_tree(root: Path) -> None:
+    """Make a newly staged immutable tree durable before publishing its rename."""
+    directories = [root]
+    for base, names, files in os.walk(root, followlinks=False):
+        base_path = Path(base)
+        directories.extend(base_path / name for name in names)
+        for name in files:
+            with (base_path / name).open("rb") as handle:
+                os.fsync(handle.fileno())
+    for directory in reversed(directories):
+        _fsync_directory(directory)
+
+
+def _verify_database(path: Path, *, deadline: float | None = None) -> None:
+    if deadline is None:
+        deadline = time.monotonic() + DEFAULT_SNAPSHOT_TIMEOUT_SECONDS
+
+    def interrupt_if_expired() -> int:
+        return int(time.monotonic() >= deadline)
+
     with sqlite3.connect(
-        f"file:{path}?mode=ro&immutable=1", uri=True
+        f"file:{path}?mode=ro&immutable=1",
+        uri=True,
+        timeout=max(0.001, min(5.0, deadline - time.monotonic())),
     ) as connection:
-        quick = connection.execute("PRAGMA quick_check").fetchall()
-        integrity = connection.execute("PRAGMA integrity_check").fetchall()
-        foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
+        connection.set_progress_handler(interrupt_if_expired, 10_000)
+        try:
+            quick = connection.execute("PRAGMA quick_check").fetchall()
+            integrity = connection.execute("PRAGMA integrity_check").fetchall()
+            foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
+        except sqlite3.OperationalError as error:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"SQLite snapshot verification exceeded its deadline for {path}"
+                ) from error
+            raise
+        finally:
+            connection.set_progress_handler(None, 0)
     if quick != [("ok",)]:
         raise RuntimeError(f"SQLite quick_check failed for {path}: {quick!r}")
     if integrity != [("ok",)]:
@@ -143,17 +197,55 @@ def _verify_database(path: Path) -> None:
         )
 
 
-def snapshot_database(source: Path, retained: Path, *, reason: str) -> bool:
+def snapshot_database(
+    source: Path,
+    retained: Path,
+    *,
+    reason: str,
+    timeout_seconds: float | None = None,
+) -> bool:
     """Create an atomic, self-contained SQLite backup on retained storage."""
     if not source.is_file():
         return False
+    if timeout_seconds is None:
+        raw_timeout = os.getenv(
+            "AAR_AUTODATA_SNAPSHOT_TIMEOUT_SECONDS",
+            str(DEFAULT_SNAPSHOT_TIMEOUT_SECONDS),
+        )
+        try:
+            timeout_seconds = float(raw_timeout)
+        except ValueError as error:
+            raise RuntimeError(
+                "AAR_AUTODATA_SNAPSHOT_TIMEOUT_SECONDS must be a positive number"
+            ) from error
+    if timeout_seconds <= 0:
+        raise RuntimeError(
+            "AAR_AUTODATA_SNAPSHOT_TIMEOUT_SECONDS must be a positive number"
+        )
+    deadline = time.monotonic() + timeout_seconds
     retained.parent.mkdir(parents=True, exist_ok=True)
     temporary = retained.with_name(f"{retained.name}.tmp.{os.getpid()}")
     try:
-        with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as source_db:
-            with sqlite3.connect(temporary) as destination_db:
-                source_db.backup(destination_db)
-        _verify_database(temporary)
+        sqlite_timeout = max(0.001, min(5.0, timeout_seconds))
+        with sqlite3.connect(
+            f"file:{source}?mode=ro", uri=True, timeout=sqlite_timeout
+        ) as source_db:
+            with sqlite3.connect(temporary, timeout=sqlite_timeout) as destination_db:
+                def fail_if_expired(
+                    _status: int, _remaining: int, _total: int
+                ) -> None:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            f"SQLite snapshot backup exceeded its deadline for {source}"
+                        )
+
+                source_db.backup(
+                    destination_db,
+                    pages=256,
+                    progress=fail_if_expired,
+                    sleep=0.1,
+                )
+        _verify_database(temporary, deadline=deadline)
         temporary.chmod(0o600)
         with temporary.open("rb") as handle:
             os.fsync(handle.fileno())
@@ -271,12 +363,30 @@ def _load_control(path: Path) -> dict[str, Any]:
     return value
 
 
-def _with_control_lock(path: Path) -> TextIO:
+def _with_control_lock(
+    path: Path, *, timeout_seconds: float = DEFAULT_CONTROL_LOCK_TIMEOUT_SECONDS
+) -> TextIO:
+    if timeout_seconds <= 0:
+        raise RuntimeError("AutoData control lock timeout must be positive")
     lock_path = path.with_name(f"{path.name}.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     handle = lock_path.open("a+", encoding="utf-8")
-    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-    return handle
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return handle
+            except BlockingIOError as error:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError(
+                        f"timed out acquiring AutoData lifecycle control lock: {lock_path}"
+                    ) from error
+                time.sleep(min(0.1, remaining))
+    except BaseException:
+        handle.close()
+        raise
 
 
 def _native_subject(state: Path, kind: str, subject_id: str) -> dict[str, Any]:
@@ -394,6 +504,7 @@ def _native_cli(
         check=False,
         capture_output=True,
         text=True,
+        timeout=WORKSPACE_RECONCILE_SLA_SECONDS,
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip()[-2000:]
@@ -405,6 +516,1175 @@ def _native_cli(
     if not isinstance(value, dict):
         raise RuntimeError("native AutoData CLI did not return one JSON object")
     return value
+
+
+def _trusted_execution_settings(
+    *,
+    campaign_policy: Path,
+    training_data_contract: Path,
+    resolved_config: Path | None = None,
+    resolved_config_sha256: str | None = None,
+    campaign_policy_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Load execution authority from the integrity-checked compiled config."""
+    resolved_raw = (
+        str(resolved_config)
+        if resolved_config is not None
+        else os.environ.get("AAR_AUTODATA_RESOLVED_CONFIG", "").strip()
+    )
+    if not resolved_raw:
+        raise RuntimeError("trusted resolved AutoData config is required")
+    from aar.autodata_run_config import validate_compiled_config
+
+    resolved_path = Path(resolved_raw).expanduser().resolve(strict=True)
+    if (
+        resolved_config_sha256 is not None
+        and _sha256(resolved_path) != resolved_config_sha256
+    ):
+        raise RuntimeError("resolved AutoData config changed after supervisor startup")
+    if campaign_policy_sha256 is not None and _sha256(campaign_policy) != campaign_policy_sha256:
+        raise RuntimeError("runtime campaign policy changed after supervisor startup")
+    import yaml
+
+    unverified = yaml.safe_load(resolved_path.read_text(encoding="utf-8"))
+    if not isinstance(unverified, dict) or not isinstance(
+        unverified.get("artifacts"), dict
+    ):
+        raise RuntimeError("resolved AutoData config has no artifact bindings")
+    compiled_policy = Path(
+        str(unverified["artifacts"].get("campaign_policy"))
+    ).resolve(strict=True)
+    resolved = validate_compiled_config(
+        resolved_path, compiled_policy, training_data_contract
+    )
+    artifacts = resolved.get("artifacts")
+    if not isinstance(artifacts, dict):
+        raise RuntimeError("resolved AutoData config has no artifact bindings")
+    expected_policy = Path(str(artifacts.get("campaign_policy"))).resolve(strict=True)
+    expected_contract = Path(
+        str(artifacts.get("training_data_contract"))
+    ).resolve(strict=True)
+    if compiled_policy != expected_policy:
+        raise RuntimeError("compiled campaign policy binding changed")
+    if training_data_contract.resolve(strict=True) != expected_contract:
+        raise RuntimeError("training-data contract is not the compiled operator artifact")
+    runtime_policy = validate_runtime_campaign_policy_rewrite(
+        _json_object(compiled_policy, "compiled campaign policy"),
+        _json_object(campaign_policy, "runtime campaign policy"),
+    )
+    settings = operator_execution_settings(
+        resolved,
+        campaign_policy=runtime_policy,
+        training_data_contract=_json_object(
+            training_data_contract, "training-data contract"
+        ),
+    )
+    broker_url = os.environ.get("AAR_AUTODATA_BROKER_URL", "").strip()
+    if not broker_url:
+        raise RuntimeError("AAR_AUTODATA_BROKER_URL is required")
+    settings["broker_url"] = broker_url
+    return settings
+
+
+def _study_reserved_task_ids(state: Path, study_id: str) -> list[str]:
+    """Return verified task IDs reserved by a completed study meta execution."""
+    with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
+        connection.row_factory = sqlite3.Row
+        if not {"executions", "study_members"}.issubset(_table_names(connection)):
+            return []
+        rows = connection.execute(
+            "SELECT e.* FROM executions e JOIN study_members s "
+            "ON s.subjectKind='execution' AND s.subjectId=e.id "
+            "WHERE s.studyId=?",
+            (study_id,),
+        ).fetchall()
+    reserved: set[str] = set()
+    completed_meta = 0
+    for row in rows:
+        spec = json.loads(str(row["executionJson"]))
+        if spec.get("mode") != "meta_optimize":
+            continue
+        if row["status"] == "cancelled":
+            if _execution_attempts(state, row) != 0:
+                raise RuntimeError(
+                    "cancelled study meta execution contains task-attempt evidence"
+                )
+            continue
+        if row["status"] != "completed" or row["phase"] != "completed":
+            raise RuntimeError(
+                "production cannot start before the study meta execution completes"
+            )
+        completed_meta += 1
+        tuning = spec.get("tuning_task_ids")
+        validation = spec.get("validation_task_ids")
+        if not isinstance(tuning, list) or not isinstance(validation, list):
+            raise RuntimeError("study meta execution has invalid explicit partitions")
+        reserved.update(str(value) for value in [*tuning, *validation])
+        pipeline_root = Path(str(row["pipelineRoot"])).resolve(strict=True)
+        reserved.update(
+            bound_grounding_task_ids(
+                pipeline_root, spec.get("test_grounding"), "study meta test grounding"
+            )
+        )
+    if completed_meta != 1:
+        raise RuntimeError(
+            "production requires exactly one completed meta execution in its study"
+        )
+    return sorted(reserved)
+
+
+def _json_sha256(value: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        dict(value), sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _execution_study(state: Path, execution_id: str) -> str:
+    with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
+        if "study_members" not in _table_names(connection):
+            raise RuntimeError("native state has no study membership table")
+        rows = connection.execute(
+            "SELECT studyId FROM study_members "
+            "WHERE subjectKind='execution' AND subjectId=?",
+            (execution_id,),
+        ).fetchall()
+    if len(rows) != 1:
+        raise RuntimeError(f"execution {execution_id} has no unique native study")
+    return str(rows[0][0])
+
+
+def _execution_finalization(state: Path, execution_id: str) -> dict[str, Any]:
+    with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
+        if "events" not in _table_names(connection):
+            raise RuntimeError("native state has no execution event evidence")
+        rows = connection.execute(
+            "SELECT payloadJson FROM events WHERE scopeKind='execution' "
+            "AND scopeId=? AND kind='execution.finalized' ORDER BY sequence",
+            (execution_id,),
+        ).fetchall()
+    if len(rows) != 1:
+        raise RuntimeError(
+            f"completed execution {execution_id} has no unique finalization event"
+        )
+    try:
+        value = json.loads(str(rows[0][0]))
+    except json.JSONDecodeError as error:
+        raise RuntimeError("native execution finalization payload is invalid") from error
+    if not isinstance(value, dict):
+        raise RuntimeError("native execution finalization payload is not an object")
+    return value
+
+
+def _run_binding(
+    state: Path, control_file: Path, meta_execution_id: str
+) -> tuple[dict[str, Any], dict[str, Any], Path]:
+    """Authenticate one meta execution against its approved run workspace."""
+    workspace_entries = [
+        entry
+        for entry in _load_control(control_file)["subjects"]
+        if entry["kind"] == "workspace"
+        and entry.get("canonical_execution_id") == meta_execution_id
+    ]
+    if len(workspace_entries) != 1:
+        raise RuntimeError(
+            "completed meta execution has no unique supervised workspace binding"
+        )
+    workspace_entry = workspace_entries[0]
+    workspace_id = str(workspace_entry["subject_id"])
+    workspace = _native_subject(state, "workspace", workspace_id)
+    root_raw = workspace.get("root")
+    if not isinstance(root_raw, str) or not root_raw:
+        raise RuntimeError("bound native workspace has no run-scoped draft root")
+    draft = Path(root_raw).resolve(strict=True)
+    run_root = draft.parent
+    if draft != run_root / "draft" or run_root.is_symlink() or not run_root.is_dir():
+        raise RuntimeError("bound native workspace is outside a safe run root")
+    team_raw = os.environ.get("TEAM_DIR", "").strip()
+    if team_raw:
+        team = Path(team_raw).resolve(strict=True)
+        if run_root.parent != team / "autodata":
+            raise RuntimeError("bound native workspace does not belong to TEAM_DIR")
+    bootstrap = _json_object(
+        run_root / "workspace-bootstrap.json", "workspace bootstrap binding"
+    )
+    expected = {
+        "schema": "aar.autodata.workspace-bootstrap/v1",
+        "workspace_id": workspace_id,
+        "study_id": _execution_study(state, meta_execution_id),
+        "run_root": str(run_root),
+    }
+    if any(bootstrap.get(key) != value for key, value in expected.items()):
+        raise RuntimeError("workspace bootstrap does not bind this meta execution")
+    run_id = bootstrap.get("run_id")
+    code_hash = bootstrap.get("code_hash")
+    idea_name = bootstrap.get("idea_name")
+    if (
+        not isinstance(run_id, str)
+        or not run_id
+        or run_root.name != run_id
+        or not isinstance(code_hash, str)
+        or len(code_hash) != 64
+        or not isinstance(idea_name, str)
+        or not idea_name
+    ):
+        raise RuntimeError("workspace bootstrap proposal binding is incomplete")
+    return workspace_entry, bootstrap, run_root
+
+
+def _write_immutable_json(path: Path, value: dict[str, Any], label: str) -> None:
+    if path.exists() or path.is_symlink():
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeError(f"{label} destination is unsafe")
+        if _json_object(path, label) != value:
+            raise RuntimeError(f"existing {label} does not match the durable intent")
+        return
+    _atomic_json(path, value)
+
+
+def _copy_tree_with_production_grounding(
+    *,
+    python: Path,
+    winner: Path,
+    destination: Path,
+    task_count: int,
+    seed: int,
+    reserved_task_ids: list[str],
+) -> tuple[Path, dict[str, Any]]:
+    """Materialize winner + a deterministic fresh production source corpus."""
+    winner = winner.resolve(strict=True)
+    builder = winner / "grounding" / "build_manifest.py"
+    coverage = winner / "grounding" / "coverage.json"
+    if (
+        builder.is_symlink()
+        or coverage.is_symlink()
+        or not builder.is_file()
+        or not coverage.is_file()
+    ):
+        raise RuntimeError("completed meta winner lacks protected grounding sources")
+    staging = destination.with_name(f".{destination.name}.tmp.{os.getpid()}")
+    if staging.exists():
+        shutil.rmtree(staging)
+    try:
+        shutil.copytree(winner, staging, symlinks=False)
+        manifest = staging / PRODUCTION_GROUNDING_PATH
+        completed = subprocess.run(
+            [
+                str(python),
+                str(builder),
+                "--count",
+                str(task_count),
+                "--seed",
+                str(seed),
+                "--id-prefix",
+                PRODUCTION_ID_PREFIX,
+                "--coverage",
+                str(coverage),
+                "--output",
+                str(manifest),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if completed.returncode != 0:
+            detail = completed.stderr.strip()[-2000:] or completed.stdout.strip()[-2000:]
+            raise RuntimeError(f"trusted production grounding build failed: {detail}")
+        value = _json_object(manifest, "production grounding manifest")
+        tasks = value.get("tasks")
+        if not isinstance(tasks, list) or len(tasks) != task_count:
+            raise RuntimeError("trusted production grounding has the wrong task count")
+        task_ids = [
+            task.get("id") if isinstance(task, dict) else None for task in tasks
+        ]
+        if (
+            any(not isinstance(task_id, str) or not task_id for task_id in task_ids)
+            or len(set(task_ids)) != task_count
+            or set(task_ids) & set(reserved_task_ids)
+        ):
+            raise RuntimeError(
+                "trusted production grounding IDs are invalid or overlap meta tasks"
+            )
+        _atomic_json(manifest, value)
+        expected_digest = _pipeline_tree_digest(staging)
+        if destination.is_dir():
+            if _pipeline_tree_digest(destination) != expected_digest:
+                raise RuntimeError("existing production pipeline differs from durable intent")
+        elif destination.exists() or destination.is_symlink():
+            raise RuntimeError("production pipeline destination is unsafe")
+        else:
+            _fsync_tree(staging)
+            os.replace(staging, destination)
+            _fsync_directory(destination.parent)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+    production_manifest = destination / PRODUCTION_GROUNDING_PATH
+    return destination / "autodata.pipeline.json", {
+        "manifest_path": PRODUCTION_GROUNDING_PATH,
+        "digest": "sha256:" + _sha256(production_manifest),
+    }
+
+
+def _export_winner_idempotently(
+    args: argparse.Namespace,
+    *,
+    execution_id: str,
+    destination: Path,
+    expected_digest: str,
+) -> None:
+    if destination.is_dir():
+        if _pipeline_tree_digest(destination) != expected_digest:
+            raise RuntimeError("existing winner export does not match native finalization")
+        return
+    if destination.exists() or destination.is_symlink():
+        raise RuntimeError("winner export destination is unsafe")
+    temporary = destination.with_name(f".{destination.name}.tmp.{os.getpid()}")
+    if temporary.exists():
+        shutil.rmtree(temporary)
+    try:
+        _native_cli(
+            args.python,
+            args.state,
+            args.artifacts,
+            args.workspaces,
+            "execution",
+            "export-winner",
+            execution_id,
+            "--output",
+            str(temporary),
+        )
+        if _pipeline_tree_digest(temporary) != expected_digest:
+            raise RuntimeError("native winner export digest does not match finalization")
+        _fsync_tree(temporary)
+        os.replace(temporary, destination)
+        _fsync_directory(destination.parent)
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+
+
+def _export_dataset_idempotently(
+    args: argparse.Namespace,
+    *,
+    execution_id: str,
+    destination: Path,
+    expected_digest: str,
+) -> None:
+    expected = expected_digest.removeprefix("sha256:")
+    if destination.is_file() and not destination.is_symlink():
+        if _sha256(destination) != expected:
+            raise RuntimeError("existing production dataset digest changed")
+        return
+    if destination.exists() or destination.is_symlink():
+        raise RuntimeError("production dataset destination is unsafe")
+    temporary = destination.with_name(f".{destination.name}.tmp.{os.getpid()}")
+    temporary.unlink(missing_ok=True)
+    try:
+        _native_cli(
+            args.python,
+            args.state,
+            args.artifacts,
+            args.workspaces,
+            "export",
+            execution_id,
+            "--output",
+            str(temporary),
+        )
+        if _sha256(temporary) != expected:
+            raise RuntimeError("native production dataset digest does not match finalization")
+        with temporary.open("rb") as handle:
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+        _fsync_directory(destination.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _publish_canonical_execution(
+    artifacts: Path, manifest: dict[str, Any]
+) -> Path:
+    encoded = json.dumps(
+        manifest, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    digest = hashlib.sha256(encoded).hexdigest()
+    root = artifacts.resolve(strict=True) / ".aar-supervised-executions"
+    root.mkdir(mode=0o700, exist_ok=True)
+    if root.is_symlink() or not root.is_dir():
+        raise RuntimeError("canonical execution directory is unsafe")
+    destination = root / f"{digest}.json"
+    if destination.is_file():
+        if _json_object(destination, "canonical execution manifest") != manifest:
+            raise RuntimeError("canonical execution manifest digest collision")
+    else:
+        _atomic_json(destination, manifest)
+    return destination
+
+
+def _existing_registration(
+    control_file: Path, *, kind: str, subject_id: str
+) -> dict[str, Any] | None:
+    matches = [
+        entry
+        for entry in _load_control(control_file)["subjects"]
+        if entry["kind"] == kind and entry["subject_id"] == subject_id
+    ]
+    if len(matches) > 1:
+        raise RuntimeError(f"duplicate lifecycle registration for {subject_id}")
+    return matches[0] if matches else None
+
+
+def reconcile_completed_meta_execution(
+    args: argparse.Namespace, meta_execution_id: str
+) -> dict[str, Any]:
+    """Converge completed meta evidence to one registered production execution."""
+    meta_row = _native_subject(args.state, "execution", meta_execution_id)
+    meta_spec = json.loads(str(meta_row.get("executionJson")))
+    if (
+        meta_row.get("status") != "completed"
+        or meta_row.get("phase") != "completed"
+        or meta_spec.get("mode") != "meta_optimize"
+    ):
+        raise RuntimeError("meta transition requires one completed meta execution")
+    workspace_entry, bootstrap, run_root = _run_binding(
+        args.state, args.control_file, meta_execution_id
+    )
+    study_id = str(bootstrap["study_id"])
+    finalization = _execution_finalization(args.state, meta_execution_id)
+    winner_id = str(finalization.get("winner_candidate_id") or "")
+    winner_digest = str(finalization.get("winner_tree_digest") or "")
+    if (
+        not winner_id
+        or winner_id != str(meta_row.get("winnerCandidateId") or "")
+        or not winner_digest.startswith("sha256:")
+    ):
+        raise RuntimeError("completed meta execution has invalid winner evidence")
+    settings = _trusted_execution_settings(
+        campaign_policy=args.campaign_policy,
+        training_data_contract=args.training_data_contract,
+        resolved_config=args.resolved_config,
+        resolved_config_sha256=args.resolved_config_sha256,
+        campaign_policy_sha256=args.campaign_policy_sha256,
+    )
+    reserved = _study_reserved_task_ids(args.state, study_id)
+    expected_reserved = sum(
+        int(settings["meta"][key])
+        for key in ("tuning_tasks", "validation_tasks", "test_tasks")
+    )
+    if len(reserved) != expected_reserved:
+        raise RuntimeError("completed meta execution does not bind the full partition")
+
+    winner = run_root / "meta-winner"
+    production_root = run_root / "production"
+    dataset = run_root / "production-dataset.json"
+    receipt = run_root / "training-consumption.json"
+    handoff = run_root / "training-handoff.json"
+    intent = {
+        "schema": SUPERVISED_TRANSITION_SCHEMA,
+        "run_id": bootstrap["run_id"],
+        "idea_name": bootstrap["idea_name"],
+        "code_hash": bootstrap["code_hash"],
+        "workspace_id": workspace_entry["subject_id"],
+        "study_id": study_id,
+        "meta_execution_id": meta_execution_id,
+        "meta_winner_candidate_id": winner_id,
+        "meta_winner_tree_digest": winner_digest,
+        "reserved_task_ids_sha256": _json_sha256({"task_ids": reserved}),
+        "operator_settings_sha256": _json_sha256(settings),
+        "production_task_count": int(settings["production"]["initial_tasks"]),
+        "production_seed": int(meta_spec["split_seed"]) + PRODUCTION_SEED_OFFSET,
+        "production_id_prefix": PRODUCTION_ID_PREFIX,
+        "winner_export": str(winner),
+        "production_pipeline": str(production_root),
+        "production_manifest": str(production_root / PRODUCTION_GROUNDING_PATH),
+        "production_dataset": str(dataset),
+        "consumption_receipt": str(receipt),
+        "training_handoff": str(handoff),
+    }
+    intent_path = run_root / "supervised-transition-intent.json"
+    _write_immutable_json(intent_path, intent, "supervised transition intent")
+    intent_digest = "sha256:" + _sha256(intent_path)
+    existing_intent = workspace_entry.get("transition_intent_sha256")
+    if existing_intent not in {None, intent_digest}:
+        raise RuntimeError("workspace transition intent changed during recovery")
+    _update_registration(
+        args.control_file,
+        kind="workspace",
+        subject_id=str(workspace_entry["subject_id"]),
+        transition_intent_sha256=intent_digest,
+    )
+
+    _export_winner_idempotently(
+        args,
+        execution_id=meta_execution_id,
+        destination=winner,
+        expected_digest=winner_digest,
+    )
+    pipeline, grounding = _copy_tree_with_production_grounding(
+        python=args.python,
+        winner=winner,
+        destination=production_root,
+        task_count=int(settings["production"]["initial_tasks"]),
+        seed=int(intent["production_seed"]),
+        reserved_task_ids=reserved,
+    )
+    production_spec = canonical_production_manifest_from_meta(
+        meta_manifest=meta_spec,
+        pipeline_manifest=pipeline,
+        production_grounding=grounding,
+        settings=settings,
+        reserved_task_ids=reserved,
+    )
+    production_spec_path = _publish_canonical_execution(
+        args.artifacts, production_spec
+    )
+    contract = validate_generation_inputs(
+        pipeline_manifest=pipeline,
+        execution_manifest=production_spec_path,
+        contract_path=args.training_data_contract,
+        campaign_policy_path=args.campaign_policy,
+        expected_concurrency=int(settings["concurrency"]),
+    )
+    key = execution_creation_key(
+        pipeline,
+        production_spec_path,
+        study_id=study_id,
+        workspaces=args.workspaces,
+    )
+    meta_registration = _existing_registration(
+        args.control_file, kind="execution", subject_id=meta_execution_id
+    )
+    if meta_registration is None:
+        raise RuntimeError("completed canonical meta execution lost its registration")
+    for field, expected in {
+        "production_idempotency_key": key,
+        "production_manifest_sha256": "sha256:" + _sha256(production_spec_path),
+        "production_pipeline_digest": _pipeline_tree_digest(production_root),
+    }.items():
+        current = meta_registration.get(field)
+        if current not in {None, expected}:
+            raise RuntimeError(f"meta transition changed durable {field}")
+    _update_registration(
+        args.control_file,
+        kind="execution",
+        subject_id=meta_execution_id,
+        transition_intent_sha256=intent_digest,
+        winner_export_digest=winner_digest,
+        production_idempotency_key=key,
+        production_manifest_sha256="sha256:" + _sha256(production_spec_path),
+        production_pipeline_digest=_pipeline_tree_digest(production_root),
+    )
+    created = _native_cli(
+        args.python,
+        args.state,
+        args.artifacts,
+        args.workspaces,
+        "execution",
+        "create",
+        "--pipeline",
+        str(pipeline),
+        "--execution",
+        str(production_spec_path),
+        "--study-id",
+        study_id,
+        "--idempotency-key",
+        key,
+    )
+    production_id = created.get("execution_id")
+    if not isinstance(production_id, str) or not production_id:
+        raise RuntimeError("native production creation returned no execution id")
+    equivalents = _equivalent_executions(args.state, production_id)
+    if len(equivalents) != 1 or str(equivalents[0]["id"]) != production_id:
+        raise RuntimeError("production creation produced an ambiguous semantic duplicate")
+    if _execution_study(args.state, production_id) != study_id:
+        raise RuntimeError("production execution escaped the meta native study")
+    latest_meta = _registration_entry(
+        args.control_file, kind="execution", subject_id=meta_execution_id
+    )
+    bound_production = latest_meta.get("production_execution_id")
+    if bound_production not in {None, production_id}:
+        raise RuntimeError("production execution identity changed during recovery")
+    _update_registration(
+        args.control_file,
+        kind="execution",
+        subject_id=meta_execution_id,
+        production_execution_id=production_id,
+    )
+    if not snapshot_database(
+        args.state,
+        args.retained_state,
+        reason=f"production-created:{meta_execution_id}:{production_id}",
+    ):
+        raise RuntimeError("cannot retain supervised production creation")
+    production_row = _native_subject(args.state, "execution", production_id)
+    registration = _existing_registration(
+        args.control_file, kind="execution", subject_id=production_id
+    )
+    if registration is None:
+        if production_row.get("status") != "active":
+            raise RuntimeError("unregistered production execution is already terminal")
+        registration = register_subject(
+            args.state,
+            args.control_file,
+            kind="execution",
+            subject_id=production_id,
+        )
+    _update_registration(
+        args.control_file,
+        kind="execution",
+        subject_id=production_id,
+        parent_meta_execution_id=meta_execution_id,
+        run_id=bootstrap["run_id"],
+        transition_intent_sha256=intent_digest,
+    )
+    _complete_registration(
+        args.control_file,
+        kind="execution",
+        subject_id=meta_execution_id,
+        native_status="completed",
+    )
+    return {
+        "transition": "meta-to-production",
+        "meta_execution_id": meta_execution_id,
+        "production_execution_id": production_id,
+        "production_registered": registration.get("status") == "registered",
+        "training_data_contract": contract["schema"],
+    }
+
+
+def reconcile_completed_production_execution(
+    args: argparse.Namespace, production_execution_id: str
+) -> dict[str, Any]:
+    """Export one completed production dataset and publish a verified handoff."""
+    registration = _registration_entry(
+        args.control_file, kind="execution", subject_id=production_execution_id
+    )
+    meta_execution_id = registration.get("parent_meta_execution_id")
+    if not isinstance(meta_execution_id, str) or not meta_execution_id:
+        raise RuntimeError("production registration has no canonical meta parent")
+    _, bootstrap, run_root = _run_binding(
+        args.state, args.control_file, meta_execution_id
+    )
+    study_id = str(bootstrap["study_id"])
+    row = _native_subject(args.state, "execution", production_execution_id)
+    spec = json.loads(str(row.get("executionJson")))
+    if (
+        row.get("status") != "completed"
+        or row.get("phase") != "completed"
+        or spec.get("mode") != "production"
+        or _execution_study(args.state, production_execution_id) != study_id
+    ):
+        raise RuntimeError("production handoff requires completed same-study production")
+    finalization = _execution_finalization(args.state, production_execution_id)
+    dataset_ref = finalization.get("dataset")
+    if not isinstance(dataset_ref, dict):
+        raise RuntimeError("completed production has no native dataset reference")
+    dataset_digest = dataset_ref.get("digest")
+    if (
+        not isinstance(dataset_digest, str)
+        or not dataset_digest.startswith("sha256:")
+    ):
+        raise RuntimeError("completed production dataset has no digest")
+    winner = run_root / "meta-winner"
+    production_root = run_root / "production"
+    production_manifest = production_root / PRODUCTION_GROUNDING_PATH
+    dataset = run_root / "production-dataset.json"
+    receipt = run_root / "training-consumption.json"
+    intent_path = run_root / "supervised-transition-intent.json"
+    intent_digest = "sha256:" + _sha256(intent_path)
+    if registration.get("transition_intent_sha256") != intent_digest:
+        raise RuntimeError("production registration lost its transition intent")
+    if not snapshot_database(
+        args.state,
+        args.retained_state,
+        reason=f"production-completed:{production_execution_id}",
+    ):
+        raise RuntimeError("cannot retain completed production state")
+    _export_dataset_idempotently(
+        args,
+        execution_id=production_execution_id,
+        destination=dataset,
+        expected_digest=dataset_digest,
+    )
+    handoff = {
+        "schema": "aar.autodata.training-handoff/v1",
+        "run_id": bootstrap["run_id"],
+        "state_db": str(args.retained_state.resolve(strict=True)),
+        "dataset": str(dataset.resolve(strict=True)),
+        "workspace_id": bootstrap["workspace_id"],
+        "study_id": study_id,
+        "meta_execution_id": meta_execution_id,
+        "production_execution_id": production_execution_id,
+        "winner_export": str(winner.resolve(strict=True)),
+        "production_manifest": str(production_manifest.resolve(strict=True)),
+        "consumption_receipt": str(receipt),
+    }
+    handoff_path = run_root / "training-handoff.json"
+    _write_immutable_json(handoff_path, handoff, "training handoff")
+    from aar.infrastructure.autodata_lifecycle import verify_preflight
+
+    verification = verify_preflight(str(bootstrap["run_id"]))
+    if (
+        verification.get("production_execution_id") != production_execution_id
+        or verification.get("meta_execution_id") != meta_execution_id
+    ):
+        raise RuntimeError("published training handoff verification changed lineage")
+    handoff_digest = "sha256:" + _sha256(handoff_path)
+    _update_registration(
+        args.control_file,
+        kind="execution",
+        subject_id=production_execution_id,
+        dataset_sha256=dataset_digest,
+        training_handoff_sha256=handoff_digest,
+    )
+    _update_registration(
+        args.control_file,
+        kind="execution",
+        subject_id=meta_execution_id,
+        training_handoff_sha256=handoff_digest,
+    )
+    _complete_registration(
+        args.control_file,
+        kind="execution",
+        subject_id=production_execution_id,
+        native_status="completed",
+    )
+    return {
+        "transition": "production-to-training-handoff",
+        "meta_execution_id": meta_execution_id,
+        "production_execution_id": production_execution_id,
+        "training_handoff": str(handoff_path),
+        "available_rows": verification["available_rows"],
+    }
+
+
+def reconcile_completed_execution_transition(
+    args: argparse.Namespace,
+) -> dict[str, Any] | None:
+    """Advance at most one completed supervised execution lifecycle edge."""
+    registrations = [
+        entry
+        for entry in _load_control(args.control_file)["subjects"]
+        if entry["kind"] == "execution"
+    ]
+    for entry in registrations:
+        execution_id = str(entry["subject_id"])
+        row = _native_subject(args.state, "execution", execution_id)
+        if row.get("status") != "completed" or row.get("phase") != "completed":
+            continue
+        spec = json.loads(str(row.get("executionJson")))
+        mode = spec.get("mode")
+        if mode == "meta_optimize" and not entry.get("production_execution_id"):
+            return reconcile_completed_meta_execution(args, execution_id)
+        if mode == "production" and not entry.get("training_handoff_sha256"):
+            return reconcile_completed_production_execution(args, execution_id)
+    return None
+
+
+def _materialize_canonical_meta_pipeline(
+    *,
+    source_pipeline: Path,
+    default_manifest: Mapping[str, Any],
+    artifacts: Path,
+    settings: Mapping[str, Any],
+) -> tuple[Path, dict[str, Any]]:
+    """Copy a frozen tree and add immutable 96-task/32-task manifests."""
+    source_pipeline = source_pipeline.resolve(strict=True)
+    source_root = source_pipeline.parent
+    source_digest = _pipeline_tree_digest(source_root)
+    identity = json.dumps(
+        {
+            "schema": "aar.autodata.canonical-meta-pipeline/v1",
+            "source_tree_digest": source_digest,
+            "meta": settings["meta"],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    digest = hashlib.sha256(identity).hexdigest()
+    root = artifacts.resolve(strict=True) / ".aar-supervised-pipelines"
+    root.mkdir(mode=0o700, exist_ok=True)
+    destination = root / digest
+    staging = root / f".{digest}.tmp.{os.getpid()}"
+    grounding_ref = default_manifest.get("grounding")
+    if not isinstance(grounding_ref, dict):
+        raise RuntimeError("freeze-created execution has no grounding reference")
+    relative = grounding_ref.get("manifest_path")
+    if (
+        not isinstance(relative, str)
+        or Path(relative).is_absolute()
+        or ".." in Path(relative).parts
+    ):
+        raise RuntimeError("freeze-created grounding path is unsafe")
+    full_manifest_path = (source_root / relative).resolve(strict=True)
+    try:
+        full_manifest_path.relative_to(source_root)
+    except ValueError as error:
+        raise RuntimeError("freeze-created grounding escapes its pipeline") from error
+    if _sha256(full_manifest_path) != str(grounding_ref.get("digest", "")).removeprefix(
+        "sha256:"
+    ):
+        raise RuntimeError("freeze-created grounding digest changed")
+    full_manifest = _json_object(full_manifest_path, "freeze-created grounding")
+    tasks = full_manifest.get("tasks")
+    meta = settings["meta"]
+    tuning_count = int(meta["tuning_tasks"])
+    validation_count = int(meta["validation_tasks"])
+    test_count = int(meta["test_tasks"])
+    if not isinstance(tasks, list) or len(tasks) != (
+        tuning_count + validation_count + test_count
+    ):
+        raise RuntimeError("freeze-created grounding has the wrong task count")
+    identifiers = [task.get("id") if isinstance(task, dict) else None for task in tasks]
+    if any(not isinstance(value, str) or not value for value in identifiers) or len(
+        set(identifiers)
+    ) != len(identifiers):
+        raise RuntimeError("freeze-created grounding task IDs are invalid")
+    meta_relative = "grounding/aar-supervised-meta.json"
+    test_relative = "grounding/aar-supervised-test.json"
+    if staging.exists():
+        shutil.rmtree(staging)
+    try:
+        shutil.copytree(
+            source_root,
+            staging,
+            symlinks=False,
+            ignore=shutil.ignore_patterns(".autodata"),
+        )
+        meta_manifest = dict(full_manifest)
+        meta_manifest["tasks"] = tasks[: tuning_count + validation_count]
+        test_manifest = dict(full_manifest)
+        test_manifest["tasks"] = tasks[tuning_count + validation_count :]
+        _atomic_json(staging / meta_relative, meta_manifest)
+        _atomic_json(staging / test_relative, test_manifest)
+        expected_tree_digest = _pipeline_tree_digest(staging)
+        if destination.is_dir():
+            if _pipeline_tree_digest(destination) != expected_tree_digest:
+                raise RuntimeError("retained canonical pipeline digest changed")
+        elif destination.exists() or destination.is_symlink():
+            raise RuntimeError("canonical pipeline destination is unsafe")
+        else:
+            os.replace(staging, destination)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+    meta_path = destination / meta_relative
+    test_path = destination / test_relative
+    derived = dict(default_manifest)
+    derived["grounding"] = {
+        "manifest_path": meta_relative,
+        "digest": "sha256:" + _sha256(meta_path),
+    }
+    derived["test_grounding"] = {
+        "manifest_path": test_relative,
+        "digest": "sha256:" + _sha256(test_path),
+    }
+    return destination / source_pipeline.name, derived
+
+
+def _registration_entry(
+    control_file: Path, *, kind: str, subject_id: str
+) -> dict[str, Any]:
+    for entry in _load_control(control_file)["subjects"]:
+        if entry["kind"] == kind and entry["subject_id"] == subject_id:
+            return entry
+    raise RuntimeError(f"AutoData lifecycle registration for {subject_id} vanished")
+
+
+def _update_registration(
+    control_file: Path, *, kind: str, subject_id: str, **fields: Any
+) -> dict[str, Any]:
+    lock = _with_control_lock(control_file)
+    try:
+        control = _load_control(control_file)
+        for entry in control["subjects"]:
+            if entry["kind"] == kind and entry["subject_id"] == subject_id:
+                entry.update(fields)
+                _atomic_json(control_file, control)
+                return dict(entry)
+        raise RuntimeError(f"AutoData lifecycle registration for {subject_id} vanished")
+    finally:
+        lock.close()
+
+
+def _workspace_study_and_executions(
+    state: Path, workspace_id: str
+) -> tuple[str, list[dict[str, Any]]]:
+    with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
+        connection.row_factory = sqlite3.Row
+        tables = _table_names(connection)
+        if not {"study_members", "executions"}.issubset(tables):
+            raise RuntimeError("native state lacks workspace execution lineage")
+        memberships = connection.execute(
+            "SELECT studyId FROM study_members "
+            "WHERE subjectKind='workspace' AND subjectId=?",
+            (workspace_id,),
+        ).fetchall()
+        if len(memberships) != 1:
+            raise RuntimeError("frozen workspace has no unique native study")
+        columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(executions)").fetchall()
+        }
+        if "workspaceId" not in columns:
+            raise RuntimeError("native executions lack workspace linkage")
+        rows = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT e.*,s.studyId AS executionStudyId FROM executions e "
+                "LEFT JOIN study_members s ON s.subjectKind='execution' "
+                "AND s.subjectId=e.id WHERE e.workspaceId=? "
+                "ORDER BY e.createdAt,e.id",
+                (workspace_id,),
+            ).fetchall()
+        ]
+        return str(memberships[0][0]), rows
+
+
+def _execution_attempts(state: Path, row: Mapping[str, Any]) -> int:
+    columns = set(row.keys())
+    native_count = (
+        int(row["taskAttemptsUsed"] or 0) if "taskAttemptsUsed" in columns else 0
+    )
+    with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
+        tables = _table_names(connection)
+        if "task_attempts" not in tables:
+            return native_count
+        columns = {
+            str(value[1])
+            for value in connection.execute("PRAGMA table_info(task_attempts)")
+        }
+        if {"scopeKind", "scopeId"}.issubset(columns):
+            result = connection.execute(
+                "SELECT COUNT(*) FROM task_attempts "
+                "WHERE scopeKind='execution' AND scopeId=?",
+                (str(row["id"]),),
+            ).fetchone()
+        elif "executionId" in columns:
+            result = connection.execute(
+                "SELECT COUNT(*) FROM task_attempts WHERE executionId=?",
+                (str(row["id"]),),
+            ).fetchone()
+        else:
+            raise RuntimeError("native task_attempts table has no execution linkage")
+        row_count = int(result[0]) if result is not None else 0
+        event_count = 0
+        if "events" in tables:
+            event_columns = {
+                str(value[1])
+                for value in connection.execute("PRAGMA table_info(events)")
+            }
+            if {"scopeKind", "scopeId", "kind"}.issubset(event_columns):
+                event = connection.execute(
+                    "SELECT COUNT(*) FROM events WHERE scopeKind='execution' "
+                    "AND scopeId=? AND kind IN "
+                    "('task_attempt.submitted','task_attempt.completed','task_attempt.failed')",
+                    (str(row["id"]),),
+                ).fetchone()
+                event_count = int(event[0]) if event is not None else 0
+    if native_count != row_count:
+        raise RuntimeError(
+            "native task-attempt counter and persisted attempt rows disagree"
+        )
+    if native_count == 0 and event_count != 0:
+        raise RuntimeError(
+            "native task-attempt counter is zero despite persisted attempt events"
+        )
+    return native_count
+
+
+def _begin_workspace_reconciliation(
+    control_file: Path, workspace_id: str
+) -> dict[str, Any]:
+    entry = _registration_entry(
+        control_file, kind="workspace", subject_id=workspace_id
+    )
+    if entry["status"] != "registered":
+        return entry
+    started_at = entry.get("reconcile_started_at")
+    if not isinstance(started_at, str):
+        started_at = _utc_now()
+    attempts = int(entry.get("reconcile_attempts") or 0)
+    elapsed = (
+        datetime.now(timezone.utc) - datetime.fromisoformat(started_at)
+    ).total_seconds()
+    if attempts >= WORKSPACE_RECONCILE_MAX_ATTEMPTS:
+        raise RuntimeError("frozen workspace exceeded three reconciliation attempts")
+    if elapsed >= WORKSPACE_RECONCILE_SLA_SECONDS:
+        raise RuntimeError("frozen workspace exceeded the 60-second registration SLA")
+    return _update_registration(
+        control_file,
+        kind="workspace",
+        subject_id=workspace_id,
+        reconcile_started_at=started_at,
+        reconcile_attempts=attempts + 1,
+        reconcile_last_attempt_at=_utc_now(),
+    )
+
+
+def reconcile_frozen_workspace(args: argparse.Namespace, workspace_id: str) -> dict[str, Any]:
+    """Atomically converge a frozen workspace to one canonical meta execution."""
+    workspace = _native_subject(args.state, "workspace", workspace_id)
+    if workspace.get("status") != "frozen":
+        raise RuntimeError(f"workspace {workspace_id} is not frozen")
+    entry = _begin_workspace_reconciliation(args.control_file, workspace_id)
+    study_id, linked = _workspace_study_and_executions(args.state, workspace_id)
+    default_id = entry.get("default_execution_id")
+    if default_id is None:
+        if len(linked) != 1:
+            raise RuntimeError(
+                "frozen workspace default execution is ambiguous before binding"
+            )
+        default_id = str(linked[0]["id"])
+        entry = _update_registration(
+            args.control_file,
+            kind="workspace",
+            subject_id=workspace_id,
+            default_execution_id=default_id,
+        )
+    defaults = [row for row in linked if str(row["id"]) == default_id]
+    if len(defaults) != 1:
+        raise RuntimeError("bound freeze-created default execution is missing")
+    default = defaults[0]
+    if default.get("executionStudyId") != study_id:
+        raise RuntimeError("freeze-created default is not in the workspace study")
+    default_status = str(default.get("status"))
+    default_phase = str(default.get("phase"))
+    attempts = _execution_attempts(args.state, default)
+    if default_status == "active" and (
+        default_phase not in {"created", "baseline_pending"} or attempts != 0
+    ):
+        raise RuntimeError(
+            "freeze-created default execution progressed; refusing automatic cleanup"
+        )
+    if default_status not in {"active", "cancelled"}:
+        raise RuntimeError(
+            f"freeze-created default execution is unexpectedly {default_status}"
+        )
+    if default_status == "cancelled" and not entry.get("canonical_execution_id"):
+        raise RuntimeError("default execution was cancelled before canonical binding")
+
+    pipeline_root = Path(str(default.get("pipelineRoot"))).resolve(strict=True)
+    source_pipeline = pipeline_root / "autodata.pipeline.json"
+    settings = _trusted_execution_settings(
+        campaign_policy=args.campaign_policy,
+        training_data_contract=args.training_data_contract,
+        resolved_config=args.resolved_config,
+        resolved_config_sha256=args.resolved_config_sha256,
+        campaign_policy_sha256=args.campaign_policy_sha256,
+    )
+    default_spec = json.loads(str(default.get("executionJson")))
+    pipeline, default_spec = _materialize_canonical_meta_pipeline(
+        source_pipeline=source_pipeline,
+        default_manifest=default_spec,
+        artifacts=args.artifacts,
+        settings=settings,
+    )
+    canonical = canonical_meta_manifest_from_default(
+        default_manifest=default_spec,
+        pipeline_manifest=pipeline,
+        settings=settings,
+    )
+    canonical_path = _publish_canonical_execution(args.artifacts, canonical)
+    contract = validate_generation_inputs(
+        pipeline_manifest=pipeline,
+        execution_manifest=canonical_path,
+        contract_path=args.training_data_contract,
+        campaign_policy_path=args.campaign_policy,
+        expected_concurrency=int(settings["concurrency"]),
+    )
+    key = execution_creation_key(
+        pipeline, canonical_path, study_id=study_id, workspaces=args.workspaces
+    )
+    existing_key = entry.get("canonical_idempotency_key")
+    if existing_key is not None and existing_key != key:
+        raise RuntimeError("canonical execution intent changed during recovery")
+    entry = _update_registration(
+        args.control_file,
+        kind="workspace",
+        subject_id=workspace_id,
+        canonical_idempotency_key=key,
+        canonical_manifest_sha256=_sha256(canonical_path),
+    )
+    created = _native_cli(
+        args.python,
+        args.state,
+        args.artifacts,
+        args.workspaces,
+        "execution",
+        "create",
+        "--pipeline",
+        str(pipeline),
+        "--execution",
+        str(canonical_path),
+        "--study-id",
+        study_id,
+        "--idempotency-key",
+        key,
+    )
+    execution_id = created.get("execution_id")
+    if not isinstance(execution_id, str) or not execution_id:
+        raise RuntimeError("native canonical creation returned no execution id")
+    bound_canonical = entry.get("canonical_execution_id")
+    if bound_canonical is not None and bound_canonical != execution_id:
+        raise RuntimeError("canonical execution identity changed during recovery")
+    _update_registration(
+        args.control_file,
+        kind="workspace",
+        subject_id=workspace_id,
+        canonical_execution_id=execution_id,
+        canonical_idempotency_key=key,
+    )
+    if not snapshot_database(
+        args.state,
+        args.retained_state,
+        reason=f"workspace-reconcile-created:{workspace_id}:{execution_id}",
+    ):
+        raise RuntimeError("cannot retain canonical execution creation")
+    registration = register_subject(
+        args.state, args.control_file, kind="execution", subject_id=execution_id
+    )
+    current_entry = _registration_entry(
+        args.control_file, kind="workspace", subject_id=workspace_id
+    )
+    started_raw = current_entry.get("reconcile_started_at")
+    if not isinstance(started_raw, str) or (
+        datetime.now(timezone.utc) - datetime.fromisoformat(started_raw)
+    ).total_seconds() >= WORKSPACE_RECONCILE_SLA_SECONDS:
+        raise RuntimeError("frozen workspace exceeded the 60-second registration SLA")
+    if default_status == "active":
+        cancelled = _native_cli(
+            args.python,
+            args.state,
+            args.artifacts,
+            args.workspaces,
+            "cancel",
+            str(default_id),
+        )
+        if cancelled.get("status") != "cancelled":
+            raise RuntimeError("native default execution cancellation did not complete")
+    if not snapshot_database(
+        args.state,
+        args.retained_state,
+        reason=f"workspace-reconciled:{workspace_id}:{execution_id}",
+    ):
+        raise RuntimeError("cannot retain reconciled workspace transition")
+    _complete_registration(
+        args.control_file,
+        kind="workspace",
+        subject_id=workspace_id,
+        native_status="frozen",
+    )
+    return {
+        "workspace_id": workspace_id,
+        "study_id": study_id,
+        "default_execution_id": default_id,
+        "execution_id": execution_id,
+        "registered": registration["registered"],
+        "training_data_contract": contract["schema"],
+    }
 
 
 def create_or_reuse_execution(
@@ -422,19 +1702,32 @@ def create_or_reuse_execution(
     campaign_policy: Path,
 ) -> dict[str, Any]:
     """Create and register exactly one semantic execution in a study."""
-    expected_concurrency_raw = os.environ.get("AAR_AUTODATA_CONCURRENCY")
-    expected_concurrency = (
-        int(expected_concurrency_raw) if expected_concurrency_raw else None
+    settings = _trusted_execution_settings(
+        campaign_policy=campaign_policy,
+        training_data_contract=training_data_contract,
     )
+    proposed = _json_object(execution, "proposed execution manifest")
+    reserved_task_ids = (
+        _study_reserved_task_ids(state, study_id)
+        if proposed.get("mode") == "production"
+        else []
+    )
+    canonical = canonical_execution_manifest(
+        proposed_manifest=execution,
+        pipeline_manifest=pipeline,
+        settings=settings,
+        reserved_task_ids=reserved_task_ids,
+    )
+    canonical_path = _publish_canonical_execution(artifacts, canonical)
     contract = validate_generation_inputs(
         pipeline_manifest=pipeline,
-        execution_manifest=execution,
+        execution_manifest=canonical_path,
         contract_path=training_data_contract,
         campaign_policy_path=campaign_policy,
-        expected_concurrency=expected_concurrency,
+        expected_concurrency=int(settings["concurrency"]),
     )
     key = execution_creation_key(
-        pipeline, execution, study_id=study_id, workspaces=workspaces
+        pipeline, canonical_path, study_id=study_id, workspaces=workspaces
     )
     created = _native_cli(
         python,
@@ -446,7 +1739,7 @@ def create_or_reuse_execution(
         "--pipeline",
         str(pipeline.resolve(strict=True)),
         "--execution",
-        str(execution.resolve(strict=True)),
+        str(canonical_path),
         "--study-id",
         study_id,
         "--idempotency-key",
@@ -570,6 +1863,21 @@ def _complete_registration(
         lock.close()
 
 
+def _frozen_registered_workspace(
+    state: Path, control_file: Path
+) -> str | None:
+    registrations = [
+        entry
+        for entry in _load_control(control_file)["subjects"]
+        if entry["status"] == "registered" and entry["kind"] == "workspace"
+    ]
+    for entry in registrations:
+        row = _native_subject(state, "workspace", str(entry["subject_id"]))
+        if row.get("status") == "frozen":
+            return str(entry["subject_id"])
+    return None
+
+
 def _table_names(connection: sqlite3.Connection) -> set[str]:
     return {
         str(row[0])
@@ -626,6 +1934,10 @@ def next_subject(
             native_status = str(row["status"])
             successful_status = "frozen" if kind == "workspace" else "completed"
             if native_status == successful_status:
+                if kind == "workspace":
+                    raise RuntimeError(
+                        f"frozen workspace {subject_id} requires canonical reconciliation"
+                    )
                 _complete_registration(
                     control_file,
                     kind=kind,
@@ -701,6 +2013,8 @@ class Supervisor:
         self.lock_handle: TextIO | None = None
         self.last_status_signature = ""
         self.last_status_written = 0.0
+        self.failed_step_signature: tuple[Any, ...] | None = None
+        self.failed_step_count = 0
 
     def _write_status(self, **fields: Any) -> None:
         signature = json.dumps(fields, sort_keys=True, default=str)
@@ -726,7 +2040,35 @@ class Supervisor:
         self.stop_requested = True
         self._write_status(state="stopping", signal=signum)
         if self.current is not None and self.current.poll() is None:
-            os.killpg(self.current.pid, signal.SIGTERM)
+            try:
+                os.killpg(self.current.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+    def _terminate_current_process_group(self) -> int:
+        """Stop the active native CLI without any unbounded wait path."""
+        process = self.current
+        if process is None:
+            raise RuntimeError("native AutoData step process is missing")
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                return process.wait(timeout=PROCESS_TERMINATE_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    return process.wait(timeout=PROCESS_KILL_GRACE_SECONDS)
+                except subprocess.TimeoutExpired as error:
+                    raise RuntimeError(
+                        "native AutoData step did not exit after bounded TERM/KILL cleanup"
+                    ) from error
+        return int(process.returncode)
 
     def _lock(self) -> None:
         self.args.lock_file.parent.mkdir(parents=True, exist_ok=True)
@@ -744,14 +2086,119 @@ class Supervisor:
         if snapshot_database(self.args.state, self.args.retained_state, reason=reason):
             self._write_status(state="running", last_snapshot_reason=reason)
 
-    def _progress_signature(self) -> tuple[tuple[str, int, int], ...]:
-        result: list[tuple[str, int, int]] = []
-        for suffix in ("", "-wal", "-shm"):
-            path = Path(f"{self.args.state}{suffix}")
-            if path.exists():
-                stat_result = path.stat()
-                result.append((suffix, stat_result.st_mtime_ns, stat_result.st_size))
-        return tuple(result)
+    def _progress_signature(self, subject: Subject | None = None) -> tuple[Any, ...]:
+        """Return native semantic progress, never SQLite/WAL write activity."""
+        if subject is None or not self.args.state.is_file():
+            return ()
+        table = "workspaces" if subject.kind == "workspace" else "executions"
+        with sqlite3.connect(
+            f"file:{self.args.state}?mode=ro", uri=True
+        ) as connection:
+            connection.row_factory = sqlite3.Row
+            tables = _table_names(connection)
+            row = connection.execute(
+                f"SELECT * FROM {table} WHERE id=?", (subject.subject_id,)
+            ).fetchone()
+            if row is None:
+                return ("missing", subject.kind, subject.subject_id)
+            columns = set(row.keys())
+            state = tuple(
+                row[name] if name in columns else None
+                for name in (
+                    "status",
+                    "phase",
+                    "revision",
+                    "iteration",
+                    "taskAttemptsUsed",
+                    "currentCandidateId",
+                    "winnerCandidateId",
+                )
+            )
+            attempts: tuple[Any, ...] = ()
+            if "task_attempts" in tables:
+                attempt_columns = {
+                    str(value[1])
+                    for value in connection.execute(
+                        "PRAGMA table_info(task_attempts)"
+                    )
+                }
+                if {"scopeKind", "scopeId", "state"}.issubset(attempt_columns):
+                    attempts = tuple(
+                        tuple(value)
+                        for value in connection.execute(
+                            "SELECT state,COUNT(*) FROM task_attempts "
+                            "WHERE scopeKind=? AND scopeId=? GROUP BY state ORDER BY state",
+                            (subject.kind, subject.subject_id),
+                        ).fetchall()
+                    )
+            actions: tuple[Any, ...] = ()
+            if "actions" in tables:
+                action_columns = {
+                    str(value[1])
+                    for value in connection.execute("PRAGMA table_info(actions)")
+                }
+                selected = [
+                    name
+                    for name in ("id", "kind", "status", "scopeRevision", "attempt")
+                    if name in action_columns
+                ]
+                if {"scopeKind", "scopeId"}.issubset(action_columns) and selected:
+                    actions = tuple(
+                        tuple(value)
+                        for value in connection.execute(
+                            f"SELECT {','.join(selected)} FROM actions "
+                            f"WHERE scopeKind=? AND scopeId=? ORDER BY {selected[0]}",
+                            (subject.kind, subject.subject_id),
+                        ).fetchall()
+                    )
+            task_progress: tuple[Any, ...] = ()
+            if "task_progress" in tables and "task_attempts" in tables:
+                progress_columns = {
+                    str(value[1])
+                    for value in connection.execute(
+                        "PRAGMA table_info(task_progress)"
+                    )
+                }
+                if {"attemptId", "sequence", "state"}.issubset(progress_columns):
+                    task_progress = tuple(
+                        tuple(value)
+                        for value in connection.execute(
+                            "SELECT p.attemptId,p.sequence,p.state FROM task_progress p "
+                            "JOIN task_attempts a ON a.id=p.attemptId "
+                            "WHERE a.scopeKind=? AND a.scopeId=? GROUP BY p.attemptId "
+                            "HAVING p.sequence=MAX(p.sequence) "
+                            "ORDER BY p.attemptId",
+                            (subject.kind, subject.subject_id),
+                        ).fetchall()
+                    )
+        return state, attempts, actions, task_progress
+
+    def _record_step_outcome(
+        self,
+        subject: Subject,
+        *,
+        return_code: int,
+        timed_out: bool,
+        stalled: bool,
+    ) -> None:
+        if return_code == 0 and not timed_out and not stalled:
+            self.failed_step_signature = None
+            self.failed_step_count = 0
+            return
+        failed_signature = (
+            subject.kind,
+            subject.subject_id,
+            subject.phase,
+        )
+        if failed_signature == self.failed_step_signature:
+            self.failed_step_count += 1
+        else:
+            self.failed_step_signature = failed_signature
+            self.failed_step_count = 1
+        if self.failed_step_count >= 3:
+            raise RuntimeError(
+                "native AutoData step failed three times without state progress"
+            )
 
     def _step(self, subject: Subject) -> None:
         command = [
@@ -787,7 +2234,7 @@ class Supervisor:
         next_snapshot = started + self.args.snapshot_interval_seconds
         timed_out = False
         stalled = False
-        progress_signature = self._progress_signature()
+        progress_signature = self._progress_signature(subject)
         last_progress = started
         while self.current.poll() is None and not self.stop_requested:
             now = time.monotonic()
@@ -796,31 +2243,25 @@ class Supervisor:
                 and now - started >= subject.timeout_seconds
             ):
                 timed_out = True
-                os.killpg(self.current.pid, signal.SIGTERM)
-                try:
-                    self.current.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    os.killpg(self.current.pid, signal.SIGKILL)
+                self._terminate_current_process_group()
                 break
-            current_signature = self._progress_signature()
+            current_signature = self._progress_signature(subject)
             if current_signature != progress_signature:
                 progress_signature = current_signature
                 last_progress = now
             elif now - last_progress >= subject.stall_seconds:
                 stalled = True
-                os.killpg(self.current.pid, signal.SIGTERM)
-                try:
-                    self.current.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    os.killpg(self.current.pid, signal.SIGKILL)
+                self._terminate_current_process_group()
                 break
             if now >= next_snapshot:
                 self._snapshot(f"in-progress:{subject.kind}:{subject.subject_id}:{subject.phase}")
                 next_snapshot = now + self.args.snapshot_interval_seconds
             time.sleep(min(self.args.poll_seconds, 2.0))
         if self.stop_requested and self.current.poll() is None:
-            self.current.wait(timeout=30)
-        return_code = self.current.wait()
+            self._terminate_current_process_group()
+        return_code = self.current.poll()
+        if return_code is None:
+            raise RuntimeError("native AutoData step remained active after bounded cleanup")
         self.current = None
         outcome = (
             "timeout"
@@ -837,6 +2278,12 @@ class Supervisor:
             last_phase=subject.phase,
             last_outcome=outcome,
         )
+        self._record_step_outcome(
+            subject,
+            return_code=return_code,
+            timed_out=timed_out,
+            stalled=stalled,
+        )
         if return_code != 0 or timed_out or stalled:
             time.sleep(self.args.error_backoff_seconds)
 
@@ -846,7 +2293,24 @@ class Supervisor:
         signal.signal(signal.SIGTERM, self._signal)
         self._write_status(state="starting")
         while not self.stop_requested:
+            workspace_id: str | None = None
             try:
+                workspace_id = _frozen_registered_workspace(
+                    self.args.state, self.args.control_file
+                )
+                if workspace_id is not None:
+                    self._write_status(
+                        state="reconciling",
+                        subject_kind="workspace",
+                        subject_id=workspace_id,
+                    )
+                    result = reconcile_frozen_workspace(self.args, workspace_id)
+                    self._write_status(state="running", reconciliation=result)
+                    continue
+                transition = reconcile_completed_execution_transition(self.args)
+                if transition is not None:
+                    self._write_status(state="running", transition=transition)
+                    continue
                 subject = next_subject(
                     self.args.state,
                     self.args.control_file,
@@ -854,6 +2318,33 @@ class Supervisor:
                     stage_timeout_policy=self.args.stage_timeout_policy,
                 )
             except Exception as error:
+                if workspace_id is not None:
+                    entry = _registration_entry(
+                        self.args.control_file,
+                        kind="workspace",
+                        subject_id=workspace_id,
+                    )
+                    attempts = int(entry.get("reconcile_attempts") or 0)
+                    started_raw = entry.get("reconcile_started_at")
+                    elapsed = WORKSPACE_RECONCILE_SLA_SECONDS
+                    if isinstance(started_raw, str):
+                        elapsed = (
+                            datetime.now(timezone.utc)
+                            - datetime.fromisoformat(started_raw)
+                        ).total_seconds()
+                    if (
+                        attempts < WORKSPACE_RECONCILE_MAX_ATTEMPTS
+                        and elapsed < WORKSPACE_RECONCILE_SLA_SECONDS
+                    ):
+                        self._write_status(
+                            state="reconcile-retrying",
+                            subject_kind="workspace",
+                            subject_id=workspace_id,
+                            attempt=attempts,
+                            error=str(error),
+                        )
+                        time.sleep(self.args.error_backoff_seconds)
+                        continue
                 self._snapshot("supervisor-configuration-failure")
                 self._write_status(state="failed", error=str(error))
                 return 2
@@ -861,7 +2352,12 @@ class Supervisor:
                 self._write_status(state="idle")
                 time.sleep(self.args.poll_seconds)
                 continue
-            self._step(subject)
+            try:
+                self._step(subject)
+            except Exception as error:
+                self._snapshot("supervisor-step-failure")
+                self._write_status(state="failed", error=str(error))
+                return 2
         self._snapshot("supervisor-shutdown")
         self._write_status(state="stopped")
         return 0
@@ -913,6 +2409,9 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--control-file", type=_path, required=True)
     run.add_argument("--artifacts", type=_path, required=True)
     run.add_argument("--workspaces", type=_path, required=True)
+    run.add_argument("--training-data-contract", type=_path, required=True)
+    run.add_argument("--campaign-policy", type=_path, required=True)
+    run.add_argument("--resolved-config", type=_path, required=True)
     run.add_argument("--lock-file", type=_path, required=True)
     run.add_argument("--status-file", type=_path, required=True)
     run.add_argument("--log-file", type=_path, required=True)
@@ -993,6 +2492,8 @@ def main() -> int:
         or args.production_timeout_seconds <= 0
     ):
         raise SystemExit("poll, snapshot, and production timeout values must be positive")
+    args.resolved_config_sha256 = _sha256(args.resolved_config)
+    args.campaign_policy_sha256 = _sha256(args.campaign_policy)
     args.log_file.parent.mkdir(parents=True, exist_ok=True)
     with args.log_file.open("a", encoding="utf-8", buffering=1) as log_handle:
         args.log_handle = log_handle

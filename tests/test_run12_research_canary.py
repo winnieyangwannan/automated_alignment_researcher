@@ -78,7 +78,7 @@ def test_run12_full_chain_rotates_the_training_contract_with_its_target() -> Non
     assert contract in controller
     assert "aar.autodata_run_config compile" in controller
     assert controller.index("aar.autodata_run_config compile") < controller.rindex(
-        'job="$(submit_session)"'
+        'job="$(submit_session '
     )
 
 

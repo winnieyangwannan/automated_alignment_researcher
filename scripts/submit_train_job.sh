@@ -18,6 +18,21 @@ fi
 # shellcheck disable=SC1091
 source "${REPO}/scripts/aar_runtime_env.sh"
 
+reconcile_training_submission() {
+  local comment="$1" queue_output="" accounting_output="" matches=""
+  queue_output="$(squeue -h --me -o '%A|%k' 2>/dev/null || true)"
+  accounting_output="$(sacct -n -X --starttime "$(date -d '8 days ago' +%F)" \
+    --format=JobIDRaw,Comment -P 2>/dev/null || true)"
+  matches="$({ printf '%s\n' "${queue_output}"; printf '%s\n' "${accounting_output}"; } \
+    | awk -F'|' -v wanted="${comment}" '$2 == wanted && $1 ~ /^[0-9]+$/ {print $1}' \
+    | sort -nu)"
+  if [ "$(wc -l <<<"${matches}")" -gt 1 ]; then
+    echo "submit_train_job: submission intent is ambiguous for ${comment}: ${matches//$'\n'/,}" >&2
+    return 2
+  fi
+  printf '%s' "${matches}"
+}
+
 [ -n "${TEAM_DIR:-}" ] || { echo "submit_train_job: TEAM_DIR is required" >&2; exit 2; }
 mkdir -p "${TEAM_DIR}/logs"
 if [ "${AAR_AUTODATA:-0}" = 1 ]; then
@@ -43,8 +58,12 @@ if [ "${AAR_REQUIRE_TRAIN_RECEIPT:-0}" = "1" ]; then
   _receipt_dir="${TEAM_DIR}/.train_submissions"
   mkdir -p "${_receipt_dir}"
   _receipt_path="${_receipt_dir}/${RUN_ID}.env"
+  _intent_path="${_receipt_dir}/${RUN_ID}.intent.json"
   exec 8>"${_receipt_path}.lock"
-  flock 8
+  flock -w 60 8 || {
+    echo "submit_train_job: timed out after 60 seconds acquiring ${_receipt_path}.lock" >&2
+    exit 75
+  }
   if [ -f "${_receipt_path}" ]; then
     _existing_run="$(awk -F= '$1 == "run_id" {print substr($0, index($0, "=") + 1)}' "${_receipt_path}")"
     _existing_job="$(awk -F= '$1 == "job_id" {print $2}' "${_receipt_path}")"
@@ -55,6 +74,14 @@ if [ "${AAR_REQUIRE_TRAIN_RECEIPT:-0}" = "1" ]; then
     echo "submit_train_job: invalid existing receipt: ${_receipt_path}" >&2
     exit 2
   fi
+  _submission_key="${TEAM_ID:-team}:${RUN_ID}"
+  _submission_digest="$("${HARNESS_PY}" -c \
+    'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:24])' \
+    "${_submission_key}")"
+  _submission_comment="aar-train:${_submission_digest}"
+  PYTHONPATH="${REPO}" "${HARNESS_PY}" -m aar.slurm_session_recovery prepare \
+    --path "${_intent_path}" --key "${_submission_key}" \
+    --comment "${_submission_comment}" >/dev/null
 fi
 
 if [ "${AAR_REQUIRE_METHOD_CONTRACT:-0}" = "1" ]; then
@@ -95,7 +122,10 @@ if [ "${_limit}" -gt 0 ]; then
   _lane_state="${TEAM_DIR}/.train_dependency_lanes"
   _lane_lock="${TEAM_DIR}/.train_dependency_lanes.lock"
   exec 9>"${_lane_lock}"
-  flock 9
+  flock -w 60 9 || {
+    echo "submit_train_job: timed out after 60 seconds acquiring ${_lane_lock}" >&2
+    exit 75
+  }
   _lanes=()
   mapfile -t _lanes < "${_lane_state}" 2>/dev/null || true
   while [ "${#_lanes[@]}" -lt "${_limit}" ]; do _lanes+=(""); done
@@ -123,35 +153,93 @@ if [ -n "${AAR_TRAIN_TIME:-}" ]; then
   _resource_args+=(--time="${AAR_TRAIN_TIME}")
 fi
 
-_jid="$(sbatch --parsable \
-  --account="${AAR_SLURM_ACCOUNT}" \
-  --partition="${AAR_SLURM_PARTITION}" \
-  --qos="${AAR_TRAIN_QOS}" \
-  --gpus="${AAR_TRAIN_GPUS:-1}" \
-  --job-name="aar-train-${TEAM_ID:-team}" \
-  --output="${TEAM_DIR}/logs/train-%j.out" \
-  "${_resource_args[@]}" \
-  "${_dependency[@]}" \
-  "${REPO}/scripts/slurm_train_submit.sh" "${IDEA}" "${RUN_ID}")"
+_comment_args=()
+_submission_status=""
+_registered_job=""
+if [ -n "${_receipt_path}" ]; then
+  _comment_args=(--comment="${_submission_comment}")
+  _intent_json="$(PYTHONPATH="${REPO}" "${HARNESS_PY}" \
+    -m aar.slurm_session_recovery show --path "${_intent_path}")"
+  read -r _submission_status _registered_job < <(
+    "${HARNESS_PY}" -c \
+      'import json,sys; value=json.load(sys.stdin); print(value.get("status", ""), value.get("job_id", ""))' \
+      <<<"${_intent_json}"
+  )
+fi
+
+if [ "${_submission_status}" = registered ]; then
+  _jid="${_registered_job}"
+elif [ "${_submission_status}" = submitting ]; then
+  _jid=""
+  for _reconcile_attempt in 1 2 3; do
+    if ! _jid="$(reconcile_training_submission "${_submission_comment}")"; then
+      exit 75
+    fi
+    [ -n "${_jid}" ] && break
+    [ "${_reconcile_attempt}" = 3 ] || sleep 20
+  done
+  if [ -z "${_jid}" ]; then
+    echo "submit_train_job: could not reconcile submitting intent ${_intent_path} within 60 seconds; refusing a duplicate sbatch" >&2
+    exit 75
+  fi
+  PYTHONPATH="${REPO}" "${HARNESS_PY}" -m aar.slurm_session_recovery transition \
+    --path "${_intent_path}" --status registered --job-id "${_jid}" >/dev/null
+else
+  if [ -n "${_receipt_path}" ]; then
+    [ "${_submission_status}" = prepared ] || {
+      echo "submit_train_job: invalid submission intent status: ${_submission_status:-missing}" >&2
+      exit 2
+    }
+    PYTHONPATH="${REPO}" "${HARNESS_PY}" -m aar.slurm_session_recovery transition \
+      --path "${_intent_path}" --status submitting >/dev/null
+  fi
+  if ! _jid="$(sbatch --parsable \
+    --account="${AAR_SLURM_ACCOUNT}" \
+    --partition="${AAR_SLURM_PARTITION}" \
+    --qos="${AAR_TRAIN_QOS}" \
+    --gpus="${AAR_TRAIN_GPUS:-1}" \
+    --job-name="aar-train-${TEAM_ID:-team}" \
+    --output="${TEAM_DIR}/logs/train-%j.out" \
+    "${_comment_args[@]}" \
+    "${_resource_args[@]}" \
+    "${_dependency[@]}" \
+    "${REPO}/scripts/slurm_train_submit.sh" "${IDEA}" "${RUN_ID}")"; then
+    echo "submit_train_job: sbatch outcome is ambiguous; retained ${_intent_path:-no-intent} for reconciliation" >&2
+    exit 75
+  fi
+fi
 
 _job_id="${_jid%%;*}"
 [[ "${_job_id}" =~ ^[0-9]+$ ]] || {
   echo "submit_train_job: sbatch returned an invalid job id: ${_jid}" >&2
-  exit 2
+  exit 75
 }
 
+if [ -n "${_receipt_path}" ] && [ "${_submission_status}" != registered ] && \
+   [ "${_submission_status}" != submitting ]; then
+  PYTHONPATH="${REPO}" "${HARNESS_PY}" -m aar.slurm_session_recovery transition \
+    --path "${_intent_path}" --status registered --job-id "${_job_id}" >/dev/null
+fi
+
+if [ "${_limit}" -gt 0 ]; then
+  _lanes[_lane]="${_jid%%;*}"
+  _lane_state_tmp="${_lane_state}.tmp.$$"
+  _lane_cursor_tmp="${_lane_state}.cursor.tmp.$$"
+  printf '%s\n' "${_lanes[@]}" > "${_lane_state_tmp}"
+  mv -f -- "${_lane_state_tmp}" "${_lane_state}"
+  printf '%s\n' "$((_cursor + 1))" > "${_lane_cursor_tmp}"
+  mv -f -- "${_lane_cursor_tmp}" "${_lane_state}.cursor"
+  flock -u 9
+  echo "[submit] dependency lane ${_lane}/${_limit}; prior=${_prior:-none}; job=${_jid}" >&2
+fi
+
+# The receipt is the final commit marker.  In particular, publish it only
+# after dependency-lane state is durable enough for a retry to observe the
+# submitted job; otherwise a crash could make the fast path skip lane repair.
 if [ -n "${_receipt_path}" ]; then
   _receipt_tmp="${_receipt_path}.tmp.$$"
   printf 'run_id=%s\njob_id=%s\n' "${RUN_ID}" "${_job_id}" > "${_receipt_tmp}"
   mv -f -- "${_receipt_tmp}" "${_receipt_path}"
   flock -u 8
-fi
-
-if [ "${_limit}" -gt 0 ]; then
-  _lanes[_lane]="${_jid%%;*}"
-  printf '%s\n' "${_lanes[@]}" > "${_lane_state}"
-  printf '%s\n' "$((_cursor + 1))" > "${_lane_state}.cursor"
-  flock -u 9
-  echo "[submit] dependency lane ${_lane}/${_limit}; prior=${_prior:-none}; job=${_jid}" >&2
 fi
 printf '%s\n' "${_jid}"

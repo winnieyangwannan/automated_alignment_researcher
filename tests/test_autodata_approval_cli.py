@@ -559,3 +559,36 @@ def test_failed_binding_or_native_completion_does_not_mutate_incumbents(
     ):
         autodata_approval.review_and_complete_action(action_id)
     update.assert_not_called()
+
+
+def test_in_progress_approval_without_durable_intent_fails_loudly(
+    tmp_path: Path,
+) -> None:
+    action_id = _action_id(21)
+    action = {
+        "id": action_id,
+        "kind": "approve_baseline",
+        "scope": {"kind": "workspace", "id": "ws_" + "1" * 32},
+        "artifacts": [],
+    }
+    package = _baseline_package(valid=1.0, challenge=1.0)
+    dummy = tmp_path / "dummy"
+    dummy.write_text("x")
+    with (
+        mock.patch.dict(
+            os.environ,
+            {"AAR_AUTODATA_APPROVAL_AUDIT_DIR": str(tmp_path)},
+            clear=False,
+        ),
+        mock.patch.object(autodata_approval, "_required_path", return_value=dummy),
+        mock.patch.object(
+            autodata_approval,
+            "_action_row",
+            return_value={"status": "in_progress", "specJson": json.dumps(action)},
+        ),
+        mock.patch.object(
+            autodata_approval, "_review_package", return_value=package
+        ),
+        pytest.raises(RuntimeError, match="durable completion intent is missing"),
+    ):
+        autodata_approval.review_and_complete_action(action_id)

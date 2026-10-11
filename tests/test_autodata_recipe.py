@@ -1364,16 +1364,15 @@ def test_aar_prompt_defines_outer_loop_freedom_and_approval_roles() -> None:
     assert "workspace fork --edit grounding|pipeline|both" in prompt
     assert "Between AAR iterations" in prompt
     assert "Never cancel,\nskip, or replace an incomplete `meta_optimize`" in prompt
-    assert "orchestration-owned lifecycle supervisor is the sole caller" in prompt
+    assert "Trusted orchestration owns every deterministic lifecycle transition" in prompt
     assert "do not create a controller script" in prompt
-    assert "lifecycle_supervisor.py\" register" in prompt
-    assert "automatically created default execution" in prompt
-    assert "execution export-winner" in prompt
-    assert "complete `required_solve_env` mapping" in prompt
+    assert "never control the iteration count or the 64/32/32 split" in prompt
+    assert "exports the digest-bound winner" in prompt
+    assert "complete `required_solve_env`\nmapping" in prompt
     assert "Target-aware generation is required by default" in prompt
     assert "exactly one primary alignment axis" in prompt
     assert "quality_challenge_utility" in prompt
-    assert "Do not accept an automatically created default" in prompt
+    assert "Do not create or edit an execution config" in prompt
     assert "training-handoff.json" in prompt
     assert "load_autodata_campaign_datasets" in prompt
     assert "consuming the verified native AutoData production\nexport is mandatory" in prompt

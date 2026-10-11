@@ -97,27 +97,40 @@ _autodata_broker_pid=''
 _autodata_bridge_pid=''
 _autodata_broker_database=''
 _autodata_broker_database_retained=''
+_autodata_watchdog_pid=''
 _autodata_supervisor_pid=''
 _autodata_native_state=''
 _autodata_native_state_retained=''
+_aar_chain_pid="$$"
+_aar_research_started=0
+_aar_research_pid_file="${TEAM_DIR}/logs/.research-process-${SLURM_JOB_ID:-$$}.pid"
 snapshot_autodata_broker_database() {
   if [ -n "${_autodata_broker_database}" ] \
       && [ -f "${_autodata_broker_database}" ] \
       && [ -n "${_autodata_broker_database_retained}" ]; then
-    "${AAR_AUTODATA_BROKER_PYTHON:-python3}" -c \
-      'import sqlite3,sys; connection=sqlite3.connect(sys.argv[1]); connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall(); connection.close()' \
-      "${_autodata_broker_database}"
-    _autodata_broker_database_staging="${_autodata_broker_database_retained}.tmp.$$"
-    cp -- "${_autodata_broker_database}" "${_autodata_broker_database_staging}"
-    chmod 600 "${_autodata_broker_database_staging}"
-    mv -- "${_autodata_broker_database_staging}" "${_autodata_broker_database_retained}"
+    "${PY}" "${REPO}/scripts/autodata_broker_ledger.py" snapshot \
+      --source "${_autodata_broker_database}" \
+      --retained "${_autodata_broker_database_retained}" >/dev/null
   fi
 }
-cleanup_autodata_broker() {
-  if [ -n "${_autodata_supervisor_pid}" ] && kill -0 "${_autodata_supervisor_pid}" 2>/dev/null; then
-    kill "${_autodata_supervisor_pid}" 2>/dev/null || true
-    wait "${_autodata_supervisor_pid}" 2>/dev/null || true
+stop_child_bounded() {
+  local pid="$1" label="$2"
+  [ -n "${pid}" ] || return 0
+  kill -0 "${pid}" 2>/dev/null || { wait "${pid}" 2>/dev/null || true; return 0; }
+  kill -TERM "${pid}" 2>/dev/null || true
+  for _ in $(seq 1 10); do
+    kill -0 "${pid}" 2>/dev/null || break
+    sleep 1
+  done
+  if kill -0 "${pid}" 2>/dev/null; then
+    echo "[aar] WARN: ${label} ignored TERM; sending KILL" >&2
+    kill -KILL "${pid}" 2>/dev/null || true
   fi
+  wait "${pid}" 2>/dev/null || true
+}
+cleanup_autodata_broker() {
+  stop_child_bounded "${_autodata_watchdog_pid}" "AutoData watchdog"
+  stop_child_bounded "${_autodata_supervisor_pid}" "AutoData lifecycle supervisor"
   if [ -n "${_autodata_native_state}" ] \
       && [ -n "${_autodata_native_state_retained}" ] \
       && [ -f "${_autodata_native_state}" ]; then
@@ -126,17 +139,50 @@ cleanup_autodata_broker() {
       --retained-state "${_autodata_native_state_retained}" \
       --reason chain-cleanup >/dev/null || true
   fi
-  if [ -n "${_autodata_broker_pid}" ] && kill -0 "${_autodata_broker_pid}" 2>/dev/null; then
-    kill "${_autodata_broker_pid}" 2>/dev/null || true
-    wait "${_autodata_broker_pid}" 2>/dev/null || true
-  fi
+  stop_child_bounded "${_autodata_broker_pid}" "AutoData broker"
   snapshot_autodata_broker_database || true
-  if [ -n "${_autodata_bridge_pid}" ] && kill -0 "${_autodata_bridge_pid}" 2>/dev/null; then
-    kill "${_autodata_bridge_pid}" 2>/dev/null || true
-    wait "${_autodata_bridge_pid}" 2>/dev/null || true
-  fi
+  stop_child_bounded "${_autodata_bridge_pid}" "Kimi auth bridge"
 }
-trap cleanup_autodata_broker EXIT
+finalize_aar_chain() {
+  local result="$1" category="completed" phase="research"
+  trap - EXIT
+  set +e
+  if [ "${result}" -ne 0 ]; then
+    if [ "${_aar_research_started}" = 1 ]; then
+      category="research_process_failure"
+    else
+      category="configuration_or_startup_failure"
+      phase="startup"
+    fi
+  fi
+  "${PY}" - "${TEAM_DIR}/logs/research-session-result-${SLURM_JOB_ID:-$$}.json" \
+    "${SLURM_JOB_ID:-}" "${result}" "${category}" "${phase}" <<'PY'
+import json
+import os
+import pathlib
+import sys
+from datetime import datetime, timezone
+
+path = pathlib.Path(sys.argv[1])
+value = {
+    "schema": "aar.research-session-result/v1",
+    "job_id": sys.argv[2] or None,
+    "exit_code": int(sys.argv[3]),
+    "category": sys.argv[4],
+    "phase": sys.argv[5],
+    "retryable": False,
+    "finished_at": datetime.now(timezone.utc).isoformat(),
+}
+temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+temporary.chmod(0o600)
+os.replace(temporary, path)
+PY
+  cleanup_autodata_broker
+  rm -f -- "${_aar_research_pid_file}"
+  exit "${result}"
+}
+trap 'finalize_aar_chain "$?"' EXIT
 if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   : "${AAR_AUTODATA_CHECKOUT:?missing canonical AutoData checkout}"
   : "${AAR_AUTODATA_PLUGIN_ROOT:?missing pinned AutoData plugin root}"
@@ -183,7 +229,15 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   _autodata_broker_archive="${_autodata_root}/attempt-ledgers"
   mkdir -p "${_autodata_broker_archive}"
   chmod 700 "${_autodata_broker_archive}"
-  _autodata_broker_database_retained="${_autodata_broker_archive}/${SLURM_JOB_ID:-$$}.db"
+  _autodata_broker_database_retained="${_autodata_broker_archive}/campaign-ledger.db"
+  exec 9>"${_autodata_broker_archive}/campaign-ledger.lock"
+  flock -n 9 || {
+    echo "[aar] ERROR: another session owns the AutoData campaign ledger" >&2
+    exit 2
+  }
+  "${PY}" "${REPO}/scripts/autodata_broker_ledger.py" restore \
+    --retained "${_autodata_broker_database_retained}" \
+    --destination "${_autodata_broker_database}" >/dev/null
   _autodata_native_state_retained="${TEAM_DIR}/autodata/native/state.db"
   export AAR_AUTODATA_RETAINED_STATE="${_autodata_native_state_retained}"
   if [ "${AAR_AUTODATA_LIFECYCLE_SUPERVISED:-0}" = 1 ]; then
@@ -260,8 +314,10 @@ PY
       --proxy-info "${AAR_KIMI_PROXY_INFO}" --port "${_autodata_bridge_port}" \
       >"${TEAM_DIR}/logs/autodata-kimi-auth-bridge-${SLURM_JOB_ID:-$$}.log" 2>&1 &
     _autodata_bridge_pid=$!
+    _autodata_bridge_ready=0
     for _autodata_probe in $(seq 1 30); do
       if "${PY}" -c 'import sys,urllib.request; urllib.request.urlopen(f"http://127.0.0.1:{sys.argv[1]}/healthz",timeout=2).read()' "${_autodata_bridge_port}" 2>/dev/null; then
+        _autodata_bridge_ready=1
         break
       fi
       kill -0 "${_autodata_bridge_pid}" 2>/dev/null || {
@@ -270,6 +326,10 @@ PY
       }
       sleep 1
     done
+    [ "${_autodata_bridge_ready}" = 1 ] || {
+      echo "[aar] ERROR: Kimi auth bridge did not become healthy within 30 seconds" >&2
+      exit 2
+    }
     kill -0 "${_autodata_bridge_pid}" 2>/dev/null || {
       echo "[aar] ERROR: Kimi auth bridge is not running" >&2
       exit 2
@@ -303,8 +363,10 @@ PY
       "${_autodata_broker_args[@]}" \
       > "${TEAM_DIR}/logs/autodata-broker.log" 2>&1 &
   _autodata_broker_pid=$!
+  _autodata_broker_ready=0
   for _autodata_probe in $(seq 1 60); do
     if "${PY}" -c 'import os,urllib.request; r=urllib.request.Request(os.environ["AAR_AUTODATA_BROKER_URL"]+"/healthz",headers={"Authorization":"Bearer "+os.environ["AAR_AUTODATA_CAPABILITY"]}); urllib.request.urlopen(r,timeout=2).read()' 2>/dev/null; then
+      _autodata_broker_ready=1
       break
     fi
     kill -0 "${_autodata_broker_pid}" 2>/dev/null || {
@@ -313,6 +375,10 @@ PY
     }
     sleep 1
   done
+  [ "${_autodata_broker_ready}" = 1 ] || {
+    echo "[aar] ERROR: AutoData broker did not become healthy within 60 seconds" >&2
+    exit 2
+  }
   kill -0 "${_autodata_broker_pid}" 2>/dev/null || { echo "[aar] ERROR: AutoData broker is not running" >&2; exit 2; }
   echo "[aar] campaign-scoped AutoData broker ready (pid=${_autodata_broker_pid}, runner=${AAR_AUTODATA_BROKER_RUNNER}, concurrency=${AAR_AUTODATA_CONCURRENCY}, database=node-local)"
   if [ "${AAR_AUTODATA_LIFECYCLE_SUPERVISED:-0}" = 1 ]; then
@@ -323,6 +389,9 @@ PY
       --control-file "${AAR_AUTODATA_SUPERVISOR_CONTROL}" \
       --artifacts "${AAR_AUTODATA_ARTIFACTS}" \
       --workspaces "${AAR_AUTODATA_WORKSPACES}" \
+      --training-data-contract "${AAR_AUTODATA_TRAINING_DATA_CONTRACT}" \
+      --campaign-policy "${AAR_AUTODATA_CAMPAIGN_POLICY}" \
+      --resolved-config "${AAR_AUTODATA_RESOLVED_CONFIG}" \
       --lock-file "${TEAM_DIR}/autodata/native/lifecycle-supervisor.lock" \
       --status-file "${TEAM_DIR}/autodata/native/lifecycle-supervisor-status.json" \
       --log-file "${TEAM_DIR}/logs/autodata-lifecycle-supervisor.log" \
@@ -335,7 +404,39 @@ PY
     }
     echo "[aar] AutoData lifecycle supervisor ready (pid=${_autodata_supervisor_pid}, stage_timeout_policy=${AAR_AUTODATA_STAGE_TIMEOUT_POLICY:-enforce}, state=node-local)"
   fi
+  (
+    abort_active_research() {
+      local reason="$1" research_pid=""
+      echo "[aar] ERROR: ${reason}" >&2
+      if [ -s "${_aar_research_pid_file}" ]; then
+        read -r research_pid < "${_aar_research_pid_file}" || true
+        if [[ "${research_pid}" =~ ^[0-9]+$ ]]; then
+          stop_child_bounded "${research_pid}" "research agent"
+        fi
+      fi
+      kill -TERM "${_aar_chain_pid}" 2>/dev/null || true
+      exit 1
+    }
+    while sleep 15; do
+      if ! kill -0 "${_autodata_broker_pid}" 2>/dev/null; then
+        abort_active_research "AutoData broker exited while research was active"
+      fi
+      if [ -n "${_autodata_bridge_pid}" ] \
+          && ! kill -0 "${_autodata_bridge_pid}" 2>/dev/null; then
+        abort_active_research "Kimi auth bridge exited while research was active"
+      fi
+      if [ -n "${_autodata_supervisor_pid}" ] \
+          && ! kill -0 "${_autodata_supervisor_pid}" 2>/dev/null; then
+        abort_active_research "AutoData lifecycle supervisor exited while research was active"
+      fi
+      if ! snapshot_autodata_broker_database; then
+        abort_active_research "failed to retain the AutoData broker ledger"
+      fi
+    done
+  ) &
+  _autodata_watchdog_pid=$!
   unset _autodata_broker_args _autodata_broker_database_root \
+    _autodata_broker_ready _autodata_bridge_ready \
     _autodata_capability_file _autodata_probe _autodata_port \
     _autodata_resume_ports _autodata_retained_port \
     _autodata_retained_bridge_port \
@@ -521,8 +622,19 @@ if [ "${AAR_HIDE_EVAL_CONFIG:-0}" = "1" ]; then
   # run-specific full suite selection or baseline override to the researcher.
   unset HOLDOUT_DIR HELDOUT_SCORES_DIR AAR_SUITE_BENCHMARKS AAR_BASELINE_OVERRIDES
 fi
+_aar_research_started=1
 PYTHONUNBUFFERED=1 "${PY}" -u run.py agent --idea-uid "${IDEA_UID}" --idea-name "${IDEA_NAME}" \
-  --max-iterations "${MAX_ITERS}" --max-runtime "${FULL_AUTO_MAX_RUNTIME_SECONDS}" --local
+  --max-iterations "${MAX_ITERS}" --max-runtime "${FULL_AUTO_MAX_RUNTIME_SECONDS}" --local &
+_aar_research_pid=$!
+printf '%s\n' "${_aar_research_pid}" > "${_aar_research_pid_file}"
+chmod 600 "${_aar_research_pid_file}"
+if wait "${_aar_research_pid}"; then
+  _aar_research_result=0
+else
+  _aar_research_result=$?
+fi
+rm -f -- "${_aar_research_pid_file}"
+[ "${_aar_research_result}" -eq 0 ] || exit "${_aar_research_result}"
 if [ "${AAR_VERIFY_TWO_ITERATION_ARTIFACTS:-0}" = 1 ]; then
   "${PY}" "${REPO}/replication/verify_two_iteration_multidimensional.py" \
     --team-dir "${TEAM_DIR}" --expected-iterations 2

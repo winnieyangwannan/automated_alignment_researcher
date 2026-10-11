@@ -413,6 +413,7 @@ class KimiAgent:
         iteration_count = 0
         continuation_count = 0
         checkpoint_retry_count = 0
+        autodata_wait_deadline: float | None = None
 
         with tempfile.TemporaryDirectory(prefix="aar-kimi-") as temp_dir:
             overlay_home = Path(temp_dir)
@@ -420,13 +421,111 @@ class KimiAgent:
             agent_file = self._write_agent_profile(overlay_home)
             with self._request_policy_proxy(env) as tool_choice_controller:
                 while True:
+                    host_resume = bool(continuation_count) or (
+                        self._resume_approved_proposal_enabled()
+                    )
+                    if host_resume and self._owns_approved_run(output):
+                        approved_run_id = self._approved_run_id()
+                        if (
+                            approved_run_id is not None
+                            and self._autodata_enabled()
+                            and self._autodata_handoff_ready(approved_run_id)
+                        ):
+                            if self._autodata_stop_after_production():
+                                self._complete_autodata_production_canary(
+                                    approved_run_id
+                                )
+                                break
+                            self._ensure_approved_training_submission()
+                            if self._autodata_stop_after_training_smoke():
+                                await self._wait_for_training_smoke_result()
+                                self._complete_autodata_training_smoke_canary(
+                                    approved_run_id
+                                )
+                                break
+                            await self._wait_for_training_result()
+                    if host_resume and self._autodata_wait_required(output):
+                        approved_run_id = self._approved_run_id()
+                        assert approved_run_id is not None
+                        workspace_id = self._autodata_workspace_id(approved_run_id)
+                        if workspace_id is None:
+                            raise RuntimeError(
+                                "approved AutoData proposal has no registered workspace"
+                            )
+                        status_subject = self._autodata_status_subject(workspace_id)
+                        action = self._autodata_pending_action_record(
+                            workspace_id, status_subject
+                        )
+                        if action is None:
+                            if autodata_wait_deadline is None:
+                                timeout = float(
+                                    os.getenv(
+                                        "AAR_AUTODATA_HOST_WAIT_SECONDS", "10800"
+                                    )
+                                )
+                                if timeout <= 0:
+                                    raise RuntimeError(
+                                        "AAR_AUTODATA_HOST_WAIT_SECONDS must be positive"
+                                    )
+                                autodata_wait_deadline = time.monotonic() + timeout
+                            if time.monotonic() >= autodata_wait_deadline:
+                                raise RuntimeError(
+                                    "timed out waiting for the AutoData lifecycle "
+                                    "supervisor to expose a scoped host action or handoff"
+                                )
+                            snapshot = self._autodata_native_status(status_subject)
+                            status = str(snapshot.get("status") or "").lower()
+                            if status in {"failed", "cancelled", "error"}:
+                                raise RuntimeError(
+                                    "AutoData lifecycle terminated before handoff: "
+                                    + json.dumps(snapshot, sort_keys=True)[:4000]
+                                )
+                            print(
+                                "[Kimi] host FSM waiting without a model turn: "
+                                f"subject={status_subject} status={status or 'unknown'}"
+                            )
+                            await asyncio.sleep(
+                                min(
+                                    10.0,
+                                    max(0.0, autodata_wait_deadline - time.monotonic()),
+                                )
+                            )
+                            continue
+                        autodata_wait_deadline = None
+                        if action["status"] == "in_progress":
+                            if action["kind"] not in {
+                                "approve_grounding",
+                                "approve_baseline",
+                                "approve_resources",
+                            }:
+                                self._autodata_require_action_lease(
+                                    str(action["id"])
+                                )
+                                result_path = self._autodata_action_result_path(
+                                    str(action["id"])
+                                )
+                                if result_path.is_file() and not (
+                                    self._autodata_pipeline_feedback_requires_edit(
+                                        action
+                                    )
+                                ):
+                                    self._autodata_complete_action(
+                                        str(action["id"]), result_path
+                                    )
+                                    print(
+                                        "[Kimi] host FSM completed durable action "
+                                        f"result without a model turn: {action['id']}"
+                                    )
+                                    continue
                     command = [executable]
                     if self.model:
                         command.extend(["--model", self.model])
                     if continuation_count:
                         command.append("--continue")
                         current_prompt = self._continuation_prompt(output)
-                        required_tool = self._continuation_tool(output)
+                        required_tool = self._continuation_tool(
+                            output, prompt=current_prompt
+                        )
                     else:
                         if agent_file is not None:
                             command.extend(["--agent-file", str(agent_file)])
@@ -847,7 +946,10 @@ class KimiAgent:
         ):
             workspace_id = self._autodata_workspace_id(approved_run_id)
             if workspace_id is not None:
-                action = self._autodata_pending_action_record()
+                status_subject = self._autodata_status_subject(workspace_id)
+                action = self._autodata_pending_action_record(
+                    workspace_id, status_subject
+                )
                 if action is not None and action["kind"] in {
                     "approve_grounding",
                     "approve_baseline",
@@ -867,9 +969,7 @@ class KimiAgent:
                         raise RuntimeError(
                             "trusted AutoData action bridge failed to acquire action"
                         )
-                    result_path = Path(
-                        f"/tmp/aar-autodata-{action['id']}-result.json"
-                    )
+                    result_path = self._autodata_action_result_path(action["id"])
                     requires_pipeline_edit = (
                         self._autodata_pipeline_feedback_requires_edit(action)
                     )
@@ -922,28 +1022,11 @@ class KimiAgent:
                             f"Current allowed-file content: {editable_context}"
                         )
                     self._autodata_complete_action(action["id"], result_path)
-                status_subject = self._autodata_status_subject(workspace_id)
                 status_snapshot = self._autodata_native_status(status_subject)
-                status_command = (
-                    "sleep 10"
-                )
-                return (
-                    f"The proposal is approved with run_id={approved_run_id}, and "
-                    "trusted orchestration already created and registered native "
-                    f"AutoData workspace_id={workspace_id}. The current supervised "
-                    f"status subject is {status_subject}. Trusted read-only native "
-                    "status is "
-                    f"{json.dumps(status_snapshot, sort_keys=True)[:12000]}. "
-                    "Do not load a skill, "
-                    "create/fork/register a workspace, edit the approved method, or "
-                    "submit another proposal. If the status is still active with no "
-                    "pending host action, the lifecycle supervisor owns the next "
-                    "deterministic step: call the native Bash tool exactly once now "
-                    f"with command={json.dumps(status_command)} and do not run a "
-                    "lifecycle or status command yourself. If the status is terminal, "
-                    "use the system prompt's exact next non-action export or supervised "
-                    "execution-creation command instead. Continue until the verified "
-                    "training handoff exists."
+                raise RuntimeError(
+                    "host FSM reached a model continuation with no scoped AutoData "
+                    "action; deterministic waits must be handled without Kimi: "
+                    + json.dumps(status_snapshot, sort_keys=True)[:4000]
                 )
             return (
                 f"The proposal is already approved with run_id={approved_run_id}. "
@@ -992,6 +1075,11 @@ class KimiAgent:
                 else False
             )
             if approved is True and approved_run_id is not None:
+                if self._autodata_enabled():
+                    raise RuntimeError(
+                        "trusted host must submit approved AutoData training before "
+                        "a researcher continuation; refusing model-controlled submission"
+                    )
                 submitter = self.workspace / "scripts/submit_train_job.sh"
                 run_id_q = shlex.quote(approved_run_id)
                 module_q = shlex.quote(method_module)
@@ -1097,11 +1185,14 @@ class KimiAgent:
             "or call another tool."
         )
 
-    def _continuation_tool(self, output: dict[str, Any]) -> Optional[str]:
+    def _continuation_tool(
+        self, output: dict[str, Any], *, prompt: str | None = None
+    ) -> Optional[str]:
         """Return the one tool required by the current fail-closed checkpoint."""
         if self.completion_tool != "share_finding":
             return self.completion_tool
-        prompt = self._continuation_prompt(output)
+        if prompt is None:
+            prompt = self._continuation_prompt(output)
         if "MCP tool share_finding exactly once" in prompt:
             return "share_finding"
         if "MCP tool submit_idea_proposal exactly once" in prompt:
@@ -1167,7 +1258,10 @@ class KimiAgent:
         }
 
     @staticmethod
-    def _autodata_pending_action_record() -> dict[str, Any] | None:
+    def _autodata_pending_action_record(
+        *allowed_scope_ids: str,
+    ) -> dict[str, Any] | None:
+        """Return the sole live action scoped to this run, never a global action."""
         state_raw = os.environ.get("AAR_AUTODATA_STATE", "").strip()
         if not state_raw:
             return None
@@ -1176,15 +1270,31 @@ class KimiAgent:
             return None
         try:
             with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
-                row = connection.execute(
+                rows = connection.execute(
                     "SELECT id FROM actions WHERE status IN ('pending','in_progress') "
-                    "ORDER BY createdAt,id LIMIT 1"
-                ).fetchone()
+                    "ORDER BY createdAt,id"
+                ).fetchall()
         except sqlite3.Error:
             return None
-        if row is None:
-            return None
-        return KimiAgent._autodata_action_record(str(row[0]))
+        allowed = {value for value in allowed_scope_ids if value}
+        matches: list[dict[str, Any]] = []
+        for row in rows:
+            action = KimiAgent._autodata_action_record(str(row[0]))
+            if action is None:
+                continue
+            scope = action["spec"].get("scope")
+            if (
+                isinstance(scope, dict)
+                and scope.get("kind") in {"workspace", "execution"}
+                and scope.get("id") in allowed
+            ):
+                matches.append(action)
+        if len(matches) > 1:
+            raise RuntimeError(
+                "ambiguous AutoData host actions for the current run: "
+                + ", ".join(str(action["id"]) for action in matches)
+            )
+        return matches[0] if matches else None
 
     @staticmethod
     def _autodata_cli(*arguments: str) -> dict[str, Any]:
@@ -1236,13 +1346,20 @@ class KimiAgent:
         team_raw = os.environ.get("TEAM_DIR", "").strip()
         if not team_raw:
             raise RuntimeError("TEAM_DIR is required for AutoData action leases")
-        job_id = re.sub(
-            r"[^A-Za-z0-9_.-]", "_", os.environ.get("SLURM_JOB_ID", "local")
-        )
-        root = Path(team_raw) / "autodata" / "runtime" / job_id / "action-leases"
+        root = Path(team_raw) / "autodata" / "action-leases"
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         root.chmod(0o700)
         return root / f"{action_id}.token"
+
+    @staticmethod
+    def _autodata_action_result_path(action_id: str) -> Path:
+        team_raw = os.environ.get("TEAM_DIR", "").strip()
+        if not team_raw:
+            raise RuntimeError("TEAM_DIR is required for AutoData action results")
+        root = Path(team_raw) / "autodata" / "action-results"
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        root.chmod(0o700)
+        return root / f"{action_id}.json"
 
     @staticmethod
     def _autodata_action_snapshot_path(action_id: str) -> Path:
@@ -1257,19 +1374,23 @@ class KimiAgent:
 
     @staticmethod
     def _write_private_text(path: Path, value: str) -> None:
-        temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
-        descriptor = os.open(
-            temporary,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            0o600,
+        descriptor, raw_temporary = tempfile.mkstemp(
+            prefix=f".{path.name}.", dir=path.parent, text=True
         )
+        temporary = Path(raw_temporary)
         try:
+            os.fchmod(descriptor, 0o600)
             with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
                 handle.write(value)
                 handle.write("\n")
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, path)
+            directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -1279,7 +1400,13 @@ class KimiAgent:
         if not isinstance(action_id, str):
             raise RuntimeError("trusted AutoData action has no identifier")
         lease_path = cls._autodata_action_lease_path(action_id)
-        lease_path.unlink(missing_ok=True)
+        if action.get("status") == "in_progress":
+            cls._autodata_require_action_lease(action_id)
+            return
+        if lease_path.exists():
+            raise RuntimeError(
+                "pending AutoData action unexpectedly has a durable lease token"
+            )
         payload = cls._autodata_cli("action", "begin", action_id)
         token = payload.get("lease_token")
         leased_action = payload.get("action")
@@ -1293,6 +1420,20 @@ class KimiAgent:
         cls._write_private_text(lease_path, token)
 
     @classmethod
+    def _autodata_require_action_lease(cls, action_id: str) -> str:
+        lease_path = cls._autodata_action_lease_path(action_id)
+        try:
+            token = lease_path.read_text(encoding="utf-8").strip()
+        except OSError as error:
+            raise RuntimeError(
+                "native AutoData action is in_progress but its durable lease token "
+                "is missing; refusing to invoke the researcher model"
+            ) from error
+        if len(token) < 20:
+            raise RuntimeError("trusted AutoData action lease is invalid")
+        return token
+
+    @classmethod
     def _autodata_complete_action(cls, action_id: str, result_path: Path) -> None:
         try:
             result = json.loads(result_path.read_text())
@@ -1301,12 +1442,7 @@ class KimiAgent:
         if not isinstance(result, dict):
             raise RuntimeError("AutoData action result must be one JSON object")
         lease_path = cls._autodata_action_lease_path(action_id)
-        try:
-            token = lease_path.read_text().strip()
-        except OSError as error:
-            raise RuntimeError("trusted AutoData action lease is unavailable") from error
-        if len(token) < 20:
-            raise RuntimeError("trusted AutoData action lease is invalid")
+        token = cls._autodata_require_action_lease(action_id)
         action = cls._autodata_action_record(action_id)
         if action is not None and action["kind"] == "author_grounding":
             cls._autodata_repair_incomplete_grounding(action)
@@ -1621,7 +1757,7 @@ class KimiAgent:
 
     @staticmethod
     def _autodata_status_subject(workspace_id: str) -> str:
-        """Return the newest supervised native subject, falling back to workspace."""
+        """Return the sole active supervised subject in this workspace lineage."""
         control_raw = os.environ.get("AAR_AUTODATA_SUPERVISOR_CONTROL", "").strip()
         if not control_raw:
             return workspace_id
@@ -1632,19 +1768,46 @@ class KimiAgent:
         subjects = control.get("subjects") if isinstance(control, dict) else None
         if not isinstance(subjects, list):
             return workspace_id
-        for entry in reversed(subjects):
-            if not isinstance(entry, dict) or entry.get("status") != "registered":
-                continue
-            subject_id = entry.get("subject_id")
-            kind = entry.get("kind")
-            if not isinstance(subject_id, str):
-                continue
-            if kind == "workspace" and re.fullmatch(r"ws_[0-9a-f]{32}", subject_id):
-                return subject_id
-            if kind == "execution" and re.fullmatch(
-                r"exe_[0-9a-f]{32}", subject_id
-            ):
-                return subject_id
+        registered = {
+            str(entry.get("subject_id"))
+            for entry in subjects
+            if isinstance(entry, dict) and entry.get("status") == "registered"
+        }
+        state_raw = os.environ.get("AAR_AUTODATA_STATE", "").strip()
+        state = Path(state_raw) if state_raw else None
+        execution_ids: list[str] = []
+        if state is not None and state.is_file() and not state.is_symlink():
+            try:
+                with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
+                    columns = {
+                        str(row[1])
+                        for row in connection.execute(
+                            "PRAGMA table_info(executions)"
+                        ).fetchall()
+                    }
+                    if "workspaceId" in columns:
+                        order = "createdAt,id" if "createdAt" in columns else "id"
+                        rows = connection.execute(
+                            "SELECT id FROM executions WHERE workspaceId=? "
+                            f"AND status='active' ORDER BY {order}",
+                            (workspace_id,),
+                        ).fetchall()
+                        execution_ids = [
+                            str(row[0]) for row in rows if str(row[0]) in registered
+                        ]
+            except sqlite3.Error as error:
+                raise RuntimeError(
+                    "cannot resolve current AutoData execution lineage"
+                ) from error
+        if len(execution_ids) > 1:
+            raise RuntimeError(
+                "ambiguous active AutoData executions for current workspace: "
+                + ", ".join(execution_ids)
+            )
+        if execution_ids:
+            return execution_ids[0]
+        if workspace_id in registered:
+            return workspace_id
         return workspace_id
 
     @staticmethod
@@ -1883,6 +2046,22 @@ class KimiAgent:
             "yes",
             "on",
         }
+
+    def _autodata_wait_required(self, output: dict[str, Any]) -> bool:
+        """Whether the trusted host should poll instead of spending a model turn."""
+        if self.completion_tool != "share_finding" or not self._autodata_enabled():
+            return False
+        if not self._owns_approved_run(output):
+            return False
+        run_id = self._approved_run_id()
+        return run_id is not None and not self._autodata_handoff_ready(run_id)
+
+    def _owns_approved_run(self, output: dict[str, Any]) -> bool:
+        """Return whether this session may advance the current durable proposal."""
+        return (
+            self._submitted_proposal_in_output(output)
+            and self._proposal_marker_changed_this_session()
+        ) or self._resume_approved_proposal_enabled()
 
     @staticmethod
     def _autodata_stop_after_production() -> bool:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -252,3 +253,117 @@ def test_bootstrap_rejects_changed_proposal_identity(tmp_path: Path) -> None:
                 idea_name="chain__method",
                 code_hash="a" * 64,
             )
+
+
+def test_bootstrap_lock_wait_is_bounded_and_fails_loudly(tmp_path: Path) -> None:
+    environment = _environment(tmp_path)
+    environment["AAR_AUTODATA_BOOTSTRAP_LOCK_SECONDS"] = "0.01"
+    run_id = "chain-iteration-1-locked"
+    root = Path(environment["TEAM_DIR"]) / "autodata" / run_id
+    root.mkdir(parents=True)
+    lock_path = root / ".bootstrap.lock"
+    with lock_path.open("a+", encoding="utf-8") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with patch.dict(os.environ, environment, clear=False):
+            with pytest.raises(RuntimeError, match="timed out acquiring"):
+                ensure_workspace(
+                    run_id=run_id,
+                    idea_name="chain__method",
+                    code_hash="a" * 64,
+                )
+
+
+def test_bootstrap_recovers_same_workspace_after_registration_crash(
+    tmp_path: Path,
+) -> None:
+    environment = _environment(tmp_path)
+    workspace_id = "ws_" + "7" * 32
+    registration_failures = 3
+
+    def run(command: list[str], **_: object) -> dict[str, object]:
+        nonlocal registration_failures
+        if "workspace" in command and "create" in command:
+            return {
+                "workspace_id": workspace_id,
+                "study_id": "study_test",
+                "status": "active",
+            }
+        if "register" in command:
+            if registration_failures:
+                registration_failures -= 1
+                raise RuntimeError("transient registration failure")
+            return {"registered": True, "subject_id": workspace_id}
+        raise AssertionError(command)
+
+    with (
+        patch.dict(os.environ, environment, clear=False),
+        patch("aar.research_loop.autodata_bootstrap._run_json", side_effect=run),
+        patch("aar.research_loop.autodata_bootstrap.time.sleep"),
+        patch(
+            "aar.research_loop.autodata_bootstrap._stage_reviewed_recipe",
+            wraps=__import__(
+                "aar.research_loop.autodata_bootstrap", fromlist=["x"]
+            )._stage_reviewed_recipe,
+        ) as stage,
+    ):
+        with pytest.raises(RuntimeError, match="three-attempt/60-second SLA"):
+            ensure_workspace(
+                run_id="chain-iteration-1-method-crash",
+                idea_name="chain__method",
+                code_hash="a" * 64,
+            )
+        recovered = ensure_workspace(
+            run_id="chain-iteration-1-method-crash",
+            idea_name="chain__method",
+            code_hash="a" * 64,
+        )
+
+    assert recovered["workspace_id"] == workspace_id
+    assert stage.call_count == 1
+    intent = json.loads(
+        (
+            Path(environment["TEAM_DIR"])
+            / "autodata"
+            / "chain-iteration-1-method-crash"
+            / "workspace-bootstrap-intent.json"
+        ).read_text()
+    )
+    assert intent["workspace_id"] == workspace_id
+
+
+def test_frozen_workspace_missing_control_is_reconciled(tmp_path: Path) -> None:
+    environment = _environment(tmp_path)
+    run_id = "chain-iteration-1-frozen"
+    workspace_id = "ws_" + "8" * 32
+    root = Path(environment["TEAM_DIR"]) / "autodata" / run_id
+    root.mkdir(parents=True)
+    (root / "workspace-bootstrap.json").write_text(
+        json.dumps(
+            {
+                "schema": BOOTSTRAP_SCHEMA,
+                "run_id": run_id,
+                "idea_name": "chain__method",
+                "code_hash": "a" * 64,
+                "workspace_id": workspace_id,
+            }
+        )
+    )
+    with (
+        patch.dict(os.environ, environment, clear=False),
+        patch(
+            "aar.research_loop.autodata_bootstrap._workspace_status",
+            return_value="frozen",
+        ),
+        patch(
+            "aar.research_loop.autodata_bootstrap._register_with_sla",
+            return_value={"registered": True},
+        ) as register,
+    ):
+        resumed = ensure_workspace(
+            run_id=run_id,
+            idea_name="chain__method",
+            code_hash="a" * 64,
+        )
+
+    assert resumed["idempotent"] is True
+    register.assert_called_once_with(workspace_id)

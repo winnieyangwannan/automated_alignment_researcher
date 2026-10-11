@@ -310,12 +310,11 @@ runtime contract. Do not change its broker, concurrency, model-request retry,
 lifecycle, routing, or reuse settings in either meta or production execution.
 
 The campaign policy at `$AAR_AUTODATA_CAMPAIGN_POLICY` is the source of truth for
-the executor. Copy its complete `required_solve_env` mapping into
-`executor.non_secret_env` for both authoring and explicit execution configs; do
-not omit, rename, or infer these entries. Create the meta execution explicitly
-with the required 64/32 split and preserve the additional 32 test tasks outside
-the execution selection sets. Do not accept an automatically created default execution
-with an implicit split.
+the executor. Trusted orchestration copies its complete `required_solve_env`
+mapping into both authoring and execution configs and creates the canonical meta
+execution with the required 64/32 split while preserving 32 held-out tasks. Do
+not create or edit an execution config, accept the implicit default, or attempt
+to alter these operator-controlled values through an action.
 
 Target-aware generation is required by default. Preserve
 `AUTODATA_TARGET_ENABLED=1` and all pinned `AUTODATA_TARGET_*` identity settings
@@ -338,57 +337,22 @@ turn, and never start production until native status says that execution is
 `completed` with a finalized winner. Persist its IDs in your memory file and resume
 the same execution in a later session if necessary.
 
-The trusted orchestration-owned lifecycle supervisor is the sole caller of native
-`workspace step` and `execution step`. Do not call either step operation yourself,
-do not launch a background stepper, and do not create a controller script. The
-supervisor never infers intent from native `active` state. The initial approved workspace
-is created and registered automatically. Only after a later deliberate scientific
-`workspace fork` must you register exactly the returned workspace ID:
+Trusted orchestration owns every deterministic lifecycle transition: workspace
+registration, native stepping, canonical meta-execution creation and registration,
+winner export, production-execution creation, and verified handoff publication. Do
+not call those operations, create their manifests, choose their counts, launch a
+background stepper, poll with Bash or `sleep`, or create a controller script. In
+particular, you never control the iteration count or the 64/32/32 split. The trusted
+host constructs those values from operator configuration and fails closed before
+native AutoData if they differ, overlap, or lack the expected holdout digest.
 
-```bash
-python3 "$AAR_REPO/scripts/autodata_lifecycle_supervisor.py" register \
-  --state "$AAR_AUTODATA_STATE" \
-  --retained-state "$AAR_AUTODATA_RETAINED_STATE" \
-  --control-file "$AAR_AUTODATA_SUPERVISOR_CONTROL" \
-  --subject-kind workspace \
-  --subject-id "$WORKSPACE_ID"
-```
-
-Registration is idempotent. Never register the workspace's automatically created
-default execution: it has an implicit split and is intentionally left inactive by
-the supervisor. A missing or already-terminal ID fails registration rather than
-selecting a substitute.
-
-Never call native `execution create` directly. Create every explicit meta or
-production execution through the supervised creation command:
-
-```bash
-python3 "$AAR_REPO/scripts/autodata_lifecycle_supervisor.py" create-execution \
-  --python "$AAR_AUTODATA_WRAPPER_PYTHON" \
-  --state "$AAR_AUTODATA_STATE" \
-  --retained-state "$AAR_AUTODATA_RETAINED_STATE" \
-  --control-file "$AAR_AUTODATA_SUPERVISOR_CONTROL" \
-  --artifacts "$AAR_AUTODATA_ARTIFACTS" \
-  --workspaces "$AAR_AUTODATA_WORKSPACES" \
-  --pipeline "$PIPELINE_MANIFEST" \
-  --execution "$EXECUTION_MANIFEST" \
-  --study-id "$STUDY_ID" \
-  --training-data-contract "$AAR_AUTODATA_TRAINING_DATA_CONTRACT" \
-  --campaign-policy "$AAR_AUTODATA_CAMPAIGN_POLICY"
-```
-
-This command derives a content-bound idempotency key, reuses a semantically
-identical active or completed execution, safely cancels only an unstarted duplicate,
-and registers the canonical execution. Never add `v2`, `prod2`, timestamps, random
-values, or other retry suffixes to an execution-creation key. After registration, use
-native `status` plus
-`$TEAM_DIR/autodata/native/lifecycle-supervisor-status.json` to observe progress.
-The supervisor pauses at every native action so you retain the host-agent
-reasoning role. Handle ordinary analysis/mutation actions through the native
-`action begin` and `action complete` workflow from the AutoData skill. When status
-instead exposes `approve_grounding`, `approve_baseline`, or `approve_resources`,
-do not complete it yourself: complete the `review_autodata_action` flow below.
-The same supervisor resumes after either kind of action completes.
+The supervisor pauses only when native AutoData requires scientific analysis or a
+scoped mutation. Handle that current action through the action bridge using only its
+allowlisted paths and evidence. After your tool call returns, stop; the host FSM
+persists the result, resumes stepping, and waits without spending another model turn.
+Never select an action from another workspace/study. When the current scoped action
+is `approve_grounding`, `approve_baseline`, or `approve_resources`, call
+`review_autodata_action` with its exact action ID instead of completing it yourself.
 {% if autodata_stage_timeout_policy == "observe-only" %}
 This measurement canary has no elapsed-time deadline for workspace authoring,
 meta-optimization, or production. Native AutoData still requires a positive
@@ -406,21 +370,13 @@ native budgets leave a ten-minute cleanup/snapshot grace inside the supervisor's
 two-hour meta and eight-hour production hard ceilings.
 {% endif %}
 
-After meta-optimization completes, use native `execution export-winner` to create a
-pristine, digest-bound winner export and never modify it. Copy that export to a
-separate production pipeline root, then build a dedicated production grounding
-manifest there with {{ autodata_production_initial_tasks }} IDs that are disjoint from every tuning, validation, and
-test ID (the checked-in builder supports `--id-prefix safety-prod`). The production
-execution must use that manifest and production copy of the exported winning
-pipeline, must share the native study with the workspace/meta execution, and must have
-`mode: production` and `max_iterations: 0`. Do not run production from the original
-baseline snapshot or the 96-task meta manifest. Keep the production execution JSON
-and handoff outside both pipeline roots; only
-`grounding/production-manifest.json` may differ between the pristine winner export
-and production pipeline root. Copy the operator-provided
-`$AAR_AUTODATA_TRAINING_DATA_CONTRACT` into each pipeline root as
-`training-data-contract.json`; it is protected pipeline content. A production
-execution must also declare this exact completion policy:
+After meta-optimization completes, trusted orchestration—not the researcher
+model—exports the digest-bound winner, builds the disjoint production manifest,
+creates the production execution, and publishes the verified handoff. The trusted
+production manifest contains {{ autodata_production_initial_tasks }} IDs disjoint
+from every tuning, validation, and test ID. Production uses the exported winner in
+the same native study, `mode: production`, `max_iterations: 0`, the operator-provided
+training-data contract, and this exact completion policy:
 
 ```json
 "finalization": {
@@ -503,28 +459,21 @@ assume or access `instruction`, `answer`, or `thinking` fields. For
 `chosen`, and `rejected`. Validate the selected objective's required fields
 before submitting training so a schema mismatch fails before any GPU job.
 
-Before calling `scripts/submit_train_job.sh`, write
-`$TEAM_DIR/autodata/<run_id>/training-handoff.json` with the durable native state
-snapshot at `$AAR_AUTODATA_RETAINED_STATE` (not the live node-local
-`$AAR_AUTODATA_STATE`),
-workspace/study ID, completed meta execution ID, exported winner root, completed
-production execution ID, dedicated production manifest, and exported production
-dataset. The submitter independently treats this file as untrusted and verifies the
+Before training submission, trusted orchestration writes
+`$TEAM_DIR/autodata/<run_id>/training-handoff.json` from the durable native state
+snapshot at `$AAR_AUTODATA_RETAINED_STATE` (never the live node-local state), with
+the workspace/study ID, completed meta execution ID, exported winner root,
+completed production execution ID, dedicated production manifest, and exported
+production dataset. Do not create or modify this handoff. The submitter independently
+treats this file as untrusted and verifies the
 complete winner-to-production lineage, exact source IDs, {{ autodata_production_rows }} accepted rows, and
 dataset digest. Training is also rejected unless the method creates the verified
 consumption receipt before its model is submitted.
 
 When the operator has provided a completed prior run whose dataset is intended for
-reuse, do not regenerate the configured production corpus. Create a v2 reuse handoff with:
-
-```bash
-python3 -m aar.infrastructure.autodata_lifecycle create-reuse-handoff \
-  --source-run-id "$SOURCE_RUN_ID" \
-  --run-id "$RUN_ID" \
-  --training-data-contract "$AAR_AUTODATA_TRAINING_DATA_CONTRACT"
-```
-
-Reuse succeeds only when `$AAR_AUTODATA_REUSE_POLICY` is `digest-verified`,
+reuse, trusted orchestration creates the v2 reuse handoff; do not regenerate or
+copy the configured production corpus yourself. Reuse succeeds only when
+`$AAR_AUTODATA_REUSE_POLICY` is `digest-verified`,
 native lineage still verifies, the dataset/manifest/state
 digests match, every row satisfies the same SFT/DPO, rubric, and model-provenance
 contract, and the source state is an operator-trusted

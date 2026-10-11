@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: model-role mapping confirmed; validating for launch
+- Status: stopped; protocol failure preserved
 - Created: 2026-10-10 23:01 PT
-- Last updated: 2026-10-10 23:02 PT
+- Last updated: 2026-10-10 23:57 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal

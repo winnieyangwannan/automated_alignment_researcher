@@ -16,13 +16,42 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 from typing import Any, Mapping
 
 
 BOOTSTRAP_SCHEMA = "aar.autodata.workspace-bootstrap/v1"
+BOOTSTRAP_INTENT_SCHEMA = "aar.autodata.workspace-bootstrap-intent/v1"
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9._:-]+$")
 _WORKSPACE_ID = re.compile(r"^ws_[0-9a-f]{32}$")
+
+
+def _acquire_bootstrap_lock(lock: Any) -> None:
+    raw_timeout = os.getenv("AAR_AUTODATA_BOOTSTRAP_LOCK_SECONDS", "60")
+    try:
+        timeout = float(raw_timeout)
+    except ValueError as error:
+        raise RuntimeError(
+            "AAR_AUTODATA_BOOTSTRAP_LOCK_SECONDS must be a positive number"
+        ) from error
+    if timeout <= 0:
+        raise RuntimeError(
+            "AAR_AUTODATA_BOOTSTRAP_LOCK_SECONDS must be a positive number"
+        )
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError as error:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    "timed out acquiring the AutoData workspace bootstrap lock"
+                ) from error
+            time.sleep(min(0.1, remaining))
 
 
 def _required_path(name: str, *, directory: bool = False) -> Path:
@@ -68,16 +97,22 @@ def _json_object(path: Path, label: str) -> dict[str, Any]:
 
 def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    descriptor, raw_temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=path.parent
+    )
+    temporary = Path(raw_temporary)
     try:
-        temporary.write_text(
-            json.dumps(dict(value), indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        temporary.chmod(0o600)
-        with temporary.open("rb") as stream:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(dict(value), indent=2, sort_keys=True) + "\n")
+            stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -186,6 +221,48 @@ def _register_command(workspace_id: str) -> list[str]:
         "--subject-id",
         workspace_id,
     ]
+
+
+def _register_with_sla(workspace_id: str) -> dict[str, Any]:
+    """Register idempotently, but never turn a broken transition into a long wait."""
+    deadline = time.monotonic() + float(
+        os.getenv("AAR_AUTODATA_REGISTRATION_SLA_SECONDS", "60")
+    )
+    errors: list[str] = []
+    for attempt in range(1, 4):
+        try:
+            result = _run_json(_register_command(workspace_id), timeout=20)
+            if result.get("registered") is not True:
+                raise RuntimeError("registration response did not confirm registration")
+            return result
+        except (RuntimeError, subprocess.TimeoutExpired) as error:
+            errors.append(f"attempt {attempt}: {error}")
+            if attempt == 3 or time.monotonic() >= deadline:
+                break
+            time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+    raise RuntimeError(
+        "native AutoData workspace registration exceeded the three-attempt/"
+        "60-second SLA: " + "; ".join(errors)
+    )
+
+
+def _control_has_workspace(workspace_id: str) -> bool:
+    raw = os.getenv("AAR_AUTODATA_SUPERVISOR_CONTROL", "").strip()
+    if not raw:
+        return False
+    path = Path(raw).expanduser()
+    try:
+        control = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    subjects = control.get("subjects") if isinstance(control, dict) else None
+    return isinstance(subjects, list) and any(
+        isinstance(entry, dict)
+        and entry.get("kind") == "workspace"
+        and entry.get("subject_id") == workspace_id
+        and entry.get("status") in {"registered", "completed"}
+        for entry in subjects
+    )
 
 
 def _prepare_brief(run_root: Path) -> tuple[Path, str]:
@@ -341,7 +418,7 @@ def ensure_workspace(
 
     lock_path = run_root / ".bootstrap.lock"
     with lock_path.open("a+", encoding="utf-8") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        _acquire_bootstrap_lock(lock)
         manifest_path = run_root / "workspace-bootstrap.json"
         if manifest_path.is_file():
             existing = _json_object(manifest_path, "AutoData workspace bootstrap")
@@ -361,23 +438,67 @@ def ensure_workspace(
             status = _workspace_status(workspace_id)
             if status in {"cancelled", "failed"}:
                 raise RuntimeError("approved AutoData workspace is terminal")
-            if status == "active":
-                _run_json(_register_command(workspace_id))
+            # Registration is idempotent.  Retrying it also lets the supervisor
+            # reconcile a frozen workspace whose control-file transition was lost.
+            if status == "active" or (
+                status == "frozen" and not _control_has_workspace(workspace_id)
+            ):
+                _register_with_sla(workspace_id)
             return {**existing, "idempotent": True}
 
-        brief, brief_digest = _prepare_brief(run_root)
-        _stage_reviewed_recipe(run_root)
-        key_payload = {
-            "schema": BOOTSTRAP_SCHEMA,
-            "run_id": run_id,
-            "idea_name": idea_name,
-            "code_hash": code_hash,
-            "brief_digest": brief_digest,
-            "root": str((run_root / "draft").resolve()),
-        }
-        idempotency_key = "aar-approved:" + hashlib.sha256(
-            json.dumps(key_payload, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
+        intent_path = run_root / "workspace-bootstrap-intent.json"
+        if intent_path.is_file():
+            intent = _json_object(intent_path, "AutoData workspace bootstrap intent")
+            expected = {
+                "schema": BOOTSTRAP_INTENT_SCHEMA,
+                "run_id": run_id,
+                "idea_name": idea_name,
+                "code_hash": code_hash,
+            }
+            if any(intent.get(key) != value for key, value in expected.items()):
+                raise RuntimeError("existing AutoData bootstrap intent binds another proposal")
+            brief = Path(str(intent.get("brief_path") or ""))
+            if brief != run_root / "input" / "autodata.workspace.json" or not brief.is_file():
+                raise RuntimeError("AutoData bootstrap intent lost its reviewed brief")
+            brief_digest = str(intent.get("brief_digest") or "")
+            if _sha256_bytes(
+                json.dumps(
+                    _json_object(brief, "reviewed AutoData workspace brief"),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ) != brief_digest:
+                raise RuntimeError("AutoData bootstrap intent brief digest changed")
+            idempotency_key = str(intent.get("idempotency_key") or "")
+            if not re.fullmatch(r"aar-approved:[0-9a-f]{64}", idempotency_key):
+                raise RuntimeError("AutoData bootstrap intent has an invalid idempotency key")
+        else:
+            brief, brief_digest = _prepare_brief(run_root)
+            _stage_reviewed_recipe(run_root)
+            key_payload = {
+                "schema": BOOTSTRAP_SCHEMA,
+                "run_id": run_id,
+                "idea_name": idea_name,
+                "code_hash": code_hash,
+                "brief_digest": brief_digest,
+                "root": str((run_root / "draft").resolve()),
+            }
+            idempotency_key = "aar-approved:" + hashlib.sha256(
+                json.dumps(key_payload, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            _atomic_json(
+                intent_path,
+                {
+                    "schema": BOOTSTRAP_INTENT_SCHEMA,
+                    "run_id": run_id,
+                    "idea_name": idea_name,
+                    "code_hash": code_hash,
+                    "brief_path": str(brief),
+                    "brief_digest": brief_digest,
+                    "idempotency_key": idempotency_key,
+                    "draft_root": str((run_root / "draft").resolve()),
+                },
+            )
         created = _run_json(
             _native_command(
                 "workspace",
@@ -393,7 +514,16 @@ def ensure_workspace(
         workspace_id = str(created.get("workspace_id") or "")
         if not _WORKSPACE_ID.fullmatch(workspace_id):
             raise RuntimeError("native AutoData did not return a valid workspace id")
-        registration = _run_json(_register_command(workspace_id))
+        # Persist the native identity before registration.  A crash from this
+        # point onward retries the same idempotent create and exact workspace.
+        intent = _json_object(intent_path, "AutoData workspace bootstrap intent")
+        existing_workspace_id = intent.get("workspace_id")
+        if existing_workspace_id not in {None, workspace_id}:
+            raise RuntimeError("AutoData bootstrap create returned a different workspace")
+        intent["workspace_id"] = workspace_id
+        intent["study_id"] = created.get("study_id")
+        _atomic_json(intent_path, intent)
+        registration = _register_with_sla(workspace_id)
         manifest = {
             "schema": BOOTSTRAP_SCHEMA,
             "run_id": run_id,

@@ -16,7 +16,7 @@ import types
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import requests
 
@@ -76,6 +76,49 @@ class KimiAgentTest(unittest.TestCase):
             self.assertIn("turn exceeded", result.error or "")
             self.assertFalse(Path(f"/proc/{parent_pid}").exists())
             self.assertFalse(Path(f"/proc/{child_pid}").exists())
+
+    def test_resumed_autodata_wait_precedes_first_model_call(self) -> None:
+        run_id = "approved-run-1"
+        workspace_id = "ws_" + "1" * 32
+        agent = KimiAgent(
+            "test-agent",
+            Path.cwd(),
+            cli_path="/bin/true",
+            completion_tool="share_finding",
+        )
+        run_command = AsyncMock()
+        with (
+            patch.dict(
+                os.environ,
+                {"AAR_AUTODATA": "1", "AAR_RESUME_APPROVED_PROPOSAL": "1"},
+                clear=False,
+            ),
+            patch.object(
+                agent, "_resume_approved_proposal_enabled", return_value=True
+            ),
+            patch.object(agent, "_approved_run_id", return_value=run_id),
+            patch.object(agent, "_autodata_handoff_ready", return_value=False),
+            patch.object(
+                agent, "_autodata_workspace_id", return_value=workspace_id
+            ),
+            patch.object(
+                agent,
+                "_autodata_status_subject",
+                return_value=("execution", "exe_" + "2" * 32),
+            ),
+            patch.object(agent, "_autodata_pending_action_record", return_value=None),
+            patch.object(
+                agent,
+                "_autodata_native_status",
+                return_value={"status": "failed", "phase": "meta_optimization"},
+            ),
+            patch.object(agent, "_run_command", new=run_command),
+        ):
+            result = asyncio.run(agent.execute("resume the approved proposal"))
+
+        self.assertFalse(result.success)
+        self.assertIn("terminated before handoff", result.error or "")
+        run_command.assert_not_awaited()
 
     def test_required_completion_resumes_after_bounded_turn_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1428,6 +1471,21 @@ class KimiAgentTest(unittest.TestCase):
                 agent._continuation_prompt(after_recipe),
             )
 
+    def test_continuation_checkpoint_reuses_computed_prompt(self) -> None:
+        agent = KimiAgent(
+            "test-agent",
+            Path.cwd(),
+            cli_path="/bin/true",
+            completion_tool="share_finding",
+        )
+        output = {"tool_uses": []}
+        prompt = "Call the native Read tool exactly once now"
+        with patch.object(agent, "_continuation_prompt") as recompute:
+            self.assertEqual(
+                agent._continuation_tool(output, prompt=prompt), "Read"
+            )
+        recompute.assert_not_called()
+
     def test_approved_training_submission_is_adapter_controlled(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1727,6 +1785,7 @@ class KimiAgentTest(unittest.TestCase):
             action_spec = {
                 "id": action_id,
                 "kind": "clarify_design",
+                "scope": {"kind": "workspace", "id": "ws_" + "1" * 32},
                 "instructions": "Confirm the reviewed workspace intent.",
                 "allowed_paths": ["autodata.workspace.json"],
                 "editable_root": str(root / "draft"),
@@ -1786,15 +1845,11 @@ class KimiAgentTest(unittest.TestCase):
                     "_autodata_native_status",
                     return_value={"status": "active"},
                 ):
-                    bootstrapped_prompt = agent._continuation_prompt(output)
-                    bootstrapped_tool = agent._continuation_tool(output)
-                self.assertIn("trusted orchestration already created", bootstrapped_prompt)
-                self.assertIn(workspace_id, bootstrapped_prompt)
-                self.assertIn("Do not load a skill", bootstrapped_prompt)
-                self.assertNotIn("create or resume", bootstrapped_prompt)
-                self.assertIn("Trusted read-only native status", bootstrapped_prompt)
-                self.assertIn('command="sleep 10"', bootstrapped_prompt)
-                self.assertEqual(bootstrapped_tool, "Bash")
+                    with self.assertRaisesRegex(
+                        RuntimeError, "deterministic waits must be handled without Kimi"
+                    ):
+                        agent._continuation_prompt(output)
+                self.assertTrue(agent._autodata_wait_required(output))
 
                 with sqlite3.connect(state) as connection:
                     connection.execute(
@@ -1808,7 +1863,7 @@ class KimiAgentTest(unittest.TestCase):
                     )
                 lease_path = agent._autodata_action_lease_path(action_id)
                 agent._write_private_text(lease_path, "x" * 32)
-                result_path = Path(f"/tmp/aar-autodata-{action_id}-result.json")
+                result_path = agent._autodata_action_result_path(action_id)
                 result_path.unlink(missing_ok=True)
                 try:
                     action_prompt = agent._continuation_prompt(output)
@@ -1835,7 +1890,11 @@ class KimiAgentTest(unittest.TestCase):
                             return_value={"status": "active"},
                         ),
                     ):
-                        completion_prompt = agent._continuation_prompt(output)
+                        with self.assertRaisesRegex(
+                            RuntimeError,
+                            "deterministic waits must be handled without Kimi",
+                        ):
+                            agent._continuation_prompt(output)
                     cli.assert_called_once_with(
                         "action",
                         "complete",
@@ -1844,7 +1903,6 @@ class KimiAgentTest(unittest.TestCase):
                         "--result",
                         str(result_path),
                     )
-                    self.assertIn("Trusted read-only native status", completion_prompt)
                     self.assertFalse(lease_path.exists())
                     self.assertFalse(result_path.exists())
                 finally:
@@ -1905,6 +1963,15 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                 self.assertIn('"tasks"', editable_context["grounding/manifest.json"])
 
                 execution_id = "exe_" + "3" * 32
+                with sqlite3.connect(state) as connection:
+                    connection.execute(
+                        "CREATE TABLE executions("
+                        "id TEXT,status TEXT,workspaceId TEXT,createdAt TEXT)"
+                    )
+                    connection.execute(
+                        "INSERT INTO executions VALUES(?,?,?,CURRENT_TIMESTAMP)",
+                        (execution_id, "active", workspace_id),
+                    )
                 control.write_text(
                     json.dumps(
                         {
@@ -2037,6 +2104,81 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                     KimiAgent._autodata_pipeline_feedback_requires_edit(action)
                 )
 
+    def test_action_lease_survives_slurm_restart_and_missing_token_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            team = Path(temporary) / "team"
+            action_id = "act_" + "4" * 24
+            with patch.dict(
+                os.environ,
+                {"TEAM_DIR": str(team), "SLURM_JOB_ID": "100"},
+                clear=False,
+            ):
+                path = KimiAgent._autodata_action_lease_path(action_id)
+                KimiAgent._write_private_text(path, "x" * 32)
+            with patch.dict(
+                os.environ,
+                {"TEAM_DIR": str(team), "SLURM_JOB_ID": "200"},
+                clear=False,
+            ):
+                self.assertEqual(
+                    KimiAgent._autodata_require_action_lease(action_id), "x" * 32
+                )
+                path.unlink()
+                with self.assertRaisesRegex(RuntimeError, "durable lease token"):
+                    KimiAgent._autodata_require_action_lease(action_id)
+
+    def test_pending_action_lookup_is_scoped_and_rejects_ambiguity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary) / "state.db"
+            workspace = "ws_" + "1" * 32
+            stale = "ws_" + "2" * 32
+            with sqlite3.connect(state) as connection:
+                connection.execute(
+                    "CREATE TABLE actions("
+                    "id TEXT,kind TEXT,status TEXT,specJson TEXT,createdAt TEXT)"
+                )
+                for suffix, scope in (("1", stale), ("2", workspace)):
+                    connection.execute(
+                        "INSERT INTO actions VALUES(?,?,?,?,CURRENT_TIMESTAMP)",
+                        (
+                            "act_" + suffix * 24,
+                            "clarify_design",
+                            "pending",
+                            json.dumps(
+                                {
+                                    "scope": {
+                                        "kind": "workspace",
+                                        "id": scope,
+                                    }
+                                }
+                            ),
+                        ),
+                    )
+            with patch.dict(
+                os.environ, {"AAR_AUTODATA_STATE": str(state)}, clear=False
+            ):
+                selected = KimiAgent._autodata_pending_action_record(workspace)
+                self.assertEqual(selected["id"], "act_" + "2" * 24)
+                with sqlite3.connect(state) as connection:
+                    connection.execute(
+                        "INSERT INTO actions VALUES(?,?,?,?,CURRENT_TIMESTAMP)",
+                        (
+                            "act_" + "3" * 24,
+                            "author_pipeline",
+                            "pending",
+                            json.dumps(
+                                {
+                                    "scope": {
+                                        "kind": "workspace",
+                                        "id": workspace,
+                                    }
+                                }
+                            ),
+                        ),
+                    )
+                with self.assertRaisesRegex(RuntimeError, "ambiguous"):
+                    KimiAgent._autodata_pending_action_record(workspace)
+
     def test_write_guard_allows_only_ideas_tree_and_chain_memory(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -2119,7 +2261,9 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                 "AAR_IDEAS_DIR": str(ideas),
                 "AAR_AGENT_LOG_PATH": str(memory),
                 "AAR_AUTODATA_STATE": str(state),
+                "TEAM_DIR": str(root / "team"),
             }
+            result_root = root / "team" / "autodata" / "action-results"
 
             def decision(path: Path) -> tuple[bool, str]:
                 return validate_tool_call(
@@ -2132,7 +2276,7 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                 )
 
             for destination in (
-                Path(f"/tmp/aar-autodata-{active_id}-result.json"),
+                result_root / f"{active_id}.json",
                 draft / "autodata.workspace.json",
                 grounding / "manifest.json",
             ):
@@ -2140,9 +2284,10 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                 self.assertTrue(allowed, reason)
 
             for destination in (
-                Path(f"/tmp/aar-autodata-{pending_id}-result.json"),
-                Path(f"/tmp/aar-autodata-{completed_id}-result.json"),
-                Path(f"/tmp/aar-autodata-act_{'d' * 24}-result.json"),
+                result_root / f"{pending_id}.json",
+                result_root / f"{completed_id}.json",
+                result_root / f"act_{'d' * 24}.json",
+                Path(f"/tmp/aar-autodata-{active_id}-result.json"),
                 draft / "recipe" / "generation_strategy.json",
                 root / "outside.json",
             ):

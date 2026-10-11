@@ -42,6 +42,14 @@ export LIT_FORUM_DIR="${TEAM_DIR}/litreview"
 export AAR_AUTODATA_PROPOSAL_BINDINGS="${CHAIN_ROOT}/secrets/proposal-bindings.json"
 export AAR_VLLM_MERGED_ROOT="${CHECKPOINT_ROOT}/chains/${SEED}/merged_candidates"
 mkdir -p "${CHAIN_ROOT}/"{bindings,deployments,logs,metadata} "${AAR_VLLM_MERGED_ROOT}"
+SUBMISSION_INTENTS="${CHAIN_ROOT}/metadata/submission-intents"
+mkdir -p "${SUBMISSION_INTENTS}"
+chmod 700 "${SUBMISSION_INTENTS}"
+exec 8>"${CHAIN_ROOT}/metadata/controller.lock"
+flock -n 8 || {
+  echo "another Run 12 controller owns chain ${SEED}" >&2
+  exit 2
+}
 
 record_event() {
   printf '%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" \
@@ -49,16 +57,59 @@ record_event() {
 }
 
 wait_job() {
-  local job_id="$1" state=""
-  while squeue -h -j "${job_id}" 2>/dev/null | grep -q .; do
+  local job_id="$1" state="" classification="" terminal="false"
+  local unknown_since="" now="" timeout="${AAR_RUN12_SACCT_UNKNOWN_TIMEOUT_SECONDS:-900}"
+  while true; do
+    # squeue is advisory only. A transient squeue outage or disappearance never
+    # constitutes completion; sacct is the authoritative terminal record.
+    squeue -h -j "${job_id}" -o '%T' >/dev/null 2>&1 || true
+    state="$(sacct -n -X -j "${job_id}" --format=State 2>/dev/null | awk 'NF{print $1; exit}')"
+    classification="$(PYTHONPATH="${REPO}" "${PY}" -m \
+      aar.slurm_session_recovery classify --state "${state}")"
+    terminal="$(jq -r '.terminal' <<<"${classification}")"
+    if [ "${terminal}" = true ]; then
+      break
+    fi
+    now="$(date +%s)"
+    if [ -z "${state}" ]; then
+      [ -n "${unknown_since}" ] || unknown_since="${now}"
+      if [ $((now - unknown_since)) -ge "${timeout}" ]; then
+        record_event "fatal=sacct_state_unavailable job=${job_id} waited_seconds=${timeout}"
+        return 75
+      fi
+    else
+      unknown_since=""
+    fi
     sleep 20
   done
-  for _ in $(seq 1 30); do
-    state="$(sacct -n -X -j "${job_id}" --format=State 2>/dev/null | awk 'NF{print $1; exit}')"
-    [ -n "${state}" ] && break
-    sleep 2
-  done
-  record_event "job=${job_id} state=${state:-unknown}"
+  LAST_JOB_ID="${job_id}"
+  LAST_JOB_STATE="$(jq -r '.state' <<<"${classification}")"
+  LAST_JOB_RETRYABLE="$(jq -r '.retryable' <<<"${classification}")"
+  LAST_JOB_CATEGORY="$(jq -r '.category' <<<"${classification}")"
+  record_event "job=${job_id} state=${LAST_JOB_STATE} category=${LAST_JOB_CATEGORY} retryable=${LAST_JOB_RETRYABLE}"
+}
+
+require_retryable_terminal() {
+  local context="$1"
+  if [ "${LAST_JOB_RETRYABLE:-false}" != true ]; then
+    record_event "fatal=${context} job=${LAST_JOB_ID:-unknown} state=${LAST_JOB_STATE:-unknown} category=${LAST_JOB_CATEGORY:-unknown} retryable=false"
+    return 1
+  fi
+}
+
+reconcile_submission_comment() {
+  local comment="$1" queue_output="" accounting_output="" matches=""
+  queue_output="$(squeue -h --me -o '%A|%k' 2>/dev/null || true)"
+  accounting_output="$(sacct -n -X --starttime "$(date -d '8 days ago' +%F)" \
+    --format=JobIDRaw,Comment -P 2>/dev/null || true)"
+  matches="$({ printf '%s\n' "${queue_output}"; printf '%s\n' "${accounting_output}"; } \
+    | awk -F'|' -v wanted="${comment}" '$2 == wanted && $1 ~ /^[0-9]+$/ {print $1}' \
+    | sort -nu)"
+  if [ "$(wc -l <<<"${matches}")" -gt 1 ]; then
+    record_event "fatal=ambiguous_submission_intent comment=${comment} jobs=$(tr '\n' ',' <<<"${matches}")"
+    return 2
+  fi
+  printf '%s' "${matches}"
 }
 
 pair_count() {
@@ -125,19 +176,63 @@ submit_session() {
   # policy path is inherited; provider/operator secrets remain excluded.
   # shellcheck disable=SC1091
   source "${REPO}/scripts/aar_runtime_env.sh"
-  local names=() name csv job
+  local attempt_number="$1" names=() name csv job intent key comment status match
   export AAR_IDEA_UID_OVERRIDE="run12-${SEED}-iteration-${next_iteration}"
   export AAR_RESUME_APPROVED_PROPOSAL=1
   for name in "${AAR_RESEARCH_CHAIN_ENV_ALLOWLIST[@]}"; do
     [[ -v "${name}" ]] && names+=("${name}")
   done
   csv="$(IFS=,; printf '%s' "${names[*]}")"
-  job="$(sbatch --parsable --account=ram --partition=g3 --qos=g3_ram_high \
+  intent="${SUBMISSION_INTENTS}/attempt-${attempt_number}.json"
+  key="${TEAM_ID}:${SEED}:${attempt_number}:${next_iteration}"
+  comment="aar-run12:${TEAM_ID}:${SEED}:${attempt_number}"
+  PYTHONPATH="${REPO}" "${PY}" -m aar.slurm_session_recovery \
+    prepare --path "${intent}" --key "${key}" --comment "${comment}" >/dev/null
+  status="$(PYTHONPATH="${REPO}" "${PY}" -m aar.slurm_session_recovery \
+    show --path "${intent}")"
+  if [ "$(jq -r '.status' <<<"${status}")" = registered ]; then
+    jq -r '.job_id' <<<"${status}"
+    return 0
+  fi
+  if [ "$(jq -r '.status' <<<"${status}")" = submitting ]; then
+    # A prior controller may have crashed after sbatch accepted the job but
+    # before registration. Reconcile the unique durable comment; never guess
+    # that an empty scheduler response permits a duplicate submission.
+    for _ in $(seq 1 30); do
+      match="$(reconcile_submission_comment "${comment}")"
+      [ -n "${match}" ] && break
+      sleep 2
+    done
+    if [ -z "${match}" ]; then
+      record_event "fatal=submission_reconciliation_timeout intent=${intent} comment=${comment}"
+      return 75
+    fi
+    PYTHONPATH="${REPO}" "${PY}" -m aar.slurm_session_recovery \
+      transition --path "${intent}" --status registered --job-id "${match}" >/dev/null
+    printf '%s\n' "${match}"
+    return 0
+  fi
+  PYTHONPATH="${REPO}" "${PY}" -m aar.slurm_session_recovery \
+    transition --path "${intent}" --status submitting >/dev/null
+  if ! job="$(sbatch --parsable --account=ram --partition=g3 --qos=g3_ram_high \
     --time="${AAR_CHAIN_MAX_HOURS:-72}:30:00" \
     --job-name="aar-run12-${SEED}" \
+    --comment="${comment}" \
     --output="${TEAM_DIR}/logs/%x_%j.out" --export="${csv}" \
     "${REPO}/scripts/slurm_aar_chain.sh" "explore-${SEED}" \
-    "${AAR_CHAIN_MAX_HOURS:-72}" 1 "${TEAM_ID}")"
+    "${AAR_CHAIN_MAX_HOURS:-72}" 1 "${TEAM_ID}")"; then
+    # The client may have lost the response after Slurm accepted the job.
+    # Retain "submitting" so a restarted controller reconciles by comment.
+    record_event "fatal=sbatch_submission_ambiguous intent=${intent} comment=${comment}"
+    return 75
+  fi
+  job="${job%%;*}"
+  [[ "${job}" =~ ^[0-9]+$ ]] || {
+    record_event "fatal=invalid_sbatch_job_id intent=${intent}"
+    return 1
+  }
+  PYTHONPATH="${REPO}" "${PY}" -m aar.slurm_session_recovery \
+    transition --path "${intent}" --status registered --job-id "${job}" >/dev/null
   printf '%s\n' "${job}"
 }
 
@@ -146,10 +241,25 @@ current_target="${CHAIN_ROOT}/bindings/iteration-1.json"
 current_policy="${CHAIN_ROOT}/metadata/campaign-policy.json"
 current_contract="${CHAIN_ROOT}/metadata/autodata-training-data-contract.json"
 current_deployment="$(jq -r '.endpoint.deployment_id' "${current_target}")"
-attempts=1
+registered_retries="$(PYTHONPATH="${REPO}" "${PY}" -m \
+  aar.slurm_session_recovery count-registered \
+  --directory "${SUBMISSION_INTENTS}")"
+attempts=$((1 + registered_retries))
+active_job="${FIRST_JOB}"
+if [ "${registered_retries}" -gt 0 ]; then
+  latest_intent="$(find "${SUBMISSION_INTENTS}" -maxdepth 1 -type f \
+    -name 'attempt-*.json' -print | sort -V \
+    | while read -r candidate; do
+        if [ "$(jq -r '.status' "${candidate}")" = registered ]; then
+          printf '%s\n' "${candidate}"
+        fi
+      done | tail -n 1)"
+  active_job="$(jq -r '.job_id' "${latest_intent}")"
+  record_event "controller_restart_reconciled=${active_job} intent=${latest_intent} attempts=${attempts}"
+fi
 export AAR_AUTODATA_TRAINING_DATA_CONTRACT="${current_contract}"
 
-wait_job "${FIRST_JOB}"
+wait_job "${active_job}"
 if [ "${AAR_AUTODATA_STOP_AFTER:-}" = production ]; then
   next_iteration=1
   while true; do
@@ -183,7 +293,8 @@ if [ "${AAR_AUTODATA_STOP_AFTER:-}" = production ]; then
       record_event "fatal=production_canary_not_completed attempts=${attempts}"
       exit 1
     fi
-    job="$(submit_session)"
+    require_retryable_terminal "production_canary_session_failed"
+    job="$(submit_session "$((attempts + 1))")"
     attempts=$((attempts + 1))
     record_event "production_canary_retry=${job} attempts=${attempts}"
     wait_job "${job}"
@@ -224,13 +335,22 @@ if [ "${AAR_AUTODATA_STOP_AFTER:-}" = training_smoke ]; then
       record_event "fatal=training_smoke_canary_not_completed attempts=${attempts}"
       exit 1
     fi
-    job="$(submit_session)"
+    require_retryable_terminal "training_smoke_session_failed"
+    job="$(submit_session "$((attempts + 1))")"
     attempts=$((attempts + 1))
     record_event "training_smoke_canary_retry=${job} attempts=${attempts}"
     wait_job "${job}"
   done
 fi
 pairs="$(pair_count)"
+if [ "${pairs}" -eq 0 ]; then
+  require_retryable_terminal "initial_session_produced_no_pair"
+elif [ -n "${latest_intent:-}" ]; then
+  latest_iteration="$(jq -r '.key | split(":") | last | tonumber' "${latest_intent}")"
+  if [ "${latest_iteration}" -gt "${pairs}" ]; then
+    require_retryable_terminal "reconciled_session_produced_no_pair"
+  fi
+fi
 while [ "${pairs}" -lt "${TARGET_PAIRS}" ]; do
   if [ "${attempts}" -ge "${MAX_ATTEMPTS}" ]; then
     record_event "fatal=attempt_budget_exhausted pairs=${pairs} attempts=${attempts}"
@@ -313,13 +433,14 @@ while [ "${pairs}" -lt "${TARGET_PAIRS}" ]; do
   }
 
   before="${pairs}"
-  job="$(submit_session)"
+  job="$(submit_session "$((attempts + 1))")"
   attempts=$((attempts + 1))
   record_event "iteration=${next_iteration} session_job=${job} before_pairs=${before}"
   wait_job "${job}"
   pairs="$(pair_count)"
   if [ "${pairs}" -le "${before}" ]; then
-    record_event "session_job=${job} produced_no_pair retrying_same_iteration=${next_iteration}"
+    require_retryable_terminal "session_produced_no_pair"
+    record_event "session_job=${job} produced_no_pair infrastructure_retry_same_iteration=${next_iteration}"
   else
     record_event "completed_pairs=${pairs} attempts=${attempts}"
   fi

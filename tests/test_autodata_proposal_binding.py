@@ -89,6 +89,66 @@ def test_result_dedup_allows_retry_of_same_authoritative_run(
     assert duplicate[1]["run_id"] == "run-1"
 
 
+def test_proposal_run_stamp_is_atomic_first_write_wins(tmp_path: Path) -> None:
+    scores = tmp_path / "scores"
+    marker = scores / ".proposals" / "chain-one.json"
+    marker.parent.mkdir(parents=True)
+    marker.write_text(
+        json.dumps(
+            {
+                "approved": True,
+                "idea_name": "method_one",
+                "code_hash": "a" * 64,
+                "ts": 1.0,
+                "paper": {"title": "first"},
+            }
+        )
+    )
+    with mock.patch.dict(
+        os.environ,
+        {"SCORES_DIR": str(scores), "IDEA_UID": "chain-one"},
+        clear=False,
+    ):
+        assert server_api_tools._stamp_run_proposal("run-one")
+        marker.write_text(
+            json.dumps(
+                {
+                    "approved": True,
+                    "idea_name": "method_two",
+                    "code_hash": "b" * 64,
+                    "ts": 2.0,
+                    "paper": {"title": "second"},
+                }
+            )
+        )
+        assert not server_api_tools._stamp_run_proposal("run-one")
+
+    frozen = json.loads(
+        (scores / ".proposals" / "runs" / "run-one.json").read_text()
+    )
+    assert frozen["idea_name"] == "method_one"
+    assert frozen["paper"] == {"title": "first"}
+
+
+def test_atomic_proposal_write_failure_does_not_replace_ready_marker(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "proposal.json"
+    marker.write_text(json.dumps({"approved": True, "execution_ready": True}))
+    with mock.patch(
+        "aar.research_loop.tools.server_api_tools.os.replace",
+        side_effect=OSError("disk failure"),
+    ):
+        with pytest.raises(OSError, match="disk failure"):
+            server_api_tools._atomic_json_write(
+                marker, {"approved": True, "execution_ready": False}
+            )
+    assert json.loads(marker.read_text()) == {
+        "approved": True,
+        "execution_ready": True,
+    }
+
+
 def test_grounding_refuses_before_approved_proposal(tmp_path: Path) -> None:
     state = _state(tmp_path / "state.db")
     registry = _registry(tmp_path / "bindings.json")
