@@ -199,3 +199,25 @@ Verified persisted invariants:
 
 This is the exact boundary at which Trial 6 failed. Trial 7 passed it without
 model-controlled execution counts or a registration delay.
+
+<a id="trial7-event-meta-baseline"></a>
+
+### ⏳ 03:06 PT — RUNNING: canonical meta baseline completed
+
+Canonical execution `exe_d94e880d06b441da8954bbb661d69c54` completed its
+96-task baseline and advanced to `awaiting_analysis`, iteration 0/3. The
+pending host action is `analyze_results` (`act_8f1cf...`).
+
+Baseline outcomes:
+
+- visible tuning: 53 succeeded, 11 failed;
+- hidden selection: 27 succeeded, 5 failed;
+- total: 80 succeeded, 16 failed, 96/699 native attempts used;
+- all 16 failures have the bounded safe code `judge_invalid_content`;
+- provider completions: 96 generator, 96 target, and 96 judge calls;
+- broker ledger: 100 succeeded jobs including four authoring tasks and
+  `$172.089600` reserved; no reliable actual-cost field is populated yet.
+
+These are task-level recipe outcomes, not a supervisor or execution failure.
+The supervisor heartbeat is fresh, the research job remains running, and no
+evaluator exists.

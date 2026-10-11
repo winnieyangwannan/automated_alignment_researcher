@@ -5,7 +5,7 @@ prompts, target responses, credentials, or held-out content belong here.
 
 ## Attempt identity
 
-- Status at 2026-10-11 03:05 PT: canonical meta baseline running.
+- Status at 2026-10-11 03:06 PT: baseline complete; analysis pending.
 - Run ID: `run12-canary2-trial7`.
 - Native AutoData revision required:
   `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`.
@@ -21,6 +21,7 @@ prompts, target responses, credentials, or held-out content belong here.
 - Freeze reconciliation attempts: 1.
 - Freeze reconciliation duration: approximately 1 second.
 - Canonical execution: `exe_d94e880d06b441da8954bbb661d69c54`.
+- Meta baseline completed: 03:06:32 PT.
 - Controller: `1813739`, dependency-gated at 02:56 PT.
 - Evaluator jobs: 0, as required.
 
@@ -35,7 +36,8 @@ prompts, target responses, credentials, or held-out content belong here.
 ✓ Workspace authoring through pipeline dry run
 ✓ Baseline review
 ✓ Canonical execution registration
-⏳ Native meta baseline
+✓ Native meta baseline
+⏳ Baseline analysis action
 ○ Three meta iterations
 ○ Production
 ○ Training smoke
@@ -51,6 +53,12 @@ prompts, target responses, credentials, or held-out content belong here.
 - Configured native meta attempts: 699.
 - Deterministic native meta attempts: 611.
 - Bounded meta recovery attempts: 88.
+- Native meta attempts consumed: 96/699.
+- Baseline visible outcomes: 53 succeeded, 11 failed.
+- Baseline hidden outcomes: 27 succeeded, 5 failed.
+- Baseline failure code: `judge_invalid_content` for all 16 failures.
+- Provider completed calls: generator 96, target 96, judge 96.
+- Broker jobs: 100 succeeded including authoring; `$172.089600` reserved.
 - Production source tasks: 0/1,250.
 - Production accepted rows: 0/1,000.
 - Training optimizer steps: 0/1.
