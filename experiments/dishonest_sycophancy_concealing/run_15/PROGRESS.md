@@ -188,6 +188,101 @@ Kimi output was coherent across all five chains. No strange output, failure
 marker, or contract rejection had appeared. All evaluators were alive and idle,
 awaiting their first submitted adapters.
 
+### 🔴 03:15 PT — STOP: first full attempt preserved after conservative alert
+
+- A monitor initially interpreted Gamma's references to exact Read/Bash calls
+  as endpoint-preflight history contamination.
+- All ten jobs were state-preservingly cancelled before any proposal, training
+  job, adapter, score, or finding existed; total output was 0/250 pairs.
+- Code and log tracing showed that the messages were normal production
+  checkpoint prompts from `KimiAgent._continuation_prompt`, with exact
+  attempt-local scaffold paths—not inherited endpoint-preflight history.
+- The stopped attempt remains retained. A fresh replacement was chosen instead
+  of resuming partially cancelled session state.
+
+### ⏳ 03:22 PT — RUNNING: fresh replacement entered session 1
+
+- Fresh attempt:
+  `/checkpoint/ram/aar/winnieyangwn/run15_native_generation/full_attempts/20261011T101623Z-40bb8665e1c4`
+- Source: `40bb8665e1c417062f8d633478f76a4f9ab08a3f`; pipeline `1814060`
+  completed successfully.
+- All five research jobs are running. All five evaluators exist but are pending
+  GPU resources; no adapter is waiting for evaluation yet.
+
+### Alpha — session 1/60, pairs 0/50
+
+```text
+✓ Infrastructure bootstrap
+✓ Literature and leaderboard context loaded
+✓ First method authored
+⏳ Repairing method contract: Gemma target regex and TRL processing_class
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
+```
+
+Alpha's checkpoint retry recovered one malformed forced-Bash emission on retry
+1/2. The two contract findings are actionable and non-terminal.
+
+### Beta — session 1/60, pairs 0/50
+
+```text
+✓ Infrastructure bootstrap
+✓ Literature and leaderboard context loaded
+⏳ Method research and authoring
+○ Method contract check
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
+```
+
+No runtime failure.
+
+### Gamma — session 1/60, pairs 0/50
+
+```text
+✓ Infrastructure bootstrap
+✓ Literature and leaderboard context loaded
+⏳ Method research and authoring
+○ Method contract check
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
+```
+
+The earlier context concern was disproven by tracing the production checkpoint
+prompts. No contamination or runtime failure is present.
+
+### Delta — session 1/60, pairs 0/50
+
+```text
+✓ Infrastructure bootstrap
+✓ Literature context loaded
+⏳ Method research and authoring
+○ Method contract check
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
+```
+
+No runtime failure.
+
+### Epsilon — session 1/60, pairs 0/50
+
+```text
+✓ Infrastructure bootstrap
+✓ Literature and leaderboard context loaded
+⏳ Method research and authoring
+○ Method contract check
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
+```
+
+No runtime failure.
+
+Total: **0/250 completed atomic score/finding pairs**.
+
 #### ⏭️ Next step
 
 Finish fail-closed source validation and obtain explicit confirmation of the
