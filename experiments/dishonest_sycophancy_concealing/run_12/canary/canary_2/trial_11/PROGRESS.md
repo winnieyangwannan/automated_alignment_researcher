@@ -84,3 +84,33 @@ Attempt root:
 Team: `run12-gemma4-31b-kimi26-alpha-1814907`. At this update research job
 `1814992` is pending allocation and controller `1814993` is correctly pending on
 its dependency. The separate monitor is active; evaluator count remains zero.
+
+### ⏳ 05:37 PT — RUNNING: canonical baseline started after verified freeze
+
+Research `1814992` started at 04:51:41 PT. The proposal was approved after one
+specific semantic-review correction, creating workspace
+`ws_e09c3e2ee4384c0db53892fb3d432453`. Clarification, grounding, pipeline
+authoring, deterministic reviews, and dry runs completed; the workspace froze at
+revision 10.
+
+Trusted reconciliation safely cancelled the freeze-created default execution
+at zero attempts and registered canonical meta execution
+`exe_3055ea6409f34720a908bb8b5039da4f`. Its durable native contract is three
+iterations with a 699-attempt ceiling. The execution entered `baseline_pending`.
+
+```text
+✓ Endpoint, MCP, immutable-source, and adapter preflight
+✓ Proposal review and approval
+✓ Workspace clarification and grounding
+✓ Pipeline authoring, checks, and dry runs
+✓ Deterministic baseline review and workspace freeze
+⏳ Canonical meta baseline (execution exe_3055ea6409f34720a908bb8b5039da4f)
+○ Meta iterations 1–3
+○ Production and verified handoff
+○ One-step training smoke
+```
+
+The repaired supervisor heartbeat has live proof: a native step ran from
+05:35:58 through 05:37:04 PT while the durable `stepping` status refreshed every
+30 seconds. Kimi did not raise the stale-heartbeat failure that stopped Trial 10.
+Evaluator count remains zero.

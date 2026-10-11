@@ -53,3 +53,18 @@ All displayed timestamps use Pacific Time (`PT`).
 - Research `1814992`: submitted 04:49:48 PT; pending allocation at 04:50 PT.
 - Controller `1814993`: submitted 04:49:48 PT; dependency-gated.
 - Evaluator job: absent.
+
+## Research and workspace
+
+- Research `1814992` started: 04:51:41 PT.
+- Proposal approved/workspace registered: 05:13:31 PT.
+- Clarification completed: 05:19:01 PT.
+- Grounding authoring completed: 05:20:34 PT.
+- Grounding approval completed: 05:21:06 PT.
+- Pipeline authoring revisions completed: 05:31:27, 05:32:33, and 05:35:57
+  PT; three checks and five dry-run attempts passed.
+- Deterministic baseline review completed: 05:37:28 PT.
+- Workspace frozen at revision 10; canonical execution
+  `exe_3055ea6409f34720a908bb8b5039da4f` entered `baseline_pending` at 05:37 PT.
+- Heartbeat repair proof: long native step 05:35:58–05:37:04 PT retained fresh
+  30-second status updates without a false liveness failure.
