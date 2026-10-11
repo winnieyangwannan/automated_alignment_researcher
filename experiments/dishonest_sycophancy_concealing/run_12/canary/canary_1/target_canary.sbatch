@@ -81,13 +81,17 @@ PYTHONPATH="${CANARY_PYTHONPATH}" "${REPO}/.venv/bin/python" \
   > "${ROOT}/canary.log" 2>&1
 end_ns="$(date +%s%N)"
 
+generator_model="$(jq -er '.required_solve_env.AUTODATA_GENERATOR_MODEL' "${AAR_AUTODATA_CAMPAIGN_POLICY:?}")"
+generator_deployment="$(jq -er '.required_solve_env.AUTODATA_GENERATOR_DEPLOYMENT_ID' "${AAR_AUTODATA_CAMPAIGN_POLICY:?}")"
+judge_model="$(jq -er '.required_solve_env.AUTODATA_JUDGE_MODEL' "${AAR_AUTODATA_CAMPAIGN_POLICY:?}")"
+target_deployment="$(jq -er '.required_solve_env.AUTODATA_TARGET_DEPLOYMENT_ID' "${AAR_AUTODATA_CAMPAIGN_POLICY:?}")"
 PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" \
   "${REPO}/scripts/verify_autodata_canary_proof.py" \
   --root "${ROOT}" \
-  --generator-model "${AUTODATA_GENERATOR_MODEL:?}" \
-  --generator-deployment-id "${AUTODATA_GENERATOR_DEPLOYMENT_ID:?}" \
-  --judge-model "${AUTODATA_JUDGE_MODEL:?}" \
-  --expected-target-deployment-id "${AUTODATA_TARGET_DEPLOYMENT_ID:?}"
+  --generator-model "${generator_model}" \
+  --generator-deployment-id "${generator_deployment}" \
+  --judge-model "${judge_model}" \
+  --expected-target-deployment-id "${target_deployment}"
 
 PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" - "${ROOT}" "${start_ns}" "${end_ns}" <<'PY'
 import json

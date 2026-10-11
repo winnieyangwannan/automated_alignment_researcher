@@ -344,6 +344,9 @@ def test_run12_uses_separate_kimi_deployments_and_maximum_token_allowances() -> 
     assert "KIMI_MODEL_MAX_OUTPUT_SIZE=65536" in launcher
     assert "KIMI_MODEL_MAX_COMPLETION_TOKENS=65536" in launcher
     assert '"${AAR_AUTODATA_RECIPE_ROOT:?}"' in canary_job
+    assert ".required_solve_env.AUTODATA_GENERATOR_MODEL" in canary_job
+    assert ".required_solve_env.AUTODATA_JUDGE_MODEL" in canary_job
+    assert ".required_solve_env.AUTODATA_TARGET_DEPLOYMENT_ID" in canary_job
     assert "KIMI_MODEL_MAX_CONTEXT_SIZE=262144" in pipeline
     assert "KIMI_MODEL_MAX_OUTPUT_SIZE=65536" in pipeline
     assert "KIMI_MODEL_MAX_COMPLETION_TOKENS=65536" in pipeline
