@@ -30,3 +30,13 @@ All displayed timestamps use Pacific Time (`PT`).
 ○ Production and verified handoff
 ○ One-step training smoke
 ```
+
+## Live attempt
+
+- Attempt root:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T110535Z-9d6a25606a38`.
+- Immutable AAR source: `9d6a25606a38c95653af02c3e74281bd3293aa3c`.
+- Launcher `1814684`: completed at 04:08:52 PT, `COMPLETED 0:0`.
+- Research `1814688`: created at 04:08 PT.
+- Controller `1814689`: created at 04:08 PT, dependency-gated.
+- Evaluator job: absent.
