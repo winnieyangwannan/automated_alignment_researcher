@@ -22,6 +22,7 @@ import requests
 
 from aar.failure_feedback import FailureFeedbackError
 from aar.research_loop.kimi_agent import (
+    AutoDataActionResultValidationError,
     PROTECTED_SUBMISSION_FILES,
     KimiAgent,
     KimiToolUseBlock,
@@ -2882,7 +2883,12 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                 patch.object(
                     KimiAgent,
                     "_autodata_action_record",
-                    return_value=None,
+                    return_value={
+                        "id": action_id,
+                        "kind": "mutate_candidate",
+                        "status": "in_progress",
+                        "spec": {"outputs": ["summary"]},
+                    },
                 ),
                 patch.object(KimiAgent, "_autodata_cli") as cli,
             ):
@@ -2900,6 +2906,115 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
             )
             self.assertFalse(lease_path.exists())
             self.assertFalse(result_path.exists())
+
+    def test_autodata_action_completion_unwraps_valid_aar_envelope(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            action_id = "act_" + "e" * 24
+            action = {
+                "id": action_id,
+                "kind": "analyze_results",
+                "status": "in_progress",
+                "spec": {"outputs": ["proposal", "dashboard_summary"]},
+            }
+            result_path = root / "result.json"
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "schema": "autodata.action-result/v1",
+                        "status": "completed",
+                        "action_id": action_id,
+                        "outputs": {
+                            "proposal": "Change one bounded generation setting.",
+                            "dashboard_summary": {
+                                "headline": "Bounded change",
+                                "summary": "Visible evidence supports one change.",
+                                "next_step": "Evaluate the candidate.",
+                            },
+                        },
+                    }
+                )
+            )
+            completed_payloads: list[dict[str, object]] = []
+
+            def complete(*arguments: str) -> dict[str, object]:
+                completed_payloads.append(
+                    json.loads(Path(arguments[-1]).read_text(encoding="utf-8"))
+                )
+                return {"status": "completed"}
+
+            with (
+                patch.dict(os.environ, {"TEAM_DIR": str(root)}, clear=False),
+                patch.object(
+                    KimiAgent, "_autodata_action_record", return_value=action
+                ),
+                patch.object(KimiAgent, "_autodata_cli", side_effect=complete),
+            ):
+                lease_path = KimiAgent._autodata_action_lease_path(action_id)
+                KimiAgent._write_private_text(lease_path, "x" * 32)
+                KimiAgent._autodata_complete_action(action_id, result_path)
+
+            self.assertEqual(
+                completed_payloads,
+                [
+                    {
+                        "proposal": "Change one bounded generation setting.",
+                        "dashboard_summary": {
+                            "headline": "Bounded change",
+                            "summary": "Visible evidence supports one change.",
+                            "next_step": "Evaluate the candidate.",
+                        },
+                    }
+                ],
+            )
+            self.assertFalse(lease_path.exists())
+            self.assertFalse(result_path.exists())
+
+    def test_autodata_action_completion_rejects_missing_native_output_for_retry(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            action_id = "act_" + "f" * 24
+            action = {
+                "id": action_id,
+                "kind": "analyze_results",
+                "status": "in_progress",
+                "spec": {"outputs": ["proposal", "dashboard_summary"]},
+            }
+            result_path = root / "result.json"
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "schema": "autodata.action-result/v1",
+                        "status": "completed",
+                        "action_id": action_id,
+                        "outputs": {"dashboard_summary": {}},
+                    }
+                )
+            )
+            with (
+                patch.dict(os.environ, {"TEAM_DIR": str(root)}, clear=False),
+                patch.object(
+                    KimiAgent, "_autodata_action_record", return_value=action
+                ),
+                patch.object(KimiAgent, "_autodata_cli") as cli,
+            ):
+                lease_path = KimiAgent._autodata_action_lease_path(action_id)
+                KimiAgent._write_private_text(lease_path, "x" * 32)
+                with self.assertRaisesRegex(
+                    AutoDataActionResultValidationError,
+                    "missing declared output.*proposal",
+                ):
+                    KimiAgent._autodata_complete_action(action_id, result_path)
+                feedback_path = KimiAgent._autodata_action_result_feedback_path(
+                    action_id
+                )
+
+            cli.assert_not_called()
+            self.assertTrue(lease_path.exists())
+            self.assertFalse(result_path.exists())
+            self.assertIn("proposal", feedback_path.read_text(encoding="utf-8"))
 
     def test_protected_submission_hash_mismatch_publishes_team_incident(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

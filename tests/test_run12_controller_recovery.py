@@ -85,9 +85,20 @@ def test_chain_retains_signal_marker_before_bounded_child_cleanup() -> None:
 def test_chain_keeps_privileged_service_logs_out_of_research_logs() -> None:
     source = CHAIN.read_text()
 
-    assert "_aar_auth_bridge_log=/dev/null" in source
-    assert "_aar_broker_log=/dev/null" in source
-    assert "_aar_supervisor_log=/dev/null" in source
+    assert 'mkdir -p "${TEAM_DIR}/secrets/failure-evidence"' in source
+    assert (
+        '_aar_auth_bridge_log="${TEAM_DIR}/secrets/failure-evidence/'
+        'autodata-kimi-auth-bridge-${SLURM_JOB_ID:-$$}.log"' in source
+    )
+    assert (
+        '_aar_broker_log="${TEAM_DIR}/secrets/failure-evidence/'
+        'autodata-broker.log"' in source
+    )
+    assert (
+        '_aar_supervisor_log="${TEAM_DIR}/secrets/failure-evidence/'
+        'autodata-lifecycle-supervisor.log"' in source
+    )
+    assert "_aar_supervisor_log=/dev/null" not in source
     assert '>"${_aar_auth_bridge_log}"' in source
     assert '> "${_aar_broker_log}"' in source
     assert '--log-file "${_aar_supervisor_log}"' in source

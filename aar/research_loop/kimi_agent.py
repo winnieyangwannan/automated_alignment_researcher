@@ -75,6 +75,10 @@ class OrchestrationIncident(RuntimeError):
         super().__init__(message)
 
 
+class AutoDataActionResultValidationError(RuntimeError):
+    """A researcher-authored result can be corrected before native completion."""
+
+
 def _retain_process_failure(
     *,
     error: BaseException,
@@ -615,14 +619,21 @@ class KimiAgent:
                                         action
                                     )
                                 ):
-                                    self._autodata_complete_action(
-                                        str(action["id"]), result_path
-                                    )
-                                    print(
-                                        "[Kimi] host FSM completed durable action "
-                                        f"result without a model turn: {action['id']}"
-                                    )
-                                    continue
+                                    try:
+                                        self._autodata_complete_action(
+                                            str(action["id"]), result_path
+                                        )
+                                    except AutoDataActionResultValidationError as error:
+                                        print(
+                                            "[Kimi] host FSM rejected correctable action "
+                                            f"result: {error}"
+                                        )
+                                    else:
+                                        print(
+                                            "[Kimi] host FSM completed durable action "
+                                            f"result without a model turn: {action['id']}"
+                                        )
+                                        continue
                     command = [executable]
                     if self.model:
                         command.extend(["--model", self.model])
@@ -1118,6 +1129,17 @@ class KimiAgent:
                         self._autodata_prepare_editable_paths(action)
                         action_spec = json.dumps(action.get("spec"), sort_keys=True)[:6000]
                         editable_context = self._autodata_editable_context(action)
+                        validation_feedback = ""
+                        feedback_path = self._autodata_action_result_feedback_path(
+                            str(action["id"])
+                        )
+                        if feedback_path.is_file() and not feedback_path.is_symlink():
+                            validation_feedback = (
+                                " The previous result was rejected before native "
+                                "completion: "
+                                + feedback_path.read_text(encoding="utf-8").strip()[:1000]
+                                + ". Rewrite the complete result JSON now."
+                            )
                         if requires_pipeline_edit:
                             strategy_path = (
                                 Path(action["spec"]["editable_root"])
@@ -1153,7 +1175,8 @@ class KimiAgent:
                             "the action, adopt them unchanged and write the action-result "
                             "JSON immediately instead of rewriting them. "
                             "Otherwise write a valid JSON object to "
-                            f"{result_path} satisfying the requested outputs. Use only "
+                            f"{result_path} satisfying the requested outputs."
+                            f"{validation_feedback} Use only "
                             "the action instructions and allowed paths; do not use Bash. "
                             f"Action specification: {action_spec}. "
                             f"Current allowed-file content: {editable_context}"
@@ -1629,6 +1652,16 @@ class KimiAgent:
         return root / f"{safe_action_id}.generation-strategy.sha256"
 
     @staticmethod
+    def _autodata_action_result_feedback_path(action_id: str) -> Path:
+        team_raw = os.environ.get("TEAM_DIR", "").strip()
+        if not team_raw:
+            raise RuntimeError("TEAM_DIR is required for AutoData action results")
+        root = Path(team_raw) / "autodata" / "action-results"
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        root.chmod(0o700)
+        return root / f"{action_id}.validation.txt"
+
+    @staticmethod
     def _write_private_text(path: Path, value: str) -> None:
         descriptor, raw_temporary = tempfile.mkstemp(
             prefix=f".{path.name}.", dir=path.parent, text=True
@@ -1690,16 +1723,134 @@ class KimiAgent:
         return token
 
     @classmethod
+    def _autodata_normalize_action_result(
+        cls,
+        action: dict[str, Any],
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Return the exact flat result shape consumed by native AutoData."""
+        action_id = action.get("id")
+        spec = action.get("spec")
+        if not isinstance(action_id, str) or not isinstance(spec, dict):
+            raise AutoDataActionResultValidationError(
+                "native AutoData action metadata is incomplete"
+            )
+        declared = spec.get("outputs")
+        if (
+            not isinstance(declared, list)
+            or not declared
+            or any(not isinstance(name, str) or not name for name in declared)
+            or len(set(declared)) != len(declared)
+        ):
+            raise AutoDataActionResultValidationError(
+                "native AutoData action has invalid declared outputs"
+            )
+
+        if "outputs" in result:
+            wrapper_keys = {"schema", "status", "action_id", "outputs"}
+            if set(result) - wrapper_keys:
+                raise AutoDataActionResultValidationError(
+                    "action result mixes envelope and top-level output fields"
+                )
+            if result.get("schema") != "autodata.action-result/v1":
+                raise AutoDataActionResultValidationError(
+                    "action result envelope has the wrong schema"
+                )
+            if result.get("status") != "completed":
+                raise AutoDataActionResultValidationError(
+                    "action result envelope status must be completed"
+                )
+            wrapped_action_id = result.get("action_id")
+            if wrapped_action_id is not None and wrapped_action_id != action_id:
+                raise AutoDataActionResultValidationError(
+                    "action result envelope names the wrong action"
+                )
+            outputs = result.get("outputs")
+            if not isinstance(outputs, dict):
+                raise AutoDataActionResultValidationError(
+                    "action result envelope outputs must be one JSON object"
+                )
+            normalized = dict(outputs)
+        else:
+            normalized = dict(result)
+
+        missing = [name for name in declared if name not in normalized]
+        unexpected = sorted(set(normalized) - set(declared))
+        if missing:
+            raise AutoDataActionResultValidationError(
+                "action result is missing declared output(s): " + ", ".join(missing)
+            )
+        if unexpected:
+            raise AutoDataActionResultValidationError(
+                "action result has undeclared output(s): " + ", ".join(unexpected)
+            )
+        for name in declared:
+            value = normalized[name]
+            if value is None:
+                raise AutoDataActionResultValidationError(
+                    f"action result output {name!r} must not be null"
+                )
+            if name in {"proposal", "summary"} and (
+                not isinstance(value, str) or not value.strip()
+            ):
+                raise AutoDataActionResultValidationError(
+                    f"action result output {name!r} must be a non-empty string"
+                )
+            if name == "decisions" and not isinstance(value, list):
+                raise AutoDataActionResultValidationError(
+                    "action result output 'decisions' must be a list"
+                )
+            if name == "dashboard_summary" and not isinstance(value, dict):
+                raise AutoDataActionResultValidationError(
+                    "action result output 'dashboard_summary' must be an object"
+                )
+        return {name: normalized[name] for name in declared}
+
+    @classmethod
     def _autodata_complete_action(cls, action_id: str, result_path: Path) -> None:
+        action = cls._autodata_action_record(action_id)
+        if action is None or action.get("status") != "in_progress":
+            raise RuntimeError("native AutoData action is unavailable for completion")
+        if result_path.is_symlink() or not result_path.is_file():
+            raise RuntimeError("AutoData action result must be a regular file")
         try:
             result = json.loads(result_path.read_text())
-        except (OSError, json.JSONDecodeError) as error:
-            raise RuntimeError("AutoData action result is not valid JSON") from error
+        except json.JSONDecodeError as error:
+            validation_error = AutoDataActionResultValidationError(
+                "action result is not valid JSON"
+            )
+            cls._write_private_text(
+                cls._autodata_action_result_feedback_path(action_id),
+                str(validation_error),
+            )
+            result_path.unlink(missing_ok=True)
+            raise validation_error from error
+        except OSError as error:
+            raise RuntimeError("AutoData action result could not be read") from error
         if not isinstance(result, dict):
-            raise RuntimeError("AutoData action result must be one JSON object")
+            validation_error = AutoDataActionResultValidationError(
+                "action result must be one JSON object"
+            )
+            cls._write_private_text(
+                cls._autodata_action_result_feedback_path(action_id),
+                str(validation_error),
+            )
+            result_path.unlink(missing_ok=True)
+            raise validation_error
         lease_path = cls._autodata_action_lease_path(action_id)
         token = cls._autodata_require_action_lease(action_id)
-        action = cls._autodata_action_record(action_id)
+        try:
+            normalized = cls._autodata_normalize_action_result(action, result)
+        except AutoDataActionResultValidationError as error:
+            cls._write_private_text(
+                cls._autodata_action_result_feedback_path(action_id), str(error)
+            )
+            result_path.unlink(missing_ok=True)
+            raise
+        cls._write_private_text(
+            result_path,
+            json.dumps(normalized, sort_keys=True, separators=(",", ":")),
+        )
         if action is not None and action["kind"] == "author_grounding":
             cls._autodata_repair_incomplete_grounding(action)
         cls._autodata_cli(
@@ -1712,6 +1863,7 @@ class KimiAgent:
         )
         lease_path.unlink(missing_ok=True)
         result_path.unlink(missing_ok=True)
+        cls._autodata_action_result_feedback_path(action_id).unlink(missing_ok=True)
 
         if action is not None:
             cls._autodata_action_snapshot_path(action_id).unlink(missing_ok=True)

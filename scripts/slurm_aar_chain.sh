@@ -78,16 +78,14 @@ export FORUM_BACKEND=fs           # default under LOCAL_MODE; explicit for clari
 # ===========================================================================
 export TEAM_DIR="${TEAM_DIR:-${AAR_RUNTIME_ROOT}/aar_teams/${TEAM_ID}}"
 mkdir -p "${TEAM_DIR}"/{forum,submissions,scores,methods,logs,litreview,_train}
-_aar_auth_bridge_log=/dev/null
-_aar_broker_log=/dev/null
-_aar_supervisor_log=/dev/null
-if [ "${AAR_RESEARCH_ENV_ISOLATION:-0}" = 1 ]; then
-  mkdir -p "${TEAM_DIR}/secrets/failure-evidence"
-  chmod 700 "${TEAM_DIR}/secrets" "${TEAM_DIR}/secrets/failure-evidence"
-  _aar_auth_bridge_log="${TEAM_DIR}/secrets/failure-evidence/autodata-kimi-auth-bridge-${SLURM_JOB_ID:-$$}.log"
-  _aar_broker_log="${TEAM_DIR}/secrets/failure-evidence/autodata-broker.log"
-  _aar_supervisor_log="${TEAM_DIR}/secrets/failure-evidence/autodata-lifecycle-supervisor.log"
-fi
+# Privileged service diagnostics are always retained outside researcher-facing
+# logs.  This must not depend on the optional process-isolation mode: otherwise
+# a native transition failure becomes irrecoverably opaque.
+mkdir -p "${TEAM_DIR}/secrets/failure-evidence"
+chmod 700 "${TEAM_DIR}/secrets" "${TEAM_DIR}/secrets/failure-evidence"
+_aar_auth_bridge_log="${TEAM_DIR}/secrets/failure-evidence/autodata-kimi-auth-bridge-${SLURM_JOB_ID:-$$}.log"
+_aar_broker_log="${TEAM_DIR}/secrets/failure-evidence/autodata-broker.log"
+_aar_supervisor_log="${TEAM_DIR}/secrets/failure-evidence/autodata-lifecycle-supervisor.log"
 export LOCAL_FINDINGS_DIR="${LOCAL_FINDINGS_DIR:-${TEAM_DIR}/forum}"
 export SUBMISSIONS_DIR="${SUBMISSIONS_DIR:-${TEAM_DIR}/submissions}"
 export SCORES_DIR="${SCORES_DIR:-${TEAM_DIR}/scores}"

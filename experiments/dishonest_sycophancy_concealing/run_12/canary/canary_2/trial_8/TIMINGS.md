@@ -37,3 +37,25 @@ All displayed timestamps use Pacific Time (`PT`).
 ○ Production and verified handoff
 ○ One-step training smoke
 ```
+
+## Terminal timing
+
+- Workspace proposal/authoring/freeze: 03:39–03:47 PT.
+- Canonical baseline: completed by 03:48:39 PT; 96/699 attempts used.
+- Analysis action: completed at approximately 03:49:05 PT.
+- Native transition retries: failed without state progress through 03:49:33 PT.
+- Research `1814230`: 03:30:53–03:49:50 PT, `FAILED 1:0`.
+- Controller `1814231`: terminal reconciliation through 03:50:18 PT,
+  `FAILED 1:0`.
+- Trial outcome: stopped before meta iteration 1 mutation.
+- Production, handoff, training, and evaluator time: 0 seconds.
+- Root cause confirmed by isolated native replay at 03:56 PT.
+
+```text
+✓ Canonical lineage routing
+✓ Exact canonical baseline
+✓ Analysis action lease/completion
+✗ AAR envelope was not flattened to native action-result fields
+✓ Failed closed before mutation/production/training/evaluation
+✓ Retained Trial 8 evidence remained unchanged during diagnosis
+```

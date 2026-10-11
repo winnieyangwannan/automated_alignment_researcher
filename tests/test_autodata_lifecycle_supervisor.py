@@ -633,6 +633,56 @@ def test_supervisor_stops_three_unchanged_nonzero_steps(
         )
 
 
+def test_supervisor_surfaces_allowlisted_native_contract_diagnostic(
+    tmp_path: Path,
+) -> None:
+    log_file = tmp_path / "supervisor.log"
+    with log_file.open("a", encoding="utf-8", buffering=1) as log_handle:
+        supervisor = lifecycle_supervisor.Supervisor(
+            Namespace(
+                state=tmp_path / "state.db",
+                log_file=log_file,
+                log_handle=log_handle,
+            )
+        )
+        offset = log_handle.tell()
+        log_handle.write(
+            "autodata: analysis action result must include a non-empty proposal\n"
+        )
+        diagnostic = supervisor._safe_step_diagnostic(offset)
+
+    assert diagnostic == "analysis action result must include a non-empty proposal"
+    subject = lifecycle_supervisor.Subject(
+        "execution", "exe_stuck", "awaiting_analysis", 60, 60
+    )
+    supervisor._record_step_outcome(
+        subject,
+        return_code=2,
+        timed_out=False,
+        stalled=False,
+        safe_diagnostic=diagnostic,
+    )
+    supervisor._record_step_outcome(
+        subject,
+        return_code=2,
+        timed_out=False,
+        stalled=False,
+        safe_diagnostic=diagnostic,
+    )
+    with pytest.raises(
+        lifecycle_supervisor.NativeStepFailure,
+        match="analysis action result must include a non-empty proposal",
+    ) as failure:
+        supervisor._record_step_outcome(
+            subject,
+            return_code=2,
+            timed_out=False,
+            stalled=False,
+            safe_diagnostic=diagnostic,
+        )
+    assert failure.value.error_code == "native_action_result_contract_failed"
+
+
 def test_supervisor_stops_repeated_failure_despite_database_mtime_progress(
     tmp_path: Path,
 ) -> None:

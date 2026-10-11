@@ -15,6 +15,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import sqlite3
@@ -63,6 +64,26 @@ PRODUCTION_GROUNDING_PATH = "grounding/production-manifest.json"
 PRODUCTION_ID_PREFIX = "safety-prod"
 PRODUCTION_SEED_OFFSET = 1000
 _MAX_PRIVATE_PROCESS_OUTPUT_BYTES = 1024 * 1024
+_MAX_NATIVE_DIAGNOSTIC_BYTES = 1024 * 1024
+
+
+class NativeStepFailure(RuntimeError):
+    """Terminal native-step failure with a content-safe public classification."""
+
+    def __init__(self, detail: str | None = None) -> None:
+        self.detail = detail
+        self.error_code = (
+            "native_action_result_contract_failed"
+            if detail is not None
+            else "lifecycle_step_failed"
+        )
+        self.public_summary = "native AutoData lifecycle step failed"
+        if detail is not None:
+            self.public_summary += f": {detail}"
+        message = "native AutoData step failed three times without state progress"
+        if detail is not None:
+            message += f": {detail}"
+        super().__init__(message)
 
 
 def _retain_operator_process_evidence(
@@ -2456,6 +2477,7 @@ class Supervisor:
         return_code: int,
         timed_out: bool,
         stalled: bool,
+        safe_diagnostic: str | None = None,
     ) -> None:
         if return_code == 0 and not timed_out and not stalled:
             self.failed_step_signature = None
@@ -2472,9 +2494,36 @@ class Supervisor:
             self.failed_step_signature = failed_signature
             self.failed_step_count = 1
         if self.failed_step_count >= 3:
-            raise RuntimeError(
-                "native AutoData step failed three times without state progress"
-            )
+            raise NativeStepFailure(safe_diagnostic)
+
+    def _safe_step_diagnostic(self, log_offset: int) -> str | None:
+        """Extract only allowlisted, content-free native contract diagnostics."""
+        self.args.log_handle.flush()
+        try:
+            with self.args.log_file.open("rb") as handle:
+                handle.seek(log_offset)
+                raw = handle.read(_MAX_NATIVE_DIAGNOSTIC_BYTES + 1)
+        except OSError:
+            return None
+        if len(raw) > _MAX_NATIVE_DIAGNOSTIC_BYTES:
+            raw = raw[-_MAX_NATIVE_DIAGNOSTIC_BYTES:]
+        text = raw.decode("utf-8", errors="replace")
+        safe_exact = {
+            "analysis action result must include a non-empty proposal",
+            "analysis action has not completed",
+            "mutation action has not completed",
+        }
+        for line in reversed(text.splitlines()):
+            if not line.startswith("autodata: "):
+                continue
+            detail = line.removeprefix("autodata: ").strip()
+            if detail in safe_exact:
+                return detail
+            if re.fullmatch(
+                r"execution cannot step from phase '[a-z][a-z0-9_]*'", detail
+            ):
+                return detail
+        return None
 
     def _step(self, subject: Subject) -> None:
         command = [
@@ -2499,6 +2548,8 @@ class Supervisor:
             timeout_seconds=subject.timeout_seconds,
             stall_seconds=subject.stall_seconds,
         )
+        self.args.log_handle.flush()
+        log_offset = self.args.log_handle.tell()
         started = time.monotonic()
         self.current = subprocess.Popen(
             command,
@@ -2559,6 +2610,7 @@ class Supervisor:
             return_code=return_code,
             timed_out=timed_out,
             stalled=stalled,
+            safe_diagnostic=self._safe_step_diagnostic(log_offset),
         )
         if return_code != 0 or timed_out or stalled:
             time.sleep(self.args.error_backoff_seconds)
@@ -2650,12 +2702,17 @@ class Supervisor:
             try:
                 self._step(subject)
             except Exception as error:
+                error_code = "lifecycle_step_failed"
+                public_summary = "native AutoData lifecycle step failed"
+                if isinstance(error, NativeStepFailure):
+                    error_code = error.error_code
+                    public_summary = error.public_summary
                 feedback = self._failure_feedback(
                     error,
-                    error_code="lifecycle_step_failed",
+                    error_code=error_code,
                     stage="autodata_lifecycle",
                     retryable=False,
-                    public_summary="native AutoData lifecycle step failed",
+                    public_summary=public_summary,
                 )
                 self._snapshot("supervisor-step-failure")
                 self._write_status(
