@@ -165,6 +165,117 @@ def _unsupported_training_arguments(tree: ast.AST) -> list[str]:
     return sorted(unsupported)
 
 
+def _dry_run_model_loading_errors(tree: ast.AST) -> list[str]:
+    """Require dry-run to exit before any statically visible model load.
+
+    The executable dry-run is intentionally CPU-only. A generated method that
+    merely declares ``dry_run`` but reaches ``from_pretrained`` can otherwise
+    try to materialize the full target model and be killed before the validator
+    can publish actionable feedback.
+    """
+
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    def call_name(node: ast.Call) -> str:
+        function = node.func
+        if isinstance(function, ast.Name):
+            return function.id
+        if isinstance(function, ast.Attribute):
+            return function.attr
+        return ""
+
+    loader_functions = {
+        name
+        for name, function in functions.items()
+        if any(
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and child.func.attr == "from_pretrained"
+            for child in ast.walk(function)
+        )
+    }
+    # Propagate through small helper stacks such as
+    # load_base_model_and_tokenizer() -> load_model() -> from_pretrained().
+    changed = True
+    while changed:
+        changed = False
+        for name, function in functions.items():
+            if name in loader_functions:
+                continue
+            if any(
+                isinstance(child, ast.Call)
+                and call_name(child) in loader_functions
+                for child in ast.walk(function)
+            ):
+                loader_functions.add(name)
+                changed = True
+
+    run_experiment = functions.get("run_experiment")
+    if run_experiment is None:
+        return []
+
+    def contains_model_load(node: ast.AST) -> bool:
+        return any(
+            isinstance(child, ast.Call)
+            and (
+                (
+                    isinstance(child.func, ast.Attribute)
+                    and child.func.attr == "from_pretrained"
+                )
+                or call_name(child) in loader_functions
+            )
+            for child in ast.walk(node)
+        )
+
+    def tests_dry_run(node: ast.AST) -> bool:
+        return any(
+            isinstance(child, ast.Attribute)
+            and isinstance(child.value, ast.Name)
+            and child.value.id == "config"
+            and child.attr == "dry_run"
+            for child in ast.walk(node)
+        )
+
+    def block_exits(statements: list[ast.stmt]) -> bool:
+        for statement in statements:
+            if isinstance(statement, (ast.Return, ast.Raise)):
+                return True
+            if isinstance(statement, ast.If) and statement.orelse:
+                if block_exits(statement.body) and block_exits(statement.orelse):
+                    return True
+        return False
+
+    first_load_index = next(
+        (
+            index
+            for index, statement in enumerate(run_experiment.body)
+            if contains_model_load(statement)
+        ),
+        None,
+    )
+    if first_load_index is None:
+        return []
+
+    for statement in run_experiment.body[:first_load_index]:
+        if (
+            isinstance(statement, ast.If)
+            and tests_dry_run(statement.test)
+            and block_exits(statement.body)
+            and not contains_model_load(statement)
+        ):
+            return []
+
+    return [
+        "run_experiment must return immediately when config.dry_run is true "
+        "before any model/tokenizer from_pretrained call or loader helper; the "
+        "CPU-only contract check must never materialize the target model"
+    ]
+
+
 def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
     """Reject target-environment API and batching failures before GPU launch."""
     errors: set[str] = set()
@@ -1033,6 +1144,8 @@ def validate(
             errors.append(
                 f"missing required phase contexts: {', '.join(missing)}{detail}"
             )
+        if run_dry_run:
+            errors.extend(_dry_run_model_loading_errors(tree))
         if (
             "BitsAndBytesConfig" in source_text
             and importlib.util.find_spec("bitsandbytes") is None

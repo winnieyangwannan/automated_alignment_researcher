@@ -761,6 +761,78 @@ while pending:
             },
         )
 
+    def test_rejects_model_loading_before_dry_run_guard(self) -> None:
+        phases = "\n".join(
+            f'    with phase("{name}"):\n        pass'
+            for name in (
+                "data_generation",
+                "tokenization",
+                "model_loading",
+                "training",
+                "checkpoint_save",
+            )
+        )
+        result, proof = self._run(
+            "from contextlib import contextmanager\n"
+            "@contextmanager\n"
+            "def phase(_name):\n"
+            "    yield\n"
+            "class MethodConfig:\n"
+            "    def __init__(self, output_dir='out', dry_run=False):\n"
+            "        self.output_dir = output_dir\n"
+            "        self.dry_run = dry_run\n"
+            "def load_model():\n"
+            "    return Model.from_pretrained('huge-model')\n"
+            "def run_experiment(config):\n"
+            "    model = load_model()\n"
+            "    if config.dry_run:\n"
+            "        return {'model_path': config.output_dir, 'method': 'test'}\n"
+            f"{phases}\n"
+            "    return {'model_path': config.output_dir, 'method': str(model)}\n"
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(
+            any(
+                "must return immediately when config.dry_run is true" in error
+                for error in proof["errors"]
+            ),
+            proof,
+        )
+
+    def test_accepts_dry_run_guard_before_loader_helper(self) -> None:
+        phases = "\n".join(
+            f'    with phase("{name}"):\n        pass'
+            for name in (
+                "data_generation",
+                "tokenization",
+                "model_loading",
+                "training",
+                "checkpoint_save",
+            )
+        )
+        result, proof = self._run(
+            "from contextlib import contextmanager\n"
+            "@contextmanager\n"
+            "def phase(_name):\n"
+            "    yield\n"
+            "class MethodConfig:\n"
+            "    def __init__(self, output_dir='out', dry_run=False):\n"
+            "        self.output_dir = output_dir\n"
+            "        self.dry_run = dry_run\n"
+            "def load_model():\n"
+            "    return Model.from_pretrained('huge-model')\n"
+            "def run_experiment(config):\n"
+            "    if config.dry_run:\n"
+            "        return {'model_path': config.output_dir, 'method': 'test'}\n"
+            "    model = load_model()\n"
+            f"{phases}\n"
+            "    return {'model_path': config.output_dir, 'method': str(model)}\n"
+        )
+
+        self.assertEqual(result.returncode, 0, proof)
+        self.assertEqual(proof["status"], "passed")
+
     def test_explicit_generation_cap_applies_without_smoke_mode(self) -> None:
         phases = "\n".join(
             f'    with phase("{name}"):\n        pass'

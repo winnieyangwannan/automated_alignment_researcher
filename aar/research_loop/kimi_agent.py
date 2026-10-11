@@ -1541,15 +1541,111 @@ class KimiAgent:
             command.append("--require-smoke-run")
         if self._autodata_enabled():
             command.append("--require-autodata-loader")
-        completed = subprocess.run(
-            command,
-            cwd=self.workspace,
-            env=os.environ.copy(),
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=self.workspace,
+                env=os.environ.copy(),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            return_code: int | str = completed.returncode
+            stdout = completed.stdout or ""
+            stderr = completed.stderr or ""
+        except subprocess.TimeoutExpired as error:
+            return_code = "timeout"
+            stdout = (
+                error.stdout.decode(errors="replace")
+                if isinstance(error.stdout, bytes)
+                else error.stdout or ""
+            )
+            stderr = (
+                error.stderr.decode(errors="replace")
+                if isinstance(error.stderr, bytes)
+                else error.stderr or ""
+            )
+        output["tool_uses"].append(
+            {
+                "tool": "Bash",
+                "input": {
+                    "command": shlex.join(command),
+                    "return_code": return_code,
+                    "stdout": stdout[-4000:],
+                    "stderr": stderr[-4000:],
+                },
+            }
         )
+        if return_code != 0:
+            status, _errors = self._method_contract_status(method_path)
+            if status != "failed":
+                signal_detail = ""
+                if isinstance(return_code, int) and return_code < 0:
+                    signal_number = -return_code
+                    try:
+                        signal_name = signal.Signals(signal_number).name
+                    except ValueError:
+                        signal_name = f"signal {signal_number}"
+                    signal_detail = f" by {signal_name} ({return_code})"
+                elif return_code == "timeout":
+                    signal_detail = " after the 60-second validator timeout"
+                else:
+                    signal_detail = f" with status {return_code}"
+                diagnostics = (stderr.strip() or stdout.strip())[-2000:]
+                error_text = (
+                    "method contract validator terminated"
+                    f"{signal_detail} before publishing a source-bound failed "
+                    "proof; ensure run_experiment returns immediately for "
+                    "config.dry_run before loading models, tokenizers, datasets, "
+                    "or starting training"
+                )
+                if diagnostics:
+                    error_text += "; validator diagnostics: " + diagnostics
+                try:
+                    source_hash = hashlib.sha256(method_path.read_bytes()).hexdigest()
+                    failure_proof = {
+                        "schema_version": 1,
+                        "status": "failed",
+                        "method_path": str(method_path.resolve()),
+                        "source_sha256": source_hash,
+                        "requirements": {
+                            "run_dry_run": True,
+                            "require_gemma4_targets": os.environ.get(
+                                "AAR_REQUIRE_GEMMA4_TARGETS", "0"
+                            )
+                            == "1",
+                            "require_smoke_run": os.environ.get(
+                                "AAR_REQUIRE_METHOD_SMOKE", "0"
+                            )
+                            == "1",
+                            "require_autodata_loader": self._autodata_enabled(),
+                        },
+                        "errors": [error_text],
+                    }
+                    temporary = proof.with_name(f".{proof.name}.{os.getpid()}.tmp")
+                    temporary.write_text(
+                        json.dumps(failure_proof, indent=2, sort_keys=True) + "\n"
+                    )
+                    os.replace(temporary, proof)
+                except OSError as error:
+                    raise _retain_process_failure(
+                        error=error,
+                        error_code="method_contract_execution_failed",
+                        stage="research_session",
+                        public_summary=(
+                            "method contract validator failed and its diagnostic "
+                            "proof could not be published"
+                        ),
+                        retryable=self.continuation_exhaustion_retryable,
+                    ) from error
+            print(
+                "[Kimi] host checkpoint rejected the candidate method "
+                f"(status={return_code}); returning diagnostics to the researcher"
+            )
+            # Re-enter the host FSM once so it reads the failed proof and emits a
+            # targeted Write checkpoint instead of rerunning the same validator.
+            return True
         if not proof.is_file():
             raise _retain_process_failure(
                 error=RuntimeError("method validator did not publish its proof"),
@@ -1558,18 +1654,9 @@ class KimiAgent:
                 public_summary="method contract validator did not publish its proof",
                 retryable=self.continuation_exhaustion_retryable,
             )
-        output["tool_uses"].append(
-            {
-                "tool": "Bash",
-                "input": {
-                    "command": shlex.join(command),
-                    "return_code": completed.returncode,
-                },
-            }
-        )
         print(
             "[Kimi] host checkpoint validated the candidate method "
-            f"(status={completed.returncode})"
+            f"(status={return_code})"
         )
         return True
 

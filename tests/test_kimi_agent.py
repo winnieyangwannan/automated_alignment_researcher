@@ -1412,6 +1412,59 @@ class KimiAgentTest(unittest.TestCase):
             {"path": {"type": "string", "const": "/tmp/run.py"}},
         )
 
+    def test_host_validator_signal_failure_becomes_targeted_write_feedback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ideas = root / "methods"
+            method = ideas / "chain__kimi_candidate" / "run.py"
+            method.parent.mkdir(parents=True)
+            method.write_text("def run_experiment(config):\n    return {}\n")
+            agent = KimiAgent(
+                "test-agent",
+                root,
+                cli_path="/bin/true",
+                completion_tool="share_finding",
+            )
+            output = {"tool_uses": []}
+            validation_prompt = (
+                "Call Bash to validate the complete import, MethodConfig, dry-run "
+                "contract before proposal submission."
+            )
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "AAR_IDEAS_DIR": str(ideas),
+                        "IDEA_NAME": "chain",
+                    },
+                    clear=False,
+                ),
+                patch(
+                    "aar.research_loop.kimi_agent.subprocess.run",
+                    return_value=subprocess.CompletedProcess(
+                        args=["validator"],
+                        returncode=-9,
+                        stdout="",
+                        stderr="",
+                    ),
+                ),
+            ):
+                self.assertTrue(
+                    agent._execute_host_checkpoint(validation_prompt, output)
+                )
+                proof = json.loads(
+                    (method.parent / ".aar-method-contract.json").read_text()
+                )
+                next_prompt = agent._continuation_prompt(output)
+
+            self.assertEqual(proof["status"], "failed")
+            self.assertIn("SIGKILL", proof["errors"][0])
+            self.assertIn("config.dry_run", proof["errors"][0])
+            self.assertIn("Write tool exactly once", next_prompt)
+            self.assertIn("config.dry_run", next_prompt)
+            self.assertEqual(output["tool_uses"][0]["input"]["return_code"], -9)
+
     def test_fresh_session_repairs_existing_failed_candidate_from_exact_errors(
         self,
     ) -> None:
