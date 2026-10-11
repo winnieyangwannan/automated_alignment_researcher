@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: prepared and launch-blocked pending the `HARNESS_PY` repair gates
+- Status: launched from immutable source; launcher queued
 - Created: 2026-10-11 01:59 PT
-- Last updated: 2026-10-11 01:59 PT
+- Last updated: 2026-10-11 02:09 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -62,18 +62,25 @@ to these confirmed fields requires fresh user confirmation.
 
 Recorded: 2026-10-11 01:59 PT
 
-Trial 6 is authorized but not yet launchable. After the `HARNESS_PY` repair is
-committed, synchronized, and passes the focused HPC and live runtime gates, run
-the committed wrapper from the Run 12 directory on `fair-cw-use2-1`:
+The `HARNESS_PY` repair was committed, synchronized, and passed the exact HPC
+and live runtime gates. The committed wrapper launched automatically from the
+Run 12 directory on `fair-cw-use2-1`:
 
 ```bash
 AAR_RUN12_REUSE_BASE_DEPLOYMENT=winnieyangwn-r12-alpha-i1-c0dab4f7 \
   canary/canary_2/trial_6/submit_canary.sh
 ```
 
-It must submit one `alpha` bootstrap-canary chain, reuse the retained target,
-stop after `training_smoke`, and submit no evaluator. The command shown here is
-an operator contract; this preparation did not execute it.
+It submitted one `alpha` bootstrap-canary launcher, reused the retained target,
+and retained the `training_smoke`/no-evaluator contract.
+
+- AAR commit: `fb886848d58463cc4b7d5346cf9df2098c3181cb`
+- Native AutoData commit: `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`
+- Attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T090839Z-fb886848d584`
+- Launcher: `1812990`, initially `PENDING`
+- Source manifest digest:
+  `sha256:caf22733a7d574acdb22305dfc1e235e1ddd2c17ff3422c8025565852e262d96`
 
 ### Mandatory pre-launch gates
 

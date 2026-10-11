@@ -761,6 +761,49 @@ while pending:
             },
         )
 
+    def test_explicit_generation_cap_applies_without_smoke_mode(self) -> None:
+        phases = "\n".join(
+            f'    with phase("{name}"):\n        pass'
+            for name in (
+                "data_generation",
+                "tokenization",
+                "model_loading",
+                "training",
+                "checkpoint_save",
+            )
+        )
+        source = (
+            "from contextlib import contextmanager\n"
+            "@contextmanager\n"
+            "def phase(_name):\n"
+            "    yield\n"
+            "class MethodConfig:\n"
+            "    def __init__(self, output_dir='out', dry_run=False):\n"
+            "        self.output_dir = output_dir\n"
+            "        self.dry_run = dry_run\n"
+            "def generate(prompts):\n"
+            "    from aar.infrastructure.serve_v2 import chat_completion\n"
+            "    for prompt in prompts:\n"
+            "        chat_completion([{'role': 'user', 'content': prompt}])\n"
+            "def run_experiment(config):\n"
+            "    if config.dry_run:\n"
+            "        return {'model_path': config.output_dir, 'method': 'test'}\n"
+            f"{phases}\n"
+            "    return {'model_path': config.output_dir, 'method': 'test'}\n"
+        )
+        with patch.dict(
+            "os.environ",
+            {"AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS": "256"},
+            clear=False,
+        ):
+            result, proof = self._run(source)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(
+            any("local static bound" in error for error in proof["errors"]),
+            proof,
+        )
+
     def test_rejects_missing_method_config_and_phases(self) -> None:
         result, proof = self._run(
             "def run_experiment(config):\n"

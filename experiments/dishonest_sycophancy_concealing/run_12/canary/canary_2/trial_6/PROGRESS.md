@@ -114,3 +114,45 @@ at this event.
 
 Complete the environment-handoff repair and all mandatory gates. Only then may
 the already-authorized Trial 6 wrapper launch automatically.
+
+<a id="trial6-event-runtime-fix"></a>
+
+### ✅ 02:08 PT — PASS: trusted-runtime repair committed and passed HPC
+
+AAR commit `fb886848d58463cc4b7d5346cf9df2098c3181cb` introduces a separately
+named trusted external interpreter, preserves it through sanitized child
+environments, and restores it after every runtime environment source. Snapshot
+mode now rejects a missing, non-executable, or snapshot-resident interpreter;
+the pipeline also verifies the trusted secret environment, workspace, benchmark
+docs, and leading Python path after environment bootstrap. The long-lived chain
+controller reapplies the centralized runtime contract before capturing Python.
+
+Both multidimensional and v0 replication environments now default the
+interpreter only when the caller did not provide one. The systematic audit
+found no other direct `.venv` path in a Run 12 snapshot descendant.
+
+Validation passed:
+
+- devserver: 290 tests plus 9 subtests;
+- exact HPC Slurm job `1812944`: `COMPLETED 0:0`, 290 tests plus 9 subtests;
+- shell syntax, scoped ShellCheck, and diff checks;
+- clean exact AAR/native revisions, protected secret/checkpoint checks, exact
+  Trial 6 configuration, and all three live model endpoints.
+
+<a id="trial6-event-launch"></a>
+
+### ⏳ 02:09 PT — RUNNING: Trial 6 immutable-source launcher submitted
+
+The committed wrapper passed a fresh Kimi Bash-plus-MCP proof and created:
+
+- attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T090839Z-fb886848d584`;
+- launcher job: `1812990`, initially `PENDING`;
+- AAR snapshot: `fb886848d58463cc4b7d5346cf9df2098c3181cb`;
+- native snapshot: `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`;
+- source manifest digest:
+  `sha256:caf22733a7d574acdb22305dfc1e235e1ddd2c17ff3422c8025565852e262d96`.
+
+No child existed at the initial snapshot. A dedicated read-only monitor is
+tracking launcher gates, child creation, lifecycle progress, and the mandatory
+absence of evaluator jobs.

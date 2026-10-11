@@ -1037,6 +1037,10 @@ def validate(
                     + ", ".join(unsupported_training_args)
                 )
             errors.extend(_undefined_name_errors(method_path))
+        if (
+            require_smoke_run
+            or "AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS" in os.environ
+        ):
             errors.extend(_unsafe_training_api_errors(tree))
         if require_autodata_loader:
             errors.extend(_autodata_loader_errors(tree))
