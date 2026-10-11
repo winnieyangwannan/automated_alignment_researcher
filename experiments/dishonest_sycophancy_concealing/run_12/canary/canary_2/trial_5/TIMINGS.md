@@ -5,8 +5,8 @@ prompts, target responses, credentials, or held-out content belong here.
 
 ## Attempt identity
 
-- Status at 2026-10-11 01:55 PT: fresh immutable-source launcher job `1812713`
-  queued; no child jobs yet.
+- Status at 2026-10-11 01:58 PT: Trial 5 terminal after pre-child trusted
+  interpreter-path failure; Trial 6 repair audit in progress.
 - Native AutoData commit: `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`.
 - AAR source commit: `4e57c7fe07acd13e0b1e6cd94ca5bcdf09e751d9`.
 - Attempt root: `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T083852Z-4e57c7fe07ac`.
@@ -61,6 +61,12 @@ prompts, target responses, credentials, or held-out content belong here.
   preflight passed; fresh Kimi Bash-plus-MCP proof passed.
 - 01:55 PT: fresh Trial 5 attempt created with independent AAR and native
   snapshots; launcher job `1812713` submitted and initially queued.
+- 01:56:45–01:57:00 PT: launcher `1812713` ran for 15 seconds, passed both
+  immutable source gates, then failed `127:0` because the replication
+  environment overwrote the trusted interpreter with a nonexistent
+  snapshot-local `.venv/bin/python`.
+- 01:58 PT: full runtime-path override audit and trusted-interpreter repair
+  began for the authorized Trial 6 replacement.
 
 ## Work and quality counters
 
@@ -74,5 +80,5 @@ prompts, target responses, credentials, or held-out content belong here.
 
 ## Unmeasured stages
 
-Downstream runtime stages remain unmeasured until fresh launcher job `1812713`
-starts and records its child jobs.
+All downstream runtime stages remain unmeasured. Neither Trial 5 launcher
+created a child job.

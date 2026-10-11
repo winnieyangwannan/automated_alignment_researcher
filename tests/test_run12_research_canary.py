@@ -42,6 +42,9 @@ def test_run12_uses_attempt_local_detached_source_snapshots() -> None:
     pipeline = (SLURM / "pipeline.sbatch").read_text()
     runtime = (ROOT / "scripts" / "aar_runtime_env.sh").read_text()
     preflight = (ROOT / "scripts" / "preflight_aar.sh").read_text()
+    multidimensional_env = (ROOT / "replication" / "env_multidimensional.sh").read_text()
+    v0_env = (ROOT / "replication" / "env_v0.sh").read_text()
+    controller = (SLURM / "chain_controller.sbatch").read_text()
 
     assert 'SOURCE_REPO="${attempt}/runtime/aar-source"' in launcher
     assert 'SOURCE_AUTODATA="${attempt}/runtime/autodata-source"' in launcher
@@ -52,7 +55,8 @@ def test_run12_uses_attempt_local_detached_source_snapshots() -> None:
     assert launcher.index("create_pinned_source_snapshot.sh") < launcher.index(
         '"${SV}/serve.sh" deploy'
     )
-    assert 'export HARNESS_PY="${SHARED_HARNESS_PY}" HARNESS_ENV="${SECRET_ENV}"' in launcher
+    assert 'export AAR_TRUSTED_HARNESS_PY="${SHARED_HARNESS_PY}"' in launcher
+    assert 'export HARNESS_PY="${AAR_TRUSTED_HARNESS_PY}" HARNESS_ENV="${SECRET_ENV}"' in launcher
     assert 'export WORKSPACE_DIR="${SOURCE_REPO}" PYTHONPATH="${SOURCE_REPO}"' in launcher
     assert 'export AAR_BENCHMARK_DOCS="${SOURCE_REPO}/benchmark_docs"' in launcher
     assert 'export BENCHMARK_DOCS_DIR="${SOURCE_REPO}/benchmark_docs"' in launcher
@@ -73,10 +77,25 @@ def test_run12_uses_attempt_local_detached_source_snapshots() -> None:
         '.git/objects/info/alternates',
         'source snapshot retains a remote',
         'AutoData source is not attempt-local',
+        'source snapshot unexpectedly contains a virtual environment',
+        'trusted harness Python is snapshot-relative',
+        'trusted harness Python was overwritten',
+        'trusted harness environment was overwritten',
+        'workspace directory escaped source snapshot',
+        'Python path is not rooted at source snapshot',
     ):
         assert required in pipeline
     assert 'export AAR_EXPECTED_COMMIT="${EXPECTED_COMMIT}"' in pipeline
     assert "AAR_EXPECTED_COMMIT AAR_SOURCE_SNAPSHOT" in runtime
+    assert "AAR_TRUSTED_HARNESS_PY" in runtime
+    assert 'export HARNESS_PY="${HARNESS_PY:-${AAR_REPO}/.venv/bin/python}"' in multidimensional_env
+    assert 'export HARNESS_PY="${HARNESS_PY:-${AAR_REPO}/.venv/bin/python}"' in v0_env
+    assert multidimensional_env.index('if [ -n "${AAR_EXPECTED_COMMIT:-}" ]') < multidimensional_env.index(
+        'export HARNESS_PY="${HARNESS_PY:-${AAR_REPO}/.venv/bin/python}"'
+    )
+    assert controller.index('source "${REPO}/scripts/aar_runtime_env.sh"') < controller.index(
+        'PY="${HARNESS_PY:?missing harness Python}"'
+    )
     assert 'if [ -n "${AAR_EXPECTED_COMMIT:-}" ]; then' in preflight
     assert "commit-pinned source snapshot is not detached" in preflight
 

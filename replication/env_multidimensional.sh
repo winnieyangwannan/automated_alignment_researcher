@@ -3,8 +3,15 @@
 _MULTIDIM_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 AAR_REPO="$(cd -- "${_MULTIDIM_DIR}/.." && pwd)"
 export AAR_REPO REPO="${AAR_REPO}"
-export AAR_EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-uv}"
-export HARNESS_PY="${AAR_REPO}/.venv/bin/python"
+if [ -n "${AAR_EXPECTED_COMMIT:-}" ]; then
+  unset AAR_EXPECTED_BRANCH
+else
+  export AAR_EXPECTED_BRANCH="${AAR_EXPECTED_BRANCH:-uv}"
+fi
+# An attempt-local source snapshot intentionally has no virtual environment.
+# Preserve the operator-selected shared runtime when one was exported and use
+# the source-adjacent environment only for ordinary branch worktrees.
+export HARNESS_PY="${HARNESS_PY:-${AAR_REPO}/.venv/bin/python}"
 export PYTHONPATH="${AAR_REPO}${PYTHONPATH:+:${PYTHONPATH}}"
 export AAR_BENCHMARK_DOCS="${AAR_REPO}/benchmark_docs"
 export BENCHMARK_DOCS_DIR="${AAR_REPO}/benchmark_docs"

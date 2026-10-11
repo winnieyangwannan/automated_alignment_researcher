@@ -13,12 +13,25 @@ REPO="${AAR_REPO:?submit through run_12/launch/submit_full.sh}"
 ATTEMPT="${AAR_RUN_ATTEMPT_DIR:?missing attempt}"
 EXPECTED_COMMIT="${AAR_BASELINE_GIT_COMMIT:?missing source commit}"
 SOURCE_SNAPSHOT="${AAR_SOURCE_SNAPSHOT:?missing immutable source snapshot}"
+TRUSTED_HARNESS_PY="${AAR_TRUSTED_HARNESS_PY:?missing trusted harness Python}"
+TRUSTED_HARNESS_ENV="${HARNESS_ENV:?missing trusted harness environment}"
 REUSED_BASELINE="${AAR_REUSED_BASELINE:?missing baseline}"
 RECOVERED_SOURCES="${AAR_RECOVERED_BASELINE_SOURCES:?missing source bundle}"
 export HF_HOME="${ATTEMPT}/cache/huggingface"
 
 [ "${REPO}" = "${SOURCE_SNAPSHOT}" ] || { echo "source snapshot path drift" >&2; exit 2; }
 [ "${REPO}" = "${ATTEMPT}/runtime/aar-source" ] || { echo "source is not attempt-local" >&2; exit 2; }
+[ ! -e "${REPO}/.venv" ] || { echo "source snapshot unexpectedly contains a virtual environment" >&2; exit 2; }
+[ -x "${TRUSTED_HARNESS_PY}" ] || { echo "trusted harness Python is not executable" >&2; exit 2; }
+trusted_harness_realpath="$(realpath -e -- "${TRUSTED_HARNESS_PY}")"
+case "${trusted_harness_realpath}" in
+  "${ATTEMPT}/runtime/"*) echo "trusted harness Python is snapshot-relative" >&2; exit 2 ;;
+esac
+[ -f "${TRUSTED_HARNESS_ENV}" ] || { echo "trusted harness environment is unavailable" >&2; exit 2; }
+trusted_harness_env_realpath="$(realpath -e -- "${TRUSTED_HARNESS_ENV}")"
+case "${trusted_harness_env_realpath}" in
+  "${ATTEMPT}/runtime/"*) echo "trusted harness environment is snapshot-relative" >&2; exit 2 ;;
+esac
 [ -z "$(git -C "${REPO}" branch --show-current)" ] || { echo "source snapshot is not detached" >&2; exit 2; }
 [ "$(git -C "${REPO}" rev-parse HEAD)" = "${EXPECTED_COMMIT}" ] || { echo "commit drift" >&2; exit 2; }
 [ -z "$(git -C "${REPO}" remote)" ] || { echo "source snapshot retains a remote" >&2; exit 2; }
@@ -29,6 +42,7 @@ if [ -n "$(git -C "${REPO}" status --porcelain --untracked-files=all)" ]; then
 fi
 AUTODATA_SNAPSHOT="${AAR_AUTODATA_CHECKOUT:?missing AutoData snapshot}"
 [ "${AUTODATA_SNAPSHOT}" = "${ATTEMPT}/runtime/autodata-source" ] || { echo "AutoData source is not attempt-local" >&2; exit 2; }
+[ ! -e "${AUTODATA_SNAPSHOT}/.venv" ] || { echo "AutoData snapshot unexpectedly contains a virtual environment" >&2; exit 2; }
 [ -z "$(git -C "${AUTODATA_SNAPSHOT}" branch --show-current)" ] || { echo "AutoData source is not detached" >&2; exit 2; }
 [ "$(git -C "${AUTODATA_SNAPSHOT}" rev-parse HEAD)" = "${AAR_AUTODATA_SHA:?missing AutoData commit}" ] || { echo "AutoData commit drift" >&2; exit 2; }
 [ -z "$(git -C "${AUTODATA_SNAPSHOT}" remote)" ] || { echo "AutoData snapshot retains a remote" >&2; exit 2; }
@@ -44,6 +58,14 @@ source "${REPO}/replication/env_multidimensional.sh"
 source "${REPO}/scripts/aar_runtime_env.sh"
 # shellcheck disable=SC1091
 source "${REPO}/scripts/axis_env.sh"
+[ "${AAR_TRUSTED_HARNESS_PY}" = "${TRUSTED_HARNESS_PY}" ] || { echo "trusted harness Python was overwritten" >&2; exit 2; }
+export HARNESS_PY="${TRUSTED_HARNESS_PY}"
+[ -x "${HARNESS_PY}" ] || { echo "harness Python is not executable after environment bootstrap" >&2; exit 2; }
+[ "${HARNESS_ENV}" = "${TRUSTED_HARNESS_ENV}" ] || { echo "trusted harness environment was overwritten" >&2; exit 2; }
+[ "${WORKSPACE_DIR}" = "${REPO}" ] || { echo "workspace directory escaped source snapshot" >&2; exit 2; }
+[ "${AAR_BENCHMARK_DOCS}" = "${REPO}/benchmark_docs" ] || { echo "benchmark docs escaped source snapshot" >&2; exit 2; }
+[ "${BENCHMARK_DOCS_DIR}" = "${REPO}/benchmark_docs" ] || { echo "benchmark docs directory escaped source snapshot" >&2; exit 2; }
+[ "${PYTHONPATH%%:*}" = "${REPO}" ] || { echo "Python path is not rooted at source snapshot" >&2; exit 2; }
 
 mkdir -p "${HF_HOME}" "${ATTEMPT}/metadata"
 SEEDS_RAW="${AAR_RUN12_SEEDS:-alpha beta gamma delta epsilon}"

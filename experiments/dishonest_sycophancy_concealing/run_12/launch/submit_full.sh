@@ -316,7 +316,8 @@ done
 printf '%s\n' "${deployments[@]}" > "${attempt}/metadata/base-deployments.txt"
 
 export AAR_REPO="${SOURCE_REPO}" AAR_SOURCE_SNAPSHOT="${SOURCE_REPO}"
-export HARNESS_PY="${SHARED_HARNESS_PY}" HARNESS_ENV="${SECRET_ENV}"
+export AAR_TRUSTED_HARNESS_PY="${SHARED_HARNESS_PY}"
+export HARNESS_PY="${AAR_TRUSTED_HARNESS_PY}" HARNESS_ENV="${SECRET_ENV}"
 export WORKSPACE_DIR="${SOURCE_REPO}" PYTHONPATH="${SOURCE_REPO}"
 export AAR_BENCHMARK_DOCS="${SOURCE_REPO}/benchmark_docs"
 export BENCHMARK_DOCS_DIR="${SOURCE_REPO}/benchmark_docs"

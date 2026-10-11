@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: fresh immutable-source attempt launched; launcher queued
+- Status: terminal pre-child failure; superseded by authorized Trial 6 repair
 - Created: 2026-10-11 01:01 PT
-- Last updated: 2026-10-11 01:55 PT
+- Last updated: 2026-10-11 01:58 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -97,6 +97,18 @@ passed the exact HPC gate, and launched a fresh attempt at 01:55 PT:
 
 The launcher was `PENDING` at the first snapshot. No research, controller,
 training, or evaluator child existed yet.
+
+The fresh launcher started at 01:56:45 PT and failed at 01:57:00 PT with exit
+`127:0`, still before creating any child. Both immutable source gates passed.
+The failure was a remaining runtime-path override:
+`replication/env_multidimensional.sh` replaced the explicitly exported shared
+ARM64 `HARNESS_PY` with `${AAR_REPO}/.venv/bin/python`; `AAR_REPO` now correctly
+names the venv-free attempt snapshot. The pipeline then tried that nonexistent
+snapshot-local interpreter.
+
+Trial 5 is terminal and preserved. Under the user's standing same-contract
+replacement authorization, the interpreter-path audit and defense-in-depth
+repair will gate Trial 6.
 
 ### Mandatory pre-launch gates
 

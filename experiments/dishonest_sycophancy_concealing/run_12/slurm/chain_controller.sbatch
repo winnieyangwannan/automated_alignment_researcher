@@ -10,6 +10,10 @@ set -euo pipefail
 umask 077
 
 REPO="${AAR_REPO:?missing repository}"
+# Reapply the trusted runtime selection before the controller captures PY; the
+# controller is long-lived and resubmits research jobs after the launcher exits.
+# shellcheck disable=SC1091
+source "${REPO}/scripts/aar_runtime_env.sh"
 ATTEMPT="${AAR_RUN_ATTEMPT_DIR:?missing attempt}"
 SEED="${1:?missing chain seed}"
 TEAM_ID="${2:?missing team id}"

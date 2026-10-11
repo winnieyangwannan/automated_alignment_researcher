@@ -19,7 +19,7 @@ case "${AAR_RUNTIME_ENV_DISABLE_FILE:-0}" in
   *) _AAR_ENV_FILE="${HARNESS_ENV:-${_AAR_RESOLVED_REPO}/.env}" ;;
 esac
 _AAR_PRESERVE=(
-  AAR_REPO HARNESS_PY HARNESS_ENV AAR_RUNTIME_ROOT AAR_RUNTIME_ARTIFACT_ROOT
+  AAR_REPO HARNESS_PY AAR_TRUSTED_HARNESS_PY HARNESS_ENV AAR_RUNTIME_ROOT AAR_RUNTIME_ARTIFACT_ROOT
   AAR_RUN_STORAGE_ROOT AAR_RUN_CONFIG WORKSPACE_DIR
   AAR_RUNTIME_ENV_DISABLE_FILE AAR_CHAIN_SANITIZE_ENV AAR_RESEARCH_ENV_ISOLATION
   AAR_RESEARCH_TOOL_DIR AAR_METHOD_VALIDATOR_PY
@@ -171,8 +171,36 @@ if [ -n "${_AAR_ENV_FILE}" ]; then
 else
   unset HARNESS_ENV
 fi
-export HARNESS_PY="${HARNESS_PY:-${REPO}/.venv/bin/python}"
+if [ -n "${AAR_TRUSTED_HARNESS_PY:-}" ]; then
+  export HARNESS_PY="${AAR_TRUSTED_HARNESS_PY}"
+else
+  export HARNESS_PY="${HARNESS_PY:-${REPO}/.venv/bin/python}"
+fi
 case "${HARNESS_PY}" in ./*) export HARNESS_PY="${REPO}/${HARNESS_PY#./}";; esac
+if [ -n "${AAR_SOURCE_SNAPSHOT:-}" ]; then
+  if [ "${REPO}" != "${AAR_SOURCE_SNAPSHOT}" ]; then
+    echo "aar_runtime_env: AAR_REPO does not match the immutable source snapshot" >&2
+    # shellcheck disable=SC2317  # sourced in production; exit is direct-run fallback
+    return 2 2>/dev/null || exit 2
+  fi
+  if [ -z "${AAR_TRUSTED_HARNESS_PY:-}" ] || [ ! -x "${HARNESS_PY}" ]; then
+    echo "aar_runtime_env: immutable source snapshot requires a trusted external Python" >&2
+    # shellcheck disable=SC2317  # sourced in production; exit is direct-run fallback
+    return 2 2>/dev/null || exit 2
+  fi
+  _AAR_HARNESS_REALPATH="$(realpath -e -- "${HARNESS_PY}")" || {
+    echo "aar_runtime_env: trusted external Python cannot be resolved" >&2
+    # shellcheck disable=SC2317  # sourced in production; exit is direct-run fallback
+    return 2 2>/dev/null || exit 2
+  }
+  case "${_AAR_HARNESS_REALPATH}" in
+    "${REPO}"/*)
+      echo "aar_runtime_env: trusted Python cannot live inside the source snapshot" >&2
+      # shellcheck disable=SC2317  # sourced in production; exit is direct-run fallback
+      return 2 2>/dev/null || exit 2
+      ;;
+  esac
+fi
 
 case "${WORKSPACE_DIR:-}" in
   ''|.) export WORKSPACE_DIR="${REPO}" ;;
@@ -196,5 +224,5 @@ export AAR_AGENT_QOS="${AAR_AGENT_QOS:-g3_ram_high}"
 export AAR_TRAIN_QOS="${AAR_TRAIN_QOS:-g3_ram_high}"
 export AAR_EVAL_QOS="${AAR_EVAL_QOS:-g3_ram_high}"
 
-unset _AAR_RESOLVED_REPO _AAR_ENV_FILE _AAR_PRESERVE _AAR_WAS_SET
+unset _AAR_RESOLVED_REPO _AAR_ENV_FILE _AAR_PRESERVE _AAR_WAS_SET _AAR_HARNESS_REALPATH
 unset _aar_name _aar_value _aar_allowed _aar_candidate _aar_line

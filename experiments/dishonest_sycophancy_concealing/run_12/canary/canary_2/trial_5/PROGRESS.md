@@ -257,3 +257,29 @@ and passed a fresh Kimi Bash-plus-MCP round trip. It submitted:
 No research, controller, training, or evaluator job existed at the first
 snapshot. The evaluator remains forbidden and the stop boundary remains
 verified `training_smoke`.
+
+### 🔴 01:57 PT — FAIL / STOP: replication environment replaced trusted interpreter
+
+Launcher job `1812713` started at 01:56:45 PT and failed at 01:57:00 PT with
+exit `127:0`, after both immutable source checks passed but before any child
+submission. The safe error was a nonexistent
+`attempt/runtime/aar-source/.venv/bin/python`.
+
+The submitter had explicitly exported the shared ARM64 `HARNESS_PY`, but
+`replication/env_multidimensional.sh` unconditionally reset it from
+`AAR_REPO`. With immutable execution, `AAR_REPO` intentionally points to the
+venv-free snapshot. `aar_runtime_env.sh` then preserved the already-overwritten
+value, and the first baseline-provenance Python invocation failed.
+
+No research, AutoData, controller, training, or evaluator job existed. No
+optimization work or campaign budget was consumed.
+
+### 🛠️ 01:58 PT — FIX IN PROGRESS: trusted-runtime path contract and full override audit
+
+The replacement repair must preserve an independently named trusted interpreter
+across every sourced environment, restore `HARNESS_PY` from that value after
+all environment setup, require it to be executable and outside the snapshot,
+and keep the snapshot intentionally venv-free. Equivalent unconditional
+runtime-path overrides are being audited in the full launch/chain/controller/
+training path. Trial 6 will launch automatically only after focused and exact
+HPC regression gates pass.
