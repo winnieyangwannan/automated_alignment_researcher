@@ -267,3 +267,42 @@ error; the only wait was ordinary Slurm CPU admission with reason `(None)`.
 - AutoData task results: 0. Accepted rows: 0. Rate-limit or service errors: 0.
 - Next critical gate: exercise the repaired first AutoData workspace-authoring
   action.
+
+### ✅ 17:03–17:10 PT — RECOVERY PROVEN: workspace authoring advances
+
+- Method authoring and the static contract completed after two researcher-local
+  corrections; proposal review approved the method.
+- AutoData registered and bootstrapped the proposal-bound workspace.
+- The formerly blocked `clarify_design` action completed on its first attempt at
+  17:03 PT. There was no result-path Write denial and no lease-token parsing
+  error.
+- `author_grounding` completed on its first attempt at 17:09 PT. The scoped
+  guard correctly allowed both the exact temporary result and the explicitly
+  allowlisted workspace draft paths.
+- The actual manifest contains 128 tasks: 43 honesty, 43 sycophancy-resistance,
+  and 42 uncertainty tasks, partitioned into 64 tuning, 32 validation, and 32
+  test tasks. The action summary's reference to 96 was the configured minimum,
+  not the manifest row count.
+- Native `approve_grounding` completed successfully on its first attempt at
+  17:10 PT.
+- Current action: `author_pipeline`.
+- AutoData generation tasks/results/accepted rows: 0/0/0. Generation has not
+  started yet.
+- Rate-limit, gateway, provider, broker, or infrastructure errors: 0.
+
+#### Lifecycle snapshot
+
+```text
+✓ Endpoint and MCP preflight
+✓ Infrastructure bootstrap
+✓ Method authoring and contract check
+✓ Proposal review and approval
+✓ AutoData workspace registration
+✓ Clarify design (former blocker cleared)
+✓ Grounding authoring and approval
+⏳ Pipeline authoring
+○ Baseline/resource approval and dry run
+○ Meta-optimization
+○ Production
+○ Training smoke
+```

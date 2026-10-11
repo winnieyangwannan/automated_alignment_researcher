@@ -39,4 +39,6 @@ agent:
   preflight_cache_ttl_seconds: 21600
 
 data_generation:
+  # Alternative: `backend: autodata` emits AAR_AUTODATA=1, but also requires
+  # an AutoData-aware launcher to supply the plugin, broker, recipe, and runtime.
   backend: native
