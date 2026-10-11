@@ -10,11 +10,12 @@ Operational events and recovery decisions are recorded separately in
 
 ## Attempt identity
 
-- Status at 2026-10-10 17:19 PT: running in the second baseline-review cycle.
+- Status at 2026-10-10 18:00 PT: stopped during baseline authoring.
 - Source commit: `5f1861ebebc897d22e9fcfb7dee4073ebb2f19d4`.
 - Wrapper job: `1808967`.
 - Research-chain job: `1808973`.
 - Controller job: `1808974`.
+- Cancelled retry job: `1809304`.
 - Attempt root:
   `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261010T235309Z-5f1861ebebc8`.
 - Team root:
@@ -51,9 +52,8 @@ estimates.
 ✓ AutoData workspace bootstrap
 ✓ Design clarification
 ✓ Grounding authoring and approval
-✓ Pipeline revision 1 and baseline 1
-✓ Pipeline revision 2 and baseline 2
-⏳ Baseline approval 2
+✓ 9 pipeline baseline cycles; 27/27 operational tasks succeeded
+✗ Baseline content convergence; research session reached 96 continuations
 ○ Meta-optimization
 ○ Production generation
 ○ Training smoke
@@ -97,14 +97,39 @@ estimates.
   - Dry-run task 1: 70 seconds.
   - Dry-run task 2: 64 seconds.
   - Sequential dry-run throughput: approximately 0.90 tasks/minute.
-- Baseline approval 2: pending from 17:18:32 PT at this snapshot.
+- Baseline approval 2: 17:18:32–17:25:14 PT, 6 minutes 42 seconds; revision
+  requested.
+
+The remaining operational baseline cycles were:
+
+```text
+Baseline 3   17:27:18–17:28:57 PT    99s   tasks: 52s, 46s
+Baseline 4   17:32:07–17:34:08 PT   121s   tasks: 70s, 51s
+Baseline 5   17:35:53–17:37:18 PT    85s   tasks: 41s, 42s
+Baseline 6   17:40:19–17:41:37 PT    78s   tasks: 31s, 44s
+Baseline 7   17:45:47–17:47:33 PT   106s   tasks: 49s, 56s
+Baseline 8   17:49:39–17:51:23 PT   104s   tasks: 43s, 60s
+Baseline 9   17:54:50–17:56:11 PT    81s   tasks: 37s, 43s
+```
+
+- Total research-chain execution: 16:58:30–17:58:26 PT, 59 minutes
+  56 seconds.
+- Instrumented Kimi research session: 16:58:42–17:57:43 PT, 59 minutes
+  0.847 seconds, terminal failure after 96 continuation turns.
+- Controller execution before cancellation: 17:59:16–18:00:06 PT, 50 seconds.
+- Retry `1809304` was cancelled before it started at 18:00:14 PT.
 
 ## Work and quality counters
 
 - Grounding: 128 scenarios split into 64 tuning, 32 validation, and 32 test
   tasks.
-- Workspace-authoring task executions: 6/6 operationally successful: two recipe
-  checks and four dry-run tasks.
+- Workspace-authoring task executions: 27/27 operationally successful: nine
+  recipe checks and 18 dry-run tasks.
+- Workspace revisions: 30. Latest completed strategy:
+  `indirect-compliance-target-aware-v15`.
+- Total operational baseline-task wall time: 16 minutes 38 seconds. The 18
+  model-backed dry-run tasks averaged approximately 54.6 seconds each, or about
+  1.10 sequential tasks/minute.
 - Meta-optimization executions and candidates: 0; this stage has not started.
 - Production accepted rows: 0; production has not started.
 - Training jobs: 0; training has not started.
@@ -130,21 +155,23 @@ between Kimi, Gemma, and Luna.
   67 seconds, approximately 27% faster. Sequential throughput rose from about
   0.65 to 0.90 tasks/minute.
 - No infrastructure or rate-limit bottleneck is visible yet.
-- The current concern is acceptance quality: the revised baseline became more
-  challenging but remained invalid. Additional authoring revisions may add more
-  wall time before meta-optimization begins.
+- The terminal bottleneck was acceptance convergence, not task execution. Nine
+  stochastic baseline cycles failed to make honesty and sycophancy valid in the
+  same cycle.
+- Rewriting the complete strategy and regenerating both axes discarded prior
+  successes. Baseline 6 made honesty valid, but a later revision regressed it
+  while sycophancy remained non-challenging.
+- Exact word, bullet, paragraph, and no-extra-text constraints repeatedly made
+  otherwise useful teacher answers invalid.
+- The strict baseline gate prevented the meta-optimizer from starting until the
+  initial strategy was already optimized, consuming all 96 researcher
+  continuation turns.
 - These two sequential baseline samples do not predict concurrency-32 production
   throughput. Meta-optimization and production must be measured separately.
 
-## Pending final measurements
+## Unmeasured stages
 
-The report will be extended when each stage starts or finishes with:
-
-- Total workspace-authoring duration and revision count.
-- Per-meta-iteration wall time, task counts, acceptance, quality, challenge,
-  throughput, retries, and failure classes.
-- Production wall time, tasks attempted/succeeded, accepted rows, rows/minute,
-  model-call counts, retries, and rate-limit evidence.
-- Handoff verification and one-step training queue/runtime.
-- Total canary wall time, critical path, and concrete recommendations for the
-  five-chain run.
+Meta-optimization, production, handoff verification, and training did not start,
+so this attempt provides no timing or concurrency-32 throughput measurements for
+those stages. The corrective design is recorded in
+[IMPROVEMENTS.md](IMPROVEMENTS.md) and must be validated by a fresh canary.

@@ -196,6 +196,72 @@ This compact view shows the exact boundary reached by attempt
 ○ Training smoke
 ```
 
+<a id="run12-canary2-terminal-baseline-convergence"></a>
+
+### 🔴 17:58–18:00 PT — STOP: baseline convergence exhausted the research session
+
+> [!IMPORTANT]
+> The repaired bridge and all 27 native check/dry-run tasks worked. The canary
+> stopped because the strict baseline-quality loop consumed all 96 Kimi
+> continuation turns before reaching meta-optimization.
+
+- Research chain `1808973` failed naturally at 17:58:26 PT after 59 minutes
+  56 seconds. Kimi reached its 96-continuation session cap before calling the
+  required `share_finding` completion tool.
+- The user then requested a stop. Controller `1808974`, which had started after
+  the chain failure, was cancelled at 18:00:06 PT.
+- The controller had already submitted retry `1809304`; it was cancelled before
+  starting at 18:00:14 PT.
+- Shared researcher Kimi, AutoData Kimi, and Gemma endpoints were not stopped or
+  modified. No unrelated jobs were cancelled.
+- All attempt and checkpoint artifacts remain preserved.
+
+#### Final native state
+
+- Workspace: active but incomplete at `pipeline_pending`, revision 30.
+- Actions: 22; latest `author_pipeline` remained pending.
+- Native task attempts: 27/32, comprising 9 recipe checks and 18 dry-run tasks.
+- Operational task outcomes: 27/27 succeeded.
+- Latest completed strategy: `indirect-compliance-target-aware-v15`.
+- Baseline rounds completed: 9; none simultaneously produced valid honesty and
+  sycophancy samples.
+- Meta executions/candidates/iterations: 0/0/0.
+- Production accepted rows: 0.
+- Training jobs: 0.
+- HTTP 429/rate-limit, broker, gateway, and fatal provider errors: 0.
+- One isolated Luna approval response contained no output text and failed
+  closed; later approvals continued normally.
+
+#### Terminal lifecycle snapshot
+
+```text
+✓ Endpoint and MCP preflight
+✓ Infrastructure bootstrap
+✓ Method authoring and proposal approval
+✓ AutoData workspace and grounding authoring
+✓ Repaired action bridge exercised successfully
+✓ 9 operational baseline dry runs
+✗ Baseline content convergence
+○ Meta-optimization
+○ Production
+○ Training smoke
+```
+
+#### Root cause and decision
+
+The authoring gate required both stochastic dry-run samples to reach `valid=1`
+simultaneously before permitting the optimizer to start. Each strategy rewrite
+regenerated both axes, so a passing axis could regress while the other was being
+repaired. Exact word, bullet, paragraph, and no-extra-text constraints added
+failure modes unrelated to the alignment objective. The run therefore spent
+nearly the entire session oscillating between teacher validity and target
+challenge.
+
+The next canary will implement the four changes in
+[IMPROVEMENTS.md](IMPROVEMENTS.md): an operational baseline gate, removal and
+deterministic rejection of brittle format constraints, component-specific
+repair, and protected per-axis incumbents.
+
 The cross marks the failed stage—not a failed model-generation task. No
 meta-optimization, production-generation, or training work began in this
 attempt.
