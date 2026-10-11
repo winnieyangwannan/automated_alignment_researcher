@@ -671,3 +671,111 @@ periodic scheduler throughput and KV-cache statistics on all sampled replicas.
   controllers are running.
 - Atomic progress: Alpha `1/50`, Beta `1/50`, Gamma `1/50`, Delta `2/50`,
   Epsilon `2/50`; total `7/250`.
+
+<a id="run14-event-beta-failure-feedback-recovery-0124"></a>
+
+### 🔧 01:24 PT — RUNNING: Beta failure-feedback recovery proven
+
+Beta's repaired approved method failed its one-step preflight before optimizer
+training: `generate_synthetic_data()` passed four positional arguments to
+`_honesty_example()`, which accepts three. The exact run published a valid,
+held-out-safe structured failure marker. The first recovery controller then
+exposed a generic sticky-terminal bug: the approved-run resume flag remained
+active after failure, so two new sessions stopped before a Kimi turn. Beta was
+stopped at 22/60 sessions to preserve the remaining budget; no other chain was
+stopped.
+
+Shared commits `768e14b`, `3266ac3`, and `7406d64` now:
+
+- end approved-run recovery after either a durable finding or a valid terminal
+  failure;
+- validate exact schema, status, run ID, stage, error code, and boolean
+  retryability before accepting a failure marker;
+- preserve the failed proposal's exact idea UID for the next research turn
+  while explicitly omitting approved-run resume, so failure feedback survives a
+  controller relaunch without resubmitting the failed run;
+- give a durable score precedence over a stale failure marker, while preserving
+  interrupted-training resume precedence; and
+- audit failure-feedback linkage in plan and recovery records.
+
+Independent review found no Run 14 blocker. Local shell coverage passed `16`
+tests plus Bash syntax and ShellCheck; the synchronized HPC focused suite passed
+`78` tests. Beta's real plan-only proof reported `22/60` sessions,
+`resume_run_id=none`, the exact prior `feedback_idea_uid`, and no state change.
+Beta then relaunched as evaluator/controller `1812485` / `1812486`.
+
+#### Alpha — session 18/60, pairs 1/50
+
+✓ Proposal-ID recovery succeeded
+
+✓ Training `1812309` completed and adapter submitted
+
+⏳ Evaluator `1812264` running; vLLM startup and warmup
+
+○ Benchmark evaluation
+
+○ Score and finding publication
+
+#### Beta — session 23/60, pairs 1/50
+
+✓ Structured preflight failure captured and bound to the exact run
+
+✓ Sticky recovery stopped before further budget loss
+
+✓ Failure-feedback-only recovery reviewed and relaunched
+
+✓ First Kimi turn received the exact prior failure with no resume context or
+  duplicate training submission
+
+⏳ Method diagnosis and repair
+
+○ Contract check and proposal review
+
+○ Training and evaluation
+
+○ Next score and finding publication
+
+#### Gamma — session 6/60, pairs 1/50
+
+✓ Retained score/finding recovery completed
+
+✓ Fresh method, contract, and proposal approved
+
+⏳ Training `1812405`; one-step preflight passed
+
+○ Adapter merge and evaluation
+
+○ Next score and finding publication
+
+#### Delta — session 5/60, pairs 2/50
+
+✓ Retained score/finding recovery completed
+
+⏳ Fresh method and contract work
+
+○ Proposal review
+
+○ Training and evaluation
+
+○ Next score and finding publication
+
+Delta has not advanced since its validator call near 01:10 PT but remains within
+the configured research-turn timeout.
+
+#### Epsilon — session 6/60, pairs 2/50
+
+✓ Retained score/finding recovery completed
+
+✓ Fresh method and contract passed
+
+✓ Proposal approved and host submission bound to the exact run
+
+⏳ Training `1812430`
+
+○ Adapter merge and evaluation
+
+○ Next score and finding publication
+
+All five evaluator workers and all five chain controllers are now running.
+Durable atomic progress remains Alpha `1/50`, Beta `1/50`, Gamma `1/50`, Delta
+`2/50`, Epsilon `2/50`; total `7/250`.
