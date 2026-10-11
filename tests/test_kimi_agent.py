@@ -112,6 +112,69 @@ class KimiAgentTest(unittest.TestCase):
         self.assertEqual(result.output["continuations"], 1)
         self.assertEqual(result.output["result_message"], "recovered")
 
+    def test_stalled_checkpoint_retries_do_not_consume_continuation_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cli = root / "kimi"
+            cli.write_text(
+                f"#!{sys.executable}\n"
+                "import json, os, sys\n"
+                "from pathlib import Path\n"
+                "counter = Path(os.environ['KIMI_CODE_HOME']) / 'checkpoint-calls'\n"
+                "call = int(counter.read_text()) + 1 if counter.exists() else 1\n"
+                "counter.write_text(str(call))\n"
+                "if call == 1:\n"
+                "  print(json.dumps({'role': 'assistant', 'content': 'starting'}))\n"
+                "elif call == 2:\n"
+                "  assert '--continue' in sys.argv\n"
+                "  print(json.dumps({'role': 'assistant', 'content': 'The'}))\n"
+                "else:\n"
+                "  assert '--continue' in sys.argv\n"
+                "  print(json.dumps({'role': 'assistant', 'content': 'done', "
+                "'tool_calls': [{'function': {'name': 'finish', "
+                "'arguments': '{}'}}]}))\n"
+            )
+            cli.chmod(0o755)
+            result = asyncio.run(
+                KimiAgent(
+                    "test-agent",
+                    root,
+                    cli_path=str(cli),
+                    completion_tool="finish",
+                    max_continuations=1,
+                    max_checkpoint_retries=1,
+                ).execute("complete the task")
+            )
+
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(result.output["continuations"], 1)
+        self.assertEqual(result.output["result_message"], "done")
+
+    def test_stalled_checkpoint_retries_remain_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cli = root / "kimi"
+            cli.write_text(
+                f"#!{sys.executable}\n"
+                "import json\n"
+                "print(json.dumps({'role': 'assistant', 'content': 'The'}))\n"
+            )
+            cli.chmod(0o755)
+            result = asyncio.run(
+                KimiAgent(
+                    "test-agent",
+                    root,
+                    cli_path=str(cli),
+                    completion_tool="finish",
+                    max_continuations=1,
+                    max_checkpoint_retries=1,
+                ).execute("complete the task")
+            )
+
+        self.assertFalse(result.success)
+        self.assertIn("repeatedly stopped", result.error or "")
+        self.assertIn("checkpoint tool finish", result.error or "")
+
     def test_only_current_session_proposal_owns_persistent_training_state(self) -> None:
         agent = KimiAgent("test-agent", Path.cwd(), cli_path="/bin/true")
         self.assertFalse(agent._submitted_proposal_in_output({"tool_uses": []}))

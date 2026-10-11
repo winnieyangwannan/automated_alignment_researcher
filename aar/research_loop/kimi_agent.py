@@ -306,6 +306,7 @@ class KimiAgent:
         auto_approve: bool = False,
         force_checkpoint_tools: bool = False,
         force_completion_tool_first_turn: bool = False,
+        max_checkpoint_retries: Optional[int] = None,
         turn_timeout_seconds: Optional[float] = None,
     ) -> None:
         self.name = name
@@ -344,6 +345,21 @@ class KimiAgent:
         self.disallowed_tools = disallowed_tools or []
         self.auto_approve = auto_approve
         self.force_checkpoint_tools = force_checkpoint_tools
+        if max_checkpoint_retries is None:
+            raw_checkpoint_retries = os.getenv(
+                "AAR_KIMI_MAX_CHECKPOINT_RETRIES", "2"
+            )
+            try:
+                max_checkpoint_retries = int(raw_checkpoint_retries)
+            except ValueError as error:
+                raise ValueError(
+                    "AAR_KIMI_MAX_CHECKPOINT_RETRIES must be an integer"
+                ) from error
+        if max_checkpoint_retries < 0:
+            raise ValueError(
+                "Kimi max_checkpoint_retries must be zero or greater"
+            )
+        self.max_checkpoint_retries = max_checkpoint_retries
         if turn_timeout_seconds is None:
             raw_timeout = os.getenv("AAR_KIMI_TURN_TIMEOUT_SECONDS", "3600")
             try:
@@ -396,6 +412,7 @@ class KimiAgent:
         }
         iteration_count = 0
         continuation_count = 0
+        checkpoint_retry_count = 0
 
         with tempfile.TemporaryDirectory(prefix="aar-kimi-") as temp_dir:
             overlay_home = Path(temp_dir)
@@ -463,6 +480,22 @@ class KimiAgent:
                             f"Kimi Code exited with status {return_code}: "
                             f"{detail or 'no error detail'}"
                         )
+                    if required_tool is not None and new_tool_uses == 0:
+                        if checkpoint_retry_count >= self.max_checkpoint_retries:
+                            raise RuntimeError(
+                                "Kimi repeatedly stopped without calling required "
+                                f"checkpoint tool {required_tool} after "
+                                f"{self.max_checkpoint_retries} retries"
+                            )
+                        checkpoint_retry_count += 1
+                        print(
+                            "[Kimi] stalled required checkpoint; retrying "
+                            f"{required_tool} ({checkpoint_retry_count}/"
+                            f"{self.max_checkpoint_retries}) without consuming the "
+                            "productive continuation budget"
+                        )
+                        continue
+                    checkpoint_retry_count = 0
                     # Proposal markers persist across AutonomousAgentLoop sessions.
                     # Only the session that actually submitted the proposal may act
                     # on that marker; otherwise one failed run poisons every later
