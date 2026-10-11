@@ -51,3 +51,22 @@ job because the configured pinned AutoData checkout path was absent on HPC.
 The required clean commit was transferred and materialized at
 `/storage/home/winnieyangwn/autodata-worktrees/judge-repair-28a9c22`, restoring
 the exact path enforced by the wrapper. Retry is authorized after revalidation.
+
+<a id="run17-canary2-event-launch"></a>
+
+### 🚀 15:47 PT — RUNNING: proof passed and alpha chain launched
+
+Retained failed proof: job `1820593` at attempt
+`20261011T223441Z-d5f4a29a367b`; Claude generation and Gemma targeting
+succeeded, while the Luna judge received a transient HTTP 429. The attempt was
+not mutated.
+
+Retained passing proof: endpoint preflight `1820609` and broker proof `1820614`
+at `/checkpoint/ram/winnieyangwn/aar-runs/run17-adapter-target/20261011T224036Z-71fddb500dc4`.
+
+The main training-smoke attempt launched from frozen source commit
+`384a144bd495351c4abe92ba78b67dc6b5409402` at
+`/checkpoint/ram/winnieyangwn/aar-runs/run17-bootstrap-canary/20261011T224631Z-384a144bd495`.
+Launcher `1820659` emitted research chain `1820679` and dependent controller
+`1820680`. Evaluator job: none. Decision: running; preserve evidence and stop
+before evaluation as configured.

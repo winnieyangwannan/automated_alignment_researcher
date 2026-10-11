@@ -71,3 +71,27 @@ was transferred directly from its clean devserver worktree and materialized as
 the detached HPC worktree
 `/storage/home/winnieyangwn/autodata-worktrees/judge-repair-28a9c22`, restoring
 the source-pinned path already enforced by the launch wrappers.
+
+<a id="run17-event-canary2-launched"></a>
+
+### 🚀 15:47 PT — RUNNING: Canary 2 research chain launched
+
+The first retained broker-proof attempt at
+`/checkpoint/ram/winnieyangwn/aar-runs/run17-adapter-target/20261011T223441Z-d5f4a29a367b`
+failed closed after the Claude generator and Gemma target succeeded because the
+GPT-5.6 Luna judge returned HTTP 429. Job `1820593` and its evidence remain
+immutable.
+
+The fresh proof root
+`/checkpoint/ram/winnieyangwn/aar-runs/run17-adapter-target/20261011T224036Z-71fddb500dc4`
+passed endpoint preflight job `1820609` and full Claude/Gemma/Luna broker-proof
+job `1820614`. Later source changes through
+`384a144bd495351c4abe92ba78b67dc6b5409402` did not change any proof-relevant
+code or configuration and passed a clean focused validation snapshot.
+
+Main attempt:
+`/checkpoint/ram/winnieyangwn/aar-runs/run17-bootstrap-canary/20261011T224631Z-384a144bd495`.
+Launcher job `1820659` emitted alpha research-chain job `1820679` and dependent
+controller job `1820680`. No evaluator was submitted, as required by the
+training-smoke boundary. The launcher froze immutable AAR and AutoData source
+snapshots before submission.
