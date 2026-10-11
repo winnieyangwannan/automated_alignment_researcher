@@ -156,6 +156,51 @@ trainer = CustomTrainer(model=model, tokenizer=tokenizer)
         self.assertEqual(len(errors), 1)
         self.assertIn("processing_class=tokenizer", errors[0])
 
+    def test_rejects_seq2seq_collator_for_causal_sft(self) -> None:
+        sources = [
+            """
+from transformers import DataCollatorForSeq2Seq
+
+trainer = SFTTrainer(
+    model=model,
+    processing_class=tokenizer,
+    train_dataset=tokenized_dataset,
+    data_collator=DataCollatorForSeq2Seq(tokenizer),
+)
+""",
+            """
+from transformers import DataCollatorForSeq2Seq as Seq2SeqCollator
+
+collator = Seq2SeqCollator(tokenizer, pad_to_multiple_of=8)
+trainer = SFTTrainer(
+    model=model,
+    processing_class=tokenizer,
+    train_dataset=tokenized_dataset,
+    data_collator=collator,
+)
+""",
+        ]
+
+        for source in sources:
+            with self.subTest(source=source):
+                errors = _unsafe_training_api_errors(ast.parse(source))
+                self.assertEqual(len(errors), 1)
+                self.assertIn("labels=None", errors[0])
+                self.assertIn("causal-LM collator", errors[0])
+
+    def test_accepts_default_sft_causal_collator(self) -> None:
+        tree = ast.parse(
+            """
+trainer = SFTTrainer(
+    model=model,
+    processing_class=tokenizer,
+    train_dataset=tokenized_dataset,
+)
+"""
+        )
+
+        self.assertEqual(_unsafe_training_api_errors(tree), [])
+
     def test_undefined_name_gate_reports_ruff_diagnostic(self) -> None:
         completed = subprocess.CompletedProcess(
             ["ruff"],

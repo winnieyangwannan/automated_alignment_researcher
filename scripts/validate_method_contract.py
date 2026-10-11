@@ -139,6 +139,40 @@ def _unsupported_training_arguments(tree: ast.AST) -> list[str]:
 def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
     """Reject target-environment API and batching failures before GPU launch."""
     errors: set[str] = set()
+    seq2seq_collator_names = {"DataCollatorForSeq2Seq"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "transformers":
+            seq2seq_collator_names.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if alias.name == "DataCollatorForSeq2Seq"
+            )
+
+    def is_seq2seq_collator_call(node: ast.AST) -> bool:
+        if not isinstance(node, ast.Call):
+            return False
+        function = node.func
+        return (
+            isinstance(function, ast.Name)
+            and function.id in seq2seq_collator_names
+        ) or (
+            isinstance(function, ast.Attribute)
+            and function.attr == "DataCollatorForSeq2Seq"
+        )
+
+    seq2seq_collator_bindings: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and is_seq2seq_collator_call(node.value):
+            seq2seq_collator_bindings.update(
+                target.id for target in node.targets if isinstance(target, ast.Name)
+            )
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.value is not None
+            and is_seq2seq_collator_call(node.value)
+        ):
+            seq2seq_collator_bindings.add(node.target.id)
     sft_trainer_classes = {
         node.name
         for node in ast.walk(tree)
@@ -227,6 +261,22 @@ def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
                     "SFTTrainer(tokenizer=...) is unsupported by the target TRL "
                     "contract; use processing_class=tokenizer"
                 )
+            if name in {"SFTTrainer", *sft_trainer_classes}:
+                for keyword in node.keywords:
+                    if keyword.arg != "data_collator":
+                        continue
+                    if is_seq2seq_collator_call(keyword.value) or (
+                        isinstance(keyword.value, ast.Name)
+                        and keyword.value.id in seq2seq_collator_bindings
+                    ):
+                        errors.add(
+                            "SFTTrainer data_collator=DataCollatorForSeq2Seq(...) "
+                            "is unsafe for causal-language-model SFT: an "
+                            "input_ids-only dataset is padded with labels=None, so "
+                            "the model returns logits without loss; omit "
+                            "data_collator to use TRL's causal-LM collator or pass "
+                            "a collator that emits non-None causal labels"
+                        )
             if name == "SFTTrainer" and keywords & {
                 "max_seq_length",
                 "dataset_text_field",
