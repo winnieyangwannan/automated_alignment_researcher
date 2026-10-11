@@ -283,6 +283,81 @@ No runtime failure.
 
 Total: **0/250 completed atomic score/finding pairs**.
 
+### ⏳ 03:25 PT — RUNNING: first methods reached contract validation
+
+### Alpha — session 1/60, pairs 0/50
+
+```text
+✓ Method authored
+✓ Initial Gemma regex and TRL contract errors repaired
+✓ Method contract passed
+⏳ Preparing proposal submission
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
+```
+
+Evaluator `1814094` is running. No proposal or training job exists yet.
+
+### Beta — session 1/60, pairs 0/50
+
+```text
+✓ Method authored
+✗ Contract found target-regex, DPO-stack, processing_class, and generation-bound issues
+⏳ Revising the method
+○ Contract pass and proposal review
+○ Training and evaluation
+○ Score and finding publication
+```
+
+Evaluator `1814096` is running. The contract failure is actionable and
+non-terminal.
+
+### Gamma — session 1/60, pairs 0/50
+
+```text
+✓ Method draft attempted
+✗ Contract caught an unterminated triple-quoted string
+⏳ Repairing method syntax
+○ Contract pass and proposal review
+○ Training and evaluation
+○ Score and finding publication
+```
+
+One malformed forced-Bash emission recovered automatically. Evaluator
+`1814098` is pending GPU resources.
+
+### Delta — session 1/60, pairs 0/50
+
+```text
+✓ Method authored
+✗ Contract found target-regex, undefined-name, and processing_class issues
+⏳ Revising the method
+○ Contract pass and proposal review
+○ Training and evaluation
+○ Score and finding publication
+```
+
+Evaluator `1814100` is pending GPU resources. The contract failure is
+actionable and non-terminal.
+
+### Epsilon — session 1/60, pairs 0/50
+
+```text
+✓ Method authored
+✗ Contract rejected the Gemma target regex encoded as a list
+⏳ Revising the method
+○ Contract pass and proposal review
+○ Training and evaluation
+○ Score and finding publication
+```
+
+Evaluator `1814102` is pending GPU resources. The contract failure is
+actionable and non-terminal.
+
+No proposal, training job, adapter, score, or finding exists yet. Total:
+**0/250 completed atomic score/finding pairs**.
+
 #### ⏭️ Next step
 
 Finish fail-closed source validation and obtain explicit confirmation of the
