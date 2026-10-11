@@ -75,57 +75,118 @@ record credentials, held-out examples, or partial held-out scores here.
 
 ### Alpha — session 0/60, pairs 0/50
 
-✓ Evaluator `1813981` launched  
-✓ Research chain `1813982` launched  
-⏳ Infrastructure bootstrap  
-○ Method authoring and contract check  
-○ Proposal review and approval  
-○ Training and evaluation  
-○ Score and finding publication  
+✓ Evaluator `1813981` launched
+✓ Research chain `1813982` launched
+⏳ Infrastructure bootstrap
+○ Method authoring and contract check
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
 
 ### Beta — session 0/60, pairs 0/50
 
-✓ Evaluator `1813983` launched  
-✓ Research chain `1813984` launched  
-⏳ Infrastructure bootstrap  
-○ Method authoring and contract check  
-○ Proposal review and approval  
-○ Training and evaluation  
-○ Score and finding publication  
+✓ Evaluator `1813983` launched
+✓ Research chain `1813984` launched
+⏳ Infrastructure bootstrap
+○ Method authoring and contract check
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
 
 ### Gamma — session 0/60, pairs 0/50
 
-✓ Evaluator `1813985` launched  
-✓ Research chain `1813986` launched  
-⏳ Infrastructure bootstrap  
-○ Method authoring and contract check  
-○ Proposal review and approval  
-○ Training and evaluation  
-○ Score and finding publication  
+✓ Evaluator `1813985` launched
+✓ Research chain `1813986` launched
+⏳ Infrastructure bootstrap
+○ Method authoring and contract check
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
 
 ### Delta — session 0/60, pairs 0/50
 
-✓ Evaluator `1813987` launched  
-✓ Research chain `1813988` launched  
-⏳ Infrastructure bootstrap  
-○ Method authoring and contract check  
-○ Proposal review and approval  
-○ Training and evaluation  
-○ Score and finding publication  
+✓ Evaluator `1813987` launched
+✓ Research chain `1813988` launched
+⏳ Infrastructure bootstrap
+○ Method authoring and contract check
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
 
 ### Epsilon — session 0/60, pairs 0/50
 
-✓ Evaluator `1813989` launched  
-✓ Research chain `1813990` launched  
-⏳ Infrastructure bootstrap  
-○ Method authoring and contract check  
-○ Proposal review and approval  
-○ Training and evaluation  
-○ Score and finding publication  
+✓ Evaluator `1813989` launched
+✓ Research chain `1813990` launched
+⏳ Infrastructure bootstrap
+○ Method authoring and contract check
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
 
 All ten child jobs were running at 03:13 PT. A session is not counted until its
 durable session state appears; a pair is not counted until score and finding
 records join on the same run ID.
+
+### 🔎 03:14 PT — OBSERVATION: all chains entered session 1
+
+### Alpha — session 1/60, pairs 0/50
+
+```text
+✓ Infrastructure bootstrap
+✓ Literature and leaderboard context loaded
+⏳ Method authoring and contract check
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
+```
+
+### Beta — session 1/60, pairs 0/50
+
+```text
+✓ Infrastructure bootstrap
+✓ Literature and leaderboard context loaded
+⏳ Method authoring and contract check
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
+```
+
+### Gamma — session 1/60, pairs 0/50
+
+```text
+✓ Infrastructure bootstrap
+✓ Literature and leaderboard context loaded
+⏳ Method authoring and contract check
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
+```
+
+### Delta — session 1/60, pairs 0/50
+
+```text
+✓ Infrastructure bootstrap
+✓ Literature and leaderboard context loaded
+⏳ Method authoring and contract check
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
+```
+
+### Epsilon — session 1/60, pairs 0/50
+
+```text
+✓ Infrastructure bootstrap
+✓ Literature and leaderboard context loaded
+⏳ Method authoring and contract check
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
+```
+
+Kimi output was coherent across all five chains. No strange output, failure
+marker, or contract rejection had appeared. All evaluators were alive and idle,
+awaiting their first submitted adapters.
 
 #### ⏭️ Next step
 
