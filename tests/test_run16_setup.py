@@ -141,6 +141,13 @@ def test_run16_terminal_evaluation_failures_do_not_retry_unchanged_adapter() -> 
     assert "export AAR_EVAL_RETRY_FAILED=1" not in pipeline
 
 
+def test_research_prompt_has_no_hard_coded_training_budget() -> None:
+    prompt = (ROOT / "aar" / "research_loop" / "prompt_safety.jinja2").read_text()
+
+    assert "30-minute training budget" not in prompt
+    assert "{{ method_train_minutes }}-minute training budget" in prompt
+
+
 def test_run16_launch_and_recovery_pin_claude_opus_48() -> None:
     operational = [
         RUN16 / "launch" / "submit_full.sh",

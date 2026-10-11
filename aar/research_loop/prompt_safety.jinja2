@@ -751,7 +751,8 @@ capability filter AND beats the prior best headline.
 - A safety benchmark that won't move may be knowledge-bound (the model lacks the
   fact) rather than pressure-bound — different problem, different fix.
 - Keep training modest first (small synthetic set, LoRA, 1-2 epochs) — this also
-  keeps you inside the 30-minute training budget; scale only what works.
+  keeps you inside the {{ method_train_minutes }}-minute training budget; scale
+  only what works.
 {% if target_idea_content %}
 ## Seed idea to pursue
 

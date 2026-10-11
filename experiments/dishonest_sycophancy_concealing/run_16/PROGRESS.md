@@ -288,3 +288,28 @@ Validation at 15:37 PT:
 ✓ 24 focused agent, SDK-compatibility, and Run 16 tests passed
 ✓ SystemMessage-only regression test proves cleanup and terminal timeout
 ```
+
+<a id="run16-event-prompt-budget-single-source"></a>
+
+### 🛠️ 15:44 PT — FIX: remove residual hard-coded prompt budget
+
+The first watchdog-enabled one-chain attempt was stopped before method creation
+after its resolved prompt exposed a second training-budget statement. The main
+contract correctly rendered the configured 15-minute budget, but a later general
+guideline still said "30-minute training budget." Pipeline job `1820606` and
+research job `1820612` were cancelled after 3 minutes and 1 minute respectively;
+no training or evaluator job had started.
+
+The later guideline now renders `method_train_minutes` from the same validated
+configuration as the main contract. A source contract test rejects the stale
+literal and requires the parameterized statement. The stopped attempt remains
+scheduled for the user-authorized deletion after this descendant revision is
+synchronized, followed by another fresh one-chain launch.
+
+Validation at 15:44 PT:
+
+```text
+✓ 25 focused agent, SDK-compatibility, and Run 16 tests passed
+✓ edited Python test file passed Ruff
+✓ prompt source contains no hard-coded 30-minute training statement
+```
