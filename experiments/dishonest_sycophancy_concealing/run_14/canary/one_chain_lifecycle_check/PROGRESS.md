@@ -83,3 +83,33 @@ Append-only operational record. All timestamps use Pacific Time (`PT`).
   method edits/training/evaluation, and requires one durable `share_finding`
   Decision: synchronize the commit to HPC, publish the missing finding, create
   the one-chain lifecycle proof, then launch the five-chain canary
+
+- 2026-10-10 18:06 PT — Exact source synchronization to FAIR HPC completed cleanly.
+  Source commit: `fae1191f236f9aaca75a65005e402737fe391c73`
+  Attempt: unchanged
+  Jobs: no recovery job launched yet
+  Evidence: the matching HPC execution worktree is clean at exact commit
+  `fae1191f236f9aaca75a65005e402737fe391c73`
+  Decision: use this synchronized revision as the recovery starting point
+
+- 2026-10-10 18:07 PT — User explicitly confirmed the presented model-role mapping.
+  Source commit: `fae1191f236f9aaca75a65005e402737fe391c73`
+  Attempt: unchanged
+  Jobs: no recovery job launched yet
+  Evidence: research and native generation use Kimi-K2.6 deployment
+  `steerability_8-kimi26`; proposal monitoring uses `claude-4-8-opus`;
+  training targets the fixed Gemma 4 31B IT base; evaluator inference uses
+  Gemma 4 plus the merged adapter through vLLM 0.25.1 in language-model-only
+  mode; no evaluator judge, AutoData teacher, row judge, or broker is used
+  Decision: the confirmed mapping authorizes finding-only recovery at this
+  configuration revision
+
+- 2026-10-10 18:08 PT — Shared Kimi final-finding hardening is in progress.
+  Source commit: `fae1191f236f9aaca75a65005e402737fe391c73`
+  Attempt: unchanged
+  Jobs: no recovery job launched yet
+  Evidence: implementation and focused validation are proceeding in a separate
+  work thread so the one-chain recovery and later five-chain experiment share
+  the same guarded final-finding behavior
+  Decision: wait for the shared hardening to be committed and synchronized
+  before finding-only recovery; no lifecycle proof has passed yet
