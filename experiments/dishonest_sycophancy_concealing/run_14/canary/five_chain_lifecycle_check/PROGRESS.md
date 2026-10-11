@@ -144,3 +144,65 @@ Append-only operational record. All timestamps use Pacific Time (`PT`).
 - Current completed outputs: zero training successes, zero evaluator
   successes, and zero score/result pairs
 - Decision: continue monitoring; do not claim the topology gate has passed
+
+<a id="run14-five-chain-stopped"></a>
+
+### 🔴 19:03 PT — STOP: topology proof became impossible
+
+> [!CAUTION]
+> **Stopped at the user's request.** Slurm terminated the remaining pipeline,
+> alpha, delta, and delta-training jobs at 19:03:19 PDT. All nine known job IDs
+> are now absent from `squeue`; retained attempt artifacts were preserved.
+
+```text
+✓ Validate exact one-chain prerequisite proof
+✓ Endpoint and MCP preflight
+✓ Infrastructure bootstrap
+✓ Launch five parallel research jobs
+✓ Retain three training receipts
+✓ Complete one training smoke
+○ Complete five method/proposal lifecycles
+○ Complete five native data-generation and training smokes
+○ Stage five verified adapters
+○ Launch on-demand evaluator
+○ Produce five score/result pairs
+```
+
+| Role             | Slurm job | Terminal state       | End (PT) |
+| ---------------- | --------- | -------------------- | -------- |
+| Pipeline         | 1809352   | CANCELLED by 686293  | 19:03:19 |
+| Alpha research   | 1809357   | CANCELLED by 686293  | 19:03:19 |
+| Beta research    | 1809358   | FAILED               | 18:55:30 |
+| Gamma research   | 1809359   | FAILED               | 18:49:56 |
+| Delta research   | 1809360   | CANCELLED by 686293  | 19:03:19 |
+| Epsilon research | 1809361   | FAILED               | 18:50:41 |
+| Epsilon training | 1809387   | FAILED               | 18:50:05 |
+| Alpha training   | 1809418   | COMPLETED            | 18:51:28 |
+| Delta training   | 1809577   | CANCELLED by 686293  | 19:03:19 |
+
+#### Result inventory
+
+| Artifact or outcome            | Count | Result                         |
+| ------------------------------ | ----- | ------------------------------ |
+| Training receipts              | 3     | Preserved                      |
+| Successful training GPU smokes | 1     | Alpha job `1809418` completed  |
+| Failed training jobs           | 1     | Epsilon job `1809387` failed   |
+| Evaluator jobs                 | 0     | Never launched                 |
+| Score/finding pairs            | 0     | None produced                  |
+
+#### Evidence and decision
+
+- Attempt:
+  `/checkpoint/ram/aar/winnieyangwn/run14_native_generation/canary_attempts/20261011T012524Z-766e7f1a0844`
+- Attempt source: `766e7f1a0844bae66b1330a46e9b9b8c5705425f`
+- Active jobs after cancellation: none; all listed IDs are absent from
+  `squeue`
+- The beta, gamma, and epsilon research failures and epsilon training failure
+  predated the stop. Alpha training completed its smoke; delta training was
+  active when cancelled.
+- With multiple research lifecycles already failed, the required five-chain
+  topology proof was impossible. The evaluator never launched because the
+  required adapter-staging boundary was not reached.
+- Corrective commits `e6dd257` and `342bfa8` were committed after the launch;
+  neither was the source of this stopped attempt.
+- Decision: STOP; preserve all artifacts and do not claim a five-chain pass.
