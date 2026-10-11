@@ -14,6 +14,21 @@ case "${MODE}" in full|canary) ;; *) echo "AAR_RUN14_MODE must be full or canary
   echo "Run 14 full mode requires the canonical run YAML" >&2
   exit 2
 }
+if [ "${MODE}" = full ]; then
+  [ "$#" -eq 2 ] || {
+    echo "usage: $0 <one-chain-proof.json> <five-chain-proof.json>" >&2
+    exit 2
+  }
+  ONE_CHAIN_PROOF="$(realpath -e -- "$1")"
+  FIVE_CHAIN_PROOF="$(realpath -e -- "$2")"
+else
+  [ "$#" -eq 0 ] || {
+    echo "Run 14 canary mode takes no positional arguments" >&2
+    exit 2
+  }
+  ONE_CHAIN_PROOF=""
+  FIVE_CHAIN_PROOF=""
+fi
 
 [ -x "${REPO}/.venv/bin/python" ] || { echo "missing worktree-local runtime" >&2; exit 2; }
 SECRET_ENV="$(realpath -e -- "${AAR_RUN14_SECRET_ENV:-${REPO}/.env}")"
@@ -65,6 +80,16 @@ if [ "${MODE}" = canary ] && \
   validate_lifecycle_proof \
     "${PREREQUISITE_PROOF}" "${AAR_LIFECYCLE_PREREQUISITE_CHAIN_COUNT}"
 fi
+if [ "${MODE}" = full ]; then
+  validate_lifecycle_proof "${ONE_CHAIN_PROOF}" 1
+  validate_lifecycle_proof "${FIVE_CHAIN_PROOF}" 5
+  one_chain_proof_sha256="$(sha256sum -- "${ONE_CHAIN_PROOF}" | awk '{print $1}')"
+  [ "$(jq -r '.prerequisite_proof_sha256 // empty' "${FIVE_CHAIN_PROOF}")" = \
+    "${one_chain_proof_sha256}" ] || {
+    echo "five-chain proof is not bound to the supplied one-chain proof" >&2
+    exit 2
+  }
+fi
 
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || {
   echo "Run 14 requires branch autodata" >&2
@@ -106,6 +131,16 @@ cp -- "${RUN_CONFIG}" "${attempt}/metadata/run.yaml"
 [ -z "${PREREQUISITE_PROOF}" ] || \
   cp -- "${PREREQUISITE_PROOF}" \
     "${attempt}/metadata/prerequisite_lifecycle_passed.json"
+if [ "${MODE}" = full ]; then
+  cp -- "${ONE_CHAIN_PROOF}" \
+    "${attempt}/metadata/one_chain_lifecycle_passed.json"
+  cp -- "${FIVE_CHAIN_PROOF}" \
+    "${attempt}/metadata/five_chain_lifecycle_passed.json"
+  five_chain_proof_sha256="$(sha256sum -- "${FIVE_CHAIN_PROOF}" | awk '{print $1}')"
+  printf 'one_chain_sha256=%s\nfive_chain_sha256=%s\n' \
+    "${one_chain_proof_sha256}" "${five_chain_proof_sha256}" \
+    > "${attempt}/metadata/lifecycle_proofs.sha256"
+fi
 "${REPO}/experiments/dishonest_sycophancy_concealing/run_10/runtime/snapshot_vllm_runtime.sh" "${attempt}" \
   > "${attempt}/metadata/vllm_runtime_path.txt"
 

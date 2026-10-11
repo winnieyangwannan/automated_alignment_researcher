@@ -1,8 +1,8 @@
 # Run 14 five-chain native-generation lifecycle check
 
-- Status: blocked on a passed one-chain lifecycle proof
+- Status: first attempt stopped; corrected rerun pending
 - Created: 2026-10-10 17:48 PT
-- Last updated: 2026-10-10 17:53 PT
+- Last updated: 2026-10-10 19:07 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -21,21 +21,19 @@ This is the ordered gate between the one-chain lifecycle check and the full
 Run 14 experiment. It consumes and retains the exact passed one-chain proof;
 its own proof records the prerequisite file's SHA-256.
 
-## Plan
+The one-chain proof has passed. The
+[first five-chain attempt stopped](../../PROGRESS.md#run14-event-five-chain-stopped)
+after proposal and training failures made a topology proof impossible. Shared
+contract and Kimi checkpoint-retry fixes are committed; a corrected attempt is
+still pending and the full run remains blocked.
 
-Recorded: 2026-10-10 17:48 PT
+## Launch
 
-1. Validate the supplied one-chain proof and source ancestry.
-2. Start `alpha`, `beta`, `gamma`, `delta`, and `epsilon` together in one
-   isolated team, with one research session per chain.
-3. Require five proposal-approved, source-bound, real-GPU one-step adapters.
-4. Stage all five verified adapters, then start the same single one-GPU
-   evaluator used by the one-chain gate to drain the shared queue.
-5. Require five two-item `verbalized_ece` scores and five matching findings.
-6. Emit a five-chain proof bound to the exact one-chain proof.
+Recorded: 2026-10-10 19:07 PT
 
-Launch from the synchronized HPC `autodata` worktree only after the one-chain
-proof exists:
+After synchronizing the corrected clean source revision and reconfirming the
+model-role mapping, launch from the HPC `autodata` worktree with the exact
+passed one-chain proof:
 
 ```bash
 experiments/dishonest_sycophancy_concealing/run_14/canary/five_chain_lifecycle_check/launch/launch.sh \
@@ -48,6 +46,19 @@ After all five lifecycles finish, create the fail-closed proof:
 python experiments/dishonest_sycophancy_concealing/run_14/canary/verify_run_14_canary.py \
   <five-chain-attempt>
 ```
+
+## Plan
+
+Recorded: 2026-10-10 17:48 PT
+
+1. Validate the supplied one-chain proof and source ancestry.
+2. Start `alpha`, `beta`, `gamma`, `delta`, and `epsilon` together in one
+   isolated team, with one research session per chain.
+3. Require five proposal-approved, source-bound, real-GPU one-step adapters.
+4. Stage all five verified adapters, then start the same single one-GPU
+   evaluator used by the one-chain gate to drain the shared queue.
+5. Require five two-item `verbalized_ece` scores and five matching findings.
+6. Emit a five-chain proof bound to the exact one-chain proof.
 
 ## Model and execution roles
 

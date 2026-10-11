@@ -68,3 +68,170 @@ execute the bounded lifecycle check before authorizing the full run.
 
 Commit and synchronize the source package, then run the one-chain lifecycle
 check on FAIR HPC.
+
+<a id="run14-event-one-chain-passed"></a>
+
+### ✅ 18:11 PT — PASS: one-chain lifecycle proof completed
+
+> [!TIP]
+> The retained one-chain attempt completed its method, proposal, native-data,
+> real-GPU training, evaluator, and finding lifecycle. A narrow finding-only
+> recovery reused the existing score and did not retrain or reevaluate.
+
+```text
+✓ Endpoint and MCP preflight
+✓ Infrastructure bootstrap
+✓ Method authoring and contract check
+✓ Proposal review and approval
+✓ Native data generation
+✓ Training smoke and adapter validation
+✓ Evaluator and score publication
+✓ Finding publication
+✓ One-chain lifecycle proof
+○ Five-chain topology proof
+○ Full five-chain run
+```
+
+#### Evidence
+
+- Attempt:
+  `/checkpoint/ram/aar/winnieyangwn/run14_native_generation/canary_attempts/20261011T002500Z-c8d5bc8da647`
+- Attempt source: `c8d5bc8da647bdea5f863db3c2292607282c28b0`
+- Recovery source: `766e7f1a0844bae66b1330a46e9b9b8c5705425f`
+- Lifecycle-proof SHA-256:
+  `f2c3e180ddb6f9fcd94c72d528ad89c57bcb358d18f75b4f2b93779548bd50ad`
+- Decision: authorize only the bounded five-chain topology gate.
+
+<a id="run14-event-five-chain-stopped"></a>
+
+### 🔴 19:03 PT — STOP: first five-chain topology attempt could not pass
+
+> [!CAUTION]
+> The user stopped the remaining jobs after multiple chain failures made the
+> required five-chain proof impossible. All known jobs were terminal or absent
+> from `squeue` by 19:03:19 PDT; retained artifacts were preserved.
+
+```text
+✓ Validate exact one-chain prerequisite proof
+✓ Endpoint and MCP preflight
+✓ Infrastructure bootstrap
+✓ Launch five parallel research chains
+✓ Retain three training receipts
+✓ Complete one real-GPU training smoke
+✗ Complete five method-to-finding lifecycles
+○ Stage five verified adapters
+○ Launch on-demand evaluator
+○ Produce five score/result pairs
+○ Five-chain topology proof
+○ Full five-chain run
+```
+
+| Role             | Slurm job | Terminal state      | End (PT) |
+| ---------------- | --------- | ------------------- | -------- |
+| Pipeline         | 1809352   | CANCELLED by 686293 | 19:03:19 |
+| Alpha research   | 1809357   | CANCELLED by 686293 | 19:03:19 |
+| Beta research    | 1809358   | FAILED              | 18:55:30 |
+| Gamma research   | 1809359   | FAILED              | 18:49:56 |
+| Delta research   | 1809360   | CANCELLED by 686293 | 19:03:19 |
+| Epsilon research | 1809361   | FAILED              | 18:50:41 |
+| Epsilon training | 1809387   | FAILED              | 18:50:05 |
+| Alpha training   | 1809418   | COMPLETED           | 18:51:28 |
+| Delta training   | 1809577   | CANCELLED by 686293 | 19:03:19 |
+
+#### 🔎 Observation
+
+- Beta and gamma exhausted their bounded Kimi continuations during proposal
+  work and produced no approved adapter.
+- Epsilon reached approval, but its causal-SFT method supplied an unsafe
+  sequence-to-sequence collator. The input-only batch produced `labels=None`,
+  so Gemma returned logits without a loss. The structured failure marker was
+  retained, but the one-session canary had no repair turn.
+- Alpha completed the only successful GPU smoke. Delta training was active when
+  cancelled. No evaluator launched, and no score/finding pair was produced.
+
+#### Evidence
+
+- Attempt:
+  `/checkpoint/ram/aar/winnieyangwn/run14_native_generation/canary_attempts/20261011T012524Z-766e7f1a0844`
+- Attempt source: `766e7f1a0844bae66b1330a46e9b9b8c5705425f`
+- Inventory: three training receipts, one successful GPU smoke, one failed
+  training job, zero evaluator jobs, and zero score/finding pairs.
+- Decision: preserve the attempt, do not issue a topology proof, and do not
+  launch the full run.
+
+<a id="run14-event-shared-hardening-and-full-budget"></a>
+
+### 🛠️ 19:07 PT — FIX: shared failures hardened and full budget resolved
+
+> [!IMPORTANT]
+> The fixes are shared infrastructure rather than attempt-specific workarounds.
+> A corrected five-chain canary must exercise them before the full run.
+
+- Commit `e6dd257` makes the method contract reject
+  `DataCollatorForSeq2Seq` in causal `SFTTrainer` methods before GPU submission
+  and explains how to use a collator that emits valid causal labels.
+- Commit `342bfa8` gives stalled required Kimi checkpoints a separate bounded
+  retry allowance, so malformed no-tool turns do not consume the productive
+  continuation budget.
+- The user selected five chains with 50 successful score/finding pairs per
+  chain and a ceiling of 60 sessions per chain: 250 target pairs total, with up
+  to 10 unsuccessful sessions of headroom for each chain.
+- The full launcher is being hardened to require both ordered lifecycle proofs
+  and retain their exact files and hashes.
+
+```text
+✓ Source validation
+✓ One-chain lifecycle proof
+✓ Diagnose first five-chain failures
+✓ Shared method-contract hardening
+✓ Shared Kimi checkpoint-retry hardening
+✓ Resolve full-run budget: 5 × 50 successes, 60 sessions per chain
+○ Validate and commit full-run organization
+○ Synchronize exact source revision to HPC
+○ Corrected five-chain topology rerun
+○ Five-chain topology proof
+○ Full five-chain launch
+```
+
+#### ⏭️ Next step
+
+Validate and commit the organized source package. Then synchronize the exact
+clean commit, reconfirm the model-role mapping, and rerun the five-chain canary.
+Do not launch the 5×50 full experiment until the corrected topology proof passes.
+
+<a id="run14-event-full-source-validated"></a>
+
+### ✅ 19:09 PT — PASS: 5×50 source and proof-gating contract validated
+
+> [!TIP]
+> The organized full-run source now resolves five seeds, 50 successful pairs
+> and 60 sessions per chain, and refuses a full launch without both correctly
+> bound lifecycle proofs. This validation step launched no job; deployment of
+> the final organized revision remains pending.
+
+| Check                     | Result                   |
+| ------------------------- | ------------------------ |
+| Full YAML resolution      | PASS: `5 × 50`, max `60` |
+| Focused Python tests      | PASS: 14                 |
+| Bash syntax               | PASS                     |
+| ShellCheck                | PASS                     |
+| Python compilation        | PASS                     |
+| Git whitespace validation | PASS                     |
+
+```text
+✓ Source validation
+✓ One-chain lifecycle proof
+✓ Shared failure hardening
+✓ Full-run 5×50 budget contract
+✓ Ordered proof validation and retention
+○ Commit organized source
+○ Synchronize exact source revision to HPC
+○ Corrected five-chain topology rerun
+○ Five-chain topology proof
+○ Full five-chain launch
+```
+
+#### ⏭️ Next step
+
+Commit this focused Run 14 source package, synchronize that exact commit, and
+rerun the bounded five-chain topology gate after model-role reconfirmation.

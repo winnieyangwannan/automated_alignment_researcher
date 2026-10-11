@@ -1,8 +1,8 @@
 # Run 14 one-chain native-generation lifecycle check
 
-- Status: planned; not launched
+- Status: passed
 - Created: 2026-10-10 17:02 PT
-- Last updated: 2026-10-10 17:53 PT
+- Last updated: 2026-10-10 18:11 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -12,6 +12,26 @@ Recorded: 2026-10-10 17:02 PT
 Prove one complete Kimi research → native data generation → proposal approval →
 real-GPU one-step training → two-item evaluation → finding lifecycle without
 loading or producing any AutoData component or artifact.
+
+## Context
+
+Recorded: 2026-10-10 18:11 PT
+
+This is the first ordered gate before the five-chain topology check and the
+full run. Its bounded score is workflow evidence, not a scientific result. The
+retained lifecycle proof passed after a finding-only recovery reused the
+existing approved method, adapter, and authoritative score.
+
+## Launch
+
+Recorded: 2026-10-10 18:11 PT
+
+This gate has already passed and should not be relaunched without explicit
+authorization. The operator entrypoint for a new bounded attempt is:
+
+```bash
+experiments/dishonest_sycophancy_concealing/run_14/canary/one_chain_lifecycle_check/launch/launch.sh
+```
 
 ## Plan
 

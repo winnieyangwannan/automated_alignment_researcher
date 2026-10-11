@@ -181,12 +181,20 @@ def test_training_prunes_redundant_staging_by_default() -> None:
     assert default in legacy
 
 
-def test_run14_declares_native_data_generation_and_target_pairs() -> None:
+def test_run14_declares_native_data_generation_and_5x50_budget() -> None:
     config_path = RUN14 / "config" / "run.yaml"
     config = yaml.safe_load(config_path.read_text())
 
     assert config["data_generation"] == {"backend": "native"}
-    assert config["research"]["target_score_result_pairs"] == 5
+    assert config["research"]["seeds"] == [
+        "alpha",
+        "beta",
+        "gamma",
+        "delta",
+        "epsilon",
+    ]
+    assert config["research"]["target_score_result_pairs"] == 50
+    assert config["research"]["max_sessions_per_chain"] == 60
 
     result = subprocess.run(
         [
@@ -201,7 +209,21 @@ def test_run14_declares_native_data_generation_and_target_pairs() -> None:
     )
 
     assert "export AAR_AUTODATA=0" in result.stdout
-    assert "export AAR_TARGET_SUCCESSFUL_ITERATIONS=5" in result.stdout
+    assert "export AAR_TARGET_SUCCESSFUL_ITERATIONS=50" in result.stdout
+    assert "export AAR_MAX_ITERATIONS_PER_CHAIN=60" in result.stdout
+
+
+def test_run14_full_launch_requires_and_binds_both_lifecycle_proofs() -> None:
+    launcher = (RUN14 / "launch" / "submit_full.sh").read_text()
+
+    assert 'usage: $0 <one-chain-proof.json> <five-chain-proof.json>' in launcher
+    assert 'validate_lifecycle_proof "${ONE_CHAIN_PROOF}" 1' in launcher
+    assert 'validate_lifecycle_proof "${FIVE_CHAIN_PROOF}" 5' in launcher
+    assert "prerequisite_proof_sha256" in launcher
+    assert "five-chain proof is not bound to the supplied one-chain proof" in launcher
+    assert "one_chain_lifecycle_passed.json" in launcher
+    assert "five_chain_lifecycle_passed.json" in launcher
+    assert "lifecycle_proofs.sha256" in launcher
 
 
 def test_run14_launch_path_fails_closed_without_autodata() -> None:

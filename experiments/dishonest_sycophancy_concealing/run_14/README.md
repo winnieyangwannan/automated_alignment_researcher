@@ -4,11 +4,31 @@
 
 Run 14's launchers and scheduled payload require this branch.
 
+## Goal
+
+Run five independent Kimi AAR research chains to 50 successful score/finding
+pairs per chain (250 total), with a ceiling of 60 research sessions per chain.
+Each researcher authors its own reproducible training-data generation without
+AutoData.
+
+## Context
+
 Run 14 preserves Run 12's Kimi researcher, five independent chains, Gemma-4
-training/evaluation stack, and target of five durable score/result pairs per
-chain. Its only intentional workflow change is that AutoData is disabled. Each
-research model writes and validates the data-generation logic inside its normal
-method package.
+training/evaluation stack, and proposal/evaluation isolation. Its intentional
+workflow change is that AutoData is disabled. Each research model writes and
+validates the data-generation logic inside its normal method package.
+
+Scale-up is ordered and fail-closed:
+
+```text
+one-chain lifecycle proof
+  → five-chain topology lifecycle proof
+  → full five-chain 5×50 run
+```
+
+The one-chain gate passed. The first five-chain topology attempt stopped
+without a proof after proposal and training failures. A corrected five-chain
+canary must pass before the full run is authorized.
 
 ## Directory layout
 
@@ -82,14 +102,14 @@ available for optional target-model generation.
 | ---------------- | ------------------------------------------------- |
 | Research model   | Kimi-K2.6                                         |
 | Chains           | `alpha`, `beta`, `gamma`, `delta`, `epsilon`      |
-| Target per chain | Five atomic score/result pairs                    |
-| Session ceiling  | Eight sessions per chain                          |
+| Target per chain | 50 atomic score/result pairs                      |
+| Session ceiling  | 60 sessions per chain                             |
 | Training         | One decoupled GPU lane per isolated chain         |
 | Evaluation       | One four-GPU vLLM evaluator per isolated chain    |
 | Data generation  | Native method code authored by the research model |
 | AutoData         | Disabled and rejected if re-enabled               |
 
-## Launch sequence
+## Launch
 
 First run the bounded one-chain lifecycle check from the synchronized HPC
 `autodata` worktree:
@@ -112,12 +132,20 @@ experiments/dishonest_sycophancy_concealing/run_14/canary/five_chain_lifecycle_c
   <one-chain-attempt>/metadata/canary_passed.json
 ```
 
-After five complete score/finding pairs produce a passed topology proof, launch
-the full run:
+After five complete score/finding pairs produce a passed topology proof, pass
+both exact proof files to the full launcher:
 
 ```bash
-experiments/dishonest_sycophancy_concealing/run_14/launch/submit_full.sh
+experiments/dishonest_sycophancy_concealing/run_14/launch/submit_full.sh \
+  <one-chain-attempt>/metadata/canary_passed.json \
+  <five-chain-attempt>/metadata/canary_passed.json
 ```
+
+The full launcher validates both proofs, verifies that the five-chain proof is
+bound to the exact one-chain proof by SHA-256, copies both proofs into the new
+attempt, and records their hashes before submission. A command in this README
+is not launch authorization; reconfirm the documented model-role mapping before
+starting a new canary, continuation, recovery, or full attempt.
 
 The launchers print and retain the attempt directory and pipeline job ID.
 `metadata/children.tsv` records one evaluator and one research-chain job per
@@ -137,6 +165,51 @@ experiments/dishonest_sycophancy_concealing/run_14/recovery/finalize_scored_run.
 The recovery validates the retained approval and score, keeps AutoData
 disabled, forbids method edits, training, and evaluation, and succeeds only
 after exactly one finding is durably joined to the scored run ID.
+
+## Pass criteria
+
+- The one-chain proof passes all lifecycle checks.
+- A corrected five-chain proof passes for all five configured seeds and retains
+  the SHA-256 of the exact one-chain proof it consumed.
+- Full-attempt metadata retains the resolved YAML, both ordered proof files,
+  their hashes, the source commit, and five distinct research/evaluator job
+  pairs.
+- Each chain publishes 50 complete score/finding pairs joined by run ID; the
+  full run therefore produces 250 complete pairs. Started or failed sessions do
+  not count toward this target.
+- Each chain stays within its 60-session ceiling.
+- Every counted result has a source-bound training receipt and the required
+  fail-closed vLLM runtime and merged-adapter provenance.
+- Attempt metadata proves native generation and `AAR_AUTODATA=0`, with no
+  AutoData process or artifact.
+
+## Stop criteria
+
+Stop before scale-up or submission if either ordered proof is missing, failed,
+stale, or not bound to the other; if the model-role mapping is unconfirmed; if
+the worktree is dirty or not at the retained source commit; or if baseline,
+public-source, endpoint, runtime, secret, or storage validation fails.
+
+During execution, stop or use a state-preserving recovery if AutoData is
+initialized, evaluator-only data reaches a research process, proposal or method
+contracts are bypassed, a training/evaluator failure is not durably structured,
+child job identities are incomplete, or score/finding joins cannot be proven.
+
+## Monitoring and recovery
+
+Use retained metadata rather than guessing job identities:
+
+```bash
+column -t -s $'\t' <attempt>/metadata/children.tsv
+squeue -j <pipeline-and-child-job-ids> -o '%.18i %.30j %.10T %.10M %R'
+sacct -j <pipeline-and-child-job-ids> --format=JobID,JobName,State,ExitCode,Elapsed
+```
+
+Track complete score/finding joins by run ID and append durable state changes to
+`PROGRESS.md` in PT. The existing finding-only recovery is deliberately narrow;
+it is not a general full-chain resume command. A full-run recovery must preserve
+existing results, reject duplicate active jobs, and subtract already-started
+sessions from each chain's 60-session budget.
 
 ## Isolation and provenance
 
