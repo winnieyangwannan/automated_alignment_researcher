@@ -31,6 +31,8 @@ evaluation:
   time_limit: 7-00:00:00
   idle_seconds: 604200
   on_demand: false
+  # Emit vLLM scheduler throughput, request, prefix-cache, and KV-cache stats.
+  vllm_log_stats: true
 
 agent:
   backend: kimi

@@ -4,6 +4,9 @@
 
 Run 14's launchers and scheduled payload require this branch.
 
+- Status: full five-chain 5×50 run paused for source hardening and recovery
+- Last updated: 2026-10-11 00:03 PT
+
 ## Goal
 
 Run five independent Kimi AAR research chains to 50 successful score/finding
@@ -27,8 +30,8 @@ one-chain lifecycle proof
 ```
 
 The one-chain gate passed. The first five-chain topology attempt stopped
-without a proof after proposal and training failures. A corrected five-chain
-canary must pass before the full run is authorized.
+without a proof after proposal and training failures. The corrected five-chain
+canary subsequently passed, and its proof authorized the active full run.
 
 ## Directory layout
 
@@ -210,6 +213,56 @@ Track complete score/finding joins by run ID and append durable state changes to
 it is not a general full-chain resume command. A full-run recovery must preserve
 existing results, reject duplicate active jobs, and subtract already-started
 sessions from each chain's 60-session budget.
+
+### Evaluator-throughput monitoring goal
+
+Recorded: 2026-10-10 23:41 PT
+
+The recovery configuration sets `evaluation.vllm_log_stats: true`. The compiled
+runtime must emit `EVAL_VLLM_LOG_STATS=1`, and each successfully initialized
+vLLM replica must log both `log_stats=True` and `disable_log_stats=False` before
+its periodic scheduler statistics are accepted as active telemetry.
+
+Determine whether the full evaluator's target-model batch size of `2` is too
+conservative. Run a separately authorized, public-only throughput canary with
+the same candidate checkpoint, four-GPU evaluator topology, vLLM 0.25.1 engine
+settings, decoding settings, benchmark ordering, judge backend, and judge
+concurrency. Compare batch sizes `2`, `4`, and `8`; test a larger batch only
+when the preceding size has measured GPU and memory headroom. Do not change the
+active full run.
+
+Retain held-out-safe measurements for every batch size and benchmark:
+
+- end-to-end evaluation wall time, model-load time, benchmark queue time, and
+  per-benchmark wall time;
+- completed examples per second, prompt tokens per second, output tokens per
+  second, and total tokens per second, separating prefill and decode when vLLM
+  exposes both;
+- request latency and time to first token at median, p95, and p99, plus active,
+  queued, and completed request counts;
+- GPU SM utilization, HBM allocation and peak use, KV-cache utilization,
+  effective batch occupancy, and allocator or out-of-memory warnings;
+- generated and truncated completion counts, output-token distributions,
+  parse failures, evaluator retries, and terminal scoring errors;
+- Model API judge request rate, completed calls, median/p95/p99 latency,
+  retry-after time, HTTP 429/rate-limit events, 5xx errors, timeouts, and
+  connection resets; and
+- aggregate score and capability-gate parity, without retaining raw held-out
+  prompts, responses, item-level scores, or hidden benchmark scores.
+
+Separate cold model loading from steady-state scoring and repeat measurements
+enough to distinguish stable throughput from noise. A larger batch is eligible
+only when it produces a repeatable throughput or wall-time improvement without
+OOMs, allocator warnings, excess truncation, provider-rate-limit pressure,
+terminal errors, or material score/capability drift.
+
+Because sampled generation can depend on batch composition and floating-point
+execution order, changing only the candidate evaluator batch is forbidden. Any
+adopted batch size must have a matching validated baseline protocol or a
+separate parity proof. The monitor must conclude with one decision: retain
+batch `2`, adopt the highest validated batch for a future run, or collect more
+evidence. It must identify the measured bottleneck as target generation, model
+loading, judge/API latency, scheduler queueing, or another observed stage.
 
 ## Isolation and provenance
 

@@ -74,12 +74,140 @@ class ThinkingParserTests(unittest.TestCase):
                 "api_key": "not-logged",
                 "model": "gemma-4-31B-it",
             }))
-            with mock.patch("urllib.request.urlopen", return_value=Response()):
+            with mock.patch(
+                "urllib.request.urlopen", return_value=Response()
+            ) as urlopen:
                 result = chat_completion(
                     [{"role": "user", "content": "17+19"}], deployment_dir=tmp
                 )
         self.assertEqual(result["reasoning"], "math")
         self.assertEqual(result["answer"], "36")
+        request = urlopen.call_args.args[0]
+        body = json.loads(request.data)
+        self.assertNotIn("max_tokens", body)
+
+    def test_serve_client_preserves_explicit_positive_completion_budget(self) -> None:
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            def read(self):
+                return json.dumps({
+                    "choices": [{
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": "<|channel>thought\nmath<channel|>36"
+                        },
+                    }],
+                }).encode()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "proxy_info.json").write_text(json.dumps({
+                "url": "http://serve.invalid",
+                "api_key": "not-logged",
+                "model": "gemma-4-31B-it",
+            }))
+            with mock.patch(
+                "urllib.request.urlopen", return_value=Response()
+            ) as urlopen:
+                chat_completion(
+                    [{"role": "user", "content": "17+19"}],
+                    deployment_dir=tmp,
+                    max_tokens=8192,
+                )
+        request = urlopen.call_args.args[0]
+        self.assertEqual(json.loads(request.data)["max_tokens"], 8192)
+
+    def test_serve_client_rejects_invalid_explicit_completion_budget(self) -> None:
+        for invalid in (0, -1, True, 1.5):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                ValueError, "positive integer or None"
+            ):
+                chat_completion([], deployment_dir="unused", max_tokens=invalid)
+
+    def test_serve_client_enforces_required_target_thinking(self) -> None:
+        with mock.patch.dict(
+            os.environ, {"AAR_TARGET_ENABLE_THINKING": "1"}, clear=False
+        ):
+            with self.assertRaisesRegex(
+                ValueError, "requires enable_thinking=True"
+            ):
+                chat_completion(
+                    [], deployment_dir="unused", enable_thinking=False
+                )
+
+    def test_serve_client_allows_disabled_thinking_when_not_required(self) -> None:
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            def read(self):
+                return json.dumps({
+                    "choices": [{
+                        "finish_reason": "stop",
+                        "message": {"content": "36"},
+                    }],
+                }).encode()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "proxy_info.json").write_text(json.dumps({
+                "url": "http://serve.invalid",
+                "api_key": "not-logged",
+                "model": "gemma-4-31B-it",
+            }))
+            with (
+                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch("urllib.request.urlopen", return_value=Response()),
+            ):
+                result = chat_completion(
+                    [], deployment_dir=tmp, enable_thinking=False
+                )
+        self.assertEqual(result["answer"], "36")
+
+    def test_serve_client_rejects_invalid_required_thinking_env(self) -> None:
+        with mock.patch.dict(
+            os.environ, {"AAR_TARGET_ENABLE_THINKING": "sometimes"}, clear=False
+        ):
+            with self.assertRaisesRegex(ValueError, "must be a boolean value"):
+                chat_completion([], deployment_dir="unused")
+
+    def test_serve_client_rejects_non_boolean_thinking_flag(self) -> None:
+        with self.assertRaisesRegex(ValueError, "enable_thinking must be a bool"):
+            chat_completion([], deployment_dir="unused", enable_thinking="yes")
+
+    def test_serve_client_rejects_length_truncated_completion(self) -> None:
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            def read(self):
+                return json.dumps({
+                    "choices": [{
+                        "finish_reason": "length",
+                        "message": {"content": "unfinished"},
+                    }],
+                }).encode()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "proxy_info.json").write_text(json.dumps({
+                "url": "http://serve.invalid",
+                "api_key": "not-logged",
+                "model": "gemma-4-31B-it",
+            }))
+            with (
+                mock.patch("urllib.request.urlopen", return_value=Response()),
+                self.assertRaisesRegex(RuntimeError, "did not stop cleanly: 'length'"),
+            ):
+                chat_completion([], deployment_dir=tmp)
 
     def test_nested_text_config_context_precedes_tokenizer_fallback(self) -> None:
         config = SimpleNamespace(

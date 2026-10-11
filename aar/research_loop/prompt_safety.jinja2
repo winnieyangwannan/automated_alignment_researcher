@@ -222,8 +222,13 @@ argument is `messages`; pass the served name as `model="{{ serve_v2_model }}"`
 and request reasoning with the Python keyword `enable_thinking=True`. The client
 translates that keyword to the HTTP payload's `chat_template_kwargs` field and
 returns `answer` separately from `reasoning`. Do not pass `chat_template_kwargs`
-or `top_p` to the Python function. Use only `answer` as a label, and let target
-generation failures propagate rather than silently substituting fallback rows.
+or `top_p` to the Python function. Leave `max_tokens` unset to let vLLM use the
+maximum completion budget remaining after the prompt; never set it to the model's
+literal context length. If you intentionally set a smaller limit while thinking
+is enabled, it must be at least 8192 tokens. When the run requires target thinking,
+the client and method contract fail closed if code passes `enable_thinking=False`
+or a dynamic value. Use only `answer` as a label, and let target generation
+failures propagate rather than silently substituting fallback rows.
 {% endif %}
 {% if autodata %}
 

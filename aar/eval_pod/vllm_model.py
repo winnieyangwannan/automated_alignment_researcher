@@ -60,6 +60,18 @@ def _scheduler_token_budget() -> int | None:
     return budget
 
 
+def _vllm_log_stats_enabled() -> bool:
+    """Return the explicitly configured vLLM statistics-logging policy."""
+    value = os.getenv("EVAL_VLLM_LOG_STATS", "").strip().lower()
+    if value in {"", "0", "false", "no", "off"}:
+        return False
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    raise ValueError(
+        "EVAL_VLLM_LOG_STATS must be a boolean value when set"
+    )
+
+
 def _round_lora_rank(rank: int) -> int:
     """Return a vLLM-supported power-of-two capacity for an adapter rank."""
     capacity = 8
@@ -340,6 +352,7 @@ class VLLMModel:
                 model_path, self.config
             )
 
+        log_stats_enabled = _vllm_log_stats_enabled()
         engine_kwargs: dict[str, Any] = {
             "model": base_model_ref,
             "tokenizer": tokenizer_ref,
@@ -354,7 +367,7 @@ class VLLMModel:
                 "EVAL_VLLM_ENABLE_PREFIX_CACHING", True
             ),
             "enforce_eager": _env_bool("EVAL_VLLM_ENFORCE_EAGER", False),
-            "disable_log_stats": True,
+            "disable_log_stats": not log_stats_enabled,
         }
         max_num_batched_tokens = _scheduler_token_budget()
         if max_num_batched_tokens is not None:
@@ -392,11 +405,18 @@ class VLLMModel:
             f"max_num_batched_tokens={engine_kwargs.get('max_num_batched_tokens', 'auto')} "
             f"gpu_memory_utilization={engine_kwargs['gpu_memory_utilization']} "
             f"prefix_caching={engine_kwargs['enable_prefix_caching']} "
+            f"log_stats={log_stats_enabled} "
             f"lora={is_adapter}",
             flush=True,
         )
         try:
             self.llm = LLM(**engine_kwargs)
+            print(
+                "[eval:vllm] engine ready "
+                f"log_stats={log_stats_enabled} "
+                f"disable_log_stats={engine_kwargs['disable_log_stats']}",
+                flush=True,
+            )
         except Exception:
             if self._adapter_temp_dir:
                 shutil.rmtree(self._adapter_temp_dir, ignore_errors=True)

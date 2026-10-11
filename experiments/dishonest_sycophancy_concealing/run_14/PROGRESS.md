@@ -340,3 +340,200 @@ rerun the bounded five-chain topology gate after model-role reconfirmation.
 - AutoData: disabled with `AAR_AUTODATA=0`
 - Decision: monitor all five chain/evaluator pairs; count success only by
   atomic score/finding pairs
+
+<a id="run14-event-full-five-chain-per-chain-snapshot-2341"></a>
+
+### ⏳ 23:41 PT — RUNNING: per-chain lifecycle snapshot
+
+> [!NOTE]
+> All five research chains and evaluator workers remain running. Two complete
+> score/finding pairs are durably joined by run ID: one from Delta and one from
+> Epsilon. Training or score publication without the matching finding does not
+> count toward the `250`-pair target.
+
+#### Alpha — session 2/60, pairs 0/50
+
+✓ Method authored and contract passed
+
+✓ Proposal approved
+
+✓ Training `1811063` completed
+
+✓ Adapter submitted and merged
+
+⏳ vLLM model loading and warmup
+
+○ Benchmark evaluation
+
+○ Score publication
+
+○ Finding publication
+
+Alpha successfully repaired the prior PEFT target-regex failure. Chain
+`1810666` and evaluator `1810665` are running.
+
+#### Beta — session 1/60, pairs 0/50
+
+✓ Method authored and contract passed
+
+✓ Proposal approved after code/paper corrections
+
+⏳ Training `1810827`: approximately 79% complete
+
+○ Adapter submission and merge
+
+○ Evaluation
+
+○ Score and finding publication
+
+No runtime failure is present. Chain `1810668` and evaluator `1810667` are
+running.
+
+#### Gamma — session 3/60, pairs 0/50
+
+✓ Method authored and contract passed
+
+✓ Proposal approved
+
+✓ Training `1811078` completed
+
+✓ Adapter submitted and merged
+
+⏳ vLLM model loading
+
+○ Benchmark evaluation
+
+○ Score and finding publication
+
+Gamma recovered from both the generation-length failure and the unproductive
+Session 1. Chain `1810670` and evaluator `1810669` are running.
+
+#### Delta — session 2/60, pairs 1/50
+
+✓ Previous iteration scored and finding published
+
+✓ Current method and contract complete
+
+✓ Current proposal approved
+
+⏳ Current training `1811101`
+
+○ Adapter merge
+
+○ Evaluation
+
+○ Next score/finding pair
+
+Chain `1810672` and evaluator `1810671` are running. The current session has no
+runtime failure.
+
+#### Epsilon — session 3/60, pairs 1/50
+
+✓ Helper-call failure repaired
+
+✓ Previous training and evaluation completed
+
+✓ Previous score and finding published
+
+⏳ New method authoring
+
+○ Contract check
+
+○ Proposal review
+
+○ Training and evaluation
+
+Chain `1810674` and evaluator `1810673` are running. The new session has no
+failure and is using the prior result through the leaderboard.
+
+#### Evidence
+
+- Snapshot: 2026-10-10 23:41:01 PDT
+- Attempt:
+  `/checkpoint/ram/aar/winnieyangwn/run14_native_generation/full_attempts/20261011T054113Z-8b83f841862c`
+- Atomic progress: `2/250` total; Alpha `0/50`, Beta `0/50`, Gamma `0/50`,
+  Delta `1/50`, Epsilon `1/50`
+
+<a id="run14-event-full-five-chain-operator-pause-2359"></a>
+
+### ⏸ 23:59 PT — PAUSED: source hardening and instrumented recovery
+
+At the user's request, all five research chains, all five evaluator workers,
+and Epsilon training job `1811135` were cancelled at 2026-10-10 23:59:51 PT.
+All eleven jobs subsequently left the scheduler. The retained attempt and its
+durable results were not deleted or overwritten.
+
+#### Alpha — session 2/60, pairs 0/50
+
+✓ Method authored, trained, and evaluated
+
+✓ Score published
+
+⏳ Finding publication to be recovered
+
+○ Next score/finding pair
+
+The completed score remains durable; it is not counted until its matching
+finding is published.
+
+#### Beta — session 1/60, pairs 0/50
+
+✓ Method authored, trained, and evaluated
+
+✓ Score published
+
+⏳ Finding publication to be recovered
+
+○ Next score/finding pair
+
+The score completed approximately six seconds before the operator pause and
+remains durable.
+
+#### Gamma — session 3/60, pairs 0/50
+
+✓ Method authored, contract passed, and training completed
+
+✓ Adapter submitted and merged
+
+⏳ Interrupted benchmark evaluation to be restarted
+
+○ Score and finding publication
+
+Five of thirteen benchmark phases had completed, but no score was published;
+partial evaluator output will not be counted as a result.
+
+#### Delta — session 2/60, pairs 1/50
+
+✓ Previous score/finding pair remains durable
+
+✓ Current method trained and adapter submitted
+
+⏳ Interrupted benchmark evaluation to be restarted
+
+○ Current score and finding publication
+
+The existing pair remains counted. The interrupted current evaluation has no
+published score.
+
+#### Epsilon — session 3/60, pairs 1/50
+
+✓ Previous score/finding pair remains durable
+
+✓ Current method, contract, and proposal approved
+
+⏳ Interrupted training to be resumed from the approved proposal
+
+○ Adapter submission, evaluation, score, and finding
+
+Training job `1811135` stopped after 12m29s without publishing an adapter.
+
+#### Recovery scope
+
+- Retained attempt:
+  `/checkpoint/ram/aar/winnieyangwn/run14_native_generation/full_attempts/20261011T054113Z-8b83f841862c`
+- Durable atomic progress: `2/250`
+- Apply the shared target-generation and method-contract hardening.
+- Enable vLLM runtime statistics through
+  `evaluation.vllm_log_stats: true` and verify the live engine log markers.
+- Resume from retained per-chain state with remaining session budgets Alpha
+  `58`, Beta `59`, Gamma `57`, Delta `58`, and Epsilon `57`.

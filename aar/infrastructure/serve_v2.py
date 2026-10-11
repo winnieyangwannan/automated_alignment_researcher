@@ -10,6 +10,17 @@ from typing import Any
 from aar.eval_pod.models import split_reasoning_and_answer_text
 
 
+def _target_requires_thinking() -> bool:
+    value = os.getenv("AAR_TARGET_ENABLE_THINKING", "").strip().lower()
+    if value in {"", "0", "false", "no", "off"}:
+        return False
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    raise ValueError(
+        "AAR_TARGET_ENABLE_THINKING must be a boolean value when set"
+    )
+
+
 def _deployment_info(deployment_dir: str | None = None) -> dict[str, Any]:
     root = Path(deployment_dir or os.environ["AAR_SERVE_V2_DEPLOYMENT_DIR"])
     info = json.loads((root / "proxy_info.json").read_text())
@@ -25,26 +36,42 @@ def chat_completion(
     deployment_dir: str | None = None,
     model: str | None = None,
     enable_thinking: bool = True,
-    max_tokens: int = 1024,
+    max_tokens: int | None = None,
     temperature: float = 1.0,
     timeout: float = 180.0,
 ) -> dict[str, Any]:
     """Return separated ``answer`` and ``reasoning`` from the deployed target.
 
     Credentials are read from the deployment metadata only for the HTTP request;
-    they are never included in the returned object or exception text.
+    they are never included in the returned object or exception text. By default,
+    ``max_tokens`` is omitted so vLLM computes the largest completion budget that
+    fits after tokenizing this request's prompt. A literal model context length is
+    not a valid completion budget because the prompt consumes part of that limit.
     """
+    if not isinstance(enable_thinking, bool):
+        raise ValueError("enable_thinking must be a bool")
+    if _target_requires_thinking() and not enable_thinking:
+        raise ValueError(
+            "AAR_TARGET_ENABLE_THINKING requires enable_thinking=True"
+        )
+    if max_tokens is not None and (
+        isinstance(max_tokens, bool)
+        or not isinstance(max_tokens, int)
+        or max_tokens <= 0
+    ):
+        raise ValueError("max_tokens must be a positive integer or None")
     info = _deployment_info(deployment_dir)
     served_model = model or os.getenv("AAR_SERVE_V2_MODEL") or info["model"]
-    body = {
+    body: dict[str, Any] = {
         "model": served_model,
         "messages": messages,
-        "max_tokens": max_tokens,
         "temperature": temperature,
         "chat_template_kwargs": {"enable_thinking": enable_thinking},
         # Required for deterministic reasoning/final channel separation.
         "skip_special_tokens": False,
     }
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
     request = urllib.request.Request(
         info["url"].rstrip("/") + "/v1/chat/completions",
         data=json.dumps(body).encode(),

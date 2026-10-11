@@ -117,6 +117,7 @@ def load_run_config(path: Path) -> dict[str, str]:
             "time_limit",
             "idle_seconds",
             "on_demand",
+            "vllm_log_stats",
         },
         "evaluation",
     )
@@ -295,6 +296,10 @@ def load_run_config(path: Path) -> dict[str, str]:
     if "on_demand" in evaluation:
         environment["AAR_EVAL_ON_DEMAND"] = _boolean(
             evaluation["on_demand"], "evaluation.on_demand"
+        )
+    if "vllm_log_stats" in evaluation:
+        environment["EVAL_VLLM_LOG_STATS"] = _boolean(
+            evaluation["vllm_log_stats"], "evaluation.vllm_log_stats"
         )
 
     if "backend" in agent:

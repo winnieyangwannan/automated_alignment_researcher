@@ -195,6 +195,7 @@ def test_run14_declares_native_data_generation_and_5x50_budget() -> None:
     ]
     assert config["research"]["target_score_result_pairs"] == 50
     assert config["research"]["max_sessions_per_chain"] == 60
+    assert config["evaluation"]["vllm_log_stats"] is True
 
     result = subprocess.run(
         [
@@ -211,6 +212,9 @@ def test_run14_declares_native_data_generation_and_5x50_budget() -> None:
     assert "export AAR_AUTODATA=0" in result.stdout
     assert "export AAR_TARGET_SUCCESSFUL_ITERATIONS=50" in result.stdout
     assert "export AAR_MAX_ITERATIONS_PER_CHAIN=60" in result.stdout
+    assert "export EVAL_VLLM_LOG_STATS=1" in result.stdout
+    runtime_env = (ROOT / "scripts" / "aar_runtime_env.sh").read_text()
+    assert "EVAL_VLLM_LOG_STATS" in runtime_env
 
 
 def test_run14_full_launch_requires_and_binds_both_lifecycle_proofs() -> None:

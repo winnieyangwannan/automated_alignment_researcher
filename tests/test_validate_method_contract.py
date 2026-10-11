@@ -201,6 +201,55 @@ trainer = SFTTrainer(
 
         self.assertEqual(_unsafe_training_api_errors(tree), [])
 
+    def test_rejects_invalid_shared_chat_template_helper_calls(self) -> None:
+        sources = [
+            """
+from aar.utils.chat_template import normalize_chat_template_ids
+ids = normalize_chat_template_ids(ids, tokenizer)
+""",
+            """
+from aar.utils.chat_template import normalize_chat_template_ids as normalize_ids
+ids = normalize_ids()
+""",
+            """
+from aar.utils import chat_template as chat_helpers
+ids = chat_helpers.normalize_chat_template_ids(ids, tokenizer=tokenizer)
+""",
+            """
+import aar.utils.chat_template
+ids = aar.utils.chat_template.normalize_chat_template_ids(ids, tokenizer)
+""",
+        ]
+
+        for source in sources:
+            with self.subTest(source=source):
+                errors = _unsafe_training_api_errors(ast.parse(source))
+                self.assertEqual(len(errors), 1)
+                self.assertIn("accepts exactly one argument (value)", errors[0])
+
+    def test_accepts_valid_shared_chat_template_helper_calls(self) -> None:
+        sources = [
+            """
+from aar.utils.chat_template import normalize_chat_template_ids
+ids = normalize_chat_template_ids(ids)
+""",
+            """
+from aar.utils.chat_template import normalize_chat_template_ids as normalize_ids
+ids = normalize_ids(value=ids)
+""",
+            """
+from aar.utils import chat_template
+ids = chat_template.normalize_chat_template_ids(ids)
+""",
+        ]
+
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertEqual(
+                    _unsafe_training_api_errors(ast.parse(source)),
+                    [],
+                )
+
     def test_undefined_name_gate_reports_ruff_diagnostic(self) -> None:
         completed = subprocess.CompletedProcess(
             ["ruff"],
@@ -279,21 +328,85 @@ except Exception:
         self.assertTrue(any("chat_template_kwargs, top_p" in error for error in errors))
         self.assertTrue(any("fail closed" in error for error in errors))
 
-    def test_accepts_supported_serve_v2_call_that_propagates_failures(self) -> None:
-        tree = ast.parse(
-            """
-result = chat_completion(
-    messages,
-    model=model,
-    enable_thinking=True,
-    max_tokens=256,
-    temperature=0.3,
-    timeout=180.0,
-)
-"""
-        )
+    def test_rejects_undersized_or_unverifiable_thinking_budget(self) -> None:
+        sources = [
+            "chat_completion(messages, enable_thinking=True, max_tokens=1024)",
+            "chat_completion(messages, max_tokens=budget)",
+            (
+                "from aar.infrastructure.serve_v2 import chat_completion as generate\n"
+                "generate(messages, enable_thinking=True, max_tokens=256)"
+            ),
+            (
+                "from aar.infrastructure import serve_v2 as target\n"
+                "target.chat_completion(messages, max_tokens=4096)"
+            ),
+        ]
+        for source in sources:
+            with self.subTest(source=source):
+                errors = _unsafe_training_api_errors(ast.parse(source))
+                self.assertEqual(len(errors), 1)
+                self.assertIn("context-aware maximum", errors[0])
+                self.assertIn("at least 8192", errors[0])
 
-        self.assertEqual(_unsafe_training_api_errors(tree), [])
+    def test_accepts_safe_supported_serve_v2_calls(self) -> None:
+        sources = [
+            "chat_completion(messages, model=model, enable_thinking=True)",
+            "chat_completion(messages, enable_thinking=True, max_tokens=None)",
+            "chat_completion(messages, enable_thinking=True, max_tokens=8192)",
+            "chat_completion(messages, enable_thinking=False, max_tokens=256)",
+            (
+                "import aar.infrastructure.serve_v2 as target\n"
+                "target.chat_completion(messages, max_tokens=32768)"
+            ),
+        ]
+        with patch.dict("os.environ", {}, clear=True):
+            for source in sources:
+                with self.subTest(source=source):
+                    self.assertEqual(
+                        _unsafe_training_api_errors(ast.parse(source)),
+                        [],
+                    )
+
+    def test_required_target_thinking_rejects_disabled_or_dynamic_calls(self) -> None:
+        sources = [
+            "chat_completion(messages, enable_thinking=False)",
+            "chat_completion(messages, enable_thinking=should_think)",
+        ]
+        with patch.dict(
+            "os.environ", {"AAR_TARGET_ENABLE_THINKING": "1"}, clear=False
+        ):
+            for source in sources:
+                with self.subTest(source=source):
+                    errors = _unsafe_training_api_errors(ast.parse(source))
+                    self.assertEqual(len(errors), 1)
+                    self.assertIn("literal enable_thinking=True", errors[0])
+
+    def test_required_target_thinking_accepts_default_or_literal_true(self) -> None:
+        sources = [
+            "chat_completion(messages)",
+            "chat_completion(messages, enable_thinking=True)",
+        ]
+        with patch.dict(
+            "os.environ", {"AAR_TARGET_ENABLE_THINKING": "1"}, clear=False
+        ):
+            for source in sources:
+                with self.subTest(source=source):
+                    self.assertEqual(
+                        _unsafe_training_api_errors(ast.parse(source)),
+                        [],
+                    )
+
+    def test_invalid_required_target_thinking_env_fails_closed(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"AAR_TARGET_ENABLE_THINKING": "sometimes"},
+            clear=False,
+        ):
+            errors = _unsafe_training_api_errors(ast.parse("value = 1"))
+        self.assertEqual(
+            errors,
+            ["AAR_TARGET_ENABLE_THINKING must be a boolean value when set"],
+        )
 
     def _run(self, source: str) -> tuple[subprocess.CompletedProcess[str], dict]:
         with tempfile.TemporaryDirectory() as temp:
@@ -558,6 +671,45 @@ result = chat_completion(
         self.assertTrue(
             any(
                 "overwrite_output_dir" in error
+                for error in proof["errors"]
+            )
+        )
+
+    def test_contract_rejects_chat_template_helper_arity_before_smoke(self) -> None:
+        phases = "\n".join(
+            f'    with phase("{name}"):\n        pass'
+            for name in (
+                "data_generation",
+                "tokenization",
+                "model_loading",
+                "training",
+                "checkpoint_save",
+            )
+        )
+        result, proof = self._run_with_smoke_required(
+            "from contextlib import contextmanager\n"
+            "@contextmanager\n"
+            "def phase(_name):\n"
+            "    yield\n"
+            "class MethodConfig:\n"
+            "    def __init__(self, output_dir='out', dry_run=False, smoke_run=False):\n"
+            "        self.output_dir = output_dir\n"
+            "        self.dry_run = dry_run\n"
+            "        self.smoke_run = smoke_run\n"
+            "def run_experiment(config):\n"
+            "    if config.dry_run:\n"
+            "        return {'model_path': config.output_dir, 'method': 'test'}\n"
+            "    from aar.utils.chat_template import normalize_chat_template_ids\n"
+            "    ids = normalize_chat_template_ids([], object())\n"
+            f"{phases}\n"
+            "    return {'model_path': config.output_dir, 'method': str(ids)}\n"
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(proof["status"], "failed")
+        self.assertTrue(
+            any(
+                "accepts exactly one argument (value)" in error
                 for error in proof["errors"]
             )
         )

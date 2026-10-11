@@ -15,6 +15,7 @@ from aar.eval_pod.vllm_model import (
     _is_heterogeneous_gemma4,
     _round_lora_rank,
     _scheduler_token_budget,
+    _vllm_log_stats_enabled,
     require_compatible_vllm,
     vllm_hf_overrides,
     vllm_lora_layout,
@@ -53,6 +54,25 @@ class VLLMLoRATests(unittest.TestCase):
 
 
 class VLLMConfigTests(unittest.TestCase):
+    def test_vllm_log_stats_are_opt_in_and_strict(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(_vllm_log_stats_enabled())
+        for value in ("1", "true", "yes", "on"):
+            with self.subTest(value=value), mock.patch.dict(
+                os.environ, {"EVAL_VLLM_LOG_STATS": value}, clear=True
+            ):
+                self.assertTrue(_vllm_log_stats_enabled())
+        for value in ("0", "false", "no", "off"):
+            with self.subTest(value=value), mock.patch.dict(
+                os.environ, {"EVAL_VLLM_LOG_STATS": value}, clear=True
+            ):
+                self.assertFalse(_vllm_log_stats_enabled())
+        with mock.patch.dict(
+            os.environ, {"EVAL_VLLM_LOG_STATS": "sometimes"}, clear=True
+        ):
+            with self.assertRaisesRegex(ValueError, "must be a boolean value"):
+                _vllm_log_stats_enabled()
+
     def test_scheduler_token_budget_is_optional_and_validated(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertIsNone(_scheduler_token_budget())

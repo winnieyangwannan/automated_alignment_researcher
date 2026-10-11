@@ -139,6 +139,24 @@ def _unsupported_training_arguments(tree: ast.AST) -> list[str]:
 def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
     """Reject target-environment API and batching failures before GPU launch."""
     errors: set[str] = set()
+    target_thinking_value = os.getenv("AAR_TARGET_ENABLE_THINKING", "").strip().lower()
+    if target_thinking_value not in {
+        "",
+        "0",
+        "false",
+        "no",
+        "off",
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        errors.add("AAR_TARGET_ENABLE_THINKING must be a boolean value when set")
+    target_thinking_required = target_thinking_value in {"1", "true", "yes", "on"}
+    serve_v2_chat_completion_names: set[str] = {"chat_completion"}
+    serve_v2_module_names: set[str] = set()
+    chat_template_normalizer_names: set[str] = set()
+    chat_template_module_names: set[str] = set()
     seq2seq_collator_names = {"DataCollatorForSeq2Seq"}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module == "transformers":
@@ -147,6 +165,99 @@ def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
                 for alias in node.names
                 if alias.name == "DataCollatorForSeq2Seq"
             )
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module == "aar.utils.chat_template"
+        ):
+            chat_template_normalizer_names.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if alias.name == "normalize_chat_template_ids"
+            )
+        elif isinstance(node, ast.ImportFrom) and node.module == "aar.utils":
+            chat_template_module_names.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if alias.name == "chat_template"
+            )
+        elif isinstance(node, ast.Import):
+            chat_template_module_names.update(
+                alias.asname
+                for alias in node.names
+                if alias.name == "aar.utils.chat_template" and alias.asname
+            )
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module == "aar.infrastructure.serve_v2"
+        ):
+            serve_v2_chat_completion_names.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if alias.name == "chat_completion"
+            )
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module == "aar.infrastructure"
+        ):
+            serve_v2_module_names.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if alias.name == "serve_v2"
+            )
+        elif isinstance(node, ast.Import):
+            serve_v2_module_names.update(
+                alias.asname
+                for alias in node.names
+                if alias.name == "aar.infrastructure.serve_v2" and alias.asname
+            )
+
+    def is_serve_v2_chat_completion_call(node: ast.Call) -> bool:
+        function = node.func
+        if (
+            isinstance(function, ast.Name)
+            and function.id in serve_v2_chat_completion_names
+        ):
+            return True
+        if not (
+            isinstance(function, ast.Attribute)
+            and function.attr == "chat_completion"
+        ):
+            return False
+        if isinstance(function.value, ast.Name):
+            return function.value.id in serve_v2_module_names
+        value = function.value
+        return (
+            isinstance(value, ast.Attribute)
+            and value.attr == "serve_v2"
+            and isinstance(value.value, ast.Attribute)
+            and value.value.attr == "infrastructure"
+            and isinstance(value.value.value, ast.Name)
+            and value.value.value.id == "aar"
+        )
+
+    def is_chat_template_normalizer_call(node: ast.Call) -> bool:
+        function = node.func
+        if (
+            isinstance(function, ast.Name)
+            and function.id in chat_template_normalizer_names
+        ):
+            return True
+        if not (
+            isinstance(function, ast.Attribute)
+            and function.attr == "normalize_chat_template_ids"
+        ):
+            return False
+        if isinstance(function.value, ast.Name):
+            return function.value.id in chat_template_module_names
+        value = function.value
+        return (
+            isinstance(value, ast.Attribute)
+            and value.attr == "chat_template"
+            and isinstance(value.value, ast.Attribute)
+            and value.value.attr == "utils"
+            and isinstance(value.value.value, ast.Name)
+            and value.value.value.id == "aar"
+        )
 
     def is_seq2seq_collator_call(node: ast.AST) -> bool:
         if not isinstance(node, ast.Call):
@@ -230,7 +341,29 @@ def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
                 else function.attr if isinstance(function, ast.Attribute) else ""
             )
             keywords = {kw.arg for kw in node.keywords if kw.arg is not None}
-            if name == "chat_completion":
+            if is_chat_template_normalizer_call(node) and not any(
+                isinstance(argument, ast.Starred) for argument in node.args
+            ) and not any(keyword.arg is None for keyword in node.keywords):
+                value_keywords = sum(
+                    keyword.arg == "value" for keyword in node.keywords
+                )
+                unsupported_keywords = sorted(
+                    keyword
+                    for keyword in keywords
+                    if keyword != "value"
+                )
+                supplied_values = len(node.args) + value_keywords
+                if supplied_values != 1 or unsupported_keywords:
+                    detail = (
+                        f"received {len(node.args)} positional argument(s)"
+                    )
+                    if keywords:
+                        detail += " and keyword(s): " + ", ".join(sorted(keywords))
+                    errors.add(
+                        "normalize_chat_template_ids accepts exactly one argument "
+                        f"(value); {detail}"
+                    )
+            if is_serve_v2_chat_completion_call(node):
                 supported = {
                     "deployment_dir",
                     "model",
@@ -250,6 +383,49 @@ def _unsafe_training_api_errors(tree: ast.AST) -> list[str]:
                         "chat_completion keyword(s) are unsupported by the locked "
                         "Serve API client: "
                         + ", ".join(unsupported)
+                    )
+                keyword_values = {
+                    keyword.arg: keyword.value
+                    for keyword in node.keywords
+                    if keyword.arg is not None
+                }
+                enable_thinking = keyword_values.get("enable_thinking")
+                thinking_disabled = (
+                    isinstance(enable_thinking, ast.Constant)
+                    and enable_thinking.value is False
+                )
+                thinking_enabled = enable_thinking is None or (
+                    isinstance(enable_thinking, ast.Constant)
+                    and enable_thinking.value is True
+                )
+                if target_thinking_required and not thinking_enabled:
+                    errors.add(
+                        "AAR_TARGET_ENABLE_THINKING requires chat_completion to "
+                        "omit enable_thinking (the client default is True) or pass "
+                        "the literal enable_thinking=True"
+                    )
+                max_tokens = keyword_values.get("max_tokens")
+                uses_context_aware_default = max_tokens is None or (
+                    isinstance(max_tokens, ast.Constant)
+                    and max_tokens.value is None
+                )
+                static_budget = (
+                    max_tokens.value
+                    if isinstance(max_tokens, ast.Constant)
+                    and isinstance(max_tokens.value, int)
+                    and not isinstance(max_tokens.value, bool)
+                    else None
+                )
+                if (
+                    not thinking_disabled
+                    and not uses_context_aware_default
+                    and (static_budget is None or static_budget < 8192)
+                ):
+                    errors.add(
+                        "chat_completion with thinking enabled must omit "
+                        "max_tokens (the client asks vLLM for the request's "
+                        "context-aware maximum) or use a literal budget of at "
+                        "least 8192 tokens"
                     )
             if name in {"DPOTrainer", "DPOConfig"}:
                 errors.add(
