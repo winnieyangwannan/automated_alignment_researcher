@@ -56,6 +56,46 @@ def test_approved_proposal_recovery_disables_after_structured_failure() -> None:
         assert not KimiAgent._resume_approved_proposal_enabled()
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {
+            "schema_version": 2,
+            "status": "failed",
+            "run_id": "different-run",
+            "stage": "training",
+            "error_code": "training_python_exception",
+            "retryable": False,
+        },
+    ],
+)
+def test_invalid_failure_marker_does_not_release_recovery(
+    tmp_path, payload
+) -> None:
+    scores = tmp_path / "scores"
+    scores.mkdir()
+    (scores / "run-1.failed.json").write_text(json.dumps(payload))
+    with (
+        patch.dict(
+            os.environ,
+            {
+                "AAR_RESUME_APPROVED_PROPOSAL": "1",
+                "SCORES_DIR": str(scores),
+            },
+            clear=False,
+        ),
+        patch.object(KimiAgent, "_approved_run_id", return_value="run-1"),
+        patch.object(
+            KimiAgent,
+            "_finding_persisted_for_run",
+            return_value=False,
+        ),
+    ):
+        assert KimiAgent._current_training_failure() is None
+        assert KimiAgent._resume_approved_proposal_enabled()
+
+
 def test_approved_proposal_without_run_id_stops_as_infrastructure_incident(
     tmp_path,
 ) -> None:

@@ -2758,7 +2758,23 @@ class KimiAgent:
             payload = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError):
             return None
-        return payload if isinstance(payload, dict) else {"error": str(payload)}
+        if not isinstance(payload, dict):
+            return None
+        stage = payload.get("stage")
+        error_code = payload.get("error_code")
+        retryable = payload.get("retryable")
+        if (
+            payload.get("schema_version") != 2
+            or payload.get("status") != "failed"
+            or payload.get("run_id") != run_id
+            or not isinstance(stage, str)
+            or re.fullmatch(r"[a-z][a-z0-9_]{0,31}", stage) is None
+            or not isinstance(error_code, str)
+            or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", error_code) is None
+            or not isinstance(retryable, bool)
+        ):
+            return None
+        return payload
 
     @classmethod
     def _previous_failure_feedback(cls) -> Optional[dict[str, Any]]:
