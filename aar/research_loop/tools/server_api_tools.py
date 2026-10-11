@@ -9,6 +9,7 @@ Provides tools for:
 
 import ast
 import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -1437,7 +1438,12 @@ def _requires_explicit_proposal_run_id() -> bool:
     truthy = {"1", "true", "yes", "on"}
     return any(
         os.getenv(name, "").strip().lower() in truthy
-        for name in ("AAR_NO_LOCAL_GPU", "AAR_AUTODATA")
+        for name in (
+            "AAR_NO_LOCAL_GPU",
+            "AAR_AUTODATA",
+            "AAR_REQUIRE_TRAIN_RECEIPT",
+            "EVAL_VIA_WORKER",
+        )
     )
 
 
@@ -1470,8 +1476,19 @@ def _approved_proposal_run_id_candidate() -> str:
     if existing is not None:
         if not isinstance(existing, str) or not re.fullmatch(
             r"[A-Za-z0-9._-]+", existing
-        ):
+        ) or not existing.startswith(f"{idea_uid}-"):
             raise RuntimeError("approved proposal marker has an unsafe run ID")
+        try:
+            stamp = json.loads(_run_proposal_path(existing).read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("approved proposal run stamp is unreadable") from error
+        if (
+            stamp.get("run_id") != existing
+            or stamp.get("idea_name") != idea_name
+            or stamp.get("code_hash") != code_hash
+            or stamp.get("paper") != marker_payload.get("paper")
+        ):
+            raise RuntimeError("approved proposal run stamp is not bound to its marker")
         return existing
 
     # Reconstruct the exact pre-mint payload used by submit_idea_proposal.  This
@@ -1497,16 +1514,26 @@ def _approved_proposal_run_id_candidate() -> str:
 
 def _ensure_approved_proposal_run_id() -> str:
     """Mint and durably stamp the current approved decoupled proposal."""
-    minted = _approved_proposal_run_id_candidate()
     marker_path = _proposal_marker_path()
-    marker_payload = json.loads(marker_path.read_text())
-    if not _stamp_run_proposal(minted):
-        raise RuntimeError("could not freeze the approved proposal run stamp")
-    if marker_payload.get("run_id") is None:
-        marker_payload["run_id"] = minted
-        marker_payload["execution_ready"] = True
-        _atomic_json_write(marker_path, marker_payload)
-    return minted
+    lock_path = marker_path.with_name(f".{marker_path.name}.run-id.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        original = marker_path.read_bytes()
+        minted = _approved_proposal_run_id_candidate()
+        if marker_path.read_bytes() != original:
+            raise RuntimeError("approved proposal changed during run-id validation")
+        marker_payload = json.loads(original)
+        if not _stamp_run_proposal(minted):
+            raise RuntimeError("could not freeze the approved proposal run stamp")
+        if marker_path.read_bytes() != original:
+            raise RuntimeError("approved proposal changed during run-id stamping")
+        if marker_payload.get("run_id") is None:
+            marker_payload["run_id"] = minted
+            marker_payload["execution_ready"] = True
+            _atomic_json_write(marker_path, marker_payload)
+        return minted
 
 
 def _autodata_method_contract_error(code: str) -> str | None:

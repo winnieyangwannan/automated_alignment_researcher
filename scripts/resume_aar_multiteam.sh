@@ -171,6 +171,7 @@ declare -A started_by_seed=()
 declare -A remaining_by_seed=()
 declare -A resume_uid_by_seed=()
 declare -A resume_run_by_seed=()
+declare -A repair_proposal_uid_by_seed=()
 declare -A retry_train_run_by_seed=()
 declare -A retry_train_job_by_seed=()
 declare -A retry_train_failure_by_seed=()
@@ -213,6 +214,7 @@ for seed in "${requested_seeds[@]}"; do
   fi
 
   proposal_dir="${team}/scores/.proposals"
+  needs_run_id_repair=0
   mapfile -t proposal_markers < <(find "${proposal_dir}" -maxdepth 1 -type f -name '*.json' -print 2>/dev/null | sort)
   latest_proposal=""
   latest_proposal_ts="-1"
@@ -241,30 +243,50 @@ for seed in "${requested_seeds[@]}"; do
       echo "${seed} approved proposal lacks a safe bound idea_uid" >&2
       exit 2
     fi
-    if [ -z "${run_id}" ]; then
+    finding=""
+    if [ -n "${run_id}" ]; then
+      [[ "${run_id}" =~ ^[A-Za-z0-9._-]+$ ]] || {
+        echo "${seed} approved proposal has an unsafe run_id" >&2
+        exit 2
+      }
+      finding="${team}/.finding_dedup/runid_${run_id}/post.json"
+    fi
+    # A durable finding closes this proposal.  Do not bind it to the current
+    # method file: a later interrupted session may legitimately have edited
+    # that shared file after the completed proposal was published.
+    if [ ! -f "${finding}" ]; then
       repair_args=(
         --team-dir "${team}"
         --idea-uid "${idea_uid}"
+        --plan-only
       )
-      if [ "${AAR_RESUME_PLAN_ONLY:-0}" = 1 ]; then
-        repair_args+=(--plan-only)
-      fi
-      run_id="$("${HARNESS_PY}" \
+      validated_run_id="$("${HARNESS_PY}" \
         "${REPO}/scripts/repair_approved_proposal_run_id.py" \
         "${repair_args[@]}" | tail -n 1)"
-    fi
-    [[ "${run_id}" =~ ^[A-Za-z0-9._-]+$ ]] || {
-      echo "${seed} approved proposal lacks a recoverable run_id" >&2
-      exit 2
-    }
-    finding="${team}/.finding_dedup/runid_${run_id}/post.json"
-    if [ ! -f "${finding}" ]; then
-      if [ -f "${team}/scores/${run_id}.json" ] || \
-         { [ -f "${team}/submissions/${run_id}/.submitted" ] && \
-           [ ! -f "${team}/scores/${run_id}.failed.json" ]; } || \
-         [ -f "${team}/.train_submissions/${run_id}.env" ]; then
+      if [ -z "${run_id}" ]; then
+        run_id="${validated_run_id}"
+        needs_run_id_repair=1
+      elif [ "${validated_run_id}" != "${run_id}" ]; then
+        echo "${seed} approved proposal run stamp disagrees with its marker" >&2
+        exit 2
+      fi
+      [[ "${run_id}" =~ ^[A-Za-z0-9._-]+$ ]] || {
+        echo "${seed} approved proposal lacks a recoverable run_id" >&2
+        exit 2
+      }
+      finding="${team}/.finding_dedup/runid_${run_id}/post.json"
+      failure="${team}/scores/${run_id}.failed.json"
+      failure_stage=""
+      [ ! -f "${failure}" ] || failure_stage="$(jq -r '.stage // empty' "${failure}")"
+      if [ ! -f "${failure}" ] || \
+         { [ "${failure_stage}" = training ] && \
+           [ -f "${team}/.train_submissions/${run_id}.env" ] && \
+           [ ! -f "${team}/submissions/${run_id}/.submitted" ]; }; then
         resume_uid_by_seed["${seed}"]="${idea_uid}"
         resume_run_by_seed["${seed}"]="${run_id}"
+        if [ "${needs_run_id_repair}" = 1 ]; then
+          repair_proposal_uid_by_seed["${seed}"]="${idea_uid}"
+        fi
       fi
     fi
   fi
@@ -357,6 +379,21 @@ record_event() {
 }
 record_event recovery_start - - \
   "original_commit=${original_commit};config_sha256=${AAR_RESUME_CONFIG_SHA256:-unknown};seeds=${REQUESTED_SEEDS// /,}"
+
+for seed in "${requested_seeds[@]}"; do
+  idea_uid="${repair_proposal_uid_by_seed[${seed}]:-}"
+  [ -n "${idea_uid}" ] || continue
+  team="${team_by_seed[${seed}]}"
+  repaired_run_id="$("${HARNESS_PY}" \
+    "${REPO}/scripts/repair_approved_proposal_run_id.py" \
+    --team-dir "${team}" --idea-uid "${idea_uid}" | tail -n 1)"
+  [ "${repaired_run_id}" = "${resume_run_by_seed[${seed}]}" ] || {
+    echo "${seed} proposal run-id repair diverged from its validated plan" >&2
+    exit 2
+  }
+  record_event proposal_run_id_repaired "${seed}" - \
+    "idea_uid=${idea_uid};run_id=${repaired_run_id}"
+done
 
 for record in "${stale_claim_records[@]}"; do
   IFS='|' read -r seed run_id claim <<< "${record}"

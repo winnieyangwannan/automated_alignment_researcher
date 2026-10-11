@@ -427,23 +427,35 @@ class KimiAgent:
                     if host_resume and self._owns_approved_run(output):
                         approved_run_id = self._approved_run_id()
                         if (
-                            approved_run_id is not None
-                            and self._autodata_enabled()
-                            and self._autodata_handoff_ready(approved_run_id)
+                            approved_run_id is None
+                            and self._resume_approved_proposal_enabled()
                         ):
-                            if self._autodata_stop_after_production():
-                                self._complete_autodata_production_canary(
-                                    approved_run_id
-                                )
-                                break
-                            self._ensure_approved_training_submission()
-                            if self._autodata_stop_after_training_smoke():
-                                await self._wait_for_training_smoke_result()
-                                self._complete_autodata_training_smoke_canary(
-                                    approved_run_id
-                                )
-                                break
-                            await self._wait_for_training_result()
+                            self._raise_orchestration_incident(
+                                "approved-proposal recovery has no fully bound trusted "
+                                "run_id; refusing to start a new model workflow"
+                            )
+                        if approved_run_id is not None:
+                            if self._autodata_enabled():
+                                if self._autodata_handoff_ready(approved_run_id):
+                                    if self._autodata_stop_after_production():
+                                        self._complete_autodata_production_canary(
+                                            approved_run_id
+                                        )
+                                        break
+                                    self._ensure_approved_training_submission()
+                                    if self._autodata_stop_after_training_smoke():
+                                        await self._wait_for_training_smoke_result()
+                                        self._complete_autodata_training_smoke_canary(
+                                            approved_run_id
+                                        )
+                                        break
+                                    await self._wait_for_training_result()
+                            else:
+                                # Native decoupled recovery is host-owned too. Do
+                                # not spend a model turn asking Kimi to rediscover
+                                # or shell-submit an already-approved run.
+                                self._ensure_approved_training_submission()
+                                await self._wait_for_training_result()
                     if host_resume and self._autodata_wait_required(output):
                         approved_run_id = self._approved_run_id()
                         assert approved_run_id is not None
@@ -1097,6 +1109,11 @@ class KimiAgent:
                     f"{json.dumps(command)}. This exact idempotent command submits the "
                     "approved run and persists its verified Slurm receipt. Do not alter "
                     "the command, emit prose, or call another tool."
+                )
+            if approved is True:
+                self._raise_orchestration_incident(
+                    "approved decoupled proposal is missing its trusted run_id; "
+                    "refusing to spend model continuations or invent an execution ID"
                 )
             if approved is False:
                 if self._proposal_rejection_is_paper_only(method_path):
@@ -1926,6 +1943,29 @@ class KimiAgent:
             return None
         idea_name = marker.get("idea_name")
         code_hash = marker.get("code_hash")
+        explicit_run_id = marker.get("run_id")
+        if explicit_run_id is not None:
+            if not isinstance(explicit_run_id, str) or not re.fullmatch(
+                r"[A-Za-z0-9._-]+", explicit_run_id
+            ) or not explicit_run_id.startswith(f"{idea_uid}-"):
+                return None
+            stamp_path = marker_path.parent / "runs" / f"{explicit_run_id}.json"
+            try:
+                stamp = json.loads(stamp_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                return None
+            if (
+                stamp.get("run_id") != explicit_run_id
+                or stamp.get("idea_name") != idea_name
+                or stamp.get("code_hash") != code_hash
+                or stamp.get("paper") != marker.get("paper")
+            ):
+                return None
+            return explicit_run_id
+
+        # Legacy markers written before approval-time run IDs are supported only
+        # by matching their immutable stamps. New decoupled approvals and repaired
+        # recoveries always take the explicit, fully verified branch above.
         candidates: list[tuple[float, str]] = []
         for path in (marker_path.parent / "runs").glob("*.json"):
             try:
@@ -1977,6 +2017,14 @@ class KimiAgent:
             )
         run_id = self._approved_run_id()
         if run_id is None or self._current_training_job_id(run_id) is not None:
+            return
+        score_path = self._score_path_for_run(run_id)
+        if score_path is not None and score_path.is_file():
+            return
+        team_dir = os.environ.get("TEAM_DIR", "").strip()
+        if team_dir and (
+            Path(team_dir) / "submissions" / run_id / ".submitted"
+        ).is_file():
             return
         if self._autodata_enabled() and not self._autodata_handoff_ready(run_id):
             # AutoData work is intentionally forbidden before proposal approval.
@@ -2362,6 +2410,16 @@ class KimiAgent:
                 + (f" workspace_id={workspace_id}" if workspace_id else "")
                 + ". Resume its visible host action or "
                 "execution and finish its verified production handoff before training."
+            )
+        if not self._autodata_enabled():
+            return (
+                task
+                + "\n\nAUTOMATIC RESUME CONTEXT: This is the same already-approved "
+                f"outer iteration with run_id={run_id}. Trusted orchestration owns "
+                "training submission and score waiting. Do not restart literature "
+                "review, author or edit a method, submit another proposal, invent a "
+                "run ID, or resubmit training. Use the durable score for this exact "
+                "run and complete the required share_finding checkpoint."
             )
         return task
 

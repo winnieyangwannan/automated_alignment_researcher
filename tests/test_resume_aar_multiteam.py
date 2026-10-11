@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -61,6 +62,19 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
         ")\n",
     )
     _write_executable(scripts / "slurm_aar_chain.sh", "#!/bin/bash\nexit 0\n")
+    _write_executable(
+        scripts / "repair_approved_proposal_run_id.py",
+        "#!/usr/bin/env python3\n"
+        "import json,os,sys\n"
+        'idea_uid = sys.argv[sys.argv.index("--idea-uid") + 1]\n'
+        'team_dir = sys.argv[sys.argv.index("--team-dir") + 1]\n'
+        'plan_only = int("--plan-only" in sys.argv)\n'
+        'with open(os.environ["REPAIR_LOG"], "a") as stream:\n'
+        '    stream.write(f"{idea_uid}|{plan_only}\\n")\n'
+        'marker = os.path.join(team_dir, "scores", ".proposals", f"{idea_uid}.json")\n'
+        'run_id = json.load(open(marker)).get("run_id")\n'
+        'print(run_id or f"{idea_uid}-repaired")\n',
+    )
     _write_executable(
         scripts / "launch_eval_worker.sh",
         "#!/bin/bash\n"
@@ -205,6 +219,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
     counter.write_text("0\n")
     eval_log = tmp_path / "eval.log"
     sbatch_log = tmp_path / "sbatch.log"
+    repair_log = tmp_path / "repair.log"
     env = {
         **os.environ,
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
@@ -242,6 +257,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
         "JOB_COUNTER": str(counter),
         "EVAL_LOG": str(eval_log),
         "SBATCH_LOG": str(sbatch_log),
+        "REPAIR_LOG": str(repair_log),
     }
     return repo, attempt, fake_bin, env
 
@@ -337,6 +353,7 @@ def test_multiteam_resume_preserves_results_and_recovers_interrupted_work(
         assert "HARNESS_ENV" not in line
         assert "AAR_IDEA_UID_OVERRIDE" in line
         assert "AAR_RESUME_APPROVED_PROPOSAL" in line
+        assert "AAR_NO_LOCAL_GPU" in line
         assert "TEAM_DIR" in line
     assert "alpha: 2/60 started" in completed.stdout
     assert "beta: 1/60 started" in completed.stdout
@@ -443,6 +460,124 @@ def test_run14_recovery_declares_decoupled_execution() -> None:
     source = RUN14_RECOVERY.read_text()
 
     assert "export AAR_NO_LOCAL_GPU=true" in source
+
+
+def test_missing_run_id_is_planned_without_mutation(tmp_path: Path) -> None:
+    repo, attempt, _fake_bin, env = _fixture(tmp_path)
+    env["AAR_RESUME_PLAN_ONLY"] = "1"
+    marker = (
+        attempt
+        / "aar_teams"
+        / "team-alpha-launch"
+        / "scores"
+        / ".proposals"
+        / "idea-alpha.json"
+    )
+    payload = json.loads(marker.read_text())
+    payload.pop("run_id")
+    payload["execution_ready"] = True
+    marker.write_text(json.dumps(payload))
+    before = marker.read_bytes()
+
+    completed = subprocess.run(
+        [
+            str(repo / "scripts" / ENGINE.name),
+            str(attempt),
+            "alpha",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "resume_run_id=idea-alpha-repaired" in completed.stdout
+    assert marker.read_bytes() == before
+    assert Path(env["REPAIR_LOG"]).read_text() == "idea-alpha|1\n"
+
+
+def test_completed_latest_proposal_skips_current_method_validation(
+    tmp_path: Path,
+) -> None:
+    repo, attempt, _fake_bin, env = _fixture(tmp_path)
+    env["AAR_RESUME_PLAN_ONLY"] = "1"
+    team = attempt / "aar_teams" / "team-alpha-launch"
+    finding = team / ".finding_dedup" / "runid_idea-alpha-run"
+    finding.mkdir()
+    (finding / "post.json").write_text(
+        '{"run_id":"idea-alpha-run","post_id":"done"}\n'
+    )
+    # Models share a method file across sessions.  Its contents may have moved
+    # on after a prior proposal completed, which must not invalidate recovery.
+    (team / "methods" / "method_alpha.py").write_text("later session draft\n")
+
+    completed = subprocess.run(
+        [str(repo / "scripts" / ENGINE.name), str(attempt), "alpha"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "resume_run_id=none" in completed.stdout
+    assert not Path(env["REPAIR_LOG"]).exists()
+
+
+def test_missing_run_id_is_repaired_and_audited_before_launch(
+    tmp_path: Path,
+) -> None:
+    repo, attempt, _fake_bin, env = _fixture(tmp_path)
+    marker = (
+        attempt
+        / "aar_teams"
+        / "team-alpha-launch"
+        / "scores"
+        / ".proposals"
+        / "idea-alpha.json"
+    )
+    payload = json.loads(marker.read_text())
+    payload.pop("run_id")
+    payload["execution_ready"] = True
+    marker.write_text(json.dumps(payload))
+
+    completed = subprocess.run(
+        [
+            str(repo / "scripts" / ENGINE.name),
+            str(attempt),
+            "alpha",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert Path(env["REPAIR_LOG"]).read_text() == (
+        "idea-alpha|1\nidea-alpha|0\n"
+    )
+    registry = (attempt / "metadata" / "recovery_jobs.tsv").read_text()
+    assert "\tproposal_run_id_repaired\talpha\t-\t" in registry
+    assert "run_id=idea-alpha-repaired" in registry
+
+
+def test_recovery_rejects_missing_decoupled_execution_flag(tmp_path: Path) -> None:
+    repo, attempt, _fake_bin, env = _fixture(tmp_path)
+    env.pop("AAR_NO_LOCAL_GPU")
+
+    completed = subprocess.run(
+        [str(repo / "scripts" / ENGINE.name), str(attempt), "alpha"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 2
+    assert "requires AAR_NO_LOCAL_GPU=true" in completed.stderr
+    assert not (attempt / "metadata" / "recovery_archive").exists()
 
 
 def test_multiteam_plan_only_validates_exact_budgets_without_changes(
