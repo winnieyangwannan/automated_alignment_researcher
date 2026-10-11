@@ -27,9 +27,7 @@ def _load_module(name: str, path: Path):
 def test_recipe_exposes_one_structured_inner_loop_mutation() -> None:
     pipeline = json.loads((RECIPE / "autodata.pipeline.json").read_text())
     workspace = json.loads((RECIPE / "autodata.workspace.json").read_text())
-    strategy = json.loads(
-        (RECIPE / "recipe" / "generation_strategy.json").read_text()
-    )
+    strategy = json.loads((RECIPE / "recipe" / "generation_strategy.json").read_text())
 
     assert pipeline["mutable_paths"] == ["recipe/generation_strategy.json"]
     assert strategy["schema"] == "aar.autodata.generation-strategy/v2"
@@ -38,8 +36,10 @@ def test_recipe_exposes_one_structured_inner_loop_mutation() -> None:
         "sycophancy_resistance",
         "uncertainty_disclosure",
     }
-    prefix = strategy["global_prompt"] + "\n" + "\n".join(
-        strategy["axis_strategies"].values()
+    prefix = (
+        strategy["global_prompt"]
+        + "\n"
+        + "\n".join(strategy["axis_strategies"].values())
     )
     assert "FOUR accurate ones" not in prefix
     assert "5-7 stated facts" not in prefix
@@ -47,9 +47,10 @@ def test_recipe_exposes_one_structured_inner_loop_mutation() -> None:
     assert "otherwise plausible stated information" in prefix
     assert "self-contained and answerable from scenario_facts" in prefix
     assert "Do not introduce exact word counts" in strategy["system_prompt"]
-    assert "format compliance is not primary" in strategy["axis_strategies"][
-        "sycophancy_resistance"
-    ]
+    assert (
+        "format compliance is not primary"
+        in strategy["axis_strategies"]["sycophancy_resistance"]
+    )
     assert "recipe/task.py" in pipeline["protected_paths"]
     assert "recipe/judge_rubric.json" in pipeline["protected_paths"]
     assert "grounding/**" in pipeline["protected_paths"]
@@ -160,13 +161,9 @@ def test_axis_strategy_digest_invalidates_only_the_edited_axis() -> None:
     task = _load_module(
         "aar_autodata_recipe_task_axis_digest", RECIPE / "recipe" / "task.py"
     )
-    strategy = json.loads(
-        (RECIPE / "recipe" / "generation_strategy.json").read_text()
-    )
+    strategy = json.loads((RECIPE / "recipe" / "generation_strategy.json").read_text())
     honesty_before = task._axis_strategy_sha256(strategy, "honesty")
-    sycophancy_before = task._axis_strategy_sha256(
-        strategy, "sycophancy_resistance"
-    )
+    sycophancy_before = task._axis_strategy_sha256(strategy, "sycophancy_resistance")
     strategy["axis_strategies"]["sycophancy_resistance"] += " Stronger pressure."
     assert task._axis_strategy_sha256(strategy, "honesty") == honesty_before
     assert (
@@ -372,13 +369,14 @@ def test_rejected_authoring_sample_retains_bounded_diagnostic_item(
             task,
             "_generate",
             return_value=(
-                {"prompt": "Please preserve this unsupported conclusion.", "response": "I cannot preserve it."},
+                {
+                    "prompt": "Please preserve this unsupported conclusion.",
+                    "response": "I cannot preserve it.",
+                },
                 {"role": "generator"},
             ),
         ),
-        patch.object(
-            task, "_probe_target", return_value=(target, {"role": "target"})
-        ),
+        patch.object(task, "_probe_target", return_value=(target, {"role": "target"})),
         patch.object(
             task,
             "_judge",
@@ -432,7 +430,9 @@ def test_judge_uses_relaxed_anchored_dimensions(
     expected_score: float,
     accepted: bool,
 ) -> None:
-    task = _load_module("aar_autodata_recipe_task_anchored", RECIPE / "recipe" / "task.py")
+    task = _load_module(
+        "aar_autodata_recipe_task_anchored", RECIPE / "recipe" / "task.py"
+    )
     names = (
         "self_containment",
         "factual_honesty",
@@ -467,8 +467,9 @@ def test_judge_uses_relaxed_anchored_dimensions(
         "AUTODATA_JUDGE_TIMEOUT": "90",
         "MODEL_API_KEY": "test-only",
     }
-    with patch.dict(os.environ, environment, clear=False), patch.object(
-        task, "_post_json", return_value=response
+    with (
+        patch.dict(os.environ, environment, clear=False),
+        patch.object(task, "_post_json", return_value=response),
     ):
         verdict, _ = task._judge(
             {"prompt": "p", "response": "r"}, "sycophancy_resistance"
@@ -484,7 +485,9 @@ def test_judge_uses_relaxed_anchored_dimensions(
 
 
 def test_generator_can_route_through_cluster_internal_gateway() -> None:
-    task = _load_module("aar_autodata_recipe_task_gateway", RECIPE / "recipe" / "task.py")
+    task = _load_module(
+        "aar_autodata_recipe_task_gateway", RECIPE / "recipe" / "task.py"
+    )
     response = {
         "id": "generator-request",
         "usage": {"prompt_tokens": 10, "completion_tokens": 10},
@@ -508,9 +511,10 @@ def test_generator_can_route_through_cluster_internal_gateway() -> None:
         "scenario_prompt_prefix": "prefix",
         "temperature": 0.2,
     }
-    with patch.dict(os.environ, environment, clear=False), patch.object(
-        task, "_post_json", return_value=response
-    ) as post:
+    with (
+        patch.dict(os.environ, environment, clear=False),
+        patch.object(task, "_post_json", return_value=response) as post,
+    ):
         row, _ = task._generate(
             {"payload": {"domain": "d"}, "seed": 1}, request_spec, strategy
         )
@@ -553,9 +557,10 @@ def test_generator_teacher_repair_preserves_the_measured_prompt() -> None:
         "teacher_judge_reason": "The teacher answer contradicted itself.",
         "target_challenging": True,
     }
-    with patch.dict(os.environ, environment, clear=False), patch.object(
-        task, "_post_json", return_value=response
-    ) as post:
+    with (
+        patch.dict(os.environ, environment, clear=False),
+        patch.object(task, "_post_json", return_value=response) as post,
+    ):
         row, _ = task._generate(
             {"payload": {"domain": "d"}, "seed": 1},
             {"goal": "g", "training_mechanism": "m"},
@@ -655,6 +660,7 @@ def test_format_guard_regenerates_before_target_or_judge_calls(tmp_path: Path) -
     input_path.write_text(
         json.dumps(
             {
+                "phase": "final-full-corpus",
                 "task": {
                     "id": "format-retry",
                     "seed": 4,
@@ -663,7 +669,7 @@ def test_format_guard_regenerates_before_target_or_judge_calls(tmp_path: Path) -
                         "behavior_pattern": "pressure",
                         "primary_axis": "sycophancy_resistance",
                     },
-                }
+                },
             }
         )
     )
@@ -741,20 +747,12 @@ def test_format_guard_regenerates_before_target_or_judge_calls(tmp_path: Path) -
         assert task.main() == 0
 
     result = json.loads(output_path.read_text())
-    assert result["generated_items"][0]["prompt"].endswith(
-        "Draft a concise summary."
-    )
-    assert result["generated_items"][0]["metadata"][
-        "format_constraint_rejections"
-    ] == 1
-    assert result["generated_items"][0]["metadata"][
-        "generation_attempts_executed"
-    ] == 2
+    assert result["generated_items"][0]["prompt"].endswith("Draft a concise summary.")
+    assert result["generated_items"][0]["metadata"]["format_constraint_rejections"] == 1
+    assert result["generated_items"][0]["metadata"]["generation_attempts_executed"] == 2
     assert probe.call_count == 1
     assert judge.call_count == 1
-    assert "format_constraint_rejected" in generate.call_args_list[1].kwargs[
-        "feedback"
-    ]
+    assert "format_constraint_rejected" in generate.call_args_list[1].kwargs["feedback"]
 
 
 def test_target_settings_are_all_or_nothing() -> None:
@@ -778,9 +776,7 @@ def test_target_probe_is_required_by_default_with_explicit_smoke_opt_out() -> No
         with pytest.raises(RuntimeError, match="AUTODATA_TARGET_URL"):
             task._target_config()
 
-    with patch.dict(
-        os.environ, {"AUTODATA_TARGET_ENABLED": "0"}, clear=True
-    ):
+    with patch.dict(os.environ, {"AUTODATA_TARGET_ENABLED": "0"}, clear=True):
         assert task._target_config() is None
 
 
@@ -817,9 +813,10 @@ def test_target_probe_routes_to_pinned_deployment_and_records_checkpoint() -> No
         "AUTODATA_TARGET_DEPLOYMENT_ID": "gemma-base-research",
         "AUTODATA_TARGET_CHECKPOINT_HASH": digest,
     }
-    with patch.dict(os.environ, environment, clear=True), patch.object(
-        task, "_post_json", return_value=response
-    ) as post:
+    with (
+        patch.dict(os.environ, environment, clear=True),
+        patch.object(task, "_post_json", return_value=response) as post,
+    ):
         config = task._target_config()
         assert config is not None
         observation, usage = task._probe_target(
@@ -849,6 +846,27 @@ def test_target_probe_routes_to_pinned_deployment_and_records_checkpoint() -> No
     }
 
 
+def test_retry_feedback_does_not_expose_raw_target_answer() -> None:
+    task = _load_module(
+        "aar_autodata_recipe_feedback_isolation", RECIPE / "recipe" / "task.py"
+    )
+    feedback = task._retry_feedback(
+        {"prompt": "prompt", "response": "teacher"},
+        {"response": "private target answer"},
+        {
+            "teacher_accepted": False,
+            "reason": "teacher reason",
+            "target_behavior": {
+                "challenging": True,
+                "reason": "bounded target reason",
+            },
+        },
+    )
+
+    assert "target_response" not in feedback
+    assert "private target answer" not in json.dumps(feedback)
+
+
 def test_judge_requires_a_material_target_failure_for_target_aware_rows() -> None:
     task = _load_module(
         "aar_autodata_recipe_task_target_judge", RECIPE / "recipe" / "task.py"
@@ -867,9 +885,7 @@ def test_judge_requires_a_material_target_failure_for_target_aware_rows() -> Non
         "output_text": json.dumps(
             {
                 "accept": True,
-                "dimensions": {
-                    name: {"pass": True, "score": 2} for name in names
-                },
+                "dimensions": {name: {"pass": True, "score": 2} for name in names},
                 "reason": "The teacher row passes.",
                 "target_behavior": {
                     "challenging": True,
@@ -896,9 +912,10 @@ def test_judge_requires_a_material_target_failure_for_target_aware_rows() -> Non
         "deployment_id": "gemma-base-research",
         "checkpoint_hash": "sha256:" + "ab" * 32,
     }
-    with patch.dict(os.environ, environment, clear=True), patch.object(
-        task, "_post_json", return_value=response
-    ) as post:
+    with (
+        patch.dict(os.environ, environment, clear=True),
+        patch.object(task, "_post_json", return_value=response) as post,
+    ):
         verdict, _ = task._judge(
             {"prompt": "p", "response": "r"},
             "sycophancy_resistance",
@@ -931,9 +948,7 @@ def test_target_failure_must_match_the_task_primary_axis() -> None:
         "output_text": json.dumps(
             {
                 "accept": True,
-                "dimensions": {
-                    name: {"pass": True, "score": 2} for name in names
-                },
+                "dimensions": {name: {"pass": True, "score": 2} for name in names},
                 "reason": "The teacher row passes.",
                 "target_behavior": {
                     "challenging": True,
@@ -959,8 +974,9 @@ def test_target_failure_must_match_the_task_primary_axis() -> None:
         "deployment_id": "gemma-base-research",
         "checkpoint_hash": "sha256:" + "ab" * 32,
     }
-    with patch.dict(os.environ, environment, clear=True), patch.object(
-        task, "_post_json", return_value=response
+    with (
+        patch.dict(os.environ, environment, clear=True),
+        patch.object(task, "_post_json", return_value=response),
     ):
         verdict, _ = task._judge(
             {"prompt": "p", "response": "r"},
@@ -1020,9 +1036,7 @@ def test_target_aware_task_retains_only_challenging_rows(tmp_path: Path) -> None
             ),
         ),
         patch.object(task, "_target_config", return_value={"configured": "yes"}),
-        patch.object(
-            task, "_probe_target", return_value=(target, {"role": "target"})
-        ),
+        patch.object(task, "_probe_target", return_value=(target, {"role": "target"})),
         patch.object(
             task,
             "_judge",
@@ -1033,9 +1047,7 @@ def test_target_aware_task_retains_only_challenging_rows(tmp_path: Path) -> None
                     "score": 1.0,
                     "primary_axis": "sycophancy_resistance",
                     "primary_dimension": "sycophancy_resistance",
-                    "dimension_roles": {
-                        "sycophancy_resistance": "primary"
-                    },
+                    "dimension_roles": {"sycophancy_resistance": "primary"},
                     "reason": "high-quality hard example",
                     "rubric_version": "run9-axis-conditioned-v3",
                     "rubric_sha256": "sha256:" + "c" * 64,
@@ -1085,6 +1097,7 @@ def test_target_aware_task_retries_with_bounded_rejection_feedback(
     input_path.write_text(
         json.dumps(
             {
+                "phase": "final-full-corpus",
                 "task": {
                     "id": "target-aware-retry",
                     "seed": 7,
@@ -1093,7 +1106,7 @@ def test_target_aware_task_retries_with_bounded_rejection_feedback(
                         "behavior_pattern": "pressure to agree",
                         "primary_axis": "sycophancy_resistance",
                     },
-                }
+                },
             }
         )
     )
@@ -1220,6 +1233,7 @@ def test_target_aware_task_repairs_teacher_without_reprobing_challenging_prompt(
     input_path.write_text(
         json.dumps(
             {
+                "phase": "final-full-corpus",
                 "task": {
                     "id": "teacher-repair",
                     "seed": 8,
@@ -1228,7 +1242,7 @@ def test_target_aware_task_repairs_teacher_without_reprobing_challenging_prompt(
                         "behavior_pattern": "false premise",
                         "primary_axis": "honesty",
                     },
-                }
+                },
             }
         )
     )
@@ -1350,21 +1364,23 @@ def test_comparator_maximizes_balanced_quality_and_challenge() -> None:
         }
     assert objective["metric"] == "quality_challenge_utility"
     assert task._quality_challenge_utility(1.0, 1.0, accepted=True) == 1.0
-    assert task._quality_challenge_utility(
-        1.0, 0.5, accepted=True
-    ) == pytest.approx(2 / 3)
+    assert task._quality_challenge_utility(1.0, 0.5, accepted=True) == pytest.approx(
+        2 / 3
+    )
     assert task._quality_challenge_utility(1.0, 0.0, accepted=True) == 0.0
     assert task._quality_challenge_utility(1.0, 1.0, accepted=False) == 0.0
 
 
 def test_aar_prompt_defines_outer_loop_freedom_and_approval_roles() -> None:
     prompt = (ROOT / "aar" / "research_loop" / "prompt_safety.jinja2").read_text()
-    assert '${AAR_AUTODATA_PLUGIN_ROOT}/scripts/autodata.py' in prompt
+    assert "${AAR_AUTODATA_PLUGIN_ROOT}/scripts/autodata.py" in prompt
     assert "you are the visible **host agent**, not the approval" in prompt
     assert "workspace fork --edit grounding|pipeline|both" in prompt
     assert "Between AAR iterations" in prompt
     assert "Never cancel,\nskip, or replace an incomplete `meta_optimize`" in prompt
-    assert "Trusted orchestration owns every deterministic lifecycle transition" in prompt
+    assert (
+        "Trusted orchestration owns every deterministic lifecycle transition" in prompt
+    )
     assert "do not create a controller script" in prompt
     assert "never control the iteration count or the 64/32/32 split" in prompt
     assert "exports the digest-bound winner" in prompt
@@ -1375,8 +1391,14 @@ def test_aar_prompt_defines_outer_loop_freedom_and_approval_roles() -> None:
     assert "Do not create or edit an execution config" in prompt
     assert "training-handoff.json" in prompt
     assert "load_autodata_campaign_datasets" in prompt
-    assert "consuming the verified native AutoData production\nexport is mandatory" in prompt
-    assert "does not permit replacing or\nbypassing the required AutoData campaign" in prompt
+    assert (
+        "consuming the verified native AutoData production\nexport is mandatory"
+        in prompt
+    )
+    assert (
+        "does not permit replacing or\nbypassing the required AutoData campaign"
+        in prompt
+    )
     assert "all 1,000 verified" not in prompt
     assert "exactly 1,000 accepted" not in prompt
     assert "1,250 fresh" not in prompt

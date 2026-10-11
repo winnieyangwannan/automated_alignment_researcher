@@ -140,6 +140,9 @@ def build_policy(
         "AUTODATA_TARGET_INPUT_USD_PER_MILLION": "0",
         "AUTODATA_TARGET_OUTPUT_USD_PER_MILLION": "0",
         "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": str(profile.model_request_max_attempts),
+        "AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS": "5",
+        "AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS": "2",
+        "AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE": "prompt_json",
         **target_environment,
     }
     return {

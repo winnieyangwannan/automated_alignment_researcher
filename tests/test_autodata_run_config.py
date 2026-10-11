@@ -27,8 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PROFILE = ROOT / "configs/autodata/target_aware_local_v1.yaml"
 CANARY2_PROFILE = ROOT / "configs/autodata/target_aware_local_c32_v1.yaml"
 RUN = (
-    ROOT
-    / "experiments/dishonest_sycophancy_concealing/run_12/config/autodata_run.yaml"
+    ROOT / "experiments/dishonest_sycophancy_concealing/run_12/config/autodata_run.yaml"
 )
 CANARY2_RUN = (
     ROOT
@@ -86,9 +85,11 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
     assert policy["required_solve_env"]["AUTODATA_GENERATOR_MAX_OUTPUT"] == "65536"
     assert policy["required_solve_env"]["AUTODATA_JUDGE_MAX_INPUT"] == "1000000"
     assert policy["required_solve_env"]["AUTODATA_TARGET_MAX_OUTPUT"] == "65536"
+    assert policy["required_solve_env"]["AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS"] == "5"
+    assert policy["required_solve_env"]["AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS"] == "2"
     assert (
-        policy["required_solve_env"]["AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS"]
-        == "5"
+        policy["required_solve_env"]["AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE"]
+        == "prompt_json"
     )
     assert contract["target"]["required"] is True
     assert contract["required_rows"] == 1000
@@ -104,12 +105,14 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
     assert "export AAR_AUTODATA_CONCURRENCY=8\n" in runtime
     assert "export AAR_AUTODATA_META_MAX_ITERATIONS=3\n" in runtime
     assert "export AAR_AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS=5\n" in runtime
+    assert "export AAR_AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS=2\n" in runtime
+    assert "export AAR_AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE=prompt_json\n" in runtime
     assert "export AAR_AUTODATA_AUTHORING_MAX_WALL_SECONDS=1800\n" in runtime
     assert "export AAR_AUTODATA_PRODUCTION_ROWS=1000\n" in runtime
+    assert "export AAR_AUTODATA_BOOTSTRAP_CANARY_STOP_AFTER=production\n" in runtime
     assert (
-        "export AAR_AUTODATA_BOOTSTRAP_CANARY_STOP_AFTER=production\n" in runtime
+        f"export AAR_RUN_STORAGE_ROOT=/checkpoint/ram/{os.environ['USER']}\n" in runtime
     )
-    assert f"export AAR_RUN_STORAGE_ROOT=/checkpoint/ram/{os.environ['USER']}\n" in runtime
     assert "export AAR_KEEP_CHECKPOINTS=0\n" in runtime
     assert "export AAR_EVAL_MEM=0\n" in runtime
     assert "export EVAL_MAX_TRUNCATION_RATE=0.2\n" in runtime
@@ -172,9 +175,7 @@ def test_canary2_compiles_independent_1000_row_training_smoke_contract(
     assert "export AAR_AUTODATA_AUTHORING_MAX_WALL_SECONDS=604800\n" in runtime
     assert "export AAR_AUTODATA_STAGE_TIMEOUT_POLICY=observe-only\n" in runtime
     assert "export AAR_AUTODATA_NATIVE_SCHEMA_WALL_SECONDS=604800\n" in runtime
-    recipe_root = (
-        ROOT / "aar/autodata_recipes/dishonest_sycophancy_concealing_v1"
-    )
+    recipe_root = ROOT / "aar/autodata_recipes/dishonest_sycophancy_concealing_v1"
     assert resolved["run"]["recipe_root"] == (
         "aar/autodata_recipes/dishonest_sycophancy_concealing_v1"
     )
@@ -187,13 +188,14 @@ def test_canary2_compiles_independent_1000_row_training_smoke_contract(
 def test_canary2_run_yaml_selects_and_enforces_its_shared_profile() -> None:
     run = load_run_config(CANARY2_RUN)
 
-    assert run["runtime_profile"] == (
-        "configs/autodata/target_aware_local_c32_v1.yaml"
+    assert run["runtime_profile"] == ("configs/autodata/target_aware_local_c32_v1.yaml")
+    assert (
+        resolve_runtime_profile_path(
+            run_path=CANARY2_RUN,
+            repo=ROOT,
+        )
+        == CANARY2_PROFILE
     )
-    assert resolve_runtime_profile_path(
-        run_path=CANARY2_RUN,
-        repo=ROOT,
-    ) == CANARY2_PROFILE
     with pytest.raises(ValueError, match="does not match the run config"):
         resolve_runtime_profile_path(
             run_path=CANARY2_RUN,
@@ -255,6 +257,8 @@ def test_inspect_reports_static_yaml_values() -> None:
         "concurrency_per_chain": 8,
         "model_request_max_attempts": 3,
         "target_feedback_max_attempts": 5,
+        "judge_format_max_attempts": 2,
+        "judge_structured_output_mode": "prompt_json",
         "authoring_max_wall_seconds": 1800,
         "researcher_kimi_deployment": "aar_8-kimi26",
         "generator_kimi_deployment": "autodata_8-kimi26",

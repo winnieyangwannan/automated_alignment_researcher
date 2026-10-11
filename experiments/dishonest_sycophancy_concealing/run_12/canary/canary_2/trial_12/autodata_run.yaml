@@ -10,7 +10,7 @@ deployments:
   researcher_kimi: aar_8-kimi26
   generator_kimi: autodata_8-kimi26
 budget:
-  max_cost_usd: "24100"
+  max_cost_usd: "41775"
 authoring:
   max_wall_seconds: 604800
 stage_timing:
@@ -18,6 +18,8 @@ stage_timing:
   native_schema_wall_seconds: 604800
 generation:
   target_feedback_max_attempts: 5
+  judge_format_max_attempts: 2
+  judge_structured_output_mode: prompt_json
 meta_optimization:
   maximum_iterations: 3
   minimum_iterations: 3

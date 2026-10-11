@@ -53,6 +53,7 @@ _AXIS_CONTRACTS = {
     },
 }
 _DEFAULT_TARGET_FEEDBACK_MAX_ATTEMPTS = 5
+_DEFAULT_JUDGE_FORMAT_MAX_ATTEMPTS = 2
 _REQUEST_TELEMETRY: dict[str, int] = {}
 _BRITTLE_FORMAT_PATTERNS = (
     (
@@ -124,9 +125,28 @@ _RUBRIC_PATH = Path(__file__).resolve().with_name("judge_rubric.json")
 class MeteredCallError(RuntimeError):
     """A provider answered and incurred usage, but its content was unusable."""
 
-    def __init__(self, message: str, usage: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        message: str,
+        usage: dict[str, Any] | list[dict[str, Any]],
+        *,
+        reason_code: str | None = None,
+    ) -> None:
         super().__init__(message)
-        self.usage = usage
+        usages = [usage] if isinstance(usage, dict) else list(usage)
+        if not usages:
+            raise ValueError("metered call errors require provider usage")
+        self.usages = tuple(usages)
+        self.usage = usages[-1]
+        self.reason_code = reason_code
+
+
+class JudgeContractError(RuntimeError):
+    """A bounded, content-free explanation of a judge wire-contract failure."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class RecipeTaskError(RuntimeError):
@@ -316,6 +336,17 @@ def _bounded_positive_int_env(name: str, default: str, *, maximum: int) -> int:
     if value < 1 or value > maximum or str(value) != raw:
         raise RuntimeError(f"{name} must be an integer from 1 through {maximum}")
     return value
+
+
+def _generation_attempt_limit(phase: str, *, target_configured: bool) -> int:
+    """Use feedback repair for production yield, not candidate comparison."""
+    if not target_configured or not phase.startswith("final-full-corpus"):
+        return 1
+    return _bounded_positive_int_env(
+        "AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS",
+        str(_DEFAULT_TARGET_FEEDBACK_MAX_ATTEMPTS),
+        maximum=5,
+    )
 
 
 def _axis_contract(primary_axis: str) -> dict[str, str]:
@@ -516,10 +547,16 @@ def _post_json(
             _increment_request_telemetry(role, "request_failures")
             message = str(error).lower()
             if (
-                isinstance(error, urllib.error.HTTPError) and error.code == 429
-            ) or "429" in message or "rate limit" in message:
+                (isinstance(error, urllib.error.HTTPError) and error.code == 429)
+                or "429" in message
+                or "rate limit" in message
+            ):
                 _increment_request_telemetry(role, "http_429_or_rate_limit")
-            if isinstance(error, TimeoutError) or "timeout" in message or "timed out" in message:
+            if (
+                isinstance(error, TimeoutError)
+                or "timeout" in message
+                or "timed out" in message
+            ):
                 _increment_request_telemetry(role, "timeouts")
             if isinstance(error, ConnectionResetError) or "reset" in message:
                 _increment_request_telemetry(role, "connection_resets")
@@ -651,9 +688,7 @@ def _target_config() -> dict[str, str] | None:
     checkpoint_hash = values["AUTODATA_TARGET_CHECKPOINT_HASH"].lower()
     digest = checkpoint_hash.removeprefix("sha256:")
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
-        raise RuntimeError(
-            "AUTODATA_TARGET_CHECKPOINT_HASH must be a SHA-256 digest"
-        )
+        raise RuntimeError("AUTODATA_TARGET_CHECKPOINT_HASH must be a SHA-256 digest")
     values["AUTODATA_TARGET_CHECKPOINT_HASH"] = "sha256:" + digest
     values["AUTODATA_TARGET_URL"] = values["AUTODATA_TARGET_URL"].rstrip("/")
     return values
@@ -732,13 +767,17 @@ def _generate(
         headers["Host"] = host_header
     system = str(strategy["system_prompt"])
     primary_axis = _task_primary_axis(task) if "axis_strategies" in strategy else ""
-    generation_prompt = _strategy_prompt(strategy, primary_axis) + "\n" + json.dumps(
-        {
-            "approved_goal": request_spec["goal"],
-            "training_mechanism": request_spec["training_mechanism"],
-            "scenario": task["payload"],
-        },
-        sort_keys=True,
+    generation_prompt = (
+        _strategy_prompt(strategy, primary_axis)
+        + "\n"
+        + json.dumps(
+            {
+                "approved_goal": request_spec["goal"],
+                "training_mechanism": request_spec["training_mechanism"],
+                "scenario": task["payload"],
+            },
+            sort_keys=True,
+        )
     )
     if feedback is not None and preserve_prompt is not None:
         generation_prompt += (
@@ -844,7 +883,6 @@ def _retry_feedback(
     return {
         "previous_prompt": row["prompt"],
         "previous_ideal_response": row["response"],
-        "target_response": target["response"] if target is not None else None,
         "teacher_accepted": bool(verdict.get("teacher_accepted")),
         "teacher_judge_reason": verdict.get("reason"),
         "target_challenging": (
@@ -853,10 +891,131 @@ def _retry_feedback(
             else None
         ),
         "target_judge_reason": (
-            target_behavior.get("reason")
-            if isinstance(target_behavior, dict)
-            else None
+            target_behavior.get("reason") if isinstance(target_behavior, dict) else None
         ),
+    }
+
+
+def _judge_contract(
+    verdict: dict[str, Any],
+    *,
+    expected_dimensions: set[str],
+    primary_dimension: str,
+    universal_guardrails: set[str],
+    scoring: dict[str, Any],
+    target_required: bool,
+    allowed_failure_modes: set[str],
+    expected_failure_mode: str,
+) -> dict[str, Any]:
+    """Normalize the minimal scored contract and derive redundant booleans."""
+    raw_dimensions = verdict.get("dimensions")
+    if not isinstance(raw_dimensions, dict):
+        raise JudgeContractError(
+            "dimensions_not_object", "dimensions must be an object"
+        )
+    missing = expected_dimensions - set(raw_dimensions)
+    if missing:
+        raise JudgeContractError(
+            "dimensions_missing",
+            "dimensions is missing required rubric keys: " + ",".join(sorted(missing)),
+        )
+    normalized: dict[str, dict[str, Any]] = {}
+    for name in sorted(expected_dimensions):
+        raw_dimension = raw_dimensions[name]
+        raw_score = (
+            raw_dimension.get("score")
+            if isinstance(raw_dimension, dict)
+            else raw_dimension
+        )
+        if (
+            isinstance(raw_score, bool)
+            or not isinstance(raw_score, int)
+            or raw_score not in {0, 1, 2}
+        ):
+            raise JudgeContractError(
+                "dimension_score_invalid",
+                f"dimensions.{name}.score must be an integer from 0 through 2",
+            )
+        score = int(raw_score)
+        normalized[name] = {"pass": score == 2, "score": score}
+    reason = verdict.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise JudgeContractError("reason_missing", "reason must be a non-empty string")
+    primary_quality = normalized[primary_dimension]["score"] / 2
+    guardrail_values = [
+        normalized[name]
+        for name in sorted(universal_guardrails)
+        if name != primary_dimension
+    ]
+    guardrail_quality = sum(value["score"] for value in guardrail_values) / (
+        2 * len(guardrail_values)
+    )
+    score = (
+        float(scoring["primary_weight"]) * primary_quality
+        + float(scoring["guardrail_weight"]) * guardrail_quality
+    )
+    teacher_accepted = (
+        normalized[primary_dimension]["score"] == scoring["required_primary_score"]
+        and all(
+            value["score"] >= scoring["minimum_guardrail_score"]
+            for value in guardrail_values
+        )
+        and score >= float(scoring["minimum_teacher_score"])
+    )
+    target_behavior: dict[str, Any] | None = None
+    if target_required:
+        raw_target = verdict.get("target_behavior")
+        if not isinstance(raw_target, dict):
+            raise JudgeContractError(
+                "target_behavior_missing", "target_behavior must be an object"
+            )
+        challenge_score = raw_target.get("score")
+        failure_modes = raw_target.get("failure_modes")
+        target_reason = raw_target.get("reason")
+        if (
+            isinstance(challenge_score, bool)
+            or not isinstance(challenge_score, int)
+            or challenge_score not in {0, 1, 2}
+        ):
+            raise JudgeContractError(
+                "target_score_invalid",
+                "target_behavior.score must be an integer from 0 through 2",
+            )
+        if (
+            not isinstance(failure_modes, list)
+            or any(
+                not isinstance(mode, str) or mode not in allowed_failure_modes
+                for mode in failure_modes
+            )
+            or len(set(failure_modes)) != len(failure_modes)
+        ):
+            raise JudgeContractError(
+                "target_failure_modes_invalid",
+                "target_behavior.failure_modes must contain unique allowed values",
+            )
+        if not isinstance(target_reason, str) or not target_reason.strip():
+            raise JudgeContractError(
+                "target_reason_missing",
+                "target_behavior.reason must be a non-empty string",
+            )
+        challenging = challenge_score > 0 and expected_failure_mode in failure_modes
+        target_behavior = {
+            "challenging": challenging,
+            "score": int(challenge_score) if challenging else 0,
+            "reported_score": int(challenge_score),
+            "failure_modes": sorted(failure_modes),
+            "expected_failure_mode": expected_failure_mode,
+            "reason": target_reason.strip(),
+        }
+    return {
+        "judge_reported_accept": (
+            verdict.get("accept") if isinstance(verdict.get("accept"), bool) else None
+        ),
+        "normalized_dimensions": normalized,
+        "reason": reason.strip(),
+        "score": score,
+        "teacher_accepted": teacher_accepted,
+        "target_behavior": target_behavior,
     }
 
 
@@ -865,6 +1024,7 @@ def _judge(
     primary_axis: str,
     target: dict[str, str] | None = None,
     judge_rubric: dict[str, Any] | None = None,
+    format_error_code: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     url = _required_env("AUTODATA_JUDGE_URL")
     model = _required_env("AUTODATA_JUDGE_MODEL")
@@ -877,9 +1037,11 @@ def _judge(
         name: (
             "primary"
             if name == primary_dimension
-            else "universal_guardrail"
-            if name in universal_guardrails
-            else "supporting_guardrail"
+            else (
+                "universal_guardrail"
+                if name in universal_guardrails
+                else "supporting_guardrail"
+            )
         )
         for name in dimensions
     }
@@ -895,9 +1057,8 @@ def _judge(
         "rubric": dimensions,
         "evaluation_policy": judge_rubric["evaluation_policy"],
         "response_contract": {
-            "accept": "nonbinding boolean summary; caller computes acceptance from scores",
-            "dimensions": "object keyed by every rubric dimension; each value has pass:boolean diagnostic and score:integer 0,1,2",
-            "reason": "short string",
+            "dimensions": "object keyed by every rubric dimension; each value is integer 0, 1, or 2",
+            "reason": "non-empty short string",
         },
     }
     if target is not None:
@@ -910,17 +1071,24 @@ def _judge(
             "instructions": judge_rubric["target_probe"]["instructions"],
         }
         rubric["response_contract"]["target_behavior"] = (
-            "object with challenging:boolean, score:integer 0,1,2, "
+            "object with score:integer 0,1,2, "
             "failure_modes:array containing only dishonesty, sycophancy, or "
-            "concealed_uncertainty, and reason:short string"
+            "concealed_uncertainty, and reason:non-empty short string"
+        )
+    judge_input = (
+        judge_rubric["judge_instruction"] + "\n" + json.dumps(rubric, sort_keys=True)
+    )
+    if format_error_code is not None:
+        judge_input += (
+            "\nYour previous response failed the JSON contract with code "
+            f"{format_error_code}. Return a fresh complete JSON object; do not "
+            "discuss the error."
         )
     response = _post_json(
         url,
         {
             "model": model,
-            "input": judge_rubric["judge_instruction"]
-            + "\n"
-            + json.dumps(rubric, sort_keys=True),
+            "input": judge_input,
             "reasoning": {"effort": "low"},
             "max_output_tokens": _bounded_positive_int_env(
                 "AUTODATA_JUDGE_MAX_OUTPUT", "65536", maximum=65536
@@ -945,102 +1113,33 @@ def _judge(
     )
     try:
         verdict = _json_object(_judge_text(response))
-        accept, dimensions, reason = (
-            verdict.get("accept"),
-            verdict.get("dimensions"),
-            verdict.get("reason"),
-        )
-        if not isinstance(accept, bool):
-            raise RuntimeError("judge verdict requires boolean accept")
-        expected = set(rubric["rubric"])
-        if not isinstance(dimensions, dict) or set(dimensions) != expected:
-            raise RuntimeError("judge verdict requires every fixed rubric dimension")
-        normalized: dict[str, dict[str, Any]] = {}
-        for name in sorted(expected):
-            dimension = dimensions[name]
-            if not isinstance(dimension, dict) or set(dimension) != {"pass", "score"}:
-                raise RuntimeError("judge dimension must contain pass and score")
-            passed, dimension_score = dimension["pass"], dimension["score"]
-            if not isinstance(passed, bool) or isinstance(dimension_score, bool) or dimension_score not in {0, 1, 2}:
-                raise RuntimeError("judge dimension has an invalid anchored score")
-            normalized[name] = {"pass": passed, "score": int(dimension_score)}
-        primary_quality = normalized[primary_dimension]["score"] / 2
-        guardrail_values = [
-            normalized[name]
-            for name in sorted(universal_guardrails)
-            if name != primary_dimension
-        ]
-        guardrail_quality = sum(value["score"] for value in guardrail_values) / (
-            2 * len(guardrail_values)
-        )
-        scoring = judge_rubric["scoring"]
-        score = (
-            float(scoring["primary_weight"]) * primary_quality
-            + float(scoring["guardrail_weight"]) * guardrail_quality
-        )
-        primary_pass = (
-            normalized[primary_dimension]["score"]
-            == scoring["required_primary_score"]
-        )
-        guardrails_pass = all(
-            value["score"] >= scoring["minimum_guardrail_score"]
-            for value in guardrail_values
-        )
-        if not isinstance(reason, str) or not reason.strip():
-            raise RuntimeError("judge verdict requires a reason")
-        target_behavior: dict[str, Any] | None = None
-        if target is not None:
-            raw_target = verdict.get("target_behavior")
-            if not isinstance(raw_target, dict) or set(raw_target) != {
-                "challenging",
-                "score",
-                "failure_modes",
-                "reason",
-            }:
-                raise RuntimeError("judge verdict requires target_behavior")
-            challenging = raw_target["challenging"]
-            challenge_score = raw_target["score"]
-            failure_modes = raw_target["failure_modes"]
-            target_reason = raw_target["reason"]
-            allowed_modes = set(
+        parsed = _judge_contract(
+            verdict,
+            expected_dimensions=set(rubric["rubric"]),
+            primary_dimension=primary_dimension,
+            universal_guardrails=universal_guardrails,
+            scoring=judge_rubric["scoring"],
+            target_required=target is not None,
+            allowed_failure_modes=set(
                 judge_rubric["target_probe"]["allowed_failure_modes"]
-            )
-            if (
-                not isinstance(challenging, bool)
-                or isinstance(challenge_score, bool)
-                or challenge_score not in {0, 1, 2}
-                or not isinstance(failure_modes, list)
-                or any(mode not in allowed_modes for mode in failure_modes)
-                or len(set(failure_modes)) != len(failure_modes)
-                or not isinstance(target_reason, str)
-                or not target_reason.strip()
-            ):
-                raise RuntimeError("judge target_behavior is invalid")
-            primary_challenging = (
-                challenging
-                and challenge_score > 0
-                and axis_contract["target_failure_mode"] in failure_modes
-            )
-            target_behavior = {
-                "challenging": primary_challenging,
-                "score": int(challenge_score) if primary_challenging else 0,
-                "reported_score": int(challenge_score),
-                "failure_modes": sorted(failure_modes),
-                "expected_failure_mode": axis_contract["target_failure_mode"],
-                "reason": target_reason.strip(),
-            }
+            ),
+            expected_failure_mode=axis_contract["target_failure_mode"],
+        )
     except Exception as error:
-        raise MeteredCallError("judge content was unusable", usage) from error
-    teacher_accepted = (
-        primary_pass
-        and guardrails_pass
-        and score >= float(judge_rubric["scoring"]["minimum_teacher_score"])
-    )
+        reason_code = getattr(error, "code", "invalid_json")
+        raise MeteredCallError(
+            "judge content was unusable", usage, reason_code=reason_code
+        ) from error
+    normalized = parsed["normalized_dimensions"]
+    score = parsed["score"]
+    reason = parsed["reason"]
+    teacher_accepted = parsed["teacher_accepted"]
+    target_behavior = parsed["target_behavior"]
     target_accepted = target_behavior is None or bool(target_behavior["challenging"])
     return {
         "accept": teacher_accepted and target_accepted,
         "teacher_accepted": teacher_accepted,
-        "judge_reported_accept": accept,
+        "judge_reported_accept": parsed["judge_reported_accept"],
         "score": score,
         "primary_axis": primary_axis,
         "primary_dimension": primary_dimension,
@@ -1051,6 +1150,52 @@ def _judge(
         "reason": reason,
         "target_behavior": target_behavior,
     }, usage
+
+
+def _judge_with_format_repair(
+    row: dict[str, str],
+    primary_axis: str,
+    target: dict[str, str] | None,
+    *,
+    judge_rubric: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if (
+        os.environ.get("AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE", "prompt_json").strip()
+        != "prompt_json"
+    ):
+        raise RuntimeError("unsupported trusted judge structured-output mode")
+    maximum_attempts = _bounded_positive_int_env(
+        "AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS",
+        str(_DEFAULT_JUDGE_FORMAT_MAX_ATTEMPTS),
+        maximum=2,
+    )
+    usages: list[dict[str, Any]] = []
+    format_error_code: str | None = None
+    last_error: MeteredCallError | None = None
+    for attempt_index in range(maximum_attempts):
+        try:
+            verdict, usage = _judge(
+                row,
+                primary_axis,
+                target,
+                judge_rubric=judge_rubric,
+                format_error_code=format_error_code,
+            )
+            usages.append(usage)
+            return verdict, usages
+        except MeteredCallError as error:
+            usages.extend(error.usages)
+            if error.reason_code is None:
+                raise MeteredCallError(str(error), usages) from error
+            format_error_code = error.reason_code
+            last_error = error
+            if attempt_index + 1 < maximum_attempts:
+                _increment_request_telemetry("judge", "format_retries")
+    raise MeteredCallError(
+        "judge contract remained invalid after bounded repair",
+        usages,
+        reason_code="judge_contract_exhausted",
+    ) from last_error
 
 
 def main() -> int:
@@ -1087,14 +1232,9 @@ def main() -> int:
     try:
         target_config = _target_config()
         primary_axis = _task_primary_axis(task)
-        maximum_generation_attempts = (
-            _bounded_positive_int_env(
-                "AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS",
-                str(_DEFAULT_TARGET_FEEDBACK_MAX_ATTEMPTS),
-                maximum=5,
-            )
-            if target_config is not None
-            else 1
+        maximum_generation_attempts = _generation_attempt_limit(
+            phase,
+            target_configured=target_config is not None,
         )
         feedback: dict[str, Any] | None = None
         candidates: list[
@@ -1114,9 +1254,11 @@ def main() -> int:
             attempt_mode = (
                 "teacher_repair"
                 if retained_target is not None
-                else "prompt_hardening"
-                if hardening_incumbent is not None
-                else "full_generation"
+                else (
+                    "prompt_hardening"
+                    if hardening_incumbent is not None
+                    else "full_generation"
+                )
             )
             if attempt_mode == "prompt_hardening":
                 row = _trusted_prompt_hardening(
@@ -1164,13 +1306,11 @@ def main() -> int:
             if target_config is not None and target is None:
                 target, target_usage = _probe_target(row, task, target_config)
                 provider_usage.append(target_usage)
-            verdict, judge_usage = _judge(
+            verdict, judge_usages = _judge_with_format_repair(
                 row, primary_axis, target, judge_rubric=judge_rubric
             )
-            provider_usage.append(judge_usage)
-            candidates.append(
-                (row, target, verdict, attempt_index + 1, attempt_mode)
-            )
+            provider_usage.extend(judge_usages)
+            candidates.append((row, target, verdict, attempt_index + 1, attempt_mode))
             if verdict["accept"]:
                 break
             feedback = _retry_feedback(row, target, verdict)
@@ -1222,7 +1362,7 @@ def main() -> int:
             raise RecipeTaskError(
                 "forbidden_format_constraint",
                 "generator exhausted bounded attempts on a forbidden incidental "
-                f"format constraint ({detail})"
+                f"format constraint ({detail})",
             )
 
         def candidate_rank(
@@ -1299,9 +1439,7 @@ def main() -> int:
                     + hashlib.sha256(
                         str(row.get("_task_request") or "").encode()
                     ).hexdigest(),
-                    "trusted_hardening_variant": row.get(
-                        "_trusted_hardening_variant"
-                    ),
+                    "trusted_hardening_variant": row.get("_trusted_hardening_variant"),
                 }
             )
         metrics = {
@@ -1360,17 +1498,32 @@ def main() -> int:
             "reason_code": (
                 None
                 if accepted
-                else "judge_rejected"
-                if target is None
-                or verdict.get("teacher_accepted", verdict.get("accept")) is False
-                else "target_not_challenging"
+                else (
+                    "judge_rejected"
+                    if target is None
+                    or verdict.get("teacher_accepted", verdict.get("accept")) is False
+                    else "target_not_challenging"
+                )
             ),
             "trajectory_artifacts": [],
         }
     except Exception as error:
-        metered = getattr(error, "usage", None)
-        if isinstance(metered, dict) and metered not in provider_usage:
-            provider_usage.append(metered)
+        metered = getattr(error, "usages", ())
+        if not metered:
+            single_usage = getattr(error, "usage", None)
+            metered = (single_usage,) if isinstance(single_usage, dict) else ()
+        known_request_ids = {
+            entry.get("request_id")
+            for entry in provider_usage
+            if isinstance(entry, dict)
+        }
+        for usage in metered:
+            if (
+                isinstance(usage, dict)
+                and usage.get("request_id") not in known_request_ids
+            ):
+                provider_usage.append(usage)
+                known_request_ids.add(usage.get("request_id"))
         # Persist any completed call's usage even when the later call or parser
         # fails. Keep the reason bounded and secret-free; detailed HTTP bodies
         # are deliberately not copied into the dataset.

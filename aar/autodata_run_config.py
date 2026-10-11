@@ -26,6 +26,8 @@ PROFILE_SCHEMA = "aar.autodata.runtime-profile/v2"
 RUN_SCHEMA = "aar.autodata.run-config/v1"
 RESOLVED_SCHEMA = "aar.autodata.resolved-run-config/v1"
 DEFAULT_TARGET_FEEDBACK_MAX_ATTEMPTS = 5
+DEFAULT_JUDGE_FORMAT_MAX_ATTEMPTS = 2
+JUDGE_STRUCTURED_OUTPUT_MODES = {"prompt_json"}
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 
 
@@ -402,9 +404,7 @@ def load_run_config(path: Path) -> dict[str, Any]:
         root["deployments"], "deployments", {"researcher_kimi", "generator_kimi"}
     )
     budget = _mapping(root["budget"], "budget", {"max_cost_usd"})
-    authoring = _mapping(
-        root["authoring"], "authoring", {"max_wall_seconds"}
-    )
+    authoring = _mapping(root["authoring"], "authoring", {"max_wall_seconds"})
     authoring = {
         "max_wall_seconds": _positive_integer(
             authoring["max_wall_seconds"],
@@ -437,11 +437,23 @@ def load_run_config(path: Path) -> dict[str, Any]:
     generation = root["generation"]
     if not isinstance(generation, dict):
         raise ValueError("generation must be a mapping")
-    unexpected_generation = set(generation) - {"target_feedback_max_attempts"}
+    unexpected_generation = set(generation) - {
+        "target_feedback_max_attempts",
+        "judge_format_max_attempts",
+        "judge_structured_output_mode",
+    }
     if unexpected_generation:
         raise ValueError(
             "generation keys differ; missing=[], "
             f"unexpected={sorted(unexpected_generation)}"
+        )
+    judge_structured_output_mode = _identifier(
+        generation.get("judge_structured_output_mode", "prompt_json"),
+        "generation.judge_structured_output_mode",
+    )
+    if judge_structured_output_mode not in JUDGE_STRUCTURED_OUTPUT_MODES:
+        raise ValueError(
+            "generation.judge_structured_output_mode is not operator-supported"
         )
     generation = {
         "target_feedback_max_attempts": _positive_integer(
@@ -451,7 +463,16 @@ def load_run_config(path: Path) -> dict[str, Any]:
             ),
             "generation.target_feedback_max_attempts",
             maximum=5,
-        )
+        ),
+        "judge_format_max_attempts": _positive_integer(
+            generation.get(
+                "judge_format_max_attempts",
+                DEFAULT_JUDGE_FORMAT_MAX_ATTEMPTS,
+            ),
+            "generation.judge_format_max_attempts",
+            maximum=2,
+        ),
+        "judge_structured_output_mode": judge_structured_output_mode,
     }
     meta = _mapping(
         root["meta_optimization"],
@@ -494,9 +515,7 @@ def load_run_config(path: Path) -> dict[str, Any]:
     }
     if production["required_rows"] > production["initial_tasks"]:
         raise ValueError("production source tasks must cover required rows")
-    storage = _mapping(
-        root["storage"], "storage", {"root", "keep_checkpoints"}
-    )
+    storage = _mapping(root["storage"], "storage", {"root", "keep_checkpoints"})
     storage = {
         "root": _storage_root(storage["root"], "storage.root"),
         "keep_checkpoints": _boolean(
@@ -695,6 +714,12 @@ def _solve_environment(
         "AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS": str(
             run["generation"]["target_feedback_max_attempts"]
         ),
+        "AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS": str(
+            run["generation"]["judge_format_max_attempts"]
+        ),
+        "AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE": run["generation"][
+            "judge_structured_output_mode"
+        ],
         **target,
     }
     return environment
@@ -740,6 +765,12 @@ def _runtime_environment(
         "AAR_AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS": str(
             run["generation"]["target_feedback_max_attempts"]
         ),
+        "AAR_AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS": str(
+            run["generation"]["judge_format_max_attempts"]
+        ),
+        "AAR_AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE": run["generation"][
+            "judge_structured_output_mode"
+        ],
         "AAR_AUTODATA_LIFECYCLE_SUPERVISED": (
             "1" if profile["execution"]["lifecycle_supervised"] else "0"
         ),
@@ -763,9 +794,7 @@ def _runtime_environment(
         "AAR_RUN_STORAGE_ROOT": storage["root"],
         "AAR_KEEP_CHECKPOINTS": "1" if storage["keep_checkpoints"] else "0",
         "AAR_EVAL_MEM": evaluation["memory"],
-        "EVAL_MAX_TRUNCATION_RATE": format(
-            evaluation["max_truncation_rate"], ".12g"
-        ),
+        "EVAL_MAX_TRUNCATION_RATE": format(evaluation["max_truncation_rate"], ".12g"),
         "AAR_EXPECTED_MAX_TRUNCATION_RATE": format(
             evaluation["max_truncation_rate"], ".12g"
         ),
@@ -901,9 +930,7 @@ def validate_compiled_config(
         Path(resolved["profile_source"]): resolved["profile_source_sha256"],
         Path(resolved["run_source"]): resolved["run_source_sha256"],
         Path(resolved["target_binding"]): resolved["target_binding_sha256"],
-        Path(resolved["judge_rubric_source"]): resolved[
-            "judge_rubric_source_sha256"
-        ],
+        Path(resolved["judge_rubric_source"]): resolved["judge_rubric_source_sha256"],
         campaign_policy_path: resolved["artifacts"]["campaign_policy_sha256"],
         contract_path: resolved["artifacts"]["training_data_contract_sha256"],
         Path(resolved["artifacts"]["runtime_environment"]): resolved["artifacts"][
@@ -950,6 +977,10 @@ def inspect_configs(profile_path: Path, run_path: Path) -> dict[str, Any]:
         ],
         "target_feedback_max_attempts": run["generation"][
             "target_feedback_max_attempts"
+        ],
+        "judge_format_max_attempts": run["generation"]["judge_format_max_attempts"],
+        "judge_structured_output_mode": run["generation"][
+            "judge_structured_output_mode"
         ],
         "authoring_max_wall_seconds": run["authoring"]["max_wall_seconds"],
         "researcher_kimi_deployment": run["deployments"]["researcher_kimi"],

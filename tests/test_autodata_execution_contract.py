@@ -26,7 +26,7 @@ def _digest(path: Path) -> str:
 
 def _policy() -> dict[str, object]:
     return {
-        "max_cost_usd": "25000",
+        "max_cost_usd": "41775",
         "environment": "oci-runner-firecracker-large",
         "image": "python@sha256:" + "a" * 64,
         "expected_image_id": "b" * 64,
@@ -35,6 +35,8 @@ def _policy() -> dict[str, object]:
         "required_solve_env": {
             "AUTODATA_TARGET_ENABLED": "1",
             "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "1",
+            "AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS": "2",
+            "AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE": "prompt_json",
         },
     }
 
@@ -101,10 +103,12 @@ def test_operator_settings_come_from_resolved_config() -> None:
                 "required_rows": 1000,
                 "minimum_successful_task_fraction": 0.95,
             },
-            "generation": {"target_feedback_max_attempts": 5},
-            "recipe_root": (
-                "aar/autodata_recipes/dishonest_sycophancy_concealing_v1"
-            ),
+            "generation": {
+                "target_feedback_max_attempts": 5,
+                "judge_format_max_attempts": 2,
+                "judge_structured_output_mode": "prompt_json",
+            },
+            "recipe_root": ("aar/autodata_recipes/dishonest_sycophancy_concealing_v1"),
             "stage_timing": {"native_schema_wall_seconds": 604800},
         },
         "profile": {
@@ -154,12 +158,13 @@ def test_operator_settings_come_from_resolved_config() -> None:
     assert settings["meta_model_task_attempts"] == 704
     assert settings["required_campaign_task_attempts"] == 3204
     assert settings["required_campaign_round_reservations"] == 14004
-    assert settings["required_campaign_cost_usd"] == "24099.427584"
+    assert settings["required_campaign_cost_usd"] == "41774.49216"
+    assert settings["required_judge_calls"] == 28008
     assert settings["authoring_model_task_attempts"] == 32
     assert settings["finalization_model_rounds_per_task"] == 5
 
     truncated_retry = json.loads(json.dumps(_policy()))
-    truncated_retry["max_cost_usd"] = "24099.427583"
+    truncated_retry["max_cost_usd"] = "41774.492159"
     with pytest.raises(
         ValueError,
         match="including authoring and finalization feedback",
@@ -175,7 +180,7 @@ def test_operator_settings_come_from_resolved_config() -> None:
 
     insufficient = json.loads(json.dumps(_policy()))
     insufficient["max_cost_usd"] = "299"
-    with pytest.raises(ValueError, match="requires at least 24099.427584"):
+    with pytest.raises(ValueError, match="requires at least 41774.49216"):
         operator_execution_settings(
             resolved,
             campaign_policy=insufficient,
@@ -194,9 +199,9 @@ def test_runtime_campaign_accepts_only_loopback_generator_rewrite() -> None:
         "AUTODATA_TARGET_ENABLED": "1",
     }
     runtime = json.loads(json.dumps(compiled))
-    runtime["required_solve_env"]["AUTODATA_GENERATOR_URL"] = (
-        "http://127.0.0.1:54321/v1"
-    )
+    runtime["required_solve_env"][
+        "AUTODATA_GENERATOR_URL"
+    ] = "http://127.0.0.1:54321/v1"
     runtime["required_solve_env"]["AUTODATA_GENERATOR_HOST_HEADER"] = ""
 
     checked = validate_runtime_campaign_policy_rewrite(compiled, runtime)

@@ -103,8 +103,8 @@ def test_run12_uses_attempt_local_detached_source_snapshots() -> None:
 def test_run12_pins_autodata_provider_provenance_serialization_fix() -> None:
     launcher = (LAUNCH / "submit_full.sh").read_text()
 
-    assert "/autodata-worktrees/finalization-budget-da9e12a" in launcher
-    assert "da9e12a43710ced9d407822e55c6e7c541e57a27" in launcher
+    assert "/autodata-worktrees/judge-repair-28a9c22" in launcher
+    assert "28a9c22125dc0cf101ebabc1b22408b4e974678a" in launcher
     assert "atomic, terminal budget handling" in launcher
 
 

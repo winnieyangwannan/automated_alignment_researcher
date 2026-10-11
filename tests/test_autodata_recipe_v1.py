@@ -12,12 +12,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RECIPE = (
-    ROOT
-    / "aar"
-    / "autodata_recipes"
-    / "dishonest_sycophancy_concealing_v1"
-)
+RECIPE = ROOT / "aar" / "autodata_recipes" / "dishonest_sycophancy_concealing_v1"
 
 
 def _load_module(name: str, path: Path):
@@ -31,15 +26,11 @@ def _load_module(name: str, path: Path):
 def test_v1_recipe_is_independent_and_selectable() -> None:
     assert RECIPE.is_dir()
     assert (
-        ROOT
-        / "aar"
-        / "autodata_recipes"
-        / "dishonest_sycophancy_concealing"
+        ROOT / "aar" / "autodata_recipes" / "dishonest_sycophancy_concealing"
     ).is_dir()
     readme = (RECIPE / "README.md").read_text(encoding="utf-8")
     assert (
-        "recipe_root: "
-        "aar/autodata_recipes/dishonest_sycophancy_concealing_v1"
+        "recipe_root: " "aar/autodata_recipes/dishonest_sycophancy_concealing_v1"
     ) in readme
 
 
@@ -52,10 +43,26 @@ def test_v1_recipe_check_and_comparator_contract() -> None:
     pipeline = json.loads((RECIPE / "autodata.pipeline.json").read_text())
     comparator = json.loads((RECIPE / "comparator.json").read_text())
     assert pipeline["mutable_paths"] == ["recipe/generation_strategy.json"]
-    assert pipeline["comparator"]["constraints"] == {
-        "valid": {"minimum": 0.75}
-    }
+    assert pipeline["comparator"]["constraints"] == {"valid": {"minimum": 0.75}}
     assert comparator["constraints"] == pipeline["comparator"]["constraints"]
+
+
+def test_recipe_timeouts_cover_final_judge_repair_envelope() -> None:
+    for recipe_name in (
+        "dishonest_sycophancy_concealing",
+        "dishonest_sycophancy_concealing_v1",
+    ):
+        pipeline = json.loads(
+            (
+                ROOT
+                / "aar"
+                / "autodata_recipes"
+                / recipe_name
+                / "autodata.pipeline.json"
+            ).read_text()
+        )
+        # Five semantic rounds, each with generator + target + two judge calls.
+        assert pipeline["commands"]["task"]["timeout_seconds"] >= 5 * 4 * 90
 
 
 def test_v1_recipe_reports_safe_structured_unsupported_field_error() -> None:
@@ -223,21 +230,26 @@ def test_v1_meta_scores_first_attempt_and_production_may_repair(
         RECIPE / "recipe" / "task.py",
     )
     monkeypatch.setenv("AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS", "5")
-    assert task._generation_attempt_limit(
-        "baseline-visible", target_configured=True
-    ) == 1
-    assert task._generation_attempt_limit(
-        "selection-hidden-r0", target_configured=True
-    ) == 1
-    assert task._generation_attempt_limit(
-        "final-full-corpus", target_configured=True
-    ) == 5
-    assert task._generation_attempt_limit(
-        "final-full-corpus-retry-1", target_configured=True
-    ) == 5
-    assert task._generation_attempt_limit(
-        "final-full-corpus", target_configured=False
-    ) == 1
+    assert (
+        task._generation_attempt_limit("baseline-visible", target_configured=True) == 1
+    )
+    assert (
+        task._generation_attempt_limit("selection-hidden-r0", target_configured=True)
+        == 1
+    )
+    assert (
+        task._generation_attempt_limit("final-full-corpus", target_configured=True) == 5
+    )
+    assert (
+        task._generation_attempt_limit(
+            "final-full-corpus-retry-1", target_configured=True
+        )
+        == 5
+    )
+    assert (
+        task._generation_attempt_limit("final-full-corpus", target_configured=False)
+        == 1
+    )
 
 
 def test_v1_feedback_does_not_expose_raw_target_answer() -> None:
@@ -258,3 +270,76 @@ def test_v1_feedback_does_not_expose_raw_target_answer() -> None:
     )
     assert "target_response" not in feedback
     assert feedback["target_challenging"] is True
+
+
+def test_v1_judge_repairs_only_its_wire_contract_and_retains_usage(
+    monkeypatch,
+) -> None:
+    task = _load_module(
+        "aar_autodata_recipe_v1_judge_repair",
+        RECIPE / "recipe" / "task.py",
+    )
+    environment = {
+        "AUTODATA_JUDGE_URL": "https://judge.example/v1/responses",
+        "AUTODATA_JUDGE_MODEL": "gpt-5-6-luna",
+        "AUTODATA_JUDGE_INPUT_USD_PER_MILLION": "1",
+        "AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": "4",
+        "AUTODATA_JUDGE_MAX_INPUT": "1000000",
+        "AUTODATA_JUDGE_MAX_OUTPUT": "65536",
+        "AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS": "2",
+        "AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE": "prompt_json",
+        "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "1",
+        "MODEL_API_KEY": "test-only",
+    }
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    rubric = task._load_judge_rubric()
+    valid = {
+        "dimensions": {name: 2 for name in rubric["dimensions"]},
+        "reason": "The teacher answer satisfies the rubric.",
+        "target_behavior": {
+            "score": 2,
+            "failure_modes": ["sycophancy"],
+            "reason": "The target endorsed the pressured claim.",
+        },
+    }
+    malformed = "PRIVATE-MALFORMED-BODY"
+    responses = iter(
+        [
+            {
+                "id": "judge-1",
+                "usage": {"input_tokens": 10, "output_tokens": 3},
+                "output_text": malformed,
+            },
+            {
+                "id": "judge-2",
+                "usage": {"input_tokens": 11, "output_tokens": 12},
+                "output_text": json.dumps(valid),
+            },
+        ]
+    )
+    calls: list[dict[str, object]] = []
+
+    def fake_post_json(url, payload, **kwargs):
+        calls.append(payload)
+        return next(responses)
+
+    monkeypatch.setattr(task, "_post_json", fake_post_json)
+    verdict, usages = task._judge(
+        {"prompt": "prompt", "response": "teacher"},
+        "sycophancy_resistance",
+        {
+            "response": "target answer",
+            "model": "gemma-4-31B-it",
+            "checkpoint_hash": "sha256:" + "a" * 64,
+        },
+        judge_rubric=rubric,
+    )
+
+    assert verdict["accept"] is True
+    assert [usage["request_id"] for usage in usages] == ["judge-1", "judge-2"]
+    assert len(calls) == 2
+    assert "invalid_json" in str(calls[1]["input"])
+    assert malformed not in str(calls[1]["input"])
+    assert "response_format" not in calls[0]
+    assert "text" not in calls[0]

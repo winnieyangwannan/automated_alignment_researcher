@@ -115,9 +115,7 @@ def operator_execution_settings(
         ),
         "campaign_policy": dict(campaign_policy),
     }
-    if settings["meta"]["minimum_iterations"] > settings["meta"][
-        "maximum_iterations"
-    ]:
+    if settings["meta"]["minimum_iterations"] > settings["meta"]["maximum_iterations"]:
         raise ValueError("minimum_iterations exceeds maximum_iterations")
     fraction = settings["production"]["minimum_successful_task_fraction"]
     if (
@@ -142,11 +140,11 @@ def operator_execution_settings(
     )
     settings["meta_wall_seconds"] = native_wall or 6300
     settings["production_wall_seconds"] = native_wall or 28200
-    per_task = Decimal("0")
+    role_costs: dict[str, Decimal] = {}
     try:
         for role in ("generator", "judge", "target"):
             provider = _object(providers.get(role), f"{role} provider")
-            per_task += (
+            role_costs[role] = (
                 Decimal(str(provider["max_input_tokens"]))
                 * Decimal(str(provider["input_usd_per_million"]))
                 + Decimal(str(provider["max_output_tokens"]))
@@ -171,6 +169,14 @@ def operator_execution_settings(
     )
     if finalization_rounds > 5:
         raise ValueError("target feedback max attempts must not exceed 5")
+    judge_format_attempts = _positive_integer(
+        generation.get("judge_format_max_attempts"),
+        "judge format max attempts",
+    )
+    if judge_format_attempts > 2:
+        raise ValueError("judge format max attempts must not exceed 2")
+    if generation.get("judge_structured_output_mode") != "prompt_json":
+        raise ValueError("judge structured-output mode is not operator-supported")
     required_environment = _object(
         campaign_policy.get("required_solve_env"),
         "campaign required_solve_env",
@@ -179,6 +185,15 @@ def operator_execution_settings(
         raise ValueError(
             "trusted campaigns require exactly one transport attempt per model request"
         )
+    if required_environment.get("AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS") != str(
+        judge_format_attempts
+    ):
+        raise ValueError("campaign judge format attempts do not match run config")
+    if (
+        required_environment.get("AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE")
+        != "prompt_json"
+    ):
+        raise ValueError("campaign judge structured-output mode is not trusted")
     recipe_relative = Path(str(run.get("recipe_root", "")))
     if (
         not recipe_relative.parts
@@ -213,14 +228,19 @@ def operator_execution_settings(
         + meta_round_reservations
         + production_round_reservations
     )
+    per_semantic_round = (
+        role_costs["generator"]
+        + role_costs["target"]
+        + Decimal(judge_format_attempts) * role_costs["judge"]
+    )
     per_round_microusd = int(
-        (per_task * Decimal(1_000_000)).to_integral_value(rounding=ROUND_CEILING)
+        (per_semantic_round * Decimal(1_000_000)).to_integral_value(
+            rounding=ROUND_CEILING
+        )
     )
     required_microusd = per_round_microusd * required_round_reservations
     campaign_microusd = int(
-        (campaign_cap * Decimal(1_000_000)).to_integral_value(
-            rounding=ROUND_CEILING
-        )
+        (campaign_cap * Decimal(1_000_000)).to_integral_value(rounding=ROUND_CEILING)
     )
     required_cost = Decimal(required_microusd) / Decimal(1_000_000)
     if campaign_microusd < required_microusd:
@@ -231,13 +251,19 @@ def operator_execution_settings(
             "including authoring and finalization feedback"
         )
     required_attempts = meta_model_attempts + production_attempts
-    settings["per_model_task_cost_usd"] = format(per_task, "f")
+    settings["per_model_task_cost_usd"] = format(per_semantic_round, "f")
     settings["per_model_round_microusd"] = per_round_microusd
     settings["required_campaign_cost_usd"] = format(required_cost, "f")
     settings["required_campaign_task_attempts"] = required_attempts
     settings["required_campaign_round_reservations"] = required_round_reservations
     settings["authoring_model_task_attempts"] = authoring_model_attempts
     settings["finalization_model_rounds_per_task"] = finalization_rounds
+    settings["judge_format_max_attempts"] = judge_format_attempts
+    settings["required_generator_calls"] = required_round_reservations
+    settings["required_target_calls"] = required_round_reservations
+    settings["required_judge_calls"] = (
+        required_round_reservations * judge_format_attempts
+    )
     settings["meta_evaluation_attempts"] = meta_evaluations
     settings["meta_finalization_retry_attempts"] = full_meta_retry
     settings["meta_model_task_attempts"] = meta_model_attempts
@@ -288,7 +314,9 @@ def validate_runtime_campaign_policy_rewrite(
             or parsed.query
             or parsed.fragment
         ):
-            raise ValueError("runtime generator URL is not an authorized loopback bridge")
+            raise ValueError(
+                "runtime generator URL is not an authorized loopback bridge"
+            )
         if runtime_environment.get("AUTODATA_GENERATOR_HOST_HEADER") != "":
             raise ValueError("runtime generator host header must be empty for loopback")
     result = deepcopy(dict(runtime_policy))
@@ -480,7 +508,9 @@ def canonical_execution_manifest(
         if proposed.get("tuning_task_ids") != tuning_ids:
             raise ValueError("meta tuning_task_ids do not match canonical partition")
         if proposed.get("validation_task_ids") != validation_ids:
-            raise ValueError("meta validation_task_ids do not match canonical partition")
+            raise ValueError(
+                "meta validation_task_ids do not match canonical partition"
+            )
         controlled_budget = {
             "max_iterations": meta["maximum_iterations"],
             "min_iterations": meta["minimum_iterations"],
@@ -502,10 +532,14 @@ def canonical_execution_manifest(
     elif mode == "production":
         production = _object(settings.get("production"), "trusted production config")
         if len(grounding_ids) != production["initial_tasks"]:
-            raise ValueError("production grounding task count does not match operator config")
+            raise ValueError(
+                "production grounding task count does not match operator config"
+            )
         overlap = set(grounding_ids) & set(reserved_task_ids)
         if overlap:
-            raise ValueError("production grounding overlaps meta tuning/validation/test tasks")
+            raise ValueError(
+                "production grounding overlaps meta tuning/validation/test tasks"
+            )
         controlled_budget = {
             "max_iterations": 0,
             "max_task_attempts": settings.get(
@@ -609,7 +643,9 @@ def canonical_meta_manifest_from_default(
     if len(set(grounding_ids) | set(test_ids)) != (
         tuning_count + validation_count + test_count
     ):
-        raise ValueError("supervisor grounding does not form the full trusted partition")
+        raise ValueError(
+            "supervisor grounding does not form the full trusted partition"
+        )
     expected_concurrency = settings.get("concurrency")
     if default.get("concurrency") != expected_concurrency:
         raise ValueError("freeze-created concurrency does not match operator config")

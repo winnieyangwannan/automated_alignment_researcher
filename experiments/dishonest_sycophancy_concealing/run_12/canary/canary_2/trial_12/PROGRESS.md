@@ -37,3 +37,35 @@ The run contract is exact `3/3/3`, disjoint `64/32/32`, concurrency 32,
 707 native attempts, and a `$24,100` hard safety ceiling. The derived worst-case
 requirement is `$24,099.427584`; expected spend is lower. No Trial 12 job or
 attempt root exists yet.
+
+### ⏳ 12:14 PT — REPAIRED: Luna wire contract and retry accounting
+
+The Trial 11 failure audit supersedes the earlier `$24,100` plan. The repaired
+contract requires only the six anchored dimension scores, a teacher reason,
+and target score/failure modes/reason. Trusted code derives the redundant
+`accept`, per-dimension `pass`, and target `challenging` booleans without
+changing any scientific acceptance threshold.
+
+Malformed Luna content now receives one bounded Luna-only repair request with
+the safe validation code. The raw malformed response is neither retained nor
+sent to Kimi, and the already-completed Kimi generation and Gemma probe are not
+repeated. Both Luna calls' usage records are retained. If the second response
+is still malformed, the task fails precisely as `judge_contract_exhausted` and
+native finalization does not rerun its upstream providers.
+
+The campaign now reserves one generator call, one target call, and up to two
+judge calls per semantic round. The exact worst-case requirement is
+`$41,774.49216`; Trial 12 is pinned to a `$41,775` hard ceiling. This represents
+14,004 generator calls, 14,004 target calls, and at most 28,008 judge calls.
+The protected task timeout is raised from 600 to 2,100 seconds to cover five
+sequential final rounds with one possible judge repair in each.
+
+The systematic audit also repaired two transferable issues in the original
+non-v1 recipe: feedback rounds are now finalization-only, matching broker
+reservations, and raw Gemma responses are no longer included in Kimi repair
+feedback. FAIR native JSON-schema output support is not documented for this
+Luna route, so Trial 12 fails closed on the operator-pinned `prompt_json` mode;
+no unsupported API field is guessed.
+
+Local evidence at this point: 85 focused AAR tests and 49 native broker/engine
+tests pass. No Trial 12 model call, job, or attempt root has been created.

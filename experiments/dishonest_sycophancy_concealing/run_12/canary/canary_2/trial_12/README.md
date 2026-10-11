@@ -4,7 +4,7 @@
 
 - Status: awaiting explicit model/config confirmation
 - Created: 2026-10-11 06:24 PT
-- Last updated: 2026-10-11 06:24 PT
+- Last updated: 2026-10-11 12:14 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -18,9 +18,10 @@ stop before evaluation.
 
 Trial 11 completed baseline and all three iterations, then exhausted an
 under-sized 699-attempt native ceiling during finalization. The systematic
-audit also found incomplete provider-round accounting and a nonterminal broker
-cost-overage path. AAR repair `b8629a8` and native repair `da9e12a` correct both
-layers. Trial 11 remains preserved and is not resumed.
+audit also found incomplete provider-round accounting, a nonterminal broker
+cost-overage path, and a brittle Luna wire contract. The current repair adds
+judge-local bounded format repair with complete usage accounting and fixes all
+three layers. Trial 11 remains preserved and is not resumed.
 
 ## Model and execution roles
 
@@ -40,9 +41,16 @@ layers. Trial 11 remains preserved and is not resumed.
 - Native capacity: 608 evaluations + 3 checks + 96 retry attempts = 707.
 - Production: 1,250 source tasks, 1,000 accepted rows.
 - Final-generation feedback: at most five visible rounds per task.
+- Luna wire format: minimal scored JSON, with one bounded judge-only repair
+  (`2` total judge attempts); Kimi and Gemma are not repeated for that repair.
+- Structured-output mode: operator-pinned `prompt_json`. The FAIR endpoint's
+  native JSON-schema capability remains unverified and is not assumed.
 - Model HTTP transport attempts: exactly one per request.
-- Campaign ceiling: `$24,100`; worst-case derived requirement
-  `$24,099.427584` across 14,004 provider-round reservations.
+- Campaign ceiling: `$41,775`; worst-case derived requirement `$41,774.49216`
+  across 14,004 semantic rounds: 14,004 generator calls, 14,004 target calls,
+  and at most 28,008 judge calls.
+- Per-task timeout: 2,100 seconds, covering five sequential semantic rounds
+  with two possible judge calls per round.
 - Stop boundary: verified `training_smoke`; evaluator disabled.
 
 ## Launch
@@ -63,7 +71,8 @@ The independent monitor tracks lifecycle state and absence of evaluator work.
 
 ## Pass criteria
 
-1. Immutable AAR `b8629a8` descendant and native `da9e12a` sources pass gates.
+1. Immutable AAR repair descendant and native `28a9c22125dc0cf101ebabc1b22408b4e974678a`
+   sources pass gates.
 2. Trusted orchestration registers exactly one 707-attempt canonical execution.
 3. Baseline and all three required iterations complete.
 4. Production yields exactly 1,000 verified accepted rows from 1,250 tasks.

@@ -16,7 +16,7 @@
       "input_mode": "file",
       "input_path": ".autodata/input.json",
       "output_path": ".autodata/task-result.json",
-      "timeout_seconds": 600
+      "timeout_seconds": 2100
     }
   },
   "output_schemas": {
