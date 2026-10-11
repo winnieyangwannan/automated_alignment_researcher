@@ -313,3 +313,24 @@ Validation at 15:44 PT:
 ✓ edited Python test file passed Ruff
 ✓ prompt source contains no hard-coded 30-minute training statement
 ```
+
+<a id="run16-event-lifecycle-health-monitoring-contract"></a>
+
+### 👀 16:01 PT — MONITOR: lifecycle-health criteria made explicit
+
+The Run 16 README now requires monitoring for code-health signals, genuine
+hangs, bounded retries, and actionable held-out-safe failure feedback. Process
+liveness alone is insufficient: monitoring must follow substantive transcript
+events and lifecycle artifacts through method, smoke, training, proposal,
+evaluation, score, and finding.
+
+At this checkpoint, fresh one-chain pipeline job `1820641` and research job
+`1820681` are both running with zero Slurm restarts. The Claude researcher is
+making substantive tool-driven progress through literature, scoring mechanics,
+runtime contracts, and evaluation-format inspection. It has not yet created a
+method, training job, adapter, submission, score, or finding. No retry loop or
+terminal failure exists. Two jail telemetry-counter connection warnings are
+non-fatal and did not prevent the Claude session from progressing.
+
+The five-chain gate remains closed until this one-chain attempt reaches a
+terminal state and the fail-closed verifier produces a passing proof.

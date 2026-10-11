@@ -4,9 +4,9 @@
 
 Run 16's launchers and scheduled payload require this branch.
 
-- Status: source validation passed; not launched; model-role confirmation pending
+- Status: fresh one-chain lifecycle canary running; five-chain gate remains closed
 - Created: 2026-10-11 01:49 PT
-- Last updated: 2026-10-11 01:52 PT
+- Last updated: 2026-10-11 16:01 PT
 
 ## Goal
 
@@ -37,9 +37,10 @@ one-chain lifecycle proof
   → full five-chain 5×50 run
 ```
 
-Run 16's gates are planned and have not launched. Their proofs must come from
-the final Run 16 source revision; proofs from Run 15 or earlier are historical
-evidence, not authorization for this fresh researcher configuration.
+Run 16's fresh one-chain gate is active. The five-chain gate is not launched.
+The full gate is not launched. Their proofs must come from the final Run 16
+source revision; proofs from Run 15 or earlier are historical evidence, not
+authorization for this fresh researcher configuration.
 
 ## Directory layout
 
@@ -235,6 +236,49 @@ Track complete score/finding joins by run ID and append durable state changes to
 it is not a general full-chain resume command. A full-run recovery must preserve
 existing results, reject duplicate active jobs, and subtract already-started
 sessions from each chain's 60-session budget.
+
+### Lifecycle-health monitoring goal
+
+Recorded: 2026-10-11 16:01 PT
+
+Monitor every lifecycle gate for progress quality, not merely process liveness:
+
+- **Code health:** inspect the researcher transcript, chain/pipeline logs,
+  artifacts, job states, and job restart counts. Report exceptions, repeated
+  validation failures, stale or contradictory configuration, missing receipts,
+  and any behavior that suggests a reusable code fix. Normal exploration must
+  eventually advance through method creation, contract validation, one-step GPU
+  smoke, training, proposal approval, submission, evaluation, score, and
+  finding; reaching only some stages is not a complete proof.
+- **Hangs:** distinguish a scheduler wait from an agent stall. A pending job
+  with an explicit Slurm reason is not by itself a hang. For Claude research,
+  blank SDK `SystemMessage` heartbeats do not count as progress; 1,200 seconds
+  without a substantive message or tool event must terminate with the
+  non-retryable `claude_progress_timeout` failure instead of remaining alive
+  indefinitely.
+- **Retries:** identify and report every retry, requeue, or repeated operation
+  with its object, reason, count, and bound. The canaries set Claude overload
+  retries to zero and `AAR_EVAL_RETRY_FAILED=0`; a terminally failed candidate
+  must remain preserved rather than re-evaluating the same unchanged adapter.
+  Proposal transport retries are bounded at five. Slurm `Restarts`, duplicate
+  active run IDs, repeated proposal submissions, and repeated evaluation of one
+  adapter are explicit warning signals. A one-session canary has no automatic
+  outer-chain retry.
+- **Failure feedback:** require a durable, held-out-safe record containing the
+  failing stage, stable error code, retryability, disposition, public summary,
+  and run ID when one exists. The disposition must match execution: terminal
+  failures stop that candidate; only explicitly bounded transient operations
+  may retry. Feedback must not expose credentials, held-out items, raw provider
+  responses, or evaluator-only detail, and it must be actionable enough to
+  distinguish infrastructure, method-contract, training, evaluation, and
+  finding-publication failures.
+
+If progress stops, retries exceed their documented bound, failure feedback is
+missing or misleading, or the same root failure recurs, preserve the evidence
+and stop scale-up. Fix the earliest enforceable contract, validate it, and use a
+fresh immutable attempt. Launch the five-chain topology gate only after the
+one-chain verifier produces a passing terminal proof from the accepted source
+revision.
 
 ### Evaluator-throughput monitoring goal
 
