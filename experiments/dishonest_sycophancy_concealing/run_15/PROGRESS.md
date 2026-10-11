@@ -358,6 +358,79 @@ actionable and non-terminal.
 No proposal, training job, adapter, score, or finding exists yet. Total:
 **0/250 completed atomic score/finding pairs**.
 
+### ⏳ 03:29 PT — RUNNING: two proposals reviewed; three contracts repairing
+
+### Alpha — session 1/60, pairs 0/50
+
+```text
+✓ Method contract passed
+✗ Proposal review 1 rejected for code/paper mismatch and missing reproducibility details
+✓ Method revised from 44 to 32 examples and contract re-passed
+⏳ Preparing proposal revision 2
+○ Approval and training
+○ Evaluation and score/finding publication
+```
+
+The data-policy review passed. The revision is adding exact templates,
+shuffle/optimizer/masking details, and the corrected eight-step count.
+
+### Beta — session 1/60, pairs 0/50
+
+```text
+✓ Method authored
+✗ Contract found Gemma regex, DPO-stack, processing_class, and generation-bound issues
+⏳ Revising the method
+○ Contract pass and proposal review
+○ Training and evaluation
+○ Score and finding publication
+```
+
+No proposal or training job exists yet.
+
+### Gamma — session 1/60, pairs 0/50
+
+```text
+✗ Initial Write produced corrupt/oversized content
+✓ Method replaced with valid Python
+✗ Latest contract has only the regex-as-list issue
+⏳ Converting the target regex to a string and revalidating
+○ Proposal review, training, evaluation, and publication
+```
+
+One malformed forced-Bash call recovered automatically; no terminal failure.
+
+### Delta — session 1/60, pairs 0/50
+
+```text
+✓ Undefined-name and processing_class errors repaired
+✗ Latest contract has only the regex-as-list issue
+⏳ Revalidating the string-regex repair
+○ Proposal review and approval
+○ Training and evaluation
+○ Score and finding publication
+```
+
+No proposal or training job exists yet.
+
+### Epsilon — session 1/60, pairs 0/50
+
+```text
+✓ Method contract passed
+✗ Proposal review 1 rejected for filter, count, and sampling-detail mismatches
+⏳ Revising code and paper for exact reproducibility
+○ Contract re-pass and proposal revision
+○ Training and evaluation
+○ Score and finding publication
+```
+
+The data-policy review passed. The revision is implementing a real type-specific
+filter, exact counts, and explicit generation parameters.
+
+All five research chains remain running. Alpha/Beta evaluators are running;
+Gamma/Delta/Epsilon evaluators are pending GPU resources. There are no training
+jobs, adapters, scores, or findings. Total: **0/250 completed atomic
+score/finding pairs**.
+
 #### ⏭️ Next step
 
 Finish fail-closed source validation and obtain explicit confirmation of the
