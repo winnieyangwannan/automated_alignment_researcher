@@ -292,3 +292,181 @@ Commit and synchronize the Run 12 pin plus these failure/recovery records, run
 the focused launcher tests on HPC, then launch a fresh unique Trial 2 attempt
 using the already verified fixed-base deployment. The failed attempts remain
 immutable evidence.
+
+### ✅ 19:38 PT — Fixed source synchronized and launch guard satisfied
+
+- AAR commit `aea267ecc1de1152cd188f94f4069cf8ec5a90e1` was
+  fast-forwarded to the clean HPC `autodata` worktree through direct
+  Git-over-SSH.
+- All 57 focused Run 12 and AutoData-integration tests passed on HPC.
+- The production guard rejected the first launcher invocation before creating
+  an attempt or submitting a job because the clean, exact AutoData checkout was
+  still attached to its named development branch. The checkout was detached at
+  the same reviewed commit `8ed79b55843d259deea9132cf257f02ff7eb5ee9`, as
+  required by the guard, and reverified clean.
+- No job or run artifact was created by the rejected invocation.
+
+### 🚀 19:39 PT — Fresh provenance-preserving attempt started
+
+- Attempt ID: `20261011T023831Z-aea267ecc1de`.
+- Attempt root:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T023831Z-aea267ecc1de`.
+- Pipeline job: `1809688`.
+- The committed submitter reused validated fixed-base deployment
+  `winnieyangwn-r12-alpha-i1-c0dab4f7`; both the Kimi/MCP preflight and the
+  model-aware Gemma smoke passed.
+- Launch contract: `bootstrap-canary`, `stop_after=training_smoke`, production
+  concurrency 32, 1,000 accepted rows required, and no evaluator.
+- Continuous monitoring is active in a dedicated thread. Distinct research and
+  controller job IDs are still pending infrastructure bootstrap.
+
+#### Lifecycle snapshot
+
+```text
+✓ Source/config validation
+✓ Endpoint and MCP preflight
+⏳ Infrastructure bootstrap — pipeline 1809688 submitted
+○ Research and method authoring
+○ Proposal/workspace authoring
+○ Meta-optimization
+○ Production
+○ Training smoke
+```
+
+#### Next gate
+
+Require the pipeline to emit distinct research and controller job IDs with no
+evaluator, then verify that provider provenance survives baseline review and
+that the first native meta execution begins.
+
+### ✅ 19:40 PT — Infrastructure bootstrap complete
+
+- Pipeline job `1809688` completed successfully.
+- Durable child manifest: research job `1809692`, controller job `1809693`,
+  and evaluator `-`.
+- The pipeline log explicitly confirms that bounded-canary evaluator and
+  held-out publication were skipped.
+- Research and method authoring is now queued/running; the controller remains
+  dependency-gated.
+
+```text
+✓ Source/config validation
+✓ Endpoint and MCP preflight
+✓ Infrastructure bootstrap
+⏳ Research and method authoring — job 1809692
+○ Proposal/workspace authoring
+○ Meta-optimization
+○ Production
+○ Training smoke
+```
+
+### ✅ 19:48 PT — Method and proposal registered
+
+- The method contract passed validation after the researcher corrected its
+  initial contract details.
+- The first proposal review rejected paper/code faithfulness mismatches. The
+  researcher corrected them, revalidated the contract, and resubmitted.
+- The corrected proposal and workspace bootstrap succeeded:
+  study `study_8d9774729dd3b46b6cea72485b18a0ca`, workspace
+  `ws_c4ae868015a64b18a697335a9724c99e`.
+- Native state is `active` at `clarify_pending`, revision 0, with
+  `clarify_design` pending and no execution yet.
+- Research job `1809692` remains running, controller `1809693` remains
+  dependency-held, evaluator is absent, and the broker reports zero errors.
+
+```text
+✓ Source/config validation
+✓ Endpoint and MCP preflight
+✓ Infrastructure bootstrap
+✓ Research method contract
+✓ Proposal and workspace registration
+⏳ Native workspace authoring — clarify_design pending
+○ Meta-optimization
+○ Production
+○ Training smoke
+```
+
+### ✅ 19:49 PT — Design clarification and grounding authored
+
+- Native `clarify_design` completed on attempt 1 and advanced the workspace to
+  `grounding_pending`, revision 1.
+- `author_grounding` then completed on attempt 1 at 19:49:35 PT.
+- Workspace revision 2 is now `grounding_review`, with `approve_grounding`
+  pending.
+- No execution or task attempt has started; research remains running,
+  controller remains held, and evaluator remains absent.
+
+### ⏳ 19:51 PT — Baseline provenance-fix gate reached
+
+- Grounding approval and pipeline authoring both completed on their first
+  attempts.
+- One authoring check and all three axis-specific dry-run tasks succeeded
+  operationally from 19:50:21 through 19:51:14 PT: 4/4 task attempts and zero
+  task errors.
+- Workspace revision 5 is `baseline_review` with `approve_baseline` pending.
+- No native meta execution exists yet. Monitoring is focused on whether the
+  preserved provider provenance allows this approval to advance without the
+  previous deterministic retry loop.
+- Research job `1809692` remains running, controller `1809693` remains held,
+  and evaluator remains absent.
+
+### ⛔ 19:56 PT — Fixed-source attempt stopped at generator deployment provenance
+
+- Baseline action `act_34089aac5d9609284631dcc7` was reviewed three times.
+  The trusted verifier returned `baseline sample deployment provenance is
+  incomplete` at 19:51:37 and 19:51:56 PT. A third review dispatched at
+  19:52:02 PT made no progress, and no native meta execution was created during
+  the following 4 minutes 18 seconds.
+- This met the documented repeated-baseline/no-meta stop criterion. Research
+  job `1809692` and dependency-held controller job `1809693` were canceled at
+  19:56:20 PT; the controller never ran. The lifecycle supervisor recorded
+  `stopped` at 19:56:21 PT.
+- The provider-usage serialization fix is proven: all three raw task results
+  and all three native baseline-summary samples preserve generator, target,
+  and judge usage lists.
+- Every target usage entry contains deployment
+  `winnieyangwn-r12-alpha-i1-c0dab4f7` and the correct checkpoint hash. Every
+  Kimi generator usage entry lacks `deployment_id`; the expected generator
+  deployment is `autodata_8-kimi26`.
+- The committed recipe sends `AUTODATA_GENERATOR_DEPLOYMENT_ID` in the
+  generator request header but does not copy it into the returned generator
+  usage record. The fail-closed AAR verifier requires deployment IDs for both
+  generator and target roles, causing the rejection before baseline action
+  completion.
+- Content execution itself was healthy: honesty recorded
+  `quality=0.933333`, `challenge=0`, `valid=0`; sycophancy resistance recorded
+  `quality=1`, `challenge=0`, `valid=0`; uncertainty disclosure recorded
+  `quality=1`, `challenge=0.5`, `valid=1`. The two rejected rows remained
+  non-exportable.
+- All three dry runs succeeded operationally. Generator, target, and judge each
+  completed three calls from three request attempts, with zero provider
+  retries and zero broker/task errors.
+- Terminal proof records zero native executions/candidates, zero production
+  tasks, zero score files, zero training receipts, and zero adapter artifacts.
+  No evaluator, held-out scoring, production, training, or promotion started.
+- All attempt artifacts are preserved under
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T023831Z-aea267ecc1de`.
+
+#### Terminal lifecycle snapshot
+
+```text
+✓ Source/config validation
+✓ Endpoint and MCP preflight
+✓ Infrastructure bootstrap
+✓ Research method contract
+✓ Proposal and workspace registration
+✗ Baseline approval — generator deployment provenance absent
+○ Meta-optimization
+○ Production
+○ Training smoke
+```
+
+#### Terminal conclusion
+
+Trial 2 reached an operational baseline faster than Trial 1 and produced one
+valid diagnostic while keeping two rejected diagnostics non-exportable, but it
+did not advance into native meta-optimization. The v1 baseline-convergence fix
+therefore remains unproven at the requested success boundary. Any future retry
+must first preserve the generator deployment ID in returned usage provenance
+and add focused regression coverage; this stopped attempt must not be reused or
+mutated.

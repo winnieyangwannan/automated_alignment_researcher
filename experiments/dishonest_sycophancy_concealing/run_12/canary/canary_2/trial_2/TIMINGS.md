@@ -11,19 +11,27 @@ Operational events and recovery decisions are recorded separately in
 
 ## Attempt identity
 
-- Current status at 2026-10-10 19:30 PT: attempt stopped at baseline approval
-  after a deterministic provider-provenance serialization failure.
-- Current source commit: `3421eb1548ecf5ae9865cb5bb2b531bb323bc2b6`.
-- Fresh attempt:
-  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T021250Z-3421eb1548ec`.
-- Fresh checkpoint root:
-  `/checkpoint/ram/winnieyangwn/aar-checkpoints/run12-bootstrap-canary/20261011T021250Z-3421eb1548ec`.
-- Fresh pipeline job: `1809610`.
+- Terminal status at 2026-10-10 19:56:21 PT: fixed-source attempt stopped at
+  baseline approval after repeated generator-deployment provenance rejection;
+  no native meta execution was created.
+- Current AAR source commit:
+  `aea267ecc1de1152cd188f94f4069cf8ec5a90e1`.
+- Current AutoData source commit:
+  `8ed79b55843d259deea9132cf257f02ff7eb5ee9`.
+- Fixed-source attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T023831Z-aea267ecc1de`.
+- Fixed-source checkpoint root:
+  `/checkpoint/ram/winnieyangwn/aar-checkpoints/run12-bootstrap-canary/20261011T023831Z-aea267ecc1de`.
+- Pipeline job: `1809688`; research-chain job: `1809692`; controller job:
+  `1809693`.
+- Study: `study_8d9774729dd3b46b6cea72485b18a0ca`; workspace:
+  `ws_c4ae868015a64b18a697335a9724c99e`.
+- Evaluator job: absent (`-`) in durable `metadata/children.tsv`, as required.
 - Revalidated reused target deployment:
   `winnieyangwn-r12-alpha-i1-c0dab4f7`.
-- Research-chain job: `1809614`.
-- Controller job: `1809615`.
-- Evaluator job: absent (`-`) in durable `metadata/children.tsv`, as required.
+- Previous serialization-loss attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T021250Z-3421eb1548ec`;
+  pipeline `1809610`, research `1809614`, controller `1809615`.
 - Failed-attempt source commit:
   `484ea65f3c019dcd7496db39a205b4f4943ee907`.
 - Failed pre-submission attempt:
@@ -45,6 +53,9 @@ Operational events and recovery decisions are recorded separately in
 - The submitter's terminal output and model-aware endpoint response.
 - Direct and proxied `/v1/chat/completions` and `/v1/models` checks that did not
   retain response content in this report.
+- Durable `metadata/children.tsv`, Slurm accounting, native workspace state,
+  lifecycle-supervisor status, native baseline summary, broker task-result
+  archives, and staged recipe hashes for the fixed-source attempt.
 
 Source timestamps stored in UTC are converted to PT. Durations come from
 recorded timestamps or Slurm accounting rather than conversational estimates.
@@ -57,7 +68,7 @@ recorded timestamps or Slurm accounting rather than conversational estimates.
 ✓ Infrastructure bootstrap
 ✓ Research and method authoring
 ✓ Proposal review and approval
-✗ Baseline approval — provider provenance removed during serialization
+✗ Baseline approval — generator deployment provenance absent
 ○ Meta-optimization
 ○ Production
 ○ Training smoke
@@ -85,7 +96,7 @@ recorded timestamps or Slurm accounting rather than conversational estimates.
 - The model-aware smoke request failed at 19:08:55 PT, approximately 11 minutes
   39 seconds after attempt creation. The submitter exited before `sbatch`.
 
-### Fresh attempt and submission
+### Previous serialization-loss attempt
 
 - Fresh attempt setup began at 19:12:50 PT.
 - The retained fixed-base deployment's model-aware smoke completed
@@ -144,6 +155,15 @@ recorded timestamps or Slurm accounting rather than conversational estimates.
 - Workspace revision: 5.
 - Authoring checks: 1/1 operationally successful.
 - Authoring dry-run tasks: 3/3 operationally successful.
+- Dry-run diagnostics:
+  - honesty: `quality=0.933333`, `challenge=0`, `valid=0`,
+    `target_not_challenging`;
+  - sycophancy resistance: `quality=1`, `challenge=0`, `valid=0`,
+    `target_not_challenging`;
+  - uncertainty disclosure: `quality=1`, `challenge=0.5`, `valid=1`.
+- Baseline review calls: three for the same action. Two returned the identical
+  deployment-provenance rejection and the third made no progress before the
+  stop boundary.
 - Native meta-optimization executions and candidates: 0.
 - Production source tasks: 0/1,250.
 - Production accepted rows: 0/1,000.
@@ -155,15 +175,16 @@ recorded timestamps or Slurm accounting rather than conversational estimates.
 - Kimi researcher endpoint/MCP preflight: passed.
 - Gemma worker: vLLM 0.25.1, BF16, language-model-only, healthy, and capable
   of direct generation.
-- Proxy validation: failed because a simultaneous unrelated deployment won the
-  same host port. The claimed Gemma proxy URL exposed `Kimi-K3`, so the
-  model-aware smoke correctly rejected it with HTTP 400.
-- One judge HTTP 429 occurred and the request succeeded on retry.
+- The reused Gemma proxy passed the model-aware smoke before submission.
+- Fixed-source authoring used exactly three completed/request attempts for each
+  of generator, target, and judge: 9 provider calls, 9 request attempts, and 0
+  provider retries.
 - Provider timeout, connection reset, broker, target, schema, task-execution,
-  and model-loading failures: 0 observed in this attempt.
-- Baseline diagnostic metrics for honesty, sycophancy resistance, and
-  uncertainty disclosure were each `quality=1.0`, `challenge=0.0`, and
-  `valid=0`. The rejected rows remained non-exportable.
+  and model-loading failures: 0 in the fixed-source attempt.
+- All three results preserve top-level generator, target, and judge
+  `provider_usage`. Target entries contain the expected deployment and valid
+  checkpoint hash; Kimi generator entries omit `deployment_id`.
+- The two rejected diagnostic rows remained non-exportable.
 
 ## Bottleneck analysis
 
@@ -172,40 +193,85 @@ control-plane proxy port-selection race. The fresh attempt bypassed that issue
 with a separately verified identical fixed-base deployment and reached native
 workspace authoring.
 
-The fresh attempt's terminal blocker was serialization between the raw task
-result and native baseline-review artifact. Raw task results contained complete
-generator, target, and judge provenance. Pinned AutoData commit `823c594`
-parsed them through a `TaskResult` model without a `provider_usage` field and
-then built baseline samples from `TaskResult.to_dict()`, deterministically
-dropping that list. The trusted AAR approval gate correctly rejected the
-incomplete evidence. The failure occurred before content-aware baseline policy
-could be evaluated.
+The previous attempt's blocker was serialization between the raw task result
+and native baseline-review artifact. AutoData commit `8ed79b5` corrected that
+loss: all three fixed-source raw task results and the native baseline summary
+contain the same three-role provider-usage lists.
+
+The fixed-source attempt exposed the next fail-closed provenance boundary.
+The committed recipe's `_generate` path sends
+`AUTODATA_GENERATOR_DEPLOYMENT_ID` in the request header but does not copy it
+into the returned generator usage record. Consequently every Kimi generator
+entry lacks `deployment_id`, although every target entry contains deployment
+`winnieyangwn-r12-alpha-i1-c0dab4f7` and the correct checkpoint hash. The
+trusted AAR verifier requires nonempty deployment IDs for both generator and
+target roles. It therefore rejected the baseline before native action
+completion. This was a provenance-shape failure, not a content-score rejection.
 
 ## Unmeasured stages
 
-Research and method authoring, proposal review, workspace authoring, baseline
-approval, native meta-optimization, production, handoff verification, and
-training smoke did not start in the first pre-submission attempt. The fresh
-attempt completed through pipeline authoring, but baseline approval did not
-complete. Meta-optimization, production, handoff verification, and training
-smoke remain unmeasured.
+The fixed-source attempt completed research/method authoring, proposal review,
+workspace registration, grounding, pipeline authoring, one recipe check, and
+three dry runs. Baseline approval did not complete. Native meta-optimization,
+production, handoff verification, and training smoke never started and remain
+unmeasured.
 
 ## Trial 2 versus Trial 1 baseline behavior
 
 - Trial 1 took approximately 11 minutes 27 seconds from workspace bootstrap to
-  completion of its first baseline cycle. Trial 2 reached its first completed
-  operational baseline about 4 minutes after workspace bootstrap.
+  completion of its first baseline cycle. The fixed-source Trial 2 attempt took
+  approximately 2 minutes 47 seconds from workspace bootstrap at 19:48:27 PT
+  to completion of its three dry runs at 19:51:14 PT.
 - Trial 1 ran nine baseline cycles, 30 workspace revisions, and 18 dry-run
-  tasks before exhausting its research session. Trial 2 authored one pipeline
-  at revision 5 and completed three dry-run tasks before the serialization
-  mismatch blocked approval.
+  tasks before exhausting its research session. The fixed-source Trial 2
+  attempt authored one pipeline, reached revision 5, and completed three
+  dry-run tasks before the deployment-provenance check blocked approval.
 - Trial 1 produced 17/18 invalid diagnostics and never placed both sampled axes
-  in an acceptable content state. Trial 2 produced one trustworthy diagnostic
-  per axis; all three were teacher-quality (`quality=1.0`) but did not challenge
-  the target (`challenge=0.0`, `valid=0`) and remained non-exportable.
+  in an acceptable content state. The fixed-source attempt produced one valid
+  uncertainty-disclosure diagnostic and two teacher-quality but
+  target-not-challenging diagnostics; the rejected rows remained
+  non-exportable.
 - Neither trial reached a first native meta execution. Trial 1 was blocked by a
-  content-convergence gate; this Trial 2 attempt was blocked earlier by lost
-  provider provenance in the native baseline artifact.
-- Therefore this stopped attempt does not prove whether the v1 recipe removed
-  Trial 1's convergence bottleneck. A fresh attempt with provenance-preserving
-  serialization is required for that comparison.
+  content-convergence gate; the fixed-source attempt was blocked by incomplete
+  generator deployment provenance before the operational baseline decision.
+- Time to first native meta execution is therefore unmeasured for both trials.
+  The v1 recipe reduced time and revisions to the first baseline and produced
+  one valid diagnostic, but this stopped attempt cannot prove that it removed
+  Trial 1's convergence blocker because the independent provenance gate
+  prevented baseline approval.
+
+## Fresh fixed-source attempt — `20261011T023831Z-aea267ecc1de`
+
+- 19:38 PT: focused HPC validation completed, 57/57 tests passed.
+- 19:38 PT: an initial launcher invocation stopped before attempt creation or
+  job submission because the exact AutoData checkout was attached to a feature
+  branch. It was detached at the unchanged pinned commit to satisfy the
+  production-source guard.
+- 19:39 PT: committed launcher created the fresh attempt and submitted pipeline
+  job `1809688`.
+- Kimi/MCP and reused Gemma endpoint preflights passed before submission.
+- Pipeline `1809688`: submitted 19:39:02 PT; queued until 19:40:10 PT; ran
+  19:40:10–19:40:30 PT for 20 seconds and completed successfully.
+- Research `1809692`: submitted 19:40:19 PT; queued until 19:41:52 PT for 1
+  minute 33 seconds; ran 19:41:52–19:56:20 PT for 14 minutes 28 seconds.
+- Controller `1809693` remained dependency-held, never started, and was
+  canceled at the terminal boundary. No evaluator job was created.
+- 19:48:27 PT: corrected proposal review and workspace bootstrap completed;
+  native workspace `ws_c4ae868015a64b18a697335a9724c99e` entered
+  `clarify_pending` at revision 0.
+- `clarify_design` attempt 1: 19:48:28–19:48:55 PT.
+- `author_grounding` attempt 1: 19:48:56–19:49:32 PT.
+- `approve_grounding` attempt 1: 19:49:33–19:50:03 PT.
+- `author_pipeline` attempt 1: 19:50:05–19:50:20 PT.
+- Baseline recipe check and three sequential dry runs: 19:50:21–19:51:14 PT;
+  all 4/4 task attempts succeeded with zero task errors.
+- Baseline action `act_34089aac5d9609284631dcc7` was reviewed three times.
+  Identical deployment-provenance rejections returned at 19:51:37 and
+  19:51:56 PT; a third call dispatched at 19:52:02 PT made no progress.
+- The documented repeated-baseline/no-meta stop criterion was applied at
+  19:56:20 PT. Research `1809692` and held controller `1809693` were canceled;
+  the lifecycle supervisor recorded `stopped` at 19:56:21 PT.
+- Terminal workspace state: active/`baseline_review`, revision 5, four task
+  attempts used, baseline approval pending, and zero native executions.
+- Meta-optimization, production, handoff, and training durations are
+  unmeasured because those stages never started.
