@@ -1431,7 +1431,21 @@ def reconcile_completed_execution_transition(
             continue
         spec = json.loads(str(row.get("executionJson")))
         mode = spec.get("mode")
-        if mode == "meta_optimize" and not entry.get("production_execution_id"):
+        production_id = entry.get("production_execution_id")
+        production_registrations = [
+            candidate
+            for candidate in registrations
+            if candidate["subject_id"] == production_id
+        ]
+        meta_transition_complete = (
+            entry["status"] == "completed"
+            and isinstance(production_id, str)
+            and bool(production_id)
+            and len(production_registrations) == 1
+            and production_registrations[0].get("parent_meta_execution_id")
+            == execution_id
+        )
+        if mode == "meta_optimize" and not meta_transition_complete:
             try:
                 return reconcile_completed_meta_execution(args, execution_id)
             except Exception as error:

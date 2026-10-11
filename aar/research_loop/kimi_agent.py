@@ -458,6 +458,7 @@ class KimiAgent:
         continuation_count = 0
         checkpoint_retry_count = 0
         autodata_wait_deadline: float | None = None
+        autodata_idle_deadline: float | None = None
 
         with tempfile.TemporaryDirectory(prefix="aar-kimi-") as temp_dir:
             overlay_home = Path(temp_dir)
@@ -513,7 +514,42 @@ class KimiAgent:
                             workspace_id, status_subject
                         )
                         if action is None:
-                            self._require_fresh_autodata_supervisor_status()
+                            supervisor_status = (
+                                self._require_fresh_autodata_supervisor_status()
+                            )
+                            if (
+                                supervisor_status is not None
+                                and supervisor_status.get("state") == "idle"
+                            ):
+                                if autodata_idle_deadline is None:
+                                    idle_grace = float(
+                                        os.getenv(
+                                            "AAR_AUTODATA_HOST_IDLE_GRACE_SECONDS",
+                                            "90",
+                                        )
+                                    )
+                                    if idle_grace <= 0:
+                                        raise RuntimeError(
+                                            "AAR_AUTODATA_HOST_IDLE_GRACE_SECONDS "
+                                            "must be positive"
+                                        )
+                                    autodata_idle_deadline = (
+                                        time.monotonic() + idle_grace
+                                    )
+                                elif time.monotonic() >= autodata_idle_deadline:
+                                    raise _retain_process_failure(
+                                        error=RuntimeError(
+                                            "AutoData supervisor remained idle without "
+                                            "a scoped action or verified handoff"
+                                        ),
+                                        error_code="autodata_supervisor_idle_stall",
+                                        stage="autodata_lifecycle",
+                                        public_summary=(
+                                            "AutoData lifecycle stalled without work"
+                                        ),
+                                    )
+                            else:
+                                autodata_idle_deadline = None
                             if autodata_wait_deadline is None:
                                 timeout = float(
                                     os.getenv(
@@ -531,7 +567,9 @@ class KimiAgent:
                                     "supervisor to expose a scoped host action or handoff"
                                 )
                             snapshot = self._autodata_native_status(status_subject)
-                            status = str(snapshot.get("status") or "").lower()
+                            status = self._autodata_subject_status(
+                                status_subject, snapshot
+                            )
                             if status in {"failed", "cancelled", "error"}:
                                 nested = snapshot.get("failure")
                                 safe_nested = safe_failure_feedback_view(nested)
@@ -559,6 +597,7 @@ class KimiAgent:
                             )
                             continue
                         autodata_wait_deadline = None
+                        autodata_idle_deadline = None
                         if action["status"] == "in_progress":
                             if action["kind"] not in {
                                 "approve_grounding",
@@ -1473,7 +1512,8 @@ class KimiAgent:
                 stage="autodata_lifecycle",
                 public_summary="AutoData lifecycle supervisor heartbeat is invalid",
             ) from error
-        if value.get("state") == "failed":
+        state = value.get("state")
+        if state == "failed":
             feedback = safe_failure_feedback_view(value.get("failure"))
             if feedback is not None:
                 raise FailureFeedbackError(feedback)
@@ -1482,6 +1522,22 @@ class KimiAgent:
                 error_code="autodata_supervisor_failed",
                 stage="autodata_lifecycle",
                 public_summary="AutoData lifecycle supervisor failed",
+            )
+        if state not in {
+            "starting",
+            "running",
+            "stepping",
+            "idle",
+            "reconciling",
+            "reconcile-retrying",
+        }:
+            raise _retain_process_failure(
+                error=RuntimeError(
+                    f"AutoData lifecycle supervisor is not runnable: {state!r}"
+                ),
+                error_code="autodata_supervisor_state_invalid",
+                stage="autodata_lifecycle",
+                public_summary="AutoData lifecycle supervisor is not runnable",
             )
         return value
 
@@ -1962,59 +2018,157 @@ class KimiAgent:
         return cls._autodata_cli("status", subject_id)
 
     @staticmethod
+    def _autodata_subject_status(
+        subject_id: str, snapshot: dict[str, Any]
+    ) -> str:
+        """Normalize and authenticate native workspace/execution status shapes."""
+        if subject_id.startswith("ws_"):
+            record = snapshot.get("workspace")
+            identifier_key = "id"
+        elif subject_id.startswith("exe_"):
+            record = snapshot
+            identifier_key = "execution_id"
+        else:
+            raise _retain_process_failure(
+                error=RuntimeError(f"unsupported AutoData subject {subject_id}"),
+                error_code="autodata_status_invalid",
+                stage="autodata_lifecycle",
+                public_summary="native AutoData status response is invalid",
+            )
+        status = record.get("status") if isinstance(record, dict) else None
+        identifier = record.get(identifier_key) if isinstance(record, dict) else None
+        if identifier != subject_id or status not in {
+            "active",
+            "frozen",
+            "completed",
+            "failed",
+            "cancelled",
+            "error",
+        }:
+            raise _retain_process_failure(
+                error=RuntimeError(
+                    f"native status for {subject_id} has an invalid identity or state"
+                ),
+                error_code="autodata_status_invalid",
+                stage="autodata_lifecycle",
+                public_summary="native AutoData status response is invalid",
+            )
+        return str(status)
+
+    @staticmethod
     def _autodata_status_subject(workspace_id: str) -> str:
-        """Return the sole active supervised subject in this workspace lineage."""
+        """Return the current supervised subject in one durable run lineage."""
         control_raw = os.environ.get("AAR_AUTODATA_SUPERVISOR_CONTROL", "").strip()
         if not control_raw:
+            if os.environ.get("AAR_AUTODATA_LIFECYCLE_SUPERVISED", "0") == "1":
+                raise _retain_process_failure(
+                    error=RuntimeError(
+                        "supervised AutoData lifecycle control is not configured"
+                    ),
+                    error_code="autodata_lineage_control_unavailable",
+                    stage="autodata_lifecycle",
+                    public_summary=(
+                        "trusted AutoData lifecycle control is unavailable"
+                    ),
+                )
             return workspace_id
-        try:
-            control = json.loads(Path(control_raw).read_text())
-        except (OSError, json.JSONDecodeError):
-            return workspace_id
-        subjects = control.get("subjects") if isinstance(control, dict) else None
-        if not isinstance(subjects, list):
-            return workspace_id
-        registered = {
-            str(entry.get("subject_id"))
-            for entry in subjects
-            if isinstance(entry, dict) and entry.get("status") == "registered"
-        }
-        state_raw = os.environ.get("AAR_AUTODATA_STATE", "").strip()
-        state = Path(state_raw) if state_raw else None
-        execution_ids: list[str] = []
-        if state is not None and state.is_file() and not state.is_symlink():
-            try:
-                with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
-                    columns = {
-                        str(row[1])
-                        for row in connection.execute(
-                            "PRAGMA table_info(executions)"
-                        ).fetchall()
-                    }
-                    if "workspaceId" in columns:
-                        order = "createdAt,id" if "createdAt" in columns else "id"
-                        rows = connection.execute(
-                            "SELECT id FROM executions WHERE workspaceId=? "
-                            f"AND status='active' ORDER BY {order}",
-                            (workspace_id,),
-                        ).fetchall()
-                        execution_ids = [
-                            str(row[0]) for row in rows if str(row[0]) in registered
-                        ]
-            except sqlite3.Error as error:
-                raise RuntimeError(
-                    "cannot resolve current AutoData execution lineage"
-                ) from error
-        if len(execution_ids) > 1:
-            raise RuntimeError(
-                "ambiguous active AutoData executions for current workspace: "
-                + ", ".join(execution_ids)
+
+        def fail(message: str) -> NoReturn:
+            raise _retain_process_failure(
+                error=RuntimeError(message),
+                error_code="autodata_lineage_invalid",
+                stage="autodata_lifecycle",
+                public_summary="trusted AutoData lifecycle lineage is invalid",
             )
-        if execution_ids:
-            return execution_ids[0]
-        if workspace_id in registered:
+
+        control_path = Path(control_raw)
+        try:
+            if control_path.is_symlink() or not control_path.is_file():
+                raise OSError("lifecycle control is not a regular file")
+            control = json.loads(control_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise _retain_process_failure(
+                error=error,
+                error_code="autodata_lineage_control_unavailable",
+                stage="autodata_lifecycle",
+                public_summary="trusted AutoData lifecycle control is unavailable",
+            ) from error
+        if (
+            not isinstance(control, dict)
+            or set(control) != {"schema", "subjects"}
+            or control.get("schema") != "aar.autodata.lifecycle-control/v1"
+        ):
+            fail("AutoData lifecycle control has an invalid schema")
+        subjects = control.get("subjects")
+        if not isinstance(subjects, list):
+            fail("AutoData lifecycle control has no subjects array")
+        entries: dict[tuple[str, str], dict[str, Any]] = {}
+        for entry in subjects:
+            if not isinstance(entry, dict):
+                fail("AutoData lifecycle control contains a non-object subject")
+            kind = entry.get("kind")
+            subject_id = entry.get("subject_id")
+            status = entry.get("status")
+            if (
+                kind not in {"workspace", "execution"}
+                or not isinstance(subject_id, str)
+                or not subject_id
+                or status not in {"registered", "completed"}
+            ):
+                fail("AutoData lifecycle control contains an invalid subject")
+            key = (kind, subject_id)
+            if key in entries:
+                fail(f"AutoData lifecycle control duplicates {kind} {subject_id}")
+            entries[key] = entry
+
+        workspace = entries.get(("workspace", workspace_id))
+        if workspace is None:
+            fail(f"AutoData lifecycle control lost workspace {workspace_id}")
+        canonical_id = workspace.get("canonical_execution_id")
+        if canonical_id is None:
+            if workspace["status"] != "registered":
+                fail(
+                    f"completed workspace {workspace_id} has no canonical execution"
+                )
             return workspace_id
-        return workspace_id
+        if not isinstance(canonical_id, str) or not canonical_id:
+            fail(f"workspace {workspace_id} has an invalid canonical execution")
+
+        current_id = canonical_id
+        seen: set[str] = set()
+        while True:
+            if current_id in seen:
+                fail(f"AutoData execution lineage contains a cycle at {current_id}")
+            seen.add(current_id)
+            current = entries.get(("execution", current_id))
+            if current is None:
+                # The supervisor durably binds an execution before enrolling it.
+                # During that short reconciliation window, the previous registered
+                # subject remains the only safe status target.
+                if current_id == canonical_id and workspace["status"] == "registered":
+                    return workspace_id
+                fail(
+                    f"AutoData execution {current_id} is bound but not registered"
+                )
+            production_id = current.get("production_execution_id")
+            if production_id is None:
+                return current_id
+            if not isinstance(production_id, str) or not production_id:
+                fail(f"execution {current_id} has an invalid production binding")
+            production = entries.get(("execution", production_id))
+            if production is None:
+                # Meta-to-production reconciliation writes the durable intent before
+                # enrolling the child. Continue observing meta for this brief window.
+                if current["status"] == "registered":
+                    return current_id
+                fail(
+                    f"production execution {production_id} is bound but not registered"
+                )
+            if production.get("parent_meta_execution_id") != current_id:
+                fail(
+                    f"production execution {production_id} has the wrong meta parent"
+                )
+            current_id = production_id
 
     @staticmethod
     def _method_contract_status(method_path: Path) -> tuple[Optional[str], list[str]]:

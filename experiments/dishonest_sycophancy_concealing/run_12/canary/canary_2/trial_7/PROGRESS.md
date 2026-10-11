@@ -221,3 +221,34 @@ Baseline outcomes:
 These are task-level recipe outcomes, not a supervisor or execution failure.
 The supervisor heartbeat is fresh, the research job remains running, and no
 evaluator exists.
+
+<a id="trial7-event-lineage-stop"></a>
+
+### 🛑 03:11 PT — STOPPED: canonical execution lineage was not propagated
+
+Trial 7 was deliberately cancelled under the standing stop-on-code-bug rule.
+The native canonical execution was healthy at `awaiting_analysis`, but the host
+resolver continued polling frozen workspace
+`ws_8e08470d7b6d46ae8121cec764517180`. The canonical execution row was created
+through the standalone native CLI and therefore had `workspaceId=NULL`; the old
+resolver incorrectly depended on that optional database linkage instead of the
+durable `canonical_execution_id` already stored in lifecycle control. As a
+result, execution-scoped action `act_8f1cf...` was never leased and Kimi logged
+`status=unknown` for the workspace.
+
+Terminal evidence:
+
+- research `1813738` cancelled at 03:11:11 PT after 13m14s;
+- controller `1813739` cancelled before it started;
+- supervisor stopped cleanly at 03:11:13 PT with no supervisor failure;
+- canonical execution remains preserved at iteration 0/3 with 96/699 attempts;
+- no production execution, handoff, training submission, training smoke,
+  evaluator, score, or checkpoint artifact exists.
+
+The replacement repair makes lifecycle control authoritative for
+workspace→meta→production lineage, normalizes the distinct native workspace
+and execution status shapes, retries incomplete meta→production registration
+after every crash window, restores ports from the controlled frozen workspace,
+and fails a healthy-but-idle host wait after a 90-second grace instead of the
+three-hour generic timeout. Trial 8 must use the committed repair and repeat
+the same frozen experiment contract.

@@ -37,13 +37,39 @@ def test_active_workspace_reuses_broker_and_generator_ports(tmp_path: Path) -> N
     }
 
 
-def test_active_execution_reuses_completed_workspace_ports(tmp_path: Path) -> None:
-    state = _state(tmp_path / "state.db", status="completed")
+def test_frozen_workspace_without_execution_workspace_id_reuses_ports(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path / "state.db", status="frozen")
+    workspace_id = "ws_1"
+    execution_id = "exe_1"
     with sqlite3.connect(state) as connection:
         connection.execute(
-            "INSERT INTO executions VALUES('exe_1','ws_1','active','2026-01-02')"
+            "INSERT INTO executions VALUES(?,?,?,?)",
+            (execution_id, None, "active", "2026-01-02"),
         )
-    assert resolve_resume_ports(state)["broker_port"] == 14993
+    control = tmp_path / "control.json"
+    control.write_text(
+        json.dumps(
+            {
+                "schema": "aar.autodata.lifecycle-control/v1",
+                "subjects": [
+                    {
+                        "kind": "workspace",
+                        "subject_id": workspace_id,
+                        "status": "completed",
+                        "canonical_execution_id": execution_id,
+                    },
+                    {
+                        "kind": "execution",
+                        "subject_id": execution_id,
+                        "status": "registered",
+                    },
+                ]
+            }
+        )
+    )
+    assert resolve_resume_ports(state, control)["broker_port"] == 14993
 
 
 def test_no_active_subject_has_no_retained_ports(tmp_path: Path) -> None:
@@ -66,3 +92,55 @@ def test_non_loopback_retained_endpoint_fails_closed(tmp_path: Path) -> None:
         )
     with pytest.raises(RuntimeError, match="safe loopback"):
         resolve_resume_ports(state)
+
+
+def test_completed_workspace_without_canonical_binding_fails_closed(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path / "state.db", status="frozen")
+    control = tmp_path / "control.json"
+    control.write_text(
+        json.dumps(
+            {
+                "schema": "aar.autodata.lifecycle-control/v1",
+                "subjects": [
+                    {
+                        "kind": "workspace",
+                        "subject_id": "ws_1",
+                        "status": "completed",
+                    }
+                ]
+            }
+        )
+    )
+    with pytest.raises(RuntimeError, match="unique canonical execution"):
+        resolve_resume_ports(state, control)
+
+
+def test_retained_workspace_without_control_fails_closed(tmp_path: Path) -> None:
+    state = _state(tmp_path / "state.db", status="frozen")
+    with pytest.raises(RuntimeError, match="without lifecycle control"):
+        resolve_resume_ports(state, tmp_path / "missing-control.json")
+
+
+def test_malformed_control_fails_closed(tmp_path: Path) -> None:
+    state = _state(tmp_path / "state.db", status="frozen")
+    control = tmp_path / "control.json"
+    control.write_text("{}")
+    with pytest.raises(RuntimeError, match="invalid schema"):
+        resolve_resume_ports(state, control)
+
+
+def test_empty_control_with_retained_workspace_fails_closed(tmp_path: Path) -> None:
+    state = _state(tmp_path / "state.db", status="frozen")
+    control = tmp_path / "control.json"
+    control.write_text(
+        json.dumps(
+            {
+                "schema": "aar.autodata.lifecycle-control/v1",
+                "subjects": [],
+            }
+        )
+    )
+    with pytest.raises(RuntimeError, match="without lifecycle control"):
+        resolve_resume_ports(state, control)

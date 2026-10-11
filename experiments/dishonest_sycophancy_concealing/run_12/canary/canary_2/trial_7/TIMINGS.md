@@ -5,7 +5,7 @@ prompts, target responses, credentials, or held-out content belong here.
 
 ## Attempt identity
 
-- Status at 2026-10-11 03:06 PT: baseline complete; analysis pending.
+- Status at 2026-10-11 03:11 PT: stopped on confirmed lineage code bug.
 - Run ID: `run12-canary2-trial7`.
 - Native AutoData revision required:
   `d6e5619bab0b34a5913a4f8a2d3895047a3ff3bc`.
@@ -22,6 +22,8 @@ prompts, target responses, credentials, or held-out content belong here.
 - Freeze reconciliation duration: approximately 1 second.
 - Canonical execution: `exe_d94e880d06b441da8954bbb661d69c54`.
 - Meta baseline completed: 03:06:32 PT.
+- Research cancelled: 03:11:11 PT after 13m14s.
+- Supervisor stopped cleanly: 03:11:13 PT.
 - Controller: `1813739`, dependency-gated at 02:56 PT.
 - Evaluator jobs: 0, as required.
 
@@ -37,10 +39,10 @@ prompts, target responses, credentials, or held-out content belong here.
 ✓ Baseline review
 ✓ Canonical execution registration
 ✓ Native meta baseline
-⏳ Baseline analysis action
-○ Three meta iterations
-○ Production
-○ Training smoke
+🛑 Baseline analysis action not leased because host resolved the frozen workspace
+○ Three meta iterations (not started)
+○ Production (not started)
+○ Training smoke (not started)
 ```
 
 ## Work and quality counters
@@ -63,3 +65,12 @@ prompts, target responses, credentials, or held-out content belong here.
 - Production accepted rows: 0/1,000.
 - Training optimizer steps: 0/1.
 - Evaluator jobs: 0, as required.
+
+## Terminal diagnosis
+
+- Durable canonical binding: present in lifecycle control.
+- Canonical native `workspaceId`: `NULL` by valid standalone creation design.
+- Host status subject: incorrectly remained the frozen workspace.
+- Pending action: `analyze_results` on the canonical execution.
+- Time from meta baseline completion to cancellation: approximately 4m39s.
+- User-visible safety result: stopped before production, training, or evaluation.

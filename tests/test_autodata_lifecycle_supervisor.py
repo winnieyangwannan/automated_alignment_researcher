@@ -984,6 +984,83 @@ def test_completed_meta_transition_recovers_without_duplicate_production(
     assert (run_root / "supervised-transition-intent.json").is_file()
 
 
+@pytest.mark.parametrize(
+    ("meta_status", "production_registration"),
+    [
+        ("registered", None),
+        (
+            "registered",
+            {
+                "kind": "execution",
+                "subject_id": "exe_" + "3" * 32,
+                "status": "registered",
+            },
+        ),
+        (
+            "registered",
+            {
+                "kind": "execution",
+                "subject_id": "exe_" + "3" * 32,
+                "status": "registered",
+                "parent_meta_execution_id": "exe_" + "2" * 32,
+            },
+        ),
+    ],
+)
+def test_completed_meta_transition_recovers_every_registration_crash_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    meta_status: str,
+    production_registration: dict[str, object] | None,
+) -> None:
+    workspace_id = "ws_" + "1" * 32
+    meta_id = "exe_" + "2" * 32
+    production_id = "exe_" + "3" * 32
+    subjects: list[dict[str, object]] = [
+        {
+            "kind": "workspace",
+            "subject_id": workspace_id,
+            "status": "completed",
+            "canonical_execution_id": meta_id,
+        },
+        {
+            "kind": "execution",
+            "subject_id": meta_id,
+            "status": meta_status,
+            "production_execution_id": production_id,
+        },
+    ]
+    if production_registration is not None:
+        subjects.append(production_registration)
+    control = tmp_path / "control.json"
+    lifecycle_supervisor._atomic_json(
+        control,
+        {"schema": lifecycle_supervisor.CONTROL_SCHEMA, "subjects": subjects},
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_native_subject",
+        lambda *_: {
+            "status": "completed",
+            "phase": "completed",
+            "executionJson": json.dumps({"mode": "meta_optimize"}),
+        },
+    )
+    recovered: list[str] = []
+
+    def reconcile(_args: Namespace, execution_id: str) -> dict[str, str]:
+        recovered.append(execution_id)
+        return {"transition": "meta-to-production"}
+
+    monkeypatch.setattr(
+        lifecycle_supervisor, "reconcile_completed_meta_execution", reconcile
+    )
+    args = Namespace(state=tmp_path / "state.db", control_file=control)
+    result = lifecycle_supervisor.reconcile_completed_execution_transition(args)
+    assert result == {"transition": "meta-to-production"}
+    assert recovered == [meta_id]
+
+
 def test_completed_production_publishes_one_verified_handoff(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

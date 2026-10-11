@@ -27,18 +27,25 @@ def _loopback_port(raw: Any, label: str) -> int:
     return parsed.port
 
 
-def _workspace_spec(connection: sqlite3.Connection) -> dict[str, Any] | None:
-    row = connection.execute(
-        "SELECT specJson FROM workspaces WHERE status='active' "
-        "ORDER BY updatedAt DESC,id DESC LIMIT 1"
-    ).fetchone()
-    if row is None:
-        row = connection.execute(
-            "SELECT w.specJson FROM workspaces AS w "
-            "JOIN executions AS e ON e.workspaceId=w.id "
-            "WHERE e.status NOT IN ('completed','failed','cancelled') "
-            "ORDER BY e.updatedAt DESC,e.id DESC LIMIT 1"
-        ).fetchone()
+def _workspace_spec(
+    connection: sqlite3.Connection, *, workspace_id: str | None = None
+) -> dict[str, Any] | None:
+    if workspace_id is None:
+        rows = connection.execute(
+            "SELECT specJson FROM workspaces WHERE status='active' "
+            "ORDER BY updatedAt DESC,id DESC"
+        ).fetchall()
+        if len(rows) > 1:
+            raise RuntimeError("retained AutoData state has ambiguous active workspaces")
+    else:
+        rows = connection.execute(
+            "SELECT specJson FROM workspaces WHERE id=?", (workspace_id,)
+        ).fetchall()
+        if len(rows) != 1:
+            raise RuntimeError(
+                f"supervised AutoData workspace {workspace_id} is missing"
+            )
+    row = rows[0] if rows else None
     if row is None:
         return None
     try:
@@ -50,12 +57,74 @@ def _workspace_spec(connection: sqlite3.Connection) -> dict[str, Any] | None:
     return value
 
 
-def resolve_resume_ports(state: Path) -> dict[str, int | None]:
-    """Return retained loopback ports for an active workspace or execution."""
+def _supervised_workspace_id(control: Path) -> str | None:
+    if control.is_symlink():
+        raise RuntimeError("AutoData lifecycle control must not be a symlink")
+    if not control.exists():
+        return None
+    try:
+        value = json.loads(control.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError("AutoData lifecycle control is unavailable") from error
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"schema", "subjects"}
+        or value.get("schema") != "aar.autodata.lifecycle-control/v1"
+    ):
+        raise RuntimeError("AutoData lifecycle control has an invalid schema")
+    subjects = value.get("subjects")
+    if not isinstance(subjects, list):
+        raise RuntimeError("AutoData lifecycle control has no subjects array")
+    workspaces = [
+        entry
+        for entry in subjects
+        if isinstance(entry, dict) and entry.get("kind") == "workspace"
+    ]
+    if not workspaces:
+        return None
+    if len(workspaces) != 1:
+        raise RuntimeError("AutoData lifecycle control has ambiguous workspaces")
+    workspace = workspaces[0]
+    workspace_id = workspace.get("subject_id")
+    status = workspace.get("status")
+    if not isinstance(workspace_id, str) or not workspace_id:
+        raise RuntimeError("AutoData lifecycle workspace has no identifier")
+    if status not in {"registered", "completed"}:
+        raise RuntimeError("AutoData lifecycle workspace has invalid status")
+    canonical_id = workspace.get("canonical_execution_id")
+    if status == "completed":
+        matches = [
+            entry
+            for entry in subjects
+            if isinstance(entry, dict)
+            and entry.get("kind") == "execution"
+            and entry.get("subject_id") == canonical_id
+            and entry.get("status") in {"registered", "completed"}
+        ]
+        if not isinstance(canonical_id, str) or not canonical_id or len(matches) != 1:
+            raise RuntimeError(
+                "completed AutoData workspace has no unique canonical execution"
+            )
+    return workspace_id
+
+
+def resolve_resume_ports(
+    state: Path, control: Path | None = None
+) -> dict[str, int | None]:
+    """Return retained loopback ports for the supervised workspace lineage."""
     if state.is_symlink() or not state.is_file():
         return {"broker_port": None, "generator_bridge_port": None}
+    workspace_id = _supervised_workspace_id(control) if control is not None else None
     with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
-        spec = _workspace_spec(connection)
+        if control is not None and workspace_id is None:
+            retained_workspaces = int(
+                connection.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0]
+            )
+            if retained_workspaces:
+                raise RuntimeError(
+                    "retained AutoData workspaces exist without lifecycle control"
+                )
+        spec = _workspace_spec(connection, workspace_id=workspace_id)
     if spec is None:
         return {"broker_port": None, "generator_bridge_port": None}
     executor = spec.get("authoring_executor")
@@ -80,8 +149,9 @@ def resolve_resume_ports(state: Path) -> dict[str, int | None]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", type=Path, required=True)
+    parser.add_argument("--control", type=Path)
     args = parser.parse_args()
-    print(json.dumps(resolve_resume_ports(args.state), sort_keys=True))
+    print(json.dumps(resolve_resume_ports(args.state, args.control), sort_keys=True))
     return 0
 
 

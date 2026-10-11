@@ -344,7 +344,8 @@ if [ "${AAR_AUTODATA:-0}" = 1 ]; then
   chmod 600 "${_autodata_capability_file}"
   _autodata_resume_ports="$(PYTHONPATH="${REPO}${PYTHONPATH:+:${PYTHONPATH}}" \
     "${PY}" -m aar.infrastructure.autodata_resume_ports \
-      --state "${AAR_AUTODATA_STATE}")"
+      --state "${AAR_AUTODATA_STATE}" \
+      --control "${AAR_AUTODATA_SUPERVISOR_CONTROL}")"
   _autodata_retained_port="$(jq -r '.broker_port // empty' \
     <<<"${_autodata_resume_ports}")"
   _autodata_retained_bridge_port="$(jq -r '.generator_bridge_port // empty' \

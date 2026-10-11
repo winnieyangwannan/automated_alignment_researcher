@@ -81,6 +81,7 @@ class KimiAgentTest(unittest.TestCase):
     def test_resumed_autodata_wait_precedes_first_model_call(self) -> None:
         run_id = "approved-run-1"
         workspace_id = "ws_" + "1" * 32
+        execution_id = "exe_" + "2" * 32
         agent = KimiAgent(
             "test-agent",
             Path.cwd(),
@@ -105,13 +106,17 @@ class KimiAgentTest(unittest.TestCase):
             patch.object(
                 agent,
                 "_autodata_status_subject",
-                return_value=("execution", "exe_" + "2" * 32),
+                return_value=execution_id,
             ),
             patch.object(agent, "_autodata_pending_action_record", return_value=None),
             patch.object(
                 agent,
                 "_autodata_native_status",
-                return_value={"status": "failed", "phase": "meta_optimization"},
+                return_value={
+                    "execution_id": execution_id,
+                    "status": "failed",
+                    "phase": "meta_optimization",
+                },
             ),
             patch.object(agent, "_run_command", new=run_command),
         ):
@@ -119,6 +124,63 @@ class KimiAgentTest(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertIn("terminated before handoff", result.error or "")
+        run_command.assert_not_awaited()
+
+    def test_resumed_autodata_idle_without_action_fails_within_short_sla(self) -> None:
+        run_id = "approved-run-1"
+        workspace_id = "ws_" + "1" * 32
+        execution_id = "exe_" + "2" * 32
+        agent = KimiAgent(
+            "test-agent",
+            Path.cwd(),
+            cli_path="/bin/true",
+            completion_tool="share_finding",
+        )
+        run_command = AsyncMock()
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "AAR_AUTODATA": "1",
+                    "AAR_RESUME_APPROVED_PROPOSAL": "1",
+                    "AAR_AUTODATA_HOST_IDLE_GRACE_SECONDS": "0.000000001",
+                },
+                clear=False,
+            ),
+            patch.object(
+                agent, "_resume_approved_proposal_enabled", return_value=True
+            ),
+            patch.object(agent, "_approved_run_id", return_value=run_id),
+            patch.object(agent, "_autodata_handoff_ready", return_value=False),
+            patch.object(
+                agent, "_autodata_workspace_id", return_value=workspace_id
+            ),
+            patch.object(
+                agent, "_autodata_status_subject", return_value=execution_id
+            ),
+            patch.object(agent, "_autodata_pending_action_record", return_value=None),
+            patch.object(
+                agent,
+                "_require_fresh_autodata_supervisor_status",
+                return_value={"state": "idle"},
+            ),
+            patch.object(
+                agent,
+                "_autodata_native_status",
+                return_value={
+                    "execution_id": execution_id,
+                    "status": "active",
+                },
+            ),
+            patch.object(agent, "_run_command", new=run_command),
+            patch("aar.research_loop.kimi_agent.asyncio.sleep", new=AsyncMock()),
+        ):
+            result = asyncio.run(agent.execute("resume the approved proposal"))
+
+        self.assertFalse(result.success)
+        self.assertEqual(
+            result.failure["error_code"], "autodata_supervisor_idle_stall"
+        )
         run_command.assert_not_awaited()
 
     def test_required_completion_resumes_after_bounded_turn_timeout(self) -> None:
@@ -1914,7 +1976,14 @@ class KimiAgentTest(unittest.TestCase):
                     "id TEXT,kind TEXT,status TEXT,specJson TEXT,createdAt TEXT)"
                 )
             control = root / "lifecycle-control.json"
-            control.write_text(json.dumps({"schema": "test", "subjects": []}))
+            control.write_text(
+                json.dumps(
+                    {
+                        "schema": "aar.autodata.lifecycle-control/v1",
+                        "subjects": [],
+                    }
+                )
+            )
             with patch.dict(
                 os.environ,
                 {
@@ -1946,10 +2015,26 @@ class KimiAgentTest(unittest.TestCase):
                 bootstrap.parent.mkdir(parents=True)
                 workspace_id = "ws_" + "1" * 32
                 bootstrap.write_text(json.dumps({"workspace_id": workspace_id}))
+                control.write_text(
+                    json.dumps(
+                        {
+                            "schema": "aar.autodata.lifecycle-control/v1",
+                            "subjects": [
+                                {
+                                    "kind": "workspace",
+                                    "subject_id": workspace_id,
+                                    "status": "registered",
+                                }
+                            ],
+                        }
+                    )
+                )
                 with patch.object(
                     KimiAgent,
                     "_autodata_native_status",
-                    return_value={"status": "active"},
+                    return_value={
+                        "workspace": {"id": workspace_id, "status": "active"}
+                    },
                 ):
                     with self.assertRaisesRegex(
                         RuntimeError, "deterministic waits must be handled without Kimi"
@@ -2081,12 +2166,13 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                 control.write_text(
                     json.dumps(
                         {
-                            "schema": "test",
+                            "schema": "aar.autodata.lifecycle-control/v1",
                             "subjects": [
                                 {
                                     "kind": "workspace",
                                     "subject_id": workspace_id,
                                     "status": "completed",
+                                    "canonical_execution_id": execution_id,
                                 },
                                 {
                                     "kind": "execution",
@@ -2107,6 +2193,276 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                     resumed = agent._with_resumable_approved_run("original task")
                     self.assertIn("AUTOMATIC RESUME CONTEXT", resumed)
                     self.assertIn(run_id, resumed)
+
+    def test_autodata_status_subject_uses_durable_control_lineage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = root / "state.db"
+            control = root / "control.json"
+            workspace_id = "ws_" + "1" * 32
+            meta_id = "exe_" + "2" * 32
+            production_id = "exe_" + "3" * 32
+            # This is the native schema shape from Trial 7: workspaceId exists,
+            # but standalone canonical creation legitimately leaves it NULL.
+            with sqlite3.connect(state) as connection:
+                connection.execute(
+                    "CREATE TABLE executions("
+                    "id TEXT,status TEXT,workspaceId TEXT,createdAt TEXT)"
+                )
+                connection.execute(
+                    "INSERT INTO executions VALUES(?,?,NULL,CURRENT_TIMESTAMP)",
+                    (meta_id, "active"),
+                )
+                connection.execute(
+                    "CREATE TABLE actions("
+                    "id TEXT,kind TEXT,status TEXT,specJson TEXT,createdAt TEXT)"
+                )
+                connection.execute(
+                    "INSERT INTO actions VALUES(?,?,?,?,CURRENT_TIMESTAMP)",
+                    (
+                        "act_" + "4" * 24,
+                        "analyze_results",
+                        "pending",
+                        json.dumps(
+                            {"scope": {"kind": "execution", "id": meta_id}}
+                        ),
+                    ),
+                )
+            environment = {
+                "AAR_AUTODATA_STATE": str(state),
+                "AAR_AUTODATA_SUPERVISOR_CONTROL": str(control),
+            }
+            control.write_text(
+                json.dumps(
+                    {
+                        "schema": "aar.autodata.lifecycle-control/v1",
+                        "subjects": [
+                            {
+                                "kind": "workspace",
+                                "subject_id": workspace_id,
+                                "status": "completed",
+                                "canonical_execution_id": meta_id,
+                            },
+                            {
+                                "kind": "execution",
+                                "subject_id": meta_id,
+                                "status": "registered",
+                            },
+                        ]
+                    }
+                )
+            )
+            with patch.dict(os.environ, environment, clear=False):
+                resolved = KimiAgent._autodata_status_subject(workspace_id)
+                self.assertEqual(resolved, meta_id)
+                action = KimiAgent._autodata_pending_action_record(
+                    workspace_id, resolved
+                )
+                self.assertIsNotNone(action)
+                self.assertEqual(action["kind"], "analyze_results")
+
+            control.write_text(
+                json.dumps(
+                    {
+                        "schema": "aar.autodata.lifecycle-control/v1",
+                        "subjects": [
+                            {
+                                "kind": "workspace",
+                                "subject_id": workspace_id,
+                                "status": "completed",
+                                "canonical_execution_id": meta_id,
+                            },
+                            {
+                                "kind": "execution",
+                                "subject_id": meta_id,
+                                "status": "completed",
+                                "production_execution_id": production_id,
+                            },
+                            {
+                                "kind": "execution",
+                                "subject_id": production_id,
+                                "status": "registered",
+                                "parent_meta_execution_id": meta_id,
+                            },
+                        ]
+                    }
+                )
+            )
+            with patch.dict(os.environ, environment, clear=False):
+                self.assertEqual(
+                    KimiAgent._autodata_status_subject(workspace_id), production_id
+                )
+
+    def test_autodata_status_subject_fails_closed_on_broken_lineage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            control = Path(temporary) / "control.json"
+            workspace_id = "ws_" + "1" * 32
+            control.write_text(
+                json.dumps(
+                    {
+                        "schema": "aar.autodata.lifecycle-control/v1",
+                        "subjects": [
+                            {
+                                "kind": "workspace",
+                                "subject_id": workspace_id,
+                                "status": "completed",
+                            }
+                        ]
+                    }
+                )
+            )
+            with (
+                patch.dict(
+                    os.environ,
+                    {"AAR_AUTODATA_SUPERVISOR_CONTROL": str(control)},
+                    clear=False,
+                ),
+                self.assertRaises(FailureFeedbackError) as failure,
+            ):
+                KimiAgent._autodata_status_subject(workspace_id)
+            self.assertEqual(
+                failure.exception.feedback["error_code"],
+                "autodata_lineage_invalid",
+            )
+
+    def test_autodata_status_subject_keeps_registered_prefreeze_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            control = Path(temporary) / "control.json"
+            workspace_id = "ws_" + "1" * 32
+            control.write_text(
+                json.dumps(
+                    {
+                        "schema": "aar.autodata.lifecycle-control/v1",
+                        "subjects": [
+                            {
+                                "kind": "workspace",
+                                "subject_id": workspace_id,
+                                "status": "registered",
+                            }
+                        ]
+                    }
+                )
+            )
+            with patch.dict(
+                os.environ,
+                {"AAR_AUTODATA_SUPERVISOR_CONTROL": str(control)},
+                clear=False,
+            ):
+                self.assertEqual(
+                    KimiAgent._autodata_status_subject(workspace_id), workspace_id
+                )
+
+    def test_autodata_subject_status_normalizes_native_shapes(self) -> None:
+        workspace_id = "ws_" + "1" * 32
+        execution_id = "exe_" + "2" * 32
+        self.assertEqual(
+            KimiAgent._autodata_subject_status(
+                workspace_id,
+                {"workspace": {"id": workspace_id, "status": "frozen"}},
+            ),
+            "frozen",
+        )
+        self.assertEqual(
+            KimiAgent._autodata_subject_status(
+                execution_id,
+                {"execution_id": execution_id, "status": "active"},
+            ),
+            "active",
+        )
+        with self.assertRaises(FailureFeedbackError) as failure:
+            KimiAgent._autodata_subject_status(workspace_id, {"status": "active"})
+        self.assertEqual(
+            failure.exception.feedback["error_code"], "autodata_status_invalid"
+        )
+
+    def test_autodata_status_subject_rejects_malformed_control_lineage(self) -> None:
+        workspace_id = "ws_" + "1" * 32
+        meta_id = "exe_" + "2" * 32
+        production_id = "exe_" + "3" * 32
+        cases = [
+            {
+                "schema": "wrong",
+                "subjects": [],
+            },
+            {
+                "schema": "aar.autodata.lifecycle-control/v1",
+                "subjects": [
+                    {
+                        "kind": "workspace",
+                        "subject_id": workspace_id,
+                        "status": "completed",
+                        "canonical_execution_id": meta_id,
+                    },
+                    {
+                        "kind": "workspace",
+                        "subject_id": workspace_id,
+                        "status": "completed",
+                        "canonical_execution_id": meta_id,
+                    },
+                ],
+            },
+            {
+                "schema": "aar.autodata.lifecycle-control/v1",
+                "subjects": [
+                    {
+                        "kind": "workspace",
+                        "subject_id": workspace_id,
+                        "status": "completed",
+                        "canonical_execution_id": meta_id,
+                    },
+                    {
+                        "kind": "execution",
+                        "subject_id": meta_id,
+                        "status": "completed",
+                        "production_execution_id": production_id,
+                    },
+                    {
+                        "kind": "execution",
+                        "subject_id": production_id,
+                        "status": "registered",
+                        "parent_meta_execution_id": "exe_wrong",
+                    },
+                ],
+            },
+            {
+                "schema": "aar.autodata.lifecycle-control/v1",
+                "subjects": [
+                    {
+                        "kind": "workspace",
+                        "subject_id": workspace_id,
+                        "status": "completed",
+                        "canonical_execution_id": meta_id,
+                    },
+                    {
+                        "kind": "execution",
+                        "subject_id": meta_id,
+                        "status": "completed",
+                        "production_execution_id": production_id,
+                    },
+                    {
+                        "kind": "execution",
+                        "subject_id": production_id,
+                        "status": "completed",
+                        "parent_meta_execution_id": meta_id,
+                        "production_execution_id": meta_id,
+                    },
+                ],
+            },
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            control = Path(temporary) / "control.json"
+            for value in cases:
+                with self.subTest(value=value):
+                    control.write_text(json.dumps(value))
+                    with (
+                        patch.dict(
+                            os.environ,
+                            {"AAR_AUTODATA_SUPERVISOR_CONTROL": str(control)},
+                            clear=False,
+                        ),
+                        self.assertRaises(FailureFeedbackError),
+                    ):
+                        KimiAgent._autodata_status_subject(workspace_id)
 
     def test_pipeline_revision_requires_a_real_mutable_strategy_edit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -2324,6 +2680,37 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                 failure.exception.feedback["error_code"],
                 "autodata_supervisor_heartbeat_invalid",
             )
+
+    def test_stopped_or_unknown_supervisor_state_fails_loudly(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            status = Path(temporary) / "status.json"
+            environment = {
+                "AAR_AUTODATA_LIFECYCLE_SUPERVISED": "1",
+                "AAR_AUTODATA_SUPERVISOR_STATUS": str(status),
+                "AAR_AUTODATA_SUPERVISOR_HEARTBEAT_SLA_SECONDS": "180",
+            }
+            for state in ("stopped", "mystery"):
+                with self.subTest(state=state):
+                    status.write_text(
+                        json.dumps(
+                            {
+                                "schema": "aar.autodata.lifecycle-supervisor/v1",
+                                "updated_at": time.strftime(
+                                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                                ),
+                                "state": state,
+                            }
+                        )
+                    )
+                    with (
+                        patch.dict(os.environ, environment, clear=False),
+                        self.assertRaises(FailureFeedbackError) as failure,
+                    ):
+                        KimiAgent._require_fresh_autodata_supervisor_status()
+                    self.assertEqual(
+                        failure.exception.feedback["error_code"],
+                        "autodata_supervisor_state_invalid",
+                    )
 
     def test_completed_training_without_smoke_marker_fails_after_grace(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
