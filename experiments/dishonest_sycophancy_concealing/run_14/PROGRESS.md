@@ -267,3 +267,76 @@ rerun the bounded five-chain topology gate after model-role reconfirmation.
 - Child jobs: none emitted as of this launch update
 - Decision: monitor bootstrap; do not report research chains as running until
   their distinct Slurm IDs are emitted
+
+<a id="run14-event-corrected-five-chain-pass"></a>
+
+### ✅ 22:39 PT — PASS: corrected five-chain topology gate
+
+> [!TIP]
+> All five chains completed their method, proposal, native-generation,
+> real-GPU training, evaluation, and finding lifecycle. The final proof passed
+> all 10 fail-closed booleans with AutoData disabled.
+
+```text
+✓ Exact one-chain prerequisite proof
+✓ Five method contracts and approved proposals
+✓ Five GPU smokes and adapter reload validations
+✓ Five scores and five findings
+✓ Evaluator and all research jobs completed `0:0`
+✓ Five-chain topology proof
+○ Full 5×50 launch
+```
+
+- Attempt:
+  `/checkpoint/ram/aar/winnieyangwn/run14_native_generation/canary_attempts/20261011T045018Z-e17b33468a15`
+- Source: `e17b33468a1553a995eece4aa9fbefe8b0fabbc5`
+- Proof: `metadata/canary_passed.json`
+- Proof SHA-256:
+  `f78d83c592ea503307135cf1e5599df7a3a24dce78993c1fef9eae140abca4ef`
+- Evaluator: `1810441`, `COMPLETED 0:0`
+- AutoData: disabled with `AAR_AUTODATA=0`
+- Decision: PASS; the retained proof authorizes the full launch
+
+<a id="run14-event-full-five-chain-active"></a>
+
+### ⏳ 22:43 PT — ACTIVE: full 5×50 experiment submitted
+
+> [!NOTE]
+> The user confirmed the exact model roles. Both ordered lifecycle proofs were
+> validated and retained before pipeline `1810631` was submitted at 22:41:42
+> PDT. Bootstrap completed successfully and emitted five evaluator/research
+> pairs; all ten child jobs are currently queued in Slurm.
+
+```text
+✓ Confirm exact model-role mapping
+✓ Validate and retain one-chain proof
+✓ Validate and retain five-chain proof
+✓ Endpoint and MCP preflight
+✓ Infrastructure bootstrap
+✓ Emit five evaluator/research job pairs
+⏳ Five chains target 50 successful score/finding pairs each
+○ 250 total successful score/finding pairs
+○ Full experiment completion
+```
+
+| Chain   | Evaluator | Research chain | State   |
+| ------- | --------- | -------------- | ------- |
+| Alpha   | 1810665   | 1810666        | PENDING |
+| Beta    | 1810667   | 1810668        | PENDING |
+| Gamma   | 1810669   | 1810670        | PENDING |
+| Delta   | 1810671   | 1810672        | PENDING |
+| Epsilon | 1810673   | 1810674        | PENDING |
+
+#### Evidence
+
+- Attempt:
+  `/checkpoint/ram/aar/winnieyangwn/run14_native_generation/full_attempts/20261011T054113Z-8b83f841862c`
+- Source commit: `8b83f841862c2381c714996b6467075805f342c3`
+- Run 14 execution paths are unchanged from validated commit
+  `e17b33468a1553a995eece4aa9fbefe8b0fabbc5`
+- Pipeline: `1810631`, submitted at 22:41:42 PDT and `COMPLETED 0:0`
+- Budget: five chains, 50 successful score/finding pairs per chain, maximum 60
+  sessions per chain
+- AutoData: disabled with `AAR_AUTODATA=0`
+- Decision: monitor all five chain/evaluator pairs; count success only by
+  atomic score/finding pairs

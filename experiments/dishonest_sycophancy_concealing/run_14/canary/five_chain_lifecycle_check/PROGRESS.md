@@ -245,3 +245,46 @@ Append-only operational record. All timestamps use Pacific Time (`PT`).
 - Child jobs: none emitted as of this launch update
 - Decision: continue monitoring bootstrap; all later lifecycle stages remain
   pending until distinct child IDs are emitted
+
+<a id="run14-five-chain-corrected-pass"></a>
+
+### ✅ 22:39 PT — PASS: corrected five-chain topology proved
+
+> [!TIP]
+> The corrected canary completed all five independent method-to-finding
+> lifecycles. The fail-closed proof records all 10 required booleans as true.
+
+```text
+✓ Confirm exact model-role mapping
+✓ Endpoint and MCP preflight
+✓ Infrastructure bootstrap
+✓ Five method-authoring and contract checks
+✓ Five proposal reviews and approvals
+✓ Five native data-generation and training smokes
+✓ Five adapter reload validations
+✓ Five score/finding pairs
+✓ Five-chain topology proof
+```
+
+| Verified outcome                | Count | Result |
+| ------------------------------- | ----- | ------ |
+| Method contracts                | 5     | PASS   |
+| Approved proposals              | 5     | PASS   |
+| Real-GPU training smokes        | 5     | PASS   |
+| Adapter reload validations      | 5     | PASS   |
+| Published scores                | 5     | PASS   |
+| Published findings              | 5     | PASS   |
+| Required proof booleans         | 10    | TRUE   |
+
+#### Evidence
+
+- Attempt:
+  `/checkpoint/ram/aar/winnieyangwn/run14_native_generation/canary_attempts/20261011T045018Z-e17b33468a15`
+- Source commit: `e17b33468a1553a995eece4aa9fbefe8b0fabbc5`
+- Proof: `metadata/canary_passed.json`
+- Proof SHA-256:
+  `f78d83c592ea503307135cf1e5599df7a3a24dce78993c1fef9eae140abca4ef`
+- Pipeline `1810186`, evaluator `1810441`, and all five research jobs:
+  `COMPLETED 0:0`
+- AutoData: disabled throughout with `AAR_AUTODATA=0`
+- Decision: PASS; the exact retained proof authorizes the full five-chain run
