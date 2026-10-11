@@ -206,3 +206,42 @@ Append-only operational record. All timestamps use Pacific Time (`PT`).
 - Corrective commits `e6dd257` and `342bfa8` were committed after the launch;
   neither was the source of this stopped attempt.
 - Decision: STOP; preserve all artifacts and do not claim a five-chain pass.
+
+<a id="run14-five-chain-corrected-launch"></a>
+
+### ⏳ 21:50 PT — RUNNING: corrected topology canary launched
+
+> [!NOTE]
+> **Bootstrap is running.** The user confirmed the exact documented model-role
+> mapping, the bounded preflight found no active Run 14 jobs, and endpoint/MCP
+> checks passed before pipeline job `1810186` was submitted at 21:50:56 PDT.
+
+```text
+✓ Confirm exact model-role mapping
+✓ Verify no active Run 14 jobs
+✓ Validate exact one-chain prerequisite proof
+✓ Synchronize and verify clean HPC source
+✓ Endpoint and MCP preflight
+⏳ Infrastructure bootstrap
+○ Emit five research child job IDs
+○ Five parallel method-authoring and contract checks
+○ Five proposal reviews and approvals
+○ Five native data-generation and training smokes
+○ Stage five verified adapters
+○ Launch on-demand evaluator
+○ Produce five score/result pairs
+```
+
+#### Evidence
+
+- One-chain lifecycle-proof SHA-256:
+  `f2c3e180ddb6f9fcd94c72d528ad89c57bcb358d18f75b4f2b93779548bd50ad`
+- Clean HPC HEAD: `e17b33468a1553a995eece4aa9fbefe8b0fabbc5`
+- Run 14 and shared-path content at that HEAD is identical to commit
+  `56b3c77`
+- Attempt:
+  `/checkpoint/ram/aar/winnieyangwn/run14_native_generation/canary_attempts/20261011T045018Z-e17b33468a15`
+- Pipeline: `1810186`, submitted at 21:50:56 PDT
+- Child jobs: none emitted as of this launch update
+- Decision: continue monitoring bootstrap; all later lifecycle stages remain
+  pending until distinct child IDs are emitted

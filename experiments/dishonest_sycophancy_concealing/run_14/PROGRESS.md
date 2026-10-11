@@ -235,3 +235,35 @@ Do not launch the 5×50 full experiment until the corrected topology proof passe
 
 Commit this focused Run 14 source package, synchronize that exact commit, and
 rerun the bounded five-chain topology gate after model-role reconfirmation.
+
+<a id="run14-event-corrected-five-chain-launch"></a>
+
+### ⏳ 21:50 PT — RUNNING: corrected five-chain canary bootstrap
+
+> [!NOTE]
+> The user confirmed the exact model roles. Preflight verified no active Run 14
+> jobs, the exact one-chain proof, clean HPC source, and working endpoint/MCP
+> access before submitting pipeline job `1810186` at 21:50:56 PDT.
+
+```text
+✓ Confirm exact model-role mapping
+✓ Verify no active Run 14 jobs
+✓ Validate exact one-chain prerequisite proof
+✓ Verify clean HPC HEAD `e17b33468a15...`
+✓ Endpoint and MCP preflight
+⏳ Infrastructure bootstrap
+○ Emit five research child job IDs
+○ Five-chain method-to-finding lifecycles
+○ Five-chain topology proof
+○ Full five-chain launch
+```
+
+- Attempt:
+  `/checkpoint/ram/aar/winnieyangwn/run14_native_generation/canary_attempts/20261011T045018Z-e17b33468a15`
+- One-chain lifecycle-proof SHA-256:
+  `f2c3e180ddb6f9fcd94c72d528ad89c57bcb358d18f75b4f2b93779548bd50ad`
+- Source: clean HPC HEAD `e17b33468a1553a995eece4aa9fbefe8b0fabbc5`;
+  Run 14 and shared paths are identical to `56b3c77`
+- Child jobs: none emitted as of this launch update
+- Decision: monitor bootstrap; do not report research chains as running until
+  their distinct Slurm IDs are emitted
