@@ -9,6 +9,7 @@ CANARY = RUN12 / "canary"
 CANARY_1 = CANARY / "canary_1"
 CANARY_2 = CANARY / "canary_2"
 CANARY_2_TRIAL_2 = CANARY_2 / "trial_2"
+CANARY_2_TRIAL_3 = CANARY_2 / "trial_3"
 CONFIG = RUN12 / "config"
 LAUNCH = RUN12 / "launch"
 SLURM = RUN12 / "slurm"
@@ -193,6 +194,33 @@ def test_bootstrap_canary_stops_after_one_training_step_without_evaluator() -> N
     assert (CANARY_2 / "README.md").is_file()
     assert (CANARY_2_TRIAL_2 / "README.md").is_file()
     assert (CANARY_2_TRIAL_2 / "submit_canary.sh").is_file()
+
+
+def test_trial3_retries_the_same_canary_with_provenance_repairs() -> None:
+    trial2 = yaml.safe_load((CANARY_2_TRIAL_2 / "autodata_run.yaml").read_text())
+    trial3 = yaml.safe_load((CANARY_2_TRIAL_3 / "autodata_run.yaml").read_text())
+    expected = {**trial2, "run_id": "run12-canary2-trial3"}
+
+    assert trial3 == expected
+    wrapper = (CANARY_2_TRIAL_3 / "submit_canary.sh").read_text()
+    assert 'AAR_RUN12_AUTODATA_RUN_CONFIG="${SCRIPT_DIR}/autodata_run.yaml"' in wrapper
+    assert "AAR_RUN12_REUSE_BASE_DEPLOYMENT" not in wrapper
+    assert 'exec "${RUN12_DIR}/launch/submit_full.sh"' in wrapper
+
+    readme = (CANARY_2_TRIAL_3 / "README.md").read_text()
+    for heading in (
+        "## Goal",
+        "## Context",
+        "## Model and execution roles",
+        "## Launch",
+        "## Pass criteria",
+        "## Stop criteria",
+    ):
+        assert heading in readme
+    assert "autodata_8-kimi26" in readme
+    assert "winnieyangwn-r12-alpha-i1-c0dab4f7" in readme
+    assert "gpt-5-6-luna" in readme
+    assert "Evaluator inference/evaluator judge" in readme
 
 
 def test_run12_deferred_launch_waits_for_a_working_gateway_route() -> None:
