@@ -3,9 +3,12 @@
 set -euo pipefail
 umask 077
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-RUN12_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-REPO="$(cd -- "${RUN12_DIR}/../../.." && pwd)"
+# Canonicalize the checkout before comparing resolved configuration paths.
+# FAIR exposes the same worktree through /home and /storage/home; retaining a
+# logical /home spelling here made in-repo files look external after realpath.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+RUN12_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+REPO="$(cd -- "${RUN12_DIR}/../../.." && pwd -P)"
 AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata-worktrees/finalization-recovery}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
 SECRET_ENV="$(realpath -e -- "${AAR_RUN12_SECRET_ENV:-${REPO}/.env}")"

@@ -31,3 +31,21 @@ All displayed timestamps use Pacific Time (`PT`).
 ○ Production and verified handoff
 ○ One-step training smoke
 ```
+
+## Terminal prelaunch timing
+
+- Preflight began: approximately 04:00 PT.
+- Live Kimi/MCP proof: passed.
+- Immutable config compilation: failed at approximately 04:01 PT.
+- Slurm jobs created for Trial 9: 0.
+- Research, controller, training, production, and evaluator time: 0 seconds.
+- Preserved attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T110006Z-ce9163e152f2`.
+
+```text
+✓ Committed source selected
+✓ Live Kimi/MCP proof
+✗ Logical /home repository root disagreed with /storage/home realpath
+✓ Compiler rejected mismatched immutable config locations
+✓ No Trial 9 Slurm job or evaluator was created
+```

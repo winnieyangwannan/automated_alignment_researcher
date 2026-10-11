@@ -149,6 +149,7 @@ def test_run12_full_chain_rotates_the_training_contract_with_its_target() -> Non
     compiler = (ROOT / "aar" / "autodata_run_config.py").read_text()
 
     contract = "autodata-training-data-contract.json"
+    assert '&& pwd -P)' in launcher
     assert "aar.autodata_run_config compile" in launcher
     assert contract in compiler
     assert "training_data_contract_from_campaign_policy" in compiler

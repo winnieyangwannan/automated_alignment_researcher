@@ -9,7 +9,7 @@ if [ -z "${REPO:-}" ] || [ ! -d "${REPO}/aar" ]; then
   return 2 2>/dev/null || exit 2
 fi
 
-_AAR_RESOLVED_REPO="$(cd -- "${REPO}" && pwd)"
+_AAR_RESOLVED_REPO="$(cd -- "${REPO}" && pwd -P)"
 # A research Slurm job can be launched with a complete, explicit allowlist and
 # no credential file.  In that mode, never fall back to REPO/.env: doing so
 # would undo the launch boundary merely because HARNESS_ENV was intentionally
