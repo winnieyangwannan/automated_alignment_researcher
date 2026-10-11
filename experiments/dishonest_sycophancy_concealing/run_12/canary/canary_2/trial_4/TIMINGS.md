@@ -9,12 +9,17 @@ belong here.
 
 ## Attempt identity
 
-- Status at 2026-10-11 00:35 PT: repaired and locally validated; launch-blocked
-  on commit, synchronization, and the complete HPC gate.
-- Source commit: pending repaired Trial 4 commit.
-- Attempt root: not created.
-- Checkpoint root: not created.
-- Pipeline, research, controller, training, and evaluator jobs: none.
+- Status at 2026-10-11 00:38 PT: submitted and running.
+- Source commit: `9b993a73310a7280508921c7ef662dc2af277500`.
+- Attempt root:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T073731Z-9b993a73310a`.
+- Checkpoint root:
+  `/checkpoint/ram/winnieyangwn/aar-checkpoints/run12-bootstrap-canary/20261011T073731Z-9b993a73310a`.
+- Launch/pipeline job: `1811750`, completed successfully in 21 seconds.
+- Research job: `1811790`, pending at 00:40 PT.
+- Controller job: `1811791`, pending at 00:40 PT.
+- Training job: not yet submitted.
+- Evaluator jobs: none, as required.
 
 ## Pre-launch timing gates
 
@@ -38,12 +43,12 @@ belong here.
 ## Current lifecycle
 
 ```text
-◐ Guardrail implementation and regression validation (local pass; HPC pending)
+● Guardrail implementation and regression validation (275 passed; 5 subtests)
 ● Budget reservation proof and operator decision
 ● Fresh model-role and configuration confirmation
-○ Source commit and HPC synchronization
-○ Endpoint and MCP preflight
-○ Infrastructure bootstrap
+● Source commit and HPC synchronization
+● Endpoint and MCP preflight
+● Infrastructure bootstrap
 ○ Method authoring and contract check
 ○ Proposal review and approval
 ○ Canonical execution create/register
@@ -60,10 +65,14 @@ belong here.
 - 00:11 PT: the user confirmed the exact model-role and launch mapping.
 - 00:35 PT: the reusable lifecycle repair passed local static and focused
   recovery validation; complete HPC validation remained pending.
+- 00:38 PT: complete HPC validation and live endpoint preflight passed; job
+  `1811750` submitted Trial 4 exactly once.
+- 00:40 PT: pipeline `1811750` completed after 21 seconds and emitted research
+  `1811790` plus controller `1811791`; no evaluator was submitted.
 
 ## Work and quality counters
 
-- Native execution intents: 0.
+- Native execution intents: 0 at submission.
 - Native executions: 0.
 - Registration attempts: 0.
 - Authoring checks and dry-run tasks: 0.
@@ -75,4 +84,5 @@ belong here.
 
 ## Unmeasured stages
 
-All runtime stages are unmeasured because Trial 4 has not launched.
+Downstream runtime stages remain unmeasured while infrastructure bootstrap is
+active.

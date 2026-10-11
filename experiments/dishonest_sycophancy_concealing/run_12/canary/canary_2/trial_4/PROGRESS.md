@@ -165,3 +165,44 @@ pre-existing runtime dependencies such as `requests` and
 No attempt or Slurm job exists. The next mandatory gates are a focused commit,
 exact fast-forward synchronization, the complete HPC regression suite, and
 runtime endpoint/source/secret preflight.
+
+<a id="trial4-event-launched"></a>
+
+### ⏳ 00:38 PT — RUNNING: Trial 4 submitted after all pre-launch gates passed
+
+The repair was committed, fast-forward synchronized to the clean matching HPC
+worktree, and validated there. The complete touched-surface suite passed with
+`275 passed, 5 subtests passed`. Live generation tests then passed for both
+Kimi-K2.6 deployments and the retained Gemma target. The source checkout,
+pinned AutoData checkout, fixed checkpoint, and mode-600 secret files matched
+the confirmed contract.
+
+The committed Trial 4 wrapper submitted exactly once with retained deployment
+`winnieyangwn-r12-alpha-i1-c0dab4f7`.
+
+#### Submission evidence
+
+- Source commit: `9b993a73310a7280508921c7ef662dc2af277500`
+- Launch/pipeline job: `1811750`
+- Attempt root:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261011T073731Z-9b993a73310a`
+- Checkpoint root:
+  `/checkpoint/ram/winnieyangwn/aar-checkpoints/run12-bootstrap-canary/20261011T073731Z-9b993a73310a`
+- Resolved contract: c32, exact three meta iterations, production `1250` to
+  `1000`, `$5,500` hard campaign ceiling
+- Stop boundary: verified `training_smoke`; evaluator forbidden
+
+The dedicated monitor thread is awaiting distinct research/controller job IDs
+and the first durable lifecycle state. No evaluator has started.
+
+<a id="trial4-event-pipeline-complete"></a>
+
+### ✅ 00:40 PT — PASS: Pipeline completed and emitted distinct child jobs
+
+Pipeline job `1811750` completed with exit code `0` after 21 seconds. It emitted
+distinct research job `1811790` and controller job `1811791` for team
+`run12-gemma4-31b-kimi26-alpha-1811750`. Both child jobs were pending at this
+transition.
+
+The pipeline explicitly recorded `bounded canary: skipping evaluator holdout
+publication`; evaluator job ID is `-`. No evaluator or held-out scoring began.
