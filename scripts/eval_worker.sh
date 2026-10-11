@@ -253,6 +253,25 @@ cleanup_ephemeral_merge() {
   rm -rf --one-file-system -- "${cleanup_target}" "${cleanup_staging}"
   echo "[worker ${WORKER_ID}] removed ephemeral merged checkpoint for ${cleanup_run_id}"
 }
+prune_terminal_submission() {
+  local prune_run_id="$1"
+  local prune_submission="$2"
+  local terminal_marker=""
+  if [ -f "${SCORES_DIR}/${prune_run_id}.json" ]; then
+    terminal_marker="${SCORES_DIR}/${prune_run_id}.json"
+  elif [ -f "${SCORES_DIR}/${prune_run_id}.failed.json" ]; then
+    terminal_marker="${SCORES_DIR}/${prune_run_id}.failed.json"
+  else
+    echo "[worker] WARNING: refusing submission pruning without a terminal marker for ${prune_run_id}" >&2
+    return 0
+  fi
+  if ! "${PY}" "${REPO}/scripts/prune_submission_artifacts.py" \
+      --submission-dir "${prune_submission}" \
+      --terminal-marker "${terminal_marker}" \
+      --retention "${AAR_ADAPTER_RETENTION:-all}"; then
+    echo "[worker] WARNING: terminal submission pruning failed for ${prune_run_id}" >&2
+  fi
+}
 last_work=$(date +%s)
 while true; do
   did=0
@@ -260,9 +279,13 @@ while true; do
     [ -d "${d}" ] || continue
     rid=$(basename "$d")
     [ -f "${d}.submitted" ] || continue
-    [ -f "${SCORES_DIR}/${rid}.json" ] && continue          # already scored
+    if [ -f "${SCORES_DIR}/${rid}.json" ]; then
+      prune_terminal_submission "${rid}" "${d%/}"
+      continue                                                # already scored
+    fi
     if [ -f "${SCORES_DIR}/${rid}.failed.json" ] && \
        [ "${AAR_EVAL_RETRY_FAILED:-0}" != 1 ]; then
+      prune_terminal_submission "${rid}" "${d%/}"
       continue                                                # terminal unless explicitly retried
     fi
     # Atomic claim: exactly one worker's mkdir succeeds for a given rid, so
@@ -300,6 +323,7 @@ while true; do
           "adapter merge failed; candidate checkpoint is invalid; inspect the evaluator log" \
           "adapter_merge_failed"
         cleanup_ephemeral_merge "${rid}" || exit 2
+        prune_terminal_submission "${rid}" "${d%/}"
         did=1; last_work=$(date +%s)
         continue
       fi
@@ -309,6 +333,7 @@ while true; do
           "adapter merge did not produce a complete checkpoint; inspect the evaluator log" \
           "merge_manifest_missing"
         cleanup_ephemeral_merge "${rid}" || exit 2
+        prune_terminal_submission "${rid}" "${d%/}"
         did=1; last_work=$(date +%s)
         continue
       }
@@ -352,14 +377,7 @@ while true; do
       fi
       cleanup_ephemeral_merge "${rid}" || exit 2
     fi
-    if [ "${AAR_VLLM_EPHEMERAL_MERGED:-0}" = 1 ]; then
-      if [ ! -f "${SCORES_DIR}/${rid}.json" ] && \
-         [ ! -f "${SCORES_DIR}/${rid}.failed.json" ]; then
-        echo "[worker] ERROR: refusing cleanup before terminal handoff for ${rid}" >&2
-        exit 2
-      fi
-      cleanup_ephemeral_merge "${rid}" || exit 2
-    fi
+    prune_terminal_submission "${rid}" "${d%/}"
     did=1; last_work=$(date +%s)
   done
   if [ "$did" = 0 ]; then

@@ -265,6 +265,7 @@ def test_training_failure_handoff_contains_safe_actionable_context() -> None:
     assert "install_uncaught_exception_failure_hook" in trainer
     assert "training_python_exception" in trainer
     assert "training_process_failed" in trainer
+    assert '\"disposition\":\"advance_session\"' in trainer
     assert "AAR_TRAIN_LOG_PATH" in trainer
 
 

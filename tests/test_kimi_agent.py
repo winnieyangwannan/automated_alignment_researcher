@@ -282,6 +282,40 @@ class KimiAgentTest(unittest.TestCase):
         self.assertIn("repeatedly stopped", result.error or "")
         self.assertIn("checkpoint tool finish", result.error or "")
 
+    def test_completion_exhaustion_is_retryable_session_advance_when_enabled(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cli = root / "kimi"
+            cli.write_text(
+                f"#!{sys.executable}\n"
+                "import json\n"
+                "print(json.dumps({'role': 'assistant', 'content': 'working', "
+                "'tool_calls': [{'function': {'name': 'Bash', "
+                "'arguments': '{\"command\": \"true\"}'}}]}))\n"
+            )
+            cli.chmod(0o755)
+            with patch.dict(
+                os.environ,
+                {"AAR_KIMI_CONTINUATION_EXHAUSTION_RETRYABLE": "1"},
+                clear=False,
+            ):
+                result = asyncio.run(
+                    KimiAgent(
+                        "test-agent",
+                        root,
+                        cli_path=str(cli),
+                        completion_tool="finish",
+                        max_continuations=1,
+                    ).execute("complete the task")
+                )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.failure["error_code"], "required_completion_missing")
+        self.assertTrue(result.failure["retryable"])
+        self.assertEqual(result.failure["disposition"], "advance_session")
+
     def test_only_current_session_proposal_owns_persistent_training_state(self) -> None:
         agent = KimiAgent("test-agent", Path.cwd(), cli_path="/bin/true")
         self.assertFalse(agent._submitted_proposal_in_output({"tool_uses": []}))
@@ -611,6 +645,53 @@ class KimiAgentTest(unittest.TestCase):
                 assert agent._with_previous_failure_feedback("do research") == (
                     "do research"
                 )
+
+    def test_training_failure_feedback_classifies_empty_preference_data(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            scores = root / "scores"
+            proposals = scores / ".proposals"
+            runs = proposals / "runs"
+            runs.mkdir(parents=True)
+            idea_uid = "kimi-empty-data"
+            run_id = f"{idea_uid}-candidate-1"
+            marker = {
+                "approved": True,
+                "idea_name": "kimi_candidate",
+                "code_hash": "abc123",
+                "run_id": run_id,
+                "paper": {},
+            }
+            (proposals / f"{idea_uid}.json").write_text(json.dumps(marker))
+            (runs / f"{run_id}.json").write_text(json.dumps(marker))
+            (scores / f"{run_id}.failed.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "status": "failed",
+                        "run_id": run_id,
+                        "stage": "training",
+                        "error_code": "training_python_exception",
+                        "retryable": False,
+                        "reason": "generated zero valid examples after filtering",
+                    }
+                )
+            )
+            agent = KimiAgent("test-agent", root, cli_path="/bin/true")
+
+            with patch.dict(
+                os.environ,
+                {
+                    "SCORES_DIR": str(scores),
+                    "TEAM_DIR": str(root),
+                    "IDEA_UID": idea_uid,
+                },
+                clear=False,
+            ):
+                prompt = agent._with_previous_failure_feedback("do research")
+
+        self.assertIn("training_dataset_empty", prompt)
+        self.assertIn("chosen and rejected fields", prompt)
 
     def test_launcher_selects_kimi_without_anthropic_credentials(self) -> None:
         observed = {}
@@ -1308,6 +1389,75 @@ class KimiAgentTest(unittest.TestCase):
                 "results_writeup": {"type": "string", "minLength": 80},
             },
         )
+
+    def test_deterministic_checkpoint_arguments_are_schema_bound(self) -> None:
+        agent = KimiAgent("test-agent", Path.cwd(), cli_path="/bin/true")
+
+        self.assertEqual(
+            agent._checkpoint_argument_schema(
+                "Read", prompt='Call Read exactly once with path="/tmp/input.json".'
+            ),
+            {"path": {"type": "string", "const": "/tmp/input.json"}},
+        )
+        self.assertEqual(
+            agent._checkpoint_argument_schema(
+                "Bash", prompt='Call Bash exactly once with command="python check.py".'
+            ),
+            {"command": {"type": "string", "const": "python check.py"}},
+        )
+        self.assertEqual(
+            agent._checkpoint_argument_schema(
+                "Write", prompt='Call Write exactly once with path="/tmp/run.py".'
+            ),
+            {"path": {"type": "string", "const": "/tmp/run.py"}},
+        )
+
+    def test_fresh_session_repairs_existing_failed_candidate_from_exact_errors(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ideas = root / "methods"
+            method = ideas / "chain__kimi_candidate" / "run.py"
+            method.parent.mkdir(parents=True)
+            method.write_text("from aar.phase_timing import phase_timing\n")
+            proof = method.parent / ".aar-method-contract.json"
+            contract_error = (
+                "missing required phase contexts: training; use exactly "
+                "`from aar.phase_timing import phase` and "
+                "`with phase(\"<required_name>\"):`; unsupported phase context "
+                "callable(s) found: phase_timing"
+            )
+            proof.write_text(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "source_sha256": hashlib.sha256(method.read_bytes()).hexdigest(),
+                        "errors": [contract_error],
+                    }
+                )
+            )
+            agent = KimiAgent(
+                "test-agent",
+                Path.cwd(),
+                cli_path="/bin/true",
+                completion_tool="share_finding",
+            )
+
+            with patch.dict(
+                os.environ,
+                {
+                    "AAR_IDEAS_DIR": str(ideas),
+                    "IDEA_NAME": "chain",
+                },
+                clear=False,
+            ):
+                prompt = agent._continuation_prompt({"tool_uses": []})
+
+            self.assertIn("Write tool exactly once", prompt)
+            self.assertIn("from aar.phase_timing import phase", prompt)
+            self.assertIn("phase_timing", prompt)
+            self.assertNotIn("candidate scaffold", prompt)
 
     def test_share_finding_continuations_advance_missing_milestone(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

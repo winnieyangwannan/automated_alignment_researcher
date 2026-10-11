@@ -816,6 +816,30 @@ while pending:
         )
         self.assertIn("MethodConfig class is missing", proof["errors"])
 
+    def test_phase_timing_near_miss_reports_exact_supported_api(self) -> None:
+        source = (
+            "from aar.phase_timing import phase_timing\n"
+            "class MethodConfig:\n"
+            "    def __init__(self, output_dir='out', dry_run=False):\n"
+            "        self.output_dir = output_dir\n"
+            "        self.dry_run = dry_run\n"
+            "def run_experiment(config):\n"
+            "    with phase_timing('training'):\n"
+            "        pass\n"
+            "    return {'model_path': config.output_dir, 'method': 'bad'}\n"
+        )
+
+        result, proof = self._run(source)
+
+        self.assertNotEqual(result.returncode, 0)
+        phase_error = next(
+            error
+            for error in proof["errors"]
+            if "missing required phase contexts" in error
+        )
+        self.assertIn("from aar.phase_timing import phase", phase_error)
+        self.assertIn("unsupported phase context callable(s) found: phase_timing", phase_error)
+
     def test_rejects_broad_gemma_targets_and_missing_bitsandbytes(self) -> None:
         source = (
             "from transformers import BitsAndBytesConfig\n"

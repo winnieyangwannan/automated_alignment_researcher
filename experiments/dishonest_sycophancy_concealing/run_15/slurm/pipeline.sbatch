@@ -117,6 +117,12 @@ export AAR_CHAIN_SANITIZE_ENV=1 AAR_RUNTIME_ENV_DISABLE_FILE=1
 export AAR_RESEARCH_ENV_ISOLATION=0 AAR_HIDE_EVAL_CONFIG=1
 
 [ "${AAR_AGENT_BACKEND:?}" = kimi ] || { echo "Run 15 requires Kimi" >&2; exit 2; }
+if [ "${AAR_RUN15_MODE:?}" = full ]; then
+  [ "${AAR_KIMI_CONTINUATION_EXHAUSTION_RETRYABLE:?}" = 1 ] || {
+    echo "full five-chain Run 15 requires retryable continuation exhaustion" >&2
+    exit 2
+  }
+fi
 [ "${AAR_TARGET_SUCCESSFUL_ITERATIONS:?}" -ge 1 ] || { echo "invalid target pair count" >&2; exit 2; }
 [ "${AAR_MAX_ITERATIONS_PER_CHAIN:?}" -ge "${AAR_TARGET_SUCCESSFUL_ITERATIONS}" ] || {
   echo "session budget is below the score/result-pair target" >&2; exit 2;

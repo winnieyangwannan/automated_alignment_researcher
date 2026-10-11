@@ -3,6 +3,8 @@ version: 1
 storage:
   root: /checkpoint/ram/aar/{user}/run15_native_generation
   keep_checkpoints: false
+  # Retain every final LoRA, while pruning Trainer checkpoints and tokenizer copies.
+  adapter_retention: all
 
 research:
   seeds:
@@ -36,6 +38,12 @@ evaluation:
 
 agent:
   backend: kimi
+  # A full five-chain run must advance to a fresh session when one Kimi
+  # conversation exhausts its bounded continuation budget.
+  continuation_exhaustion_retryable: true
+  max_continuations: 32
+  progress_stall_limit: 3
+  progress_stall_grace_continuations: 8
   turn_timeout_seconds: 1800
   preflight_timeout_seconds: 180
   preflight_cache_ttl_seconds: 21600

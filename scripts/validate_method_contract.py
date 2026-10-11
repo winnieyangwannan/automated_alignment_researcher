@@ -50,6 +50,34 @@ def _required_phases(tree: ast.AST) -> set[str]:
     return observed
 
 
+def _phase_context_near_misses(tree: ast.AST) -> set[str]:
+    """Return call names used like required phase contexts but not accepted."""
+
+    observed: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.With, ast.AsyncWith)):
+            continue
+        for item in node.items:
+            call = item.context_expr
+            if not isinstance(call, ast.Call) or not call.args:
+                continue
+            value = call.args[0]
+            if not (
+                isinstance(value, ast.Constant)
+                and value.value in REQUIRED_METHOD_PHASES
+            ):
+                continue
+            function = call.func
+            name = (
+                function.id
+                if isinstance(function, ast.Name)
+                else function.attr if isinstance(function, ast.Attribute) else ""
+            )
+            if name and name != "phase":
+                observed.add(name)
+    return observed
+
+
 def _gemma_regex_wrapped_in_collection(tree: ast.AST) -> bool:
     """PEFT treats collections as literal suffixes; only a string is a regex."""
 
@@ -992,7 +1020,19 @@ def validate(
     if tree is not None:
         missing = sorted(set(REQUIRED_METHOD_PHASES) - _required_phases(tree))
         if missing:
-            errors.append(f"missing required phase contexts: {', '.join(missing)}")
+            near_misses = sorted(_phase_context_near_misses(tree))
+            detail = (
+                "; use exactly `from aar.phase_timing import phase` and "
+                "`with phase(\"<required_name>\"):`"
+            )
+            if near_misses:
+                detail += (
+                    "; unsupported phase context callable(s) found: "
+                    + ", ".join(near_misses)
+                )
+            errors.append(
+                f"missing required phase contexts: {', '.join(missing)}{detail}"
+            )
         if (
             "BitsAndBytesConfig" in source_text
             and importlib.util.find_spec("bitsandbytes") is None

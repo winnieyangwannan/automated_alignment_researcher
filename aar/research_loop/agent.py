@@ -892,6 +892,8 @@ class AutonomousAgentLoop:
         successful_sessions = 0
         failed_sessions = 0
         last_failure: dict[str, Any] | None = None
+        self._next_session_failure = None
+        self._next_resume_run_id = None
         target_successful_pairs = int(
             os.getenv("AAR_TARGET_SUCCESSFUL_ITERATIONS", "0") or "0"
         )
@@ -933,6 +935,8 @@ class AutonomousAgentLoop:
                 ):
                     await self._run_session()
                 self.stop_checker.record_success()
+                self._next_session_failure = None
+                self._next_resume_run_id = None
                 successful_sessions += 1
                 if not self.local_mode:
                     await self._sync_to_s3()
@@ -989,25 +993,32 @@ class AutonomousAgentLoop:
                 )
                 self.stop_checker.record_error()
                 failed_sessions += 1
-                if last_failure.get("retryable") is True:
+                disposition = last_failure.get("disposition")
+                if (
+                    disposition == "halt"
+                    and safe_failure is not None
+                    and safe_failure.get("stage") in {"training", "evaluation"}
+                    and isinstance(safe_failure.get("run_id"), str)
+                ):
+                    # Backward-compatible candidate evidence: the failed operation
+                    # is terminal, but the research chain should author a new method.
+                    disposition = "advance_session"
+                if disposition == "advance_session":
+                    self._next_session_failure = last_failure
+                    run_id = last_failure.get("run_id")
+                    if isinstance(run_id, str):
+                        self._next_resume_run_id = run_id
+                    print(
+                        "[Loop] Advancing to a fresh research session from "
+                        "durable lifecycle state"
+                    )
+                elif disposition == "retry_operation":
                     backoff = (
                         OVERLOADED_WAIT_SECONDS
                         if last_failure.get("error_code") == "kimi_model_overloaded"
                         else 30
                     )
                     await asyncio.sleep(backoff)
-                elif (
-                    safe_failure is not None
-                    and safe_failure.get("stage") in {"training", "evaluation"}
-                    and isinstance(safe_failure.get("run_id"), str)
-                ):
-                    # `retryable` governs retrying the failed operation.  A
-                    # run-bound candidate failure is instead evidence for the
-                    # next research session to author a different method.
-                    print(
-                        "[Loop] Advancing to a fresh research session with "
-                        "candidate failure feedback"
-                    )
                 else:
                     stop_reason = "permanent_session_failure"
                     break
@@ -1120,6 +1131,16 @@ class AutonomousAgentLoop:
         self._ensure_approved_autodata_workspace()
 
         prompt = self._get_prompt()
+        next_failure = getattr(self, "_next_session_failure", None)
+        if isinstance(next_failure, dict):
+            prompt += (
+                "\n\nAUTOMATIC SAFE HANDOFF FROM THE PREVIOUS RESEARCH SESSION:\n"
+                + json.dumps(next_failure, sort_keys=True)
+                + "\nTreat `guidance` as the required correction and `disposition` "
+                "as the controller decision. Continue from durable artifacts. Do not "
+                "repeat an unchanged contract error, proposal, training submission, "
+                "or run ID."
+            )
 
         with open(log_file, "w") as log_f:
             log_f.write(f"# Session {session_id}\n# Started: {datetime.now().isoformat()}\n\n")
@@ -1144,7 +1165,20 @@ class AutonomousAgentLoop:
 
             try:
                 agent = self._create_agent(session_id, message_callback=message_callback)
-                result = await agent.execute(task=prompt)
+                resume_run_id = getattr(self, "_next_resume_run_id", None)
+                prior_resume = os.environ.get("AAR_RESUME_APPROVED_PROPOSAL")
+                prior_expected = os.environ.get("AAR_RESUME_EXPECTED_RUN_ID")
+                if isinstance(resume_run_id, str):
+                    os.environ["AAR_RESUME_APPROVED_PROPOSAL"] = "1"
+                    os.environ["AAR_RESUME_EXPECTED_RUN_ID"] = resume_run_id
+                try:
+                    result = await agent.execute(task=prompt)
+                finally:
+                    if isinstance(resume_run_id, str):
+                        if prior_resume is None:
+                            os.environ.pop("AAR_RESUME_APPROVED_PROPOSAL", None)
+                        if prior_expected is None:
+                            os.environ.pop("AAR_RESUME_EXPECTED_RUN_ID", None)
 
                 log_f.write(f"\n# Result: success={result.success}, "
                            f"duration={result.duration:.1f}s, "

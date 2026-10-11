@@ -38,6 +38,7 @@ def test_run15_is_fresh_native_5x50_configuration() -> None:
     assert config["storage"]["root"] == (
         "/checkpoint/ram/aar/{user}/run15_native_generation"
     )
+    assert config["storage"]["adapter_retention"] == "all"
     assert config["research"] == {
         "seeds": ["alpha", "beta", "gamma", "delta", "epsilon"],
         "target_score_result_pairs": 50,
@@ -51,13 +52,27 @@ def test_run15_is_fresh_native_5x50_configuration() -> None:
     assert config["evaluation"]["workers"] == 1
     assert config["evaluation"]["gpus_per_worker"] == 4
     assert config["evaluation"]["vllm_log_stats"] is True
+    assert config["agent"]["continuation_exhaustion_retryable"] is True
+    assert config["agent"]["max_continuations"] == 32
+    assert config["agent"]["progress_stall_limit"] == 3
+    assert config["agent"]["progress_stall_grace_continuations"] == 8
 
     environment = _resolved_environment(config_path)
     assert "export AAR_AUTODATA=0" in environment
+    assert "export AAR_ADAPTER_RETENTION=all" in environment
     assert "export AAR_TARGET_SUCCESSFUL_ITERATIONS=50" in environment
     assert "export AAR_MAX_ITERATIONS_PER_CHAIN=60" in environment
     assert "export AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS=256" in environment
+    assert "export AAR_KIMI_CONTINUATION_EXHAUSTION_RETRYABLE=1" in environment
+    assert "export AAR_KIMI_MAX_CONTINUATIONS=32" in environment
+    assert "export AAR_KIMI_PROGRESS_STALL_LIMIT=3" in environment
+    assert "export AAR_KIMI_PROGRESS_STALL_GRACE_CONTINUATIONS=8" in environment
     assert "export EVAL_VLLM_LOG_STATS=1" in environment
+
+    evaluator = (ROOT / "scripts" / "eval_worker.sh").read_text()
+    assert "prune_submission_artifacts.py" in evaluator
+    assert '--retention "${AAR_ADAPTER_RETENTION:-all}"' in evaluator
+    assert evaluator.count('prune_terminal_submission "${rid}" "${d%/}"') == 5
 
 
 def test_run15_canaries_are_fresh_bounded_and_ordered() -> None:
@@ -153,6 +168,7 @@ def test_run15_launch_and_recovery_are_isolated_from_run14() -> None:
     assert "lifecycle_proof_override.json" in pipeline
     assert '.git_commit == $git_commit' in pipeline
     assert '.researcher_deployment == "autodata2_8-kimi26"' in pipeline
+    assert "full five-chain Run 15 requires retryable continuation exhaustion" in pipeline
 
     recovery = (RUN15 / "recovery" / "resume_full.sh").read_text()
     assert 'lifecycle_proof_policy="$(sed -n' in recovery
@@ -303,6 +319,23 @@ def test_run15_recovery_accepts_identical_and_telemetry_only_configs(
         )
         + "\n"
     )
+    continuation_legacy = tmp_path / "continuation-legacy.yaml"
+    continuation_legacy.write_text(
+        "\n".join(
+            line
+            for line in canonical.read_text().splitlines()
+            if line
+            not in {
+                "  # A full five-chain run must advance to a fresh session when one Kimi",
+                "  # conversation exhausts its bounded continuation budget.",
+                "  continuation_exhaustion_retryable: true",
+                "  max_continuations: 32",
+                "  progress_stall_limit: 3",
+                "  progress_stall_grace_continuations: 8",
+            }
+        )
+        + "\n"
+    )
     incompatible = tmp_path / "incompatible.yaml"
     incompatible.write_text(canonical.read_text().replace("workers: 1", "workers: 2"))
 
@@ -325,6 +358,7 @@ def test_run15_recovery_accepts_identical_and_telemetry_only_configs(
 
     assert compatible(identical).returncode == 0
     assert compatible(telemetry_legacy).returncode == 0
+    assert compatible(continuation_legacy).returncode == 0
     assert compatible(incompatible).returncode != 0
 
 

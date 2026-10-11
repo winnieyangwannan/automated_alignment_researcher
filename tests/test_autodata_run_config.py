@@ -114,6 +114,7 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
         f"export AAR_RUN_STORAGE_ROOT=/checkpoint/ram/{os.environ['USER']}\n" in runtime
     )
     assert "export AAR_KEEP_CHECKPOINTS=0\n" in runtime
+    assert "export AAR_ADAPTER_RETENTION=all\n" in runtime
     assert "export AAR_EVAL_MEM=0\n" in runtime
     assert "export EVAL_MAX_TRUNCATION_RATE=0.2\n" in runtime
     assert "export AAR_EXPECTED_MAX_TRUNCATION_RATE=0.2\n" in runtime
@@ -272,6 +273,7 @@ def test_inspect_reports_static_yaml_values() -> None:
         "target_model": "gemma-4-31B-it",
         "storage_root": f"/checkpoint/ram/{os.environ['USER']}",
         "keep_checkpoints": False,
+        "adapter_retention": "all",
         "evaluation_memory": "0",
         "max_truncation_rate": 0.2,
         "agent_backend": "kimi",

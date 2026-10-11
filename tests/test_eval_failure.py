@@ -8,10 +8,59 @@ from unittest.mock import patch
 import pytest
 
 from aar.eval_pod.failure import (
+    classify_failure_error_code,
     install_uncaught_exception_failure_hook,
     publish_failure,
     sanitize_failure_text,
 )
+
+
+def test_training_failure_classifier_returns_actionable_contract_codes() -> None:
+    assert classify_failure_error_code(
+        stage="training",
+        error_code="training_python_exception",
+        reason="generated zero valid examples after filtering",
+    ) == "training_dataset_empty"
+    assert classify_failure_error_code(
+        stage="training",
+        error_code="training_python_exception",
+        reason="chosen must be a string",
+    ) == "training_preference_schema_invalid"
+    assert classify_failure_error_code(
+        stage="training",
+        error_code="training_python_exception",
+        reason="model did not return a loss from labels",
+    ) == "training_loss_missing"
+    assert classify_failure_error_code(
+        stage="training",
+        error_code="training_python_exception",
+        reason="got an unexpected keyword argument tokenizer",
+    ) == "training_api_mismatch"
+
+
+def test_training_failure_classifier_covers_common_runtime_contracts() -> None:
+    cases = {
+        "TypeError: '>' not supported between instances of 'NoneType' and 'int'": (
+            "training_optional_integer_invalid"
+        ),
+        "ValueError: Target modules q_proj were not found in the base model": (
+            "training_peft_target_mismatch"
+        ),
+        "torch.OutOfMemoryError: CUDA out of memory": "training_cuda_out_of_memory",
+        "RuntimeError: mat1 and mat2 shapes cannot be multiplied": (
+            "training_tensor_shape_mismatch"
+        ),
+        "ValueError: tokenizer padding token is not set": (
+            "training_tokenizer_configuration_invalid"
+        ),
+    }
+
+    for reason, expected in cases.items():
+        assert classify_failure_error_code(
+            stage="training",
+            error_code="training_python_exception",
+            reason=reason,
+        ) == expected
 
 
 def test_publish_failure_is_atomic_and_idempotent(tmp_path: Path) -> None:
@@ -29,6 +78,7 @@ def test_publish_failure_is_atomic_and_idempotent(tmp_path: Path) -> None:
         "stage": "evaluation",
         "error_code": "evaluator_rejected",
         "retryable": False,
+        "disposition": "advance_session",
         "error": "adapter merge failed",
         "reason": "adapter merge failed",
         "eval_job_id": "42",

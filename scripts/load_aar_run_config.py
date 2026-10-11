@@ -91,7 +91,9 @@ def load_run_config(path: Path) -> dict[str, str]:
     _reject_unknown(
         lifecycle, {"name", "prerequisite_chain_count"}, "lifecycle"
     )
-    _reject_unknown(storage, {"root", "keep_checkpoints"}, "storage")
+    _reject_unknown(
+        storage, {"root", "keep_checkpoints", "adapter_retention"}, "storage"
+    )
     _reject_unknown(
         research,
         {
@@ -125,6 +127,10 @@ def load_run_config(path: Path) -> dict[str, str]:
         agent,
         {
             "backend",
+            "max_continuations",
+            "continuation_exhaustion_retryable",
+            "progress_stall_limit",
+            "progress_stall_grace_continuations",
             "turn_timeout_seconds",
             "preflight_timeout_seconds",
             "preflight_cache_ttl_seconds",
@@ -171,6 +177,11 @@ def load_run_config(path: Path) -> dict[str, str]:
         environment["AAR_KEEP_CHECKPOINTS"] = _boolean(
             storage["keep_checkpoints"], "storage.keep_checkpoints"
         )
+    if "adapter_retention" in storage:
+        adapter_retention = storage["adapter_retention"]
+        if adapter_retention != "all":
+            raise ValueError("storage.adapter_retention currently supports only 'all'")
+        environment["AAR_ADAPTER_RETENTION"] = adapter_retention
 
     if "seeds" in research:
         seeds = research["seeds"]
@@ -311,6 +322,37 @@ def load_run_config(path: Path) -> dict[str, str]:
         if backend not in {"claude", "kimi"}:
             raise ValueError("agent.backend must be claude or kimi")
         environment["AAR_AGENT_BACKEND"] = backend
+    if "max_continuations" in agent:
+        environment["AAR_KIMI_MAX_CONTINUATIONS"] = str(
+            _integer(
+                agent["max_continuations"],
+                "agent.max_continuations",
+                maximum=1000,
+            )
+        )
+    if "continuation_exhaustion_retryable" in agent:
+        environment["AAR_KIMI_CONTINUATION_EXHAUSTION_RETRYABLE"] = _boolean(
+            agent["continuation_exhaustion_retryable"],
+            "agent.continuation_exhaustion_retryable",
+        )
+    if "progress_stall_limit" in agent:
+        environment["AAR_KIMI_PROGRESS_STALL_LIMIT"] = str(
+            _integer(
+                agent["progress_stall_limit"],
+                "agent.progress_stall_limit",
+                minimum=2,
+                maximum=100,
+            )
+        )
+    if "progress_stall_grace_continuations" in agent:
+        environment["AAR_KIMI_PROGRESS_STALL_GRACE_CONTINUATIONS"] = str(
+            _integer(
+                agent["progress_stall_grace_continuations"],
+                "agent.progress_stall_grace_continuations",
+                minimum=0,
+                maximum=1000,
+            )
+        )
     if "turn_timeout_seconds" in agent:
         timeout = agent["turn_timeout_seconds"]
         if isinstance(timeout, bool) or not isinstance(timeout, int):

@@ -82,7 +82,7 @@ _record_training_failure() {
         --log-path "${AAR_TRAIN_LOG_PATH:-}" \
         --reason "training process exited before model scoring; operator evidence retained privately" \
         >/dev/null 2>&1 || \
-        printf '{"schema_version":2,"run_id":"%s","status":"failed","stage":"training","error_code":"training_process_failed","retryable":false,"exit_code":%d,"error":"training process exited before model scoring","reason":"training process exited before model scoring"}\n' \
+        printf '{"schema_version":2,"run_id":"%s","status":"failed","stage":"training","error_code":"training_process_failed","retryable":false,"disposition":"advance_session","exit_code":%d,"error":"training process exited before model scoring","reason":"training process exited before model scoring"}\n' \
           "${RUN_ID}" "${_exit_code}" > "${_failure_path}"
     fi
   fi

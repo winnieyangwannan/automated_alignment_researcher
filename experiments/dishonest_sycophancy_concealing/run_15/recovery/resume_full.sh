@@ -159,6 +159,10 @@ eval "$("${HARNESS_PY}" "${REPO}/scripts/load_aar_run_config.py" "${CANONICAL_CO
   echo "Run 15 recovery requires Kimi" >&2
   exit 2
 }
+[ "${AAR_KIMI_CONTINUATION_EXHAUSTION_RETRYABLE:?}" = 1 ] || {
+  echo "Run 15 recovery requires retryable continuation exhaustion" >&2
+  exit 2
+}
 [ "${AAR_RESEARCH_SEEDS:?}" = "alpha beta gamma delta epsilon" ] || exit 2
 [ "${AAR_TARGET_SUCCESSFUL_ITERATIONS:?}" = 50 ] || exit 2
 [ "${AAR_MAX_ITERATIONS_PER_CHAIN:?}" = 60 ] || exit 2

@@ -65,6 +65,85 @@ class SmokeOrchestrationTest(TestCase):
         self.assertEqual(observed["backend"], "claude")
         self.assertEqual(observed["model"], "claude-test")
 
+    def test_pair_target_accepts_failures_within_session_ceiling(self):
+        class Loop:
+            def __init__(self, **_kwargs):
+                pass
+
+            async def run(self):
+                return {
+                    "sessions": 57,
+                    "successful_sessions": 50,
+                    "failed_sessions": 7,
+                    "successful_score_result_pairs": 50,
+                    "stop_reason": "successful_iterations",
+                }
+
+        agent_module = types.ModuleType("aar.research_loop.agent")
+        agent_module.AutonomousAgentLoop = Loop
+        args = SimpleNamespace(
+            idea_uid="full-uid",
+            idea_name="full-chain",
+            max_runtime=3600,
+            max_iterations=60,
+            model="kimi-test",
+            backend="kimi",
+            local=True,
+        )
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "AAR_REQUIRE_SUCCESSFUL_ITERATIONS": "1",
+                    "AAR_TARGET_SUCCESSFUL_ITERATIONS": "50",
+                    "KIMI_CLI_PATH": "/bin/true",
+                },
+                clear=True,
+            ),
+            patch.dict(sys.modules, {"aar.research_loop.agent": agent_module}),
+        ):
+            launcher.cmd_agent(args, [])
+
+    def test_pair_target_rejects_session_ceiling_without_enough_pairs(self):
+        class Loop:
+            def __init__(self, **_kwargs):
+                pass
+
+            async def run(self):
+                return {
+                    "sessions": 60,
+                    "successful_sessions": 49,
+                    "failed_sessions": 11,
+                    "successful_score_result_pairs": 49,
+                    "stop_reason": "max_iterations",
+                }
+
+        agent_module = types.ModuleType("aar.research_loop.agent")
+        agent_module.AutonomousAgentLoop = Loop
+        args = SimpleNamespace(
+            idea_uid="full-uid",
+            idea_name="full-chain",
+            max_runtime=3600,
+            max_iterations=60,
+            model="kimi-test",
+            backend="kimi",
+            local=True,
+        )
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "AAR_REQUIRE_SUCCESSFUL_ITERATIONS": "1",
+                    "AAR_TARGET_SUCCESSFUL_ITERATIONS": "50",
+                    "KIMI_CLI_PATH": "/bin/true",
+                },
+                clear=True,
+            ),
+            patch.dict(sys.modules, {"aar.research_loop.agent": agent_module}),
+            self.assertRaises(SystemExit),
+        ):
+            launcher.cmd_agent(args, [])
+
     def test_max_iterations_caps_started_sessions_even_after_failure(self):
         sdk = types.ModuleType("claude_agent_sdk")
         for name in (
@@ -254,6 +333,84 @@ class SmokeOrchestrationTest(TestCase):
                     transport.put_model(str(source), "smoke-run")
 
             self.assertFalse((submissions / "smoke-run" / ".submitted").exists())
+
+    def test_put_model_stages_only_final_adapter_artifacts(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            checkpoint = source / "checkpoint-10"
+            checkpoint.mkdir(parents=True)
+            (source / "adapter_config.json").write_text("{}")
+            (source / "adapter_model.safetensors").write_bytes(b"final-adapter")
+            (source / "tokenizer_config.json").write_text("{}")
+            (source / "tokenizer.json").write_text("{}")
+            (source / "training_args.bin").write_bytes(b"training-args")
+            (checkpoint / "adapter_model.safetensors").write_bytes(b"checkpoint")
+            (checkpoint / "optimizer.pt").write_bytes(b"optimizer")
+            submissions = root / "submissions"
+            with (
+                patch.dict(os.environ, {"AAR_REQUIRE_ADAPTER": "1"}),
+                patch.object(
+                    transport, "_validate_finite_adapter_weights", return_value=None
+                ),
+                patch.object(config, "HARNESS_TRANSPORT", "fs"),
+                patch.object(config, "SUBMISSIONS_DIR", str(submissions)),
+            ):
+                staged = Path(transport.put_model(str(source), "adapter-run"))
+
+            self.assertEqual(
+                {path.name for path in staged.iterdir()},
+                {"adapter_config.json", "adapter_model.safetensors"},
+            )
+            self.assertTrue((staged.parent / ".submitted").is_file())
+
+    def test_terminal_pruning_retains_only_final_adapter(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            submission = root / "submissions" / "adapter-run"
+            model = submission / "model"
+            checkpoint = model / "checkpoint-10"
+            checkpoint.mkdir(parents=True)
+            (model / "adapter_config.json").write_text("{}")
+            (model / "adapter_model.safetensors").write_bytes(b"final-adapter")
+            (model / "tokenizer.json").write_bytes(b"tokenizer")
+            (model / "training_args.bin").write_bytes(b"training-args")
+            (checkpoint / "optimizer.pt").write_bytes(b"optimizer")
+            marker = root / "scores" / "adapter-run.json"
+            marker.parent.mkdir()
+            marker.write_text(
+                '{"suite": "smoke", "per_benchmark": {"visible": {}}}'
+            )
+
+            result = transport.prune_terminal_adapter_submission(
+                submission, marker, retention="all"
+            )
+
+            self.assertEqual(
+                {path.name for path in model.iterdir()},
+                {"adapter_config.json", "adapter_model.safetensors"},
+            )
+            self.assertEqual(result["removed_directories"], 1)
+            self.assertEqual(result["removed_files"], 2)
+            self.assertGreater(result["removed_bytes"], 0)
+
+    def test_terminal_pruning_rejects_a_mismatched_marker(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            submission = root / "submissions" / "adapter-run"
+            model = submission / "model"
+            model.mkdir(parents=True)
+            (model / "adapter_config.json").write_text("{}")
+            (model / "adapter_model.safetensors").write_bytes(b"final-adapter")
+            (model / "tokenizer.json").write_bytes(b"tokenizer")
+            marker = root / "scores" / "different-run.json"
+            marker.parent.mkdir()
+            marker.write_text('{"run_id": "different-run"}')
+
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                transport.prune_terminal_adapter_submission(submission, marker)
+
+            self.assertTrue((model / "tokenizer.json").is_file())
 
     def test_saturated_held_out_is_still_detected_and_stripped(self):
         full = {

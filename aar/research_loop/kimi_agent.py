@@ -380,6 +380,24 @@ class KimiAgent:
         if max_continuations < 1:
             raise ValueError("Kimi max_continuations must be at least one")
         self.max_continuations = max_continuations
+        self.continuation_exhaustion_retryable = os.getenv(
+            "AAR_KIMI_CONTINUATION_EXHAUSTION_RETRYABLE", "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        try:
+            self.progress_stall_limit = int(
+                os.getenv("AAR_KIMI_PROGRESS_STALL_LIMIT", "3")
+            )
+            self.progress_stall_grace = int(
+                os.getenv("AAR_KIMI_PROGRESS_STALL_GRACE_CONTINUATIONS", "8")
+            )
+        except ValueError as error:
+            raise ValueError(
+                "Kimi progress-stall settings must be integers"
+            ) from error
+        if self.progress_stall_limit < 2:
+            raise ValueError("Kimi progress stall limit must be at least two")
+        if self.progress_stall_grace < 0:
+            raise ValueError("Kimi progress stall grace cannot be negative")
         self.disallowed_tools = disallowed_tools or []
         self.auto_approve = auto_approve
         self.force_checkpoint_tools = force_checkpoint_tools
@@ -461,6 +479,10 @@ class KimiAgent:
         iteration_count = 0
         continuation_count = 0
         checkpoint_retry_count = 0
+        last_progress_signature: tuple[Any, ...] | None = None
+        repeated_progress_signature = 0
+        last_contract_errors: tuple[str, ...] | None = None
+        repeated_contract_errors = 0
         autodata_wait_deadline: float | None = None
         autodata_idle_deadline: float | None = None
 
@@ -652,6 +674,10 @@ class KimiAgent:
                             if self.force_completion_tool_first_turn
                             else None
                         )
+                    if continuation_count and self._execute_host_checkpoint(
+                        current_prompt, output
+                    ):
+                        continue
                     checkpoint_tool = (
                         required_tool
                         if self.force_checkpoint_tools
@@ -664,7 +690,7 @@ class KimiAgent:
                     tool_choice_controller.arm(
                         checkpoint_tool,
                         argument_schema=self._checkpoint_argument_schema(
-                            checkpoint_tool
+                            checkpoint_tool, prompt=current_prompt
                         ),
                     )
                     command.extend(
@@ -721,6 +747,8 @@ class KimiAgent:
                                     RuntimeError("required checkpoint missing"),
                                     error_code="required_checkpoint_missing",
                                     stage="research_session",
+                                    retryable=self.continuation_exhaustion_retryable,
+                                    disposition="advance_session",
                                     public_summary=(
                                         "Kimi repeatedly stopped without calling required "
                                         f"checkpoint tool {required_tool} after "
@@ -737,6 +765,56 @@ class KimiAgent:
                         )
                         continue
                     checkpoint_retry_count = 0
+                    progress_signature = self._lifecycle_progress_signature()
+                    if progress_signature == last_progress_signature:
+                        repeated_progress_signature += 1
+                    else:
+                        last_progress_signature = progress_signature
+                        repeated_progress_signature = 1
+                    contract_status, contract_errors = self._current_method_contract()
+                    contract_error_signature = (
+                        tuple(contract_errors) if contract_status == "failed" else None
+                    )
+                    if (
+                        contract_error_signature is not None
+                        and contract_error_signature == last_contract_errors
+                    ):
+                        repeated_contract_errors += 1
+                    else:
+                        last_contract_errors = contract_error_signature
+                        repeated_contract_errors = (
+                            1 if contract_error_signature is not None else 0
+                        )
+                    stalled = (
+                        continuation_count >= self.progress_stall_grace
+                        and (
+                            repeated_progress_signature >= self.progress_stall_limit
+                            or repeated_contract_errors >= self.progress_stall_limit
+                        )
+                    )
+                    if stalled:
+                        feedback = build_failure_feedback(
+                            RuntimeError("research session made no lifecycle progress"),
+                            error_code="research_session_stalled",
+                            stage="research_session",
+                            retryable=self.continuation_exhaustion_retryable,
+                            disposition="advance_session",
+                            public_summary=(
+                                "Kimi repeated an unchanged lifecycle or method-contract "
+                                "state and should continue in a fresh research session"
+                            ),
+                        )
+                        feedback["count"] = max(
+                            repeated_progress_signature, repeated_contract_errors
+                        )
+                        run_id = (
+                            self._approved_run_id()
+                            if self._owns_approved_run(output)
+                            else None
+                        )
+                        if run_id is not None:
+                            feedback["run_id"] = run_id
+                        raise FailureFeedbackError(feedback)
                     # Proposal markers persist across AutonomousAgentLoop sessions.
                     # Only the session that actually submitted the proposal may act
                     # on that marker; otherwise one failed run poisons every later
@@ -778,17 +856,28 @@ class KimiAgent:
                     if not self.completion_tool or self._completion_tool_used(output):
                         break
                     if continuation_count >= self.max_continuations:
+                        feedback = build_failure_feedback(
+                            RuntimeError("required completion missing"),
+                            error_code="required_completion_missing",
+                            stage="research_session",
+                            retryable=self.continuation_exhaustion_retryable,
+                            disposition="advance_session",
+                            public_summary=(
+                                "Kimi stopped before calling the required completion "
+                                f"tool {self.completion_tool} after "
+                                f"{self.max_continuations} continuations"
+                            ),
+                        )
+                        feedback["count"] = self.max_continuations
+                        run_id = (
+                            self._approved_run_id()
+                            if self._owns_approved_run(output)
+                            else None
+                        )
+                        if run_id is not None:
+                            feedback["run_id"] = run_id
                         raise FailureFeedbackError(
-                            build_failure_feedback(
-                                RuntimeError("required completion missing"),
-                                error_code="required_completion_missing",
-                                stage="research_session",
-                                public_summary=(
-                                    "Kimi stopped before calling the required completion "
-                                    f"tool {self.completion_tool} after "
-                                    f"{self.max_continuations} continuations"
-                                ),
-                            )
+                            feedback
                         )
                     continuation_count += 1
                     print(
@@ -958,6 +1047,46 @@ class KimiAgent:
             for item in output.get("tool_uses", [])
         )
 
+    def _candidate_method_path(self) -> Path:
+        idea_name = os.environ.get("IDEA_NAME", "chain")
+        chain_id = re.sub(r"[^A-Za-z0-9]+", "_", idea_name).strip("_") or "chain"
+        method_module = f"{chain_id}__kimi_candidate"
+        ideas_root = Path(os.environ.get("AAR_IDEAS_DIR", "$AAR_IDEAS_DIR"))
+        return ideas_root / method_module / "run.py"
+
+    def _current_method_contract(self) -> tuple[str | None, list[str]]:
+        return self._method_contract_status(self._candidate_method_path())
+
+    def _lifecycle_progress_signature(self) -> tuple[Any, ...]:
+        """Fingerprint durable milestones rather than conversational activity."""
+
+        method_path = self._candidate_method_path()
+        try:
+            method_sha = hashlib.sha256(method_path.read_bytes()).hexdigest()
+        except OSError:
+            method_sha = None
+        contract_status, contract_errors = self._method_contract_status(method_path)
+        run_id = self._approved_run_id()
+        job_id = self._current_training_job_id(run_id) if run_id is not None else None
+        score_state = "missing"
+        if run_id is not None:
+            score_path = self._score_path_for_run(run_id)
+            scores_dir = os.environ.get("SCORES_DIR", "").strip()
+            if score_path is not None and score_path.is_file():
+                score_state = "scored"
+            elif scores_dir and (Path(scores_dir) / f"{run_id}.failed.json").is_file():
+                score_state = "failed"
+        return (
+            method_sha,
+            contract_status,
+            tuple(contract_errors),
+            self._proposal_marker_fingerprint(),
+            run_id,
+            job_id,
+            score_state,
+            bool(run_id and self._finding_persisted_for_run(run_id)),
+        )
+
     def _continuation_prompt(self, output: dict[str, Any]) -> str:
         """Require one concrete next milestone instead of replaying the task."""
         if self.completion_tool != "share_finding":
@@ -970,7 +1099,9 @@ class KimiAgent:
         uses = output["tool_uses"]
         names = [self._tool_name(item) for item in uses]
         inputs = [item.get("input") or {} for item in uses]
-        if not uses:
+        method_path = self._candidate_method_path()
+        candidate_exists = method_path.is_file()
+        if not uses and not candidate_exists:
             return (
                 "Call the native structured MCP tool get_literature exactly once "
                 "now with an empty input. Do not emit prose or call another tool."
@@ -1014,12 +1145,8 @@ class KimiAgent:
                 "for a reproducible proposal. Do not emit prose or call another tool."
             )
         template_path = (self.workspace / "aar/ideas/TEMPLATE/run.py").resolve()
-        idea_name = os.environ.get("IDEA_NAME", "chain")
-        chain_id = re.sub(r"[^A-Za-z0-9]+", "_", idea_name).strip("_") or "chain"
-        method_module = f"{chain_id}__kimi_candidate"
-        ideas_root = Path(os.environ.get("AAR_IDEAS_DIR", "$AAR_IDEAS_DIR"))
-        method_dir = ideas_root / method_module
-        method_path = method_dir / "run.py"
+        method_dir = method_path.parent
+        method_module = method_dir.name
 
         def input_text(index: int, key: str) -> str:
             value = inputs[index].get(key, "")
@@ -1030,7 +1157,7 @@ class KimiAgent:
             and input_text(index, "path").endswith("aar/ideas/TEMPLATE/run.py")
             for index, name in enumerate(names)
         )
-        scaffold_seen = any(
+        scaffold_seen = candidate_exists or any(
             name == "Bash"
             and method_module in input_text(index, "command")
             and "TEMPLATE" in input_text(index, "command")
@@ -1287,14 +1414,15 @@ class KimiAgent:
                 "use its run_id exactly. If rejected, revise the same run.py from the "
                 "monitor feedback. Do not invent a run id or emit prose."
             )
-        if edit_index >= 0 and contract_status == "passed":
+        candidate_ready = edit_index >= 0 or candidate_exists
+        if candidate_ready and contract_status == "passed":
             return (
                 "Call the native structured MCP tool submit_idea_proposal exactly once "
                 f"now for the implemented method {method_module}. Fill every required "
                 "method-paper and compliance field from the code and literature. Do "
                 "not emit prose or another tool."
             )
-        if edit_index >= 0:
+        if candidate_ready:
             if contract_status == "failed":
                 error_summary = "; ".join(contract_errors)[:4000]
                 return (
@@ -1374,19 +1502,106 @@ class KimiAgent:
             return "Bash"
         return None
 
+    def _execute_host_checkpoint(
+        self, prompt: str, output: dict[str, Any]
+    ) -> bool:
+        """Execute deterministic filesystem/validator steps without a model turn."""
+
+        method_path = self._candidate_method_path()
+        if "This creates the candidate scaffold." in prompt:
+            template = self.workspace / "aar/ideas/TEMPLATE"
+            method_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(template, method_path.parent, dirs_exist_ok=True)
+            recorded_command = (
+                f"mkdir -p {method_path.parent} && "
+                f"cp -a {template}/. {method_path.parent}/"
+            )
+            output["tool_uses"].append(
+                {
+                    "tool": "Bash",
+                    "input": {"command": recorded_command},
+                }
+            )
+            print("[Kimi] host checkpoint copied the candidate scaffold")
+            return True
+        if "to validate the complete import, MethodConfig," not in prompt:
+            return False
+        proof = method_path.parent / ".aar-method-contract.json"
+        command = [
+            sys.executable,
+            str(self.workspace / "scripts/validate_method_contract.py"),
+            str(method_path),
+            "--proof",
+            str(proof),
+            "--run-dry-run",
+        ]
+        if os.environ.get("AAR_REQUIRE_GEMMA4_TARGETS") == "1":
+            command.append("--require-gemma4-targets")
+        if os.environ.get("AAR_REQUIRE_METHOD_SMOKE") == "1":
+            command.append("--require-smoke-run")
+        if self._autodata_enabled():
+            command.append("--require-autodata-loader")
+        completed = subprocess.run(
+            command,
+            cwd=self.workspace,
+            env=os.environ.copy(),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        if not proof.is_file():
+            raise _retain_process_failure(
+                error=RuntimeError("method validator did not publish its proof"),
+                error_code="method_contract_execution_failed",
+                stage="research_session",
+                public_summary="method contract validator did not publish its proof",
+                retryable=self.continuation_exhaustion_retryable,
+            )
+        output["tool_uses"].append(
+            {
+                "tool": "Bash",
+                "input": {
+                    "command": shlex.join(command),
+                    "return_code": completed.returncode,
+                },
+            }
+        )
+        print(
+            "[Kimi] host checkpoint validated the candidate method "
+            f"(status={completed.returncode})"
+        )
+        return True
+
     def _checkpoint_argument_schema(
-        self, required_tool: Optional[str]
+        self, required_tool: Optional[str], *, prompt: str = ""
     ) -> dict[str, dict[str, Any]]:
-        """Bind forced result publication to one complete, approved tool call."""
-        if required_tool != "share_finding":
+        """Bind deterministic checkpoints to the host-selected arguments."""
+
+        if required_tool == "share_finding":
+            run_id = self._approved_run_id()
+            if run_id is None:
+                return {}
+            return {
+                "run_id": {"type": "string", "const": run_id},
+                "results_writeup": {"type": "string", "minLength": 80},
+            }
+        field = "command" if required_tool == "Bash" else "path"
+        if required_tool not in {"Bash", "Read", "Write"}:
             return {}
-        run_id = self._approved_run_id()
-        if run_id is None:
+        match = re.search(
+            rf"\b{field}=(\"(?:\\.|[^\"\\])*\")",
+            prompt,
+        )
+        if match is None:
             return {}
-        return {
-            "run_id": {"type": "string", "const": run_id},
-            "results_writeup": {"type": "string", "minLength": 80},
-        }
+        try:
+            value = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(value, str):
+            return {}
+        return {field: {"type": "string", "const": value}}
 
     @staticmethod
     def _autodata_action_record(action_id: str) -> dict[str, Any] | None:
@@ -2439,6 +2654,7 @@ class KimiAgent:
         idea_name = marker.get("idea_name")
         code_hash = marker.get("code_hash")
         explicit_run_id = marker.get("run_id")
+        expected_run_id = os.getenv("AAR_RESUME_EXPECTED_RUN_ID", "").strip()
         if explicit_run_id is not None:
             if not isinstance(explicit_run_id, str) or not re.fullmatch(
                 r"[A-Za-z0-9._-]+", explicit_run_id
@@ -2455,6 +2671,8 @@ class KimiAgent:
                 or stamp.get("code_hash") != code_hash
                 or stamp.get("paper") != marker.get("paper")
             ):
+                return None
+            if expected_run_id and explicit_run_id != expected_run_id:
                 return None
             return explicit_run_id
 
@@ -2476,7 +2694,10 @@ class KimiAgent:
                 and run_id.startswith(f"{idea_uid}-")
             ):
                 candidates.append((float(payload.get("stamped_ts", 0)), run_id))
-        return max(candidates, default=(0.0, None))[1]
+        selected = max(candidates, default=(0.0, None))[1]
+        if expected_run_id and selected != expected_run_id:
+            return None
+        return selected
 
     @staticmethod
     def _current_training_job_id(run_id: str) -> Optional[str]:
@@ -2871,6 +3092,7 @@ class KimiAgent:
             cls._current_training_failure() is not None
         ):
             os.environ["AAR_RESUME_APPROVED_PROPOSAL"] = "0"
+            os.environ.pop("AAR_RESUME_EXPECTED_RUN_ID", None)
             return False
         return True
 
@@ -3458,11 +3680,20 @@ class KimiAgent:
             or not isinstance(retryable, bool)
         ):
             return None
+        from aar.eval_pod.failure import classify_failure_error_code
+
+        public_reason = payload.get("reason") or payload.get("error") or error_code
+        error_code = classify_failure_error_code(
+            stage=stage,
+            error_code=error_code,
+            reason=public_reason,
+        )
         feedback = build_failure_feedback(
             RuntimeError(error_code),
             error_code=error_code,
             stage=stage,
             retryable=retryable,
+            disposition="advance_session",
             public_summary=f"{stage} failed ({error_code})",
         )
         feedback["run_id"] = run_id
@@ -3501,11 +3732,12 @@ class KimiAgent:
             + "\n\nAUTOMATIC HELD-OUT-SAFE FAILURE FEEDBACK FROM YOUR PREVIOUS "
             "CANDIDATE:\n"
             + json.dumps(feedback, sort_keys=True)
-            + "\nBefore proposing another method, diagnose and fix this exact failure. "
-            "Use the typed code and retryability; operator evidence is intentionally "
-            "not readable from the research sandbox. Record the cause in your chain memory, "
-            "and do not resubmit the unchanged method. This feedback contains no "
-            "held-out examples or partial held-out scores."
+            + "\nTreat `guidance` as the required correction and `disposition` as "
+            "the controller decision. Before proposing another method, diagnose and "
+            "fix this exact failure. Operator evidence is intentionally not readable "
+            "from the research sandbox. Record the cause in your chain memory, and do "
+            "not resubmit the unchanged method. This feedback contains no held-out "
+            "examples or partial held-out scores."
         )
 
     @staticmethod

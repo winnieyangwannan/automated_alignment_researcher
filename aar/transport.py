@@ -20,11 +20,19 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Optional
 
 from aar import config
+
+
+_ADAPTER_TRANSPORT_FILES = (
+    "adapter_config.json",
+    "adapter_model.safetensors",
+    "adapter_model.bin",
+)
 
 
 def _fs() -> bool:
@@ -47,6 +55,28 @@ def _copytree_retry(src, dst, attempts: int = 4):
             if i < attempts - 1:
                 time.sleep(2 ** i)   # 1,2,4s
     raise last
+
+
+def _copy_adapter_retry(src: Path, dst: Path, attempts: int = 4) -> None:
+    """Copy only final PEFT artifacts, never Trainer checkpoints or tokenizers."""
+
+    last: OSError | shutil.Error | None = None
+    for index in range(attempts):
+        try:
+            dst.mkdir(parents=True)
+            for name in _ADAPTER_TRANSPORT_FILES:
+                source = src / name
+                if source.is_file():
+                    shutil.copy2(source, dst / name)
+            return
+        except (OSError, shutil.Error) as error:
+            last = error
+            shutil.rmtree(dst, ignore_errors=True)
+            if index < attempts - 1:
+                time.sleep(2**index)
+    if last is not None:
+        raise last
+    raise RuntimeError("adapter copy failed without an exception")
 
 
 def _validate_finite_adapter_weights(path: Path) -> None:
@@ -128,27 +158,105 @@ def validate_model_submission(model_path: str) -> Path:
             "with save_pretrained(output_dir)"
         )
 
-    if not (path / "tokenizer_config.json").is_file():
-        raise ValueError(
-            "model submission is missing tokenizer_config.json; save the "
-            "tokenizer next to the model with tokenizer.save_pretrained(output_dir)"
-        )
-    tokenizer_assets = (
-        "tokenizer.json",
-        "tokenizer.model",
-        "spiece.model",
-        "sentencepiece.bpe.model",
-        "vocab.json",
-        "vocab.txt",
-    )
-    if not any((path / name).is_file() for name in tokenizer_assets):
-        raise ValueError(
-            "model submission has tokenizer_config.json but no tokenizer "
-            "vocabulary/model asset"
-        )
     if is_adapter:
         _validate_finite_adapter_weights(path)
+    else:
+        if not (path / "tokenizer_config.json").is_file():
+            raise ValueError(
+                "model submission is missing tokenizer_config.json; save the "
+                "tokenizer next to the model with tokenizer.save_pretrained(output_dir)"
+            )
+        tokenizer_assets = (
+            "tokenizer.json",
+            "tokenizer.model",
+            "spiece.model",
+            "sentencepiece.bpe.model",
+            "vocab.json",
+            "vocab.txt",
+        )
+        if not any((path / name).is_file() for name in tokenizer_assets):
+            raise ValueError(
+                "model submission has tokenizer_config.json but no tokenizer "
+                "vocabulary/model asset"
+            )
     return path
+
+
+def prune_terminal_adapter_submission(
+    submission_dir: str | Path,
+    terminal_marker: str | Path,
+    *,
+    retention: str = "all",
+) -> dict[str, int | str]:
+    """Retain one final adapter after a terminal score and remove transport waste."""
+
+    if retention != "all":
+        raise ValueError("only adapter retention policy 'all' is currently supported")
+    submission = Path(submission_dir)
+    marker = Path(terminal_marker)
+    if submission.is_symlink() or marker.is_symlink():
+        raise ValueError("submission and terminal marker must not be symlinks")
+    submission = submission.resolve(strict=True)
+    marker = marker.resolve(strict=True)
+    run_id = submission.name
+    if marker.name not in {f"{run_id}.json", f"{run_id}.failed.json"}:
+        raise ValueError("terminal marker does not match the submission run id")
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("terminal marker must contain a JSON object")
+    if marker.name.endswith(".failed.json"):
+        if (
+            payload.get("schema_version") != 2
+            or payload.get("status") != "failed"
+            or payload.get("run_id") != run_id
+        ):
+            raise ValueError("failure marker does not contain the submission run id")
+    elif (
+        not isinstance(payload.get("suite"), str)
+        or not isinstance(payload.get("per_benchmark"), dict)
+    ):
+        raise ValueError("successful terminal marker is not an evaluation score")
+
+    model = submission / "model"
+    if model.is_symlink() or not model.is_dir():
+        raise ValueError("submission model directory is missing or unsafe")
+    adapter_config = model / "adapter_config.json"
+    weights = [
+        model / name
+        for name in ("adapter_model.safetensors", "adapter_model.bin")
+        if (model / name).is_file() and (model / name).stat().st_size > 0
+    ]
+    if not adapter_config.is_file() or not weights:
+        raise ValueError("terminal submission does not contain a complete final adapter")
+
+    allowed = {adapter_config.name, *(path.name for path in weights)}
+    removed_files = 0
+    removed_directories = 0
+    removed_bytes = 0
+    for path in model.iterdir():
+        if path.name in allowed:
+            continue
+        if path.is_symlink():
+            removed_bytes += path.lstat().st_size
+            path.unlink()
+            removed_files += 1
+        elif path.is_dir():
+            for child in path.rglob("*"):
+                if child.is_file() and not child.is_symlink():
+                    removed_bytes += child.stat().st_size
+            shutil.rmtree(path)
+            removed_directories += 1
+        else:
+            removed_bytes += path.stat().st_size
+            path.unlink()
+            removed_files += 1
+    return {
+        "run_id": run_id,
+        "retention": retention,
+        "removed_bytes": removed_bytes,
+        "removed_files": removed_files,
+        "removed_directories": removed_directories,
+    }
 
 
 # --- model handoff (research -> eval) --------------------------------------
@@ -160,7 +268,10 @@ def put_model(model_path: str, run_id: str) -> str:
         dest.parent.mkdir(parents=True, exist_ok=True)
         if dest.exists():
             shutil.rmtree(dest)
-        _copytree_retry(source, dest)
+        if (source / "adapter_config.json").is_file():
+            _copy_adapter_retry(source, dest)
+        else:
+            _copytree_retry(source, dest)
         # Check the actual staged tree, rather than assuming every shared-FS
         # copy retained all files, before advertising it to a worker.
         validate_model_submission(str(dest))
@@ -170,7 +281,13 @@ def put_model(model_path: str, run_id: str) -> str:
         return str(dest)
     from aar.infrastructure import s3_utils
     prefix = f"{config.SUBMISSION_PREFIX}{run_id}/model"
-    s3_utils.upload_directory_to_s3(source, prefix, config.S3_BUCKET)
+    if (source / "adapter_config.json").is_file():
+        with tempfile.TemporaryDirectory(prefix="aar-adapter-submit-") as temporary:
+            staged = Path(temporary) / "model"
+            _copy_adapter_retry(source, staged)
+            s3_utils.upload_directory_to_s3(staged, prefix, config.S3_BUCKET)
+    else:
+        s3_utils.upload_directory_to_s3(source, prefix, config.S3_BUCKET)
     return f"s3://{config.S3_BUCKET}/{prefix}"
 
 

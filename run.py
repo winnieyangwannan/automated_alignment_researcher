@@ -94,12 +94,20 @@ def cmd_agent(args, remaining):
         "1", "true", "yes"
     ):
         expected = getattr(args, "max_iterations", None)
-        if (
-            expected is None
-            or result.get("sessions") != expected
-            or result.get("successful_sessions") != expected
-            or result.get("failed_sessions") != 0
-        ):
+        target_pairs = int(os.getenv("AAR_TARGET_SUCCESSFUL_ITERATIONS", "0") or "0")
+        if target_pairs:
+            complete = (
+                result.get("successful_score_result_pairs", 0) >= target_pairs
+                and result.get("stop_reason") == "successful_iterations"
+            )
+        else:
+            complete = (
+                expected is not None
+                and result.get("sessions") == expected
+                and result.get("successful_sessions") == expected
+                and result.get("failed_sessions") == 0
+            )
+        if not complete:
             print("Error: required successful AAR iterations did not complete")
             sys.exit(1)
 

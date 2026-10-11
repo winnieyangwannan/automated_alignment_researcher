@@ -17,6 +17,87 @@ from aar.failure_feedback import sanitize_failure_summary
 
 _ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _STAGE_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+
+
+def classify_failure_error_code(
+    *, stage: str, error_code: str, reason: object
+) -> str:
+    """Refine generic training failures into actionable, content-free codes."""
+
+    if stage != "training" or error_code not in {
+        "training_process_failed",
+        "training_python_exception",
+    }:
+        return error_code
+    normalized = " ".join(str(reason).lower().split())
+    if any(
+        token in normalized
+        for token in (
+            "zero valid example",
+            "no valid example",
+            "empty dataset",
+            "dataset is empty",
+            "num_samples should be a positive integer",
+        )
+    ):
+        return "training_dataset_empty"
+    if (
+        ("chosen" in normalized or "rejected" in normalized)
+        and any(token in normalized for token in ("string", "str", "text"))
+    ):
+        return "training_preference_schema_invalid"
+    if "loss" in normalized and any(
+        token in normalized
+        for token in (
+            "without a loss",
+            "did not return a loss",
+            "loss is none",
+            "no loss",
+        )
+    ):
+        return "training_loss_missing"
+    if (
+        "unexpected keyword argument" in normalized
+        or "got an unexpected keyword" in normalized
+    ):
+        return "training_api_mismatch"
+    if (
+        "nonetype" in normalized
+        and any(operator in normalized for operator in (">", "<", ">=", "<="))
+        and "int" in normalized
+    ):
+        return "training_optional_integer_invalid"
+    if "target modules" in normalized and any(
+        token in normalized
+        for token in ("not found", "did not match", "no target", "cannot find")
+    ):
+        return "training_peft_target_mismatch"
+    if any(
+        token in normalized
+        for token in (
+            "cuda out of memory",
+            "cuda error: out of memory",
+            "torch.outofmemoryerror",
+        )
+    ):
+        return "training_cuda_out_of_memory"
+    if any(
+        token in normalized
+        for token in (
+            "mat1 and mat2 shapes cannot be multiplied",
+            "size mismatch",
+            "shape mismatch",
+            "must have the same shape",
+        )
+    ):
+        return "training_tensor_shape_mismatch"
+    if ("pad_token" in normalized or "padding token" in normalized) and any(
+        token in normalized for token in ("not set", "none", "missing", "undefined")
+    ):
+        return "training_tokenizer_configuration_invalid"
+    return error_code
+
+
 def sanitize_failure_text(value: object, *, limit: int = 1000) -> str:
     """Return a compact diagnostic that is safe for the research-side handoff."""
 
@@ -32,6 +113,7 @@ def publish_failure(
     stage: str = "evaluation",
     error_code: str = "evaluator_rejected",
     retryable: bool = False,
+    disposition: str | None = None,
     exception_type: str | None = None,
     exit_code: int | None = None,
     log_path: str | Path | None = None,
@@ -48,8 +130,19 @@ def publish_failure(
         raise ValueError("run_id must be one nonempty path component")
     if not _STAGE_RE.fullmatch(stage):
         raise ValueError("stage must be a lowercase identifier")
+    error_code = classify_failure_error_code(
+        stage=stage, error_code=error_code, reason=reason
+    )
     if not _ERROR_CODE_RE.fullmatch(error_code):
         raise ValueError("error_code must be a lowercase identifier")
+    if disposition is None:
+        disposition = (
+            "retry_operation"
+            if retryable
+            else "advance_session" if stage in {"training", "evaluation"} else "halt"
+        )
+    if disposition not in {"retry_operation", "advance_session", "halt"}:
+        raise ValueError("invalid failure disposition")
 
     directory = Path(scores_dir)
     directory.mkdir(parents=True, exist_ok=True)
@@ -87,6 +180,7 @@ def publish_failure(
         "stage": stage,
         "error_code": error_code,
         "retryable": retryable,
+        "disposition": disposition,
         # Keep both keys while older research clients still distinguish training
         # ("error") from evaluation ("reason") failure markers.
         "error": safe_reason,
@@ -166,6 +260,10 @@ def main() -> int:
     parser.add_argument("--stage", default="evaluation")
     parser.add_argument("--error-code", default="evaluator_rejected")
     parser.add_argument("--retryable", action="store_true")
+    parser.add_argument(
+        "--disposition",
+        choices=("retry_operation", "advance_session", "halt"),
+    )
     parser.add_argument("--exception-type")
     parser.add_argument("--exit-code", type=int)
     parser.add_argument("--log-path")
@@ -179,6 +277,7 @@ def main() -> int:
             stage=args.stage,
             error_code=args.error_code,
             retryable=args.retryable,
+            disposition=args.disposition,
             exception_type=args.exception_type,
             exit_code=args.exit_code,
             log_path=args.log_path,

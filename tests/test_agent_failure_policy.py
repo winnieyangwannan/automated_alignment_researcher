@@ -85,6 +85,53 @@ def test_only_explicit_retryable_session_failure_retries(tmp_path: Path) -> None
     assert result["successful_sessions"] == 1
 
 
+def test_continuation_exhaustion_advances_without_backoff(tmp_path: Path) -> None:
+    failure = build_failure_feedback(
+        RuntimeError("private conversation"),
+        error_code="required_completion_missing",
+        stage="research_session",
+        retryable=True,
+        disposition="advance_session",
+        public_summary="continuation budget exhausted",
+    )
+    loop = _loop(tmp_path, FailureFeedbackError(failure))
+    loop.max_iterations = 2
+    loop._run_session = AsyncMock(
+        side_effect=[FailureFeedbackError(failure), None]
+    )
+
+    with patch("aar.research_loop.agent.asyncio.sleep", new=AsyncMock()) as sleep:
+        result = asyncio.run(loop.run())
+
+    assert loop._run_session.await_count == 2
+    sleep.assert_not_awaited()
+    assert result["failed_sessions"] == 1
+    assert result["successful_sessions"] == 1
+
+
+def test_one_session_canary_does_not_exceed_ceiling_after_exhaustion(
+    tmp_path: Path,
+) -> None:
+    failure = build_failure_feedback(
+        RuntimeError("private conversation"),
+        error_code="required_completion_missing",
+        stage="research_session",
+        retryable=True,
+        disposition="advance_session",
+        public_summary="continuation budget exhausted",
+    )
+    loop = _loop(tmp_path, FailureFeedbackError(failure))
+    loop.max_iterations = 1
+
+    with patch("aar.research_loop.agent.asyncio.sleep", new=AsyncMock()) as sleep:
+        result = asyncio.run(loop.run())
+
+    assert loop._run_session.await_count == 1
+    sleep.assert_not_awaited()
+    assert result["sessions"] == 1
+    assert result["stop_reason"] == "max_iterations"
+
+
 def test_run_bound_candidate_failure_advances_without_operation_retry(
     tmp_path: Path,
 ) -> None:

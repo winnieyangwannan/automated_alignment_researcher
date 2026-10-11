@@ -1,12 +1,78 @@
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 from aar.failure_feedback import (
     FailureFeedbackError,
     build_failure_feedback,
+    failure_guidance,
     feedback_from_exception,
+    has_actionable_failure_guidance,
     safe_failure_feedback_view,
     sanitize_failure_summary,
 )
+
+
+def _production_literal_error_codes() -> set[str]:
+    root = Path(__file__).resolve().parents[1]
+    paths = [
+        *sorted((root / "aar").rglob("*.py")),
+        *sorted((root / "scripts").glob("*.py")),
+        root / "run.py",
+    ]
+    result: set[str] = set()
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            for keyword in node.keywords:
+                if (
+                    keyword.arg == "error_code"
+                    and isinstance(keyword.value, ast.Constant)
+                    and isinstance(keyword.value.value, str)
+                ):
+                    result.add(keyword.value.value)
+    return result
+
+
+def test_every_production_failure_stage_has_static_safe_guidance() -> None:
+    stages = {
+        "research_session",
+        "research_tool",
+        "proposal_review",
+        "proposal_submission",
+        "training_submission",
+        "training",
+        "evaluation_submission",
+        "evaluation",
+        "evaluation_scoring",
+        "result_publication",
+        "autodata_bootstrap",
+        "autodata_approval",
+        "autodata_action",
+        "autodata_grounding",
+        "autodata_lifecycle",
+        "autodata_production",
+        "autodata_handoff",
+    }
+
+    for stage in stages:
+        guidance = failure_guidance(stage, "representative_failure")
+        assert guidance
+        assert guidance != (
+            "Use the typed stage and error code to repair the failed operation."
+        )
+
+
+def test_every_literal_production_error_code_has_actionable_guidance() -> None:
+    codes = _production_literal_error_codes()
+
+    missing = sorted(code for code in codes if not has_actionable_failure_guidance(code))
+
+    assert codes
+    assert missing == []
 
 
 def test_failure_summary_is_bounded_and_redacts_common_secret_forms() -> None:
@@ -36,6 +102,8 @@ def test_structured_feedback_keeps_only_safe_cause() -> None:
         "provider returned HTTP 409; token=[REDACTED]"
     )
     assert feedback["retryable"] is False
+    assert feedback["disposition"] == "halt"
+    assert feedback["guidance"]
     assert "evidence" not in feedback
 
 
@@ -90,5 +158,25 @@ def test_safe_view_drops_stored_summary_and_invalid_pointer() -> None:
 
     assert view is not None
     assert view["summary"] == "training failed (training_failed)"
+    assert view["disposition"] == "halt"
+    assert view["guidance"]
     assert "held-out prompt" not in str(view)
     assert "evidence" not in view
+
+
+def test_advance_session_disposition_survives_safe_view() -> None:
+    feedback = build_failure_feedback(
+        RuntimeError("private conversational state"),
+        error_code="required_completion_missing",
+        stage="research_session",
+        retryable=True,
+        disposition="advance_session",
+        public_summary="continuation budget exhausted",
+    )
+
+    view = safe_failure_feedback_view(feedback)
+
+    assert view is not None
+    assert view["retryable"] is True
+    assert view["disposition"] == "advance_session"
+    assert "fresh research session" in view["guidance"]

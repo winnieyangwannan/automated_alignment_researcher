@@ -44,6 +44,24 @@ def _mapping(value: Any, label: str, expected: set[str]) -> dict[str, Any]:
     return dict(value)
 
 
+def _mapping_with_optional(
+    value: Any,
+    label: str,
+    required: set[str],
+    optional: set[str],
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a mapping")
+    missing = required - set(value)
+    unexpected = set(value) - required - optional
+    if missing or unexpected:
+        raise ValueError(
+            f"{label} keys differ; missing={sorted(missing)}, "
+            f"unexpected={sorted(unexpected)}"
+        )
+    return dict(value)
+
+
 def _text(value: Any, label: str, *, allow_empty: bool = False) -> str:
     if not isinstance(value, str) or "\n" in value or "\r" in value:
         raise ValueError(f"{label} must be single-line text")
@@ -515,13 +533,21 @@ def load_run_config(path: Path) -> dict[str, Any]:
     }
     if production["required_rows"] > production["initial_tasks"]:
         raise ValueError("production source tasks must cover required rows")
-    storage = _mapping(root["storage"], "storage", {"root", "keep_checkpoints"})
+    storage = _mapping_with_optional(
+        root["storage"],
+        "storage",
+        {"root", "keep_checkpoints"},
+        {"adapter_retention"},
+    )
     storage = {
         "root": _storage_root(storage["root"], "storage.root"),
         "keep_checkpoints": _boolean(
             storage["keep_checkpoints"], "storage.keep_checkpoints"
         ),
+        "adapter_retention": storage.get("adapter_retention", "all"),
     }
+    if storage["adapter_retention"] != "all":
+        raise ValueError("storage.adapter_retention currently supports only 'all'")
     evaluation = _mapping(
         root["evaluation"], "evaluation", {"memory", "max_truncation_rate"}
     )
@@ -793,6 +819,7 @@ def _runtime_environment(
         "AAR_AUTODATA_RECIPE_ROOT": str(recipe_root),
         "AAR_RUN_STORAGE_ROOT": storage["root"],
         "AAR_KEEP_CHECKPOINTS": "1" if storage["keep_checkpoints"] else "0",
+        "AAR_ADAPTER_RETENTION": storage["adapter_retention"],
         "AAR_EVAL_MEM": evaluation["memory"],
         "EVAL_MAX_TRUNCATION_RATE": format(evaluation["max_truncation_rate"], ".12g"),
         "AAR_EXPECTED_MAX_TRUNCATION_RATE": format(
@@ -995,6 +1022,7 @@ def inspect_configs(profile_path: Path, run_path: Path) -> dict[str, Any]:
         "target_model": profile["providers"]["target"]["model"],
         "storage_root": run["storage"]["root"],
         "keep_checkpoints": run["storage"]["keep_checkpoints"],
+        "adapter_retention": run["storage"]["adapter_retention"],
         "evaluation_memory": run["evaluation"]["memory"],
         "max_truncation_rate": run["evaluation"]["max_truncation_rate"],
         "agent_backend": run["agent"]["backend"],
