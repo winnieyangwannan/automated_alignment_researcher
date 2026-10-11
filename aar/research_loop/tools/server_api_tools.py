@@ -12,6 +12,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Dict
@@ -1440,6 +1441,74 @@ def _requires_explicit_proposal_run_id() -> bool:
     )
 
 
+def _approved_proposal_run_id_candidate() -> str:
+    """Validate and return the deterministic run ID without writing state."""
+    if not _requires_explicit_proposal_run_id():
+        raise RuntimeError("decoupled proposal run IDs require AAR_NO_LOCAL_GPU")
+    marker_path = _proposal_marker_path()
+    try:
+        marker_payload = json.loads(marker_path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("approved proposal marker is unreadable") from error
+    if marker_payload.get("approved") is not True:
+        raise RuntimeError("proposal marker is not approved")
+
+    idea_uid = os.getenv("IDEA_UID") or os.getenv("IDEA_NAME") or "run"
+    if marker_payload.get("idea_uid") != idea_uid:
+        raise RuntimeError("approved proposal marker is bound to another idea UID")
+    idea_name = marker_payload.get("idea_name")
+    if not isinstance(idea_name, str) or not re.fullmatch(
+        r"[A-Za-z_][A-Za-z0-9_]*", idea_name
+    ):
+        raise RuntimeError("approved proposal marker has an unsafe idea name")
+    code_hash = marker_payload.get("code_hash")
+    _, current_hash = _method_code(idea_name)
+    if not isinstance(code_hash, str) or current_hash != code_hash:
+        raise RuntimeError("approved proposal code no longer matches the method")
+
+    existing = marker_payload.get("run_id")
+    if existing is not None:
+        if not isinstance(existing, str) or not re.fullmatch(
+            r"[A-Za-z0-9._-]+", existing
+        ):
+            raise RuntimeError("approved proposal marker has an unsafe run ID")
+        return existing
+
+    # Reconstruct the exact pre-mint payload used by submit_idea_proposal.  This
+    # permits a trusted recovery to repair an approval written by an older
+    # launcher that omitted AAR_NO_LOCAL_GPU, without re-running review or
+    # inventing an unbound identifier.
+    digest_payload = dict(marker_payload)
+    digest_payload.pop("run_id", None)
+    digest_payload["execution_ready"] = False
+    safe_uid = "".join(
+        char if (char.isalnum() or char in "_.-") else "_" for char in idea_uid
+    )[:64]
+    safe_idea = "".join(
+        char if (char.isalnum() or char in "_.-") else "_" for char in idea_name
+    )[:48]
+    proposal_digest = hashlib.sha256(
+        json.dumps(
+            digest_payload, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()[:20]
+    return f"{safe_uid}-{safe_idea}-{proposal_digest}"
+
+
+def _ensure_approved_proposal_run_id() -> str:
+    """Mint and durably stamp the current approved decoupled proposal."""
+    minted = _approved_proposal_run_id_candidate()
+    marker_path = _proposal_marker_path()
+    marker_payload = json.loads(marker_path.read_text())
+    if not _stamp_run_proposal(minted):
+        raise RuntimeError("could not freeze the approved proposal run stamp")
+    if marker_payload.get("run_id") is None:
+        marker_payload["run_id"] = minted
+        marker_payload["execution_ready"] = True
+        _atomic_json_write(marker_path, marker_payload)
+    return minted
+
+
 def _autodata_method_contract_error(code: str) -> str | None:
     """Require approved AutoData methods to use the receipt-producing loader."""
     try:
@@ -1735,23 +1804,9 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
         # run_id inside evaluate_model (sequential: marker can't be overwritten before it scores), so we skip
         # here to avoid orphan run-stamps for ids the inline agent won't use.
         if verdict.get("approved") and _requires_explicit_proposal_run_id():
-            _uid_raw = os.getenv("IDEA_UID") or os.getenv("IDEA_NAME") or "run"
-            _uid = "".join(
-                c if (c.isalnum() or c in "_.-") else "_" for c in _uid_raw
-            )[:64]
-            _safe_idea = "".join(c if (c.isalnum() or c in "_.-") else "_"
-                                 for c in (idea_name or "idea"))[:48]
-            _proposal_digest = hashlib.sha256(
-                json.dumps(
-                    marker_payload, sort_keys=True, separators=(",", ":")
-                ).encode("utf-8")
-            ).hexdigest()[:20]
-            _minted = f"{_uid}-{_safe_idea}-{_proposal_digest}"
-            if not _stamp_run_proposal(_minted):
-                raise RuntimeError("could not freeze the approved proposal run stamp")
+            _minted = _ensure_approved_proposal_run_id()
             verdict["run_id"] = _minted
             marker_payload["run_id"] = _minted
-            _atomic_json_write(_proposal_marker_path(), marker_payload)
             print(f"[submit_idea_proposal] froze pre-run paper to run_id={_minted}")
         if (
             verdict.get("approved")

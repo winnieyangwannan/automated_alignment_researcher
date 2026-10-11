@@ -33,6 +33,12 @@ source "${REPO}/scripts/aar_runtime_env.sh"
 : "${AAR_RESUME_HOURS:?set replacement-chain wall-clock hours}"
 : "${AAR_RESUME_JOB_PREFIX:?set the recovery job prefix}"
 : "${AAR_EVAL_IDLE_SECONDS:?missing evaluator idle timeout}"
+: "${HARNESS_PY:?set the trusted harness Python}"
+
+case "${AAR_NO_LOCAL_GPU:-}" in
+  1|true|TRUE|yes|YES|on|ON) ;;
+  *) echo "recovery requires AAR_NO_LOCAL_GPU=true for decoupled training" >&2; exit 2;;
+esac
 
 case "${AAR_RESUME_MAX_SESSIONS}" in
   ''|0|*[!0-9]*) echo "invalid session ceiling" >&2; exit 2;;
@@ -208,21 +214,47 @@ for seed in "${requested_seeds[@]}"; do
 
   proposal_dir="${team}/scores/.proposals"
   mapfile -t proposal_markers < <(find "${proposal_dir}" -maxdepth 1 -type f -name '*.json' -print 2>/dev/null | sort)
-  if [ "${#proposal_markers[@]}" -gt 1 ]; then
-    echo "${seed} has ambiguous current proposal markers" >&2
-    exit 2
-  fi
-  if [ "${#proposal_markers[@]}" -eq 1 ] && \
-     [ "$(jq -r '.approved // false' "${proposal_markers[0]}")" = true ]; then
-    idea_uid="$(jq -r '.idea_uid // empty' "${proposal_markers[0]}")"
-    run_id="$(jq -r '.run_id // empty' "${proposal_markers[0]}")"
-    if [[ ! "${idea_uid}" =~ ^[A-Za-z0-9._-]+$ ]] || \
-       [[ ! "${run_id}" =~ ^[A-Za-z0-9._-]+$ ]]; then
-      echo "${seed} approved proposal lacks safe idea_uid/run_id" >&2
+  latest_proposal=""
+  latest_proposal_ts="-1"
+  for proposal_marker in "${proposal_markers[@]}"; do
+    proposal_ts="$(jq -r 'if (.ts | type) == "number" then .ts else empty end' "${proposal_marker}")"
+    [[ "${proposal_ts}" =~ ^[0-9]+([.][0-9]+)?$ ]] || {
+      echo "${seed} proposal marker has no numeric timestamp: ${proposal_marker}" >&2
+      exit 2
+    }
+    if awk -v current="${proposal_ts}" -v latest="${latest_proposal_ts}" \
+      'BEGIN {exit !(current > latest)}'; then
+      latest_proposal="${proposal_marker}"
+      latest_proposal_ts="${proposal_ts}"
+    elif awk -v current="${proposal_ts}" -v latest="${latest_proposal_ts}" \
+      'BEGIN {exit !(current == latest)}'; then
+      echo "${seed} has ambiguous proposal markers with timestamp ${proposal_ts}" >&2
       exit 2
     fi
-    [ "$(basename -- "${proposal_markers[0]}" .json)" = "${idea_uid}" ] || {
-      echo "${seed} proposal marker is not bound to idea_uid ${idea_uid}" >&2
+  done
+  if [ -n "${latest_proposal}" ] && \
+     [ "$(jq -r '.approved // false' "${latest_proposal}")" = true ]; then
+    idea_uid="$(jq -r '.idea_uid // empty' "${latest_proposal}")"
+    run_id="$(jq -r '.run_id // empty' "${latest_proposal}")"
+    if [[ ! "${idea_uid}" =~ ^[A-Za-z0-9._-]+$ ]] || \
+       [ "$(basename -- "${latest_proposal}" .json)" != "${idea_uid}" ]; then
+      echo "${seed} approved proposal lacks a safe bound idea_uid" >&2
+      exit 2
+    fi
+    if [ -z "${run_id}" ]; then
+      repair_args=(
+        --team-dir "${team}"
+        --idea-uid "${idea_uid}"
+      )
+      if [ "${AAR_RESUME_PLAN_ONLY:-0}" = 1 ]; then
+        repair_args+=(--plan-only)
+      fi
+      run_id="$("${HARNESS_PY}" \
+        "${REPO}/scripts/repair_approved_proposal_run_id.py" \
+        "${repair_args[@]}" | tail -n 1)"
+    fi
+    [[ "${run_id}" =~ ^[A-Za-z0-9._-]+$ ]] || {
+      echo "${seed} approved proposal lacks a recoverable run_id" >&2
       exit 2
     }
     finding="${team}/.finding_dedup/runid_${run_id}/post.json"
@@ -398,6 +430,7 @@ for seed in "${requested_seeds[@]}"; do
     [[ -v "${chain_name}" ]] && chain_export_names+=("${chain_name}")
   done
   for required_export in AAR_REPO AAR_RUNTIME_ROOT TEAM_DIR AAR_AUTODATA \
+    AAR_NO_LOCAL_GPU \
     AAR_TARGET_SUCCESSFUL_ITERATIONS AAR_REQUIRE_TRAIN_RECEIPT; do
     [[ " ${chain_export_names[*]} " = *" ${required_export} "* ]] || {
       echo "research-chain export is missing ${required_export}" >&2

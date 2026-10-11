@@ -6,6 +6,7 @@ import hashlib
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -54,7 +55,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
         scripts / "aar_runtime_env.sh",
         "#!/bin/bash\n"
         "AAR_RESEARCH_CHAIN_ENV_ALLOWLIST=(\n"
-        "  AAR_REPO AAR_RUNTIME_ROOT TEAM_DIR AAR_AUTODATA\n"
+        "  AAR_REPO AAR_RUNTIME_ROOT TEAM_DIR AAR_AUTODATA AAR_NO_LOCAL_GPU\n"
         "  AAR_TARGET_SUCCESSFUL_ITERATIONS AAR_REQUIRE_TRAIN_RECEIPT\n"
         "  AAR_IDEA_UID_OVERRIDE AAR_RESUME_APPROVED_PROPOSAL\n"
         ")\n",
@@ -150,7 +151,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
         run_id = f"{idea_uid}-run"
         proposal = (
             '{"approved":true,"idea_uid":"%s","idea_name":"method_%s",'
-            '"run_id":"%s","code_hash":"abc"}\n'
+            '"run_id":"%s","code_hash":"abc","ts":1}\n'
             % (idea_uid, seed, run_id)
         )
         (team / "scores" / ".proposals" / f"{idea_uid}.json").write_text(proposal)
@@ -208,8 +209,10 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
         **os.environ,
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
         "AAR_REPO": str(repo),
+        "HARNESS_PY": sys.executable,
         "AAR_RUNTIME_ROOT": str(attempt),
         "AAR_AUTODATA": "0",
+        "AAR_NO_LOCAL_GPU": "true",
         "AAR_TARGET_SUCCESSFUL_ITERATIONS": "50",
         "AAR_REQUIRE_TRAIN_RECEIPT": "1",
         "AAR_CHAIN_SANITIZE_ENV": "1",
@@ -393,6 +396,53 @@ def test_partial_resume_ignores_active_jobs_for_unrequested_teams(
     assert "beta: started=1 remaining=59" in completed.stdout
     assert "gamma:" not in completed.stdout
     assert not (attempt / "metadata" / "recovery_archive").exists()
+
+
+def test_partial_resume_selects_latest_proposal_marker(tmp_path: Path) -> None:
+    repo, attempt, _fake_bin, env = _fixture(tmp_path)
+    env["AAR_RESUME_PLAN_ONLY"] = "1"
+    proposals = (
+        attempt
+        / "aar_teams"
+        / "team-alpha-launch"
+        / "scores"
+        / ".proposals"
+    )
+    (proposals / "idea-alpha-new.json").write_text(
+        '{"approved":true,"idea_uid":"idea-alpha-new",'
+        '"idea_name":"method_alpha","run_id":"idea-alpha-new-run",'
+        '"code_hash":"def","ts":2}\n'
+    )
+    submission = (
+        attempt
+        / "aar_teams"
+        / "team-alpha-launch"
+        / "submissions"
+        / "idea-alpha-new-run"
+    )
+    submission.mkdir()
+    (submission / ".submitted").touch()
+
+    completed = subprocess.run(
+        [
+            str(repo / "scripts" / ENGINE.name),
+            str(attempt),
+            "alpha",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "resume_run_id=idea-alpha-new-run" in completed.stdout
+
+
+def test_run14_recovery_declares_decoupled_execution() -> None:
+    source = RUN14_RECOVERY.read_text()
+
+    assert "export AAR_NO_LOCAL_GPU=true" in source
 
 
 def test_multiteam_plan_only_validates_exact_budgets_without_changes(
