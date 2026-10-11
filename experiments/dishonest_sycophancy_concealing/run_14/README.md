@@ -16,6 +16,9 @@ method package.
 run_14/
 ├── config/run.yaml
 ├── launch/submit_full.sh
+├── recovery/
+│   ├── finalize_scored_run.py
+│   └── finalize_scored_run.sh
 ├── slurm/pipeline.sbatch
 ├── canary/
 │   ├── README.md
@@ -121,6 +124,19 @@ The launchers print and retain the attempt directory and pipeline job ID.
 seed for the full run. The five-chain topology gate instead launches five
 research chains in one isolated team and one on-demand evaluator that drains
 all five staged adapters.
+
+If a one-chain canary has an approved proposal and authoritative public score
+but its Kimi session stops before the required `share_finding` call, recover
+only that missing publication step:
+
+```bash
+experiments/dishonest_sycophancy_concealing/run_14/recovery/finalize_scored_run.sh \
+  <one-chain-attempt>
+```
+
+The recovery validates the retained approval and score, keeps AutoData
+disabled, forbids method edits, training, and evaluation, and succeeds only
+after exactly one finding is durably joined to the scored run ID.
 
 ## Isolation and provenance
 

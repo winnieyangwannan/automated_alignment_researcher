@@ -391,3 +391,23 @@ def test_run14_five_chain_proof_accepts_one_shared_evaluator(tmp_path: Path) -> 
     assert proof["prerequisite_proof_sha256"] == hashlib.sha256(
         prerequisite.read_bytes()
     ).hexdigest()
+
+
+def test_run14_finding_recovery_is_scored_run_only() -> None:
+    finalizer = (
+        RUN14 / "recovery" / "finalize_scored_run.py"
+    ).read_text()
+    launcher = (
+        RUN14 / "recovery" / "finalize_scored_run.sh"
+    ).read_text()
+
+    assert '"AAR_RESUME_APPROVED_PROPOSAL": "1"' in finalizer
+    assert '"AAR_REQUIRE_SUCCESSFUL_ITERATIONS": "1"' in finalizer
+    assert '"AAR_AUTODATA": "0"' in finalizer
+    assert 'completion_tool="share_finding"' in finalizer
+    assert "Recover only the missing final finding" in finalizer
+    assert "Do not call literature, edit files, submit a " in finalizer
+    assert "train, or evaluate" in finalizer
+    assert 'export AAR_AUTODATA=0' in launcher
+    assert "finalize_scored_run.py" in launcher
+    assert "one_chain_lifecycle_check/config/run.yaml" in launcher
