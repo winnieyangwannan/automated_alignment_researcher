@@ -146,3 +146,31 @@ also passed before submission.
 Monitor allocation and every typed lifecycle transition. Stop and repair before
 a replacement trial if a new code defect appears; otherwise continue through
 the verified training-smoke boundary.
+
+<a id="trial7-event-baseline-review"></a>
+
+### ⏳ 03:05 PT — RUNNING: pipeline gates passed; baseline review pending
+
+Research job `1813738` started at 02:57:57 PT. The native workspace was
+registered at 03:01:42 PT, then completed design clarification, grounding
+authoring, grounding approval, and pipeline authoring on their first leases.
+
+```text
+✓ Workspace ws_8e08470d7b6d46ae8121cec764517180 registered durably
+✓ clarify_design completed first lease
+✓ author_grounding completed first lease
+✓ approve_grounding completed first lease
+✓ author_pipeline completed first lease
+✓ Protected pipeline check passed 1/1
+✓ Visible authoring dry run passed 3/3
+⏳ Deterministic approve_baseline action pending
+○ Workspace freeze and canonical execution registration
+○ Three-iteration meta-optimization
+○ Production and verified handoff
+○ One-step training smoke
+```
+
+At this checkpoint the workspace is `baseline_review`, revision 5, with 4/32
+authoring task attempts retained. No execution or canonical transition intent
+exists yet. The supervisor heartbeat is fresh, no typed failure exists, and
+the child manifest still contains no evaluator.
