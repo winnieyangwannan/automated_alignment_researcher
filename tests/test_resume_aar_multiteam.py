@@ -369,6 +369,32 @@ def test_multiteam_resume_rejects_active_job_before_retiring_state(tmp_path: Pat
     assert not Path(env["SBATCH_LOG"]).exists()
 
 
+def test_partial_resume_ignores_active_jobs_for_unrequested_teams(
+    tmp_path: Path,
+) -> None:
+    repo, attempt, _fake_bin, env = _fixture(tmp_path)
+    env["ACTIVE_JOBS"] = "105"
+    env["AAR_RESUME_PLAN_ONLY"] = "1"
+
+    completed = subprocess.run(
+        [
+            str(repo / "scripts" / ENGINE.name),
+            str(attempt),
+            "alpha beta",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "alpha: started=2 remaining=58" in completed.stdout
+    assert "beta: started=1 remaining=59" in completed.stdout
+    assert "gamma:" not in completed.stdout
+    assert not (attempt / "metadata" / "recovery_archive").exists()
+
+
 def test_multiteam_plan_only_validates_exact_budgets_without_changes(
     tmp_path: Path,
 ) -> None:

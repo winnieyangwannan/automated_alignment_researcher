@@ -94,6 +94,21 @@ valid_seed() {
   return 1
 }
 
+seed_requested() {
+  local candidate="$1" requested
+  for requested in "${requested_seeds[@]}"; do
+    [ "${candidate}" = "${requested}" ] && return 0
+  done
+  return 1
+}
+
+for seed in "${requested_seeds[@]}"; do
+  valid_seed "${seed}" || {
+    echo "invalid or disallowed recovery seed: ${seed}" >&2
+    exit 2
+  }
+done
+
 job_active() {
   local job="$1"
   [[ "${job}" =~ ^[0-9]+$ ]] || return 1
@@ -117,6 +132,7 @@ active_jobs=()
 while IFS=$'\t' read -r seed evaluator chain extra; do
   [ -z "${extra:-}" ] || { echo "invalid children.tsv row for ${seed}" >&2; exit 2; }
   valid_seed "${seed}" || { echo "invalid child seed: ${seed}" >&2; exit 2; }
+  seed_requested "${seed}" || continue
   for job in "${evaluator}" "${chain}"; do
     [[ "${job}" =~ ^[0-9]+$ ]] || { echo "invalid child job id: ${job}" >&2; exit 2; }
     job_active "${job}" && active_jobs+=("${job}")
@@ -124,14 +140,20 @@ while IFS=$'\t' read -r seed evaluator chain extra; do
 done < "${children}"
 if [ -f "${registry}" ]; then
   while IFS=$'\t' read -r _timestamp _kind _seed job _rest; do
+    seed_requested "${_seed}" || continue
     job_active "${job:-}" && active_jobs+=("${job}")
   done < "${registry}"
 fi
-while IFS= read -r receipt; do
-  receipt_job="$(sed -n 's/^job_id=//p' "${receipt}")"
-  case "${receipt_job}" in ''|*[!0-9]*) continue;; esac
-  job_active "${receipt_job}" && active_jobs+=("${receipt_job}")
-done < <(find "${ATTEMPT_DIR}/aar_teams" -path '*/.train_submissions/*.env' -type f -print)
+for seed in "${requested_seeds[@]}"; do
+  requested_team="${ATTEMPT_DIR}/aar_teams/${AAR_RESUME_TEAM_PREFIX}${seed}${AAR_RESUME_TEAM_SUFFIX}"
+  [ -d "${requested_team}" ] || continue
+  while IFS= read -r receipt; do
+    receipt_job="$(sed -n 's/^job_id=//p' "${receipt}")"
+    case "${receipt_job}" in ''|*[!0-9]*) continue;; esac
+    job_active "${receipt_job}" && active_jobs+=("${receipt_job}")
+  done < <(find "${requested_team}/.train_submissions" -maxdepth 1 \
+    -type f -name '*.env' -print 2>/dev/null)
+done
 if [ "${#active_jobs[@]}" -gt 0 ]; then
   printf 'refusing recovery while attempt job(s) remain active: %s\n' \
     "$(printf '%s\n' "${active_jobs[@]}" | sort -un | tr '\n' ' ')" >&2
@@ -158,7 +180,6 @@ expected_remaining_for() {
 }
 
 for seed in "${requested_seeds[@]}"; do
-  valid_seed "${seed}" || { echo "invalid or disallowed recovery seed: ${seed}" >&2; exit 2; }
   matches="$(awk -F'\t' -v wanted="${seed}" '$1 == wanted {count++; line=$0} END {if (count == 1) print line; else exit 2}' "${children}")" || {
     echo "children.tsv does not contain exactly one row for ${seed}" >&2
     exit 2
