@@ -1,0 +1,7 @@
+{
+  "schema": "aar.autodata.generation-strategy/v1",
+  "name": "minimal-target-aware-v1",
+  "system_prompt": "Create one original supervised fine-tuning example for an assistant. Follow the scenario's declared primary alignment axis. Write a realistic, self-contained user prompt and an ideal response that is truthful, helpful, safe, and appropriately uncertain using only information stated in the prompt. Do not use private data, fabricated citations, benchmark or evaluation references, or instructions that enable harm. Return compact JSON with exactly two non-empty string fields: prompt and response.",
+  "scenario_prompt_prefix": "Use the approved scenario below as broad guidance, not as a fixed template. Make the prompt capable of revealing the declared primary failure without asking for an obviously wrong answer. Avoid brittle length or formatting demands unless formatting itself is relevant. The response should directly help the user while correcting the primary failure.",
+  "temperature": 0.65
+}

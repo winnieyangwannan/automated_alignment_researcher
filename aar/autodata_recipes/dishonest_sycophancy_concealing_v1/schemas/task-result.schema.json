@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "task_id",
+    "outcome",
+    "generated_items",
+    "metrics",
+    "provider_usage",
+    "trajectory_artifacts"
+  ],
+  "properties": {
+    "schema": { "const": "autodata.task-result/v1" },
+    "task_id": { "type": "string", "minLength": 1 },
+    "outcome": { "enum": ["succeeded", "skipped", "failed", "cancelled"] },
+    "generated_items": {
+      "type": "array",
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "prompt", "response", "metadata", "_autodata_usage"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "prompt": { "type": "string", "minLength": 1 },
+          "response": { "type": "string", "minLength": 1 },
+          "metadata": { "type": "object" },
+          "_autodata_usage": { "type": "array", "minItems": 2 }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": { "type": "number" },
+      "required": [
+        "quality",
+        "valid",
+        "challenge",
+        "quality_challenge_utility"
+      ]
+    },
+    "provider_usage": { "type": "array" },
+    "reason_code": { "type": ["string", "null"] },
+    "trajectory_artifacts": { "type": "array" }
+  }
+}

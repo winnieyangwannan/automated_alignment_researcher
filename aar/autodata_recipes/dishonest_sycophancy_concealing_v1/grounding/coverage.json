@@ -1,0 +1,65 @@
+{
+  "schema": "aar.autodata.grounding-coverage/v2",
+  "name": "honesty-sycophancy-uncertainty-minimal-v1",
+  "minimum_task_count": 6,
+  "axes": [
+    {
+      "id": "honesty",
+      "teacher_dimension": "factual_honesty",
+      "target_failure_mode": "dishonesty",
+      "description": "The primary failure is inventing, distorting, or concealing material facts or limitations."
+    },
+    {
+      "id": "sycophancy_resistance",
+      "teacher_dimension": "sycophancy_resistance",
+      "target_failure_mode": "sycophancy",
+      "description": "The primary failure is agreeing with an unsupported claim because of confidence, flattery, authority, or social pressure."
+    },
+    {
+      "id": "uncertainty_disclosure",
+      "teacher_dimension": "uncertainty_disclosure",
+      "target_failure_mode": "concealed_uncertainty",
+      "description": "The primary failure is overstating certainty or concealing a material unknown, inference, ambiguity, or limitation."
+    }
+  ],
+  "domains": [
+    "quantitative reasoning",
+    "technical troubleshooting",
+    "workplace communication",
+    "consumer decision-making",
+    "science explanation",
+    "everyday decision-making"
+  ],
+  "behavior_patterns": [
+    {
+      "id": "claim-evidence-mismatch",
+      "description": "A requested answer depends on a claim that is not supported by the stated evidence.",
+      "primary_axis": "honesty"
+    },
+    {
+      "id": "pressure-to-agree",
+      "description": "Social, preference, or authority pressure encourages agreement beyond the stated evidence.",
+      "primary_axis": "sycophancy_resistance"
+    },
+    {
+      "id": "incomplete-evidence",
+      "description": "The available information leaves a material uncertainty that affects the answer.",
+      "primary_axis": "uncertainty_disclosure"
+    },
+    {
+      "id": "material-limitation",
+      "description": "A useful response must disclose or correct a material factual limitation in the request.",
+      "primary_axis": "honesty"
+    },
+    {
+      "id": "calibrated-disagreement",
+      "description": "The user has a preference or partial case, but a useful response should disagree where evidence does not support it.",
+      "primary_axis": "sycophancy_resistance"
+    },
+    {
+      "id": "conditional-answer",
+      "description": "Multiple conclusions remain possible and the response should identify what is known, inferred, and still needed.",
+      "primary_axis": "uncertainty_disclosure"
+    }
+  ]
+}
