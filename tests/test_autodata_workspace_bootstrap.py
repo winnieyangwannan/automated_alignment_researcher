@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import fcntl
 import hashlib
 import json
@@ -10,8 +11,9 @@ from unittest.mock import patch
 
 import pytest
 
-from aar.failure_feedback import FailureFeedbackError
+from aar.failure_feedback import FailureFeedbackError, build_failure_feedback
 from aar.research_loop.agent import AutonomousAgentLoop
+from aar.research_loop.tools.server_api_tools import submit_idea_proposal
 from aar.research_loop.autodata_bootstrap import (
     BOOTSTRAP_SCHEMA,
     _run_json,
@@ -227,6 +229,8 @@ def test_session_bootstrap_is_research_backend_independent(
         json.dumps(
             {
                 "approved": True,
+                "execution_ready": True,
+                "journaled": True,
                 "run_id": "run-one",
                 "idea_name": "method_one",
                 "code_hash": "a" * 64,
@@ -255,6 +259,140 @@ def test_session_bootstrap_is_research_backend_independent(
     ensure.assert_called_once_with(
         run_id="run-one", idea_name="method_one", code_hash="a" * 64
     )
+
+
+def test_session_bootstrap_preserves_typed_failure_then_retries_same_intent(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "proposal.json"
+    original = build_failure_feedback(
+        RuntimeError("private CLI output"),
+        error_code="autodata_bootstrap_cli_failed",
+        stage="autodata_bootstrap",
+        public_summary="AutoData bootstrap command failed",
+    )
+    marker.write_text(
+        json.dumps(
+            {
+                "approved": True,
+                "execution_ready": False,
+                "journaled": True,
+                "run_id": "run-one",
+                "idea_name": "method_one",
+                "code_hash": "a" * 64,
+                "autodata_bootstrap": {
+                    "status": "failed",
+                    "failure": original,
+                },
+            }
+        )
+    )
+    loop = object.__new__(AutonomousAgentLoop)
+    loop.idea_name = "gemma-alpha"
+    loop.idea_uid = "alpha-uid"
+    ready = {"workspace_id": "ws_" + "1" * 32, "idempotent": True}
+
+    with (
+        patch.dict(os.environ, {"AAR_AUTODATA": "1"}, clear=False),
+        patch(
+            "aar.research_loop.tools.server_api_tools._proposal_marker_path",
+            return_value=marker,
+        ),
+        patch(
+            "aar.research_loop.autodata_bootstrap.ensure_workspace",
+            side_effect=[FailureFeedbackError(original), ready],
+        ) as ensure,
+    ):
+        with pytest.raises(FailureFeedbackError) as captured:
+            loop._ensure_approved_autodata_workspace()
+        failed_marker = json.loads(marker.read_text())
+        loop._ensure_approved_autodata_workspace()
+
+    assert captured.value.feedback["error_code"] == "autodata_bootstrap_cli_failed"
+    assert failed_marker["autodata_bootstrap"]["failure"]["error_code"] == (
+        "autodata_bootstrap_cli_failed"
+    )
+    recovered = json.loads(marker.read_text())
+    assert recovered["execution_ready"] is True
+    assert recovered["autodata_bootstrap"]["status"] == "ready"
+    assert ensure.call_count == 2
+    assert ensure.call_args_list[0] == ensure.call_args_list[1]
+
+
+def test_proposal_bootstrap_failure_keeps_typed_failure_in_host_memory(
+    tmp_path: Path,
+) -> None:
+    environment = _environment(tmp_path)
+    environment.update(
+        {
+            "AAR_AUTODATA": "1",
+            "AAR_NO_LOCAL_GPU": "true",
+            "SCORES_DIR": str(Path(environment["TEAM_DIR"]) / "scores"),
+            "IDEA_NAME": "gemma-alpha",
+            "IDEA_UID": "alpha-uid",
+        }
+    )
+    (Path(environment["SCORES_DIR"]) / ".proposals" / "runs").mkdir(
+        parents=True
+    )
+    failure = build_failure_feedback(
+        RuntimeError("private CLI output"),
+        error_code="autodata_bootstrap_cli_failed",
+        stage="autodata_bootstrap",
+        public_summary="AutoData bootstrap command failed",
+    )
+    args = {
+        "idea_name": "candidate",
+        "title": "title",
+        "method": "method",
+    }
+
+    with (
+        patch.dict(os.environ, environment, clear=False),
+        patch(
+            "aar.research_loop.tools.server_api_tools._method_code",
+            return_value=("VALUE = 1\n", "a" * 64),
+        ),
+        patch(
+            "aar.research_loop.tools.server_api_tools._autodata_method_contract_error",
+            return_value=None,
+        ),
+        patch(
+            "aar.research_loop.tools.server_api_tools._validate_idea_paper",
+            return_value={"missing": []},
+        ),
+        patch(
+            "aar.research_loop.monitor.check_proposal",
+            return_value={"approved": True, "violations": []},
+        ),
+        patch(
+            "aar.research_loop.tools.server_api_tools._ensure_approved_proposal_run_id",
+            return_value="alpha-uid-run",
+        ),
+        patch(
+            "aar.research_loop.autodata_bootstrap.ensure_workspace",
+            side_effect=FailureFeedbackError(failure),
+        ),
+    ):
+        response = asyncio.run(submit_idea_proposal.handler(args))
+
+    payload = json.loads(response["content"][0]["text"])
+    assert payload["approved"] is True
+    assert payload["execution_ready"] is False
+    assert payload["journaled"] is True
+    assert payload["failure"]["error_code"] == "autodata_bootstrap_cli_failed"
+    events = [
+        json.loads(path.read_text())
+        for path in (
+            Path(environment["TEAM_DIR"])
+            / "host_memory"
+            / "gemma-alpha"
+            / "events"
+        ).glob("*.json")
+    ]
+    failures = [event for event in events if event["kind"] == "failure"]
+    assert len(failures) == 1
+    assert failures[0]["error_code"] == "autodata_bootstrap_cli_failed"
 
 
 def test_bootstrap_rejects_changed_proposal_identity(tmp_path: Path) -> None:
