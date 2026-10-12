@@ -15,6 +15,8 @@ from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
+import queue
+import time
 from typing import Any
 
 import yaml
@@ -532,6 +534,118 @@ def _gpu_worker(
             q.put(("done", str(gpu), None, None))
 
 
+def _parallel_worker_shutdown_timeout_seconds() -> float:
+    raw = os.getenv("AAR_EVAL_WORKER_SHUTDOWN_TIMEOUT_SECONDS", "120")
+    try:
+        value = float(raw)
+    except ValueError as error:
+        raise ValueError(
+            "AAR_EVAL_WORKER_SHUTDOWN_TIMEOUT_SECONDS must be numeric"
+        ) from error
+    if value <= 0:
+        raise ValueError(
+            "AAR_EVAL_WORKER_SHUTDOWN_TIMEOUT_SECONDS must be positive"
+        )
+    return value
+
+
+def _terminate_parallel_workers(procs) -> list[int | None]:
+    stuck = [process for process in procs if process.is_alive()]
+    for process in stuck:
+        process.terminate()
+    for process in stuck:
+        process.join(timeout=10)
+    for process in stuck:
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=10)
+    return [process.pid for process in stuck]
+
+
+def _collect_parallel_results(result_queue, procs, role_by_id, shutdown_timeout_seconds):
+    """Collect benchmark outcomes and bound the post-scoring worker shutdown.
+
+    vLLM worker cleanup can hang after every benchmark has already returned an
+    outcome. Without this bound, the evaluator wrapper never receives a nonzero
+    exit and therefore cannot publish its terminal failure marker.
+    """
+    scores, errors, fingerprint = {}, [], None
+    workers_done: set[str] = set()
+    benchmark_outcomes: set[str] = set()
+    shutdown_deadline = None
+
+    while len(workers_done) < len(procs):
+        timeout = None
+        if shutdown_deadline is not None:
+            timeout = max(0.0, min(1.0, shutdown_deadline - time.monotonic()))
+        try:
+            if timeout is None:
+                kind, sid, sc, err = result_queue.get()
+            else:
+                kind, sid, sc, err = result_queue.get(timeout=timeout)
+        except queue.Empty:
+            if shutdown_deadline is None or time.monotonic() < shutdown_deadline:
+                continue
+            stuck_pids = _terminate_parallel_workers(procs)
+            errors.append((
+                "worker_shutdown",
+                "parallel evaluator workers did not exit within "
+                f"{shutdown_timeout_seconds:g}s after all benchmark outcomes; "
+                f"terminated pids={stuck_pids}",
+            ))
+            print(f"  worker shutdown FAILED: {errors[-1][1]}", flush=True)
+            break
+
+        sid = str(sid)
+        if kind == "done":
+            workers_done.add(sid)
+        elif kind == "fingerprint":
+            fingerprint = sc
+        elif kind == "worker_error":
+            errors.append((f"gpu:{sid}", err))
+            print(f"  gpu:{sid} FAILED: {err}", flush=True)
+        elif kind == "score":
+            benchmark_outcomes.add(sid)
+            if err:
+                errors.append((sid, err))
+                print(f"  {sid:16s} FAILED: {err}", flush=True)
+            else:
+                scores[sid] = sc
+                if role_by_id.get(sid) == "held_out":
+                    print(
+                        "  [a held_out benchmark — name, score, n all hidden from logs]",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"  {sid:16s} mean={sc.mean:.4f} "
+                        f"ci=[{sc.ci_low:.4f},{sc.ci_high:.4f}] n={sc.n}",
+                        flush=True,
+                    )
+
+        if (
+            shutdown_deadline is None
+            and benchmark_outcomes == set(role_by_id)
+            and len(workers_done) < len(procs)
+        ):
+            shutdown_deadline = time.monotonic() + shutdown_timeout_seconds
+
+    join_deadline = time.monotonic() + shutdown_timeout_seconds
+    for process in procs:
+        process.join(timeout=max(0.0, join_deadline - time.monotonic()))
+    still_alive = [process for process in procs if process.is_alive()]
+    if still_alive:
+        stuck_pids = _terminate_parallel_workers(still_alive)
+        errors.append((
+            "worker_join",
+            "parallel evaluator workers emitted done but did not exit within "
+            f"{shutdown_timeout_seconds:g}s; terminated pids={stuck_pids}",
+        ))
+        print(f"  worker join FAILED: {errors[-1][1]}", flush=True)
+
+    return scores, errors, fingerprint
+
+
 def _score_parallel(specs, model_ref, secret_dir, ngpu, suite_name=""):
     """Dynamically schedule benchmarks across one model replica per GPU."""
     import multiprocessing as mp
@@ -561,28 +675,12 @@ def _score_parallel(specs, model_ref, secret_dir, ngpu, suite_name=""):
         p.start()
         procs.append(p)
     _role = {s.id: s.role for s in specs}
-    scores, errors, fingerprint = {}, [], None
-    workers_done = 0
-    while workers_done < nworkers:
-        kind, sid, sc, err = q.get()
-        if kind == "done":
-            workers_done += 1
-        elif kind == "fingerprint":
-            fingerprint = sc
-        elif kind == "worker_error":
-            errors.append((f"gpu:{sid}", err))
-            print(f"  gpu:{sid} FAILED: {err}", flush=True)
-        elif err:
-            errors.append((sid, err))
-            print(f"  {sid:16s} FAILED: {err}", flush=True)
-        else:
-            scores[sid] = sc
-            if _role.get(sid) == "held_out":      # never print held-out score to stdout
-                print("  [a held_out benchmark — name, score, n all hidden from logs]", flush=True)
-            else:
-                print(f"  {sid:16s} mean={sc.mean:.4f} ci=[{sc.ci_low:.4f},{sc.ci_high:.4f}] n={sc.n}", flush=True)
-    for p in procs:
-        p.join()
+    scores, errors, fingerprint = _collect_parallel_results(
+        q,
+        procs,
+        _role,
+        _parallel_worker_shutdown_timeout_seconds(),
+    )
     if errors:
         raise RuntimeError(f"{len(errors)} benchmark(s) failed: {errors}")
     missing = sorted(_role.keys() - scores.keys())
