@@ -314,4 +314,5 @@ def test_manifest_is_not_in_research_environment_allowlist() -> None:
     preserve = runtime.split("_AAR_PRESERVE=(", 1)[1].split("\n)", 1)[0]
     assert "AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST" not in preserve
     assert "AAR_AUTODATA_CLARIFY_COORDINATOR" in preserve
+    assert "AAR_AUTODATA_MUTATION_COORDINATOR" in preserve
     assert "AAR_AUTODATA_SEMANTIC_WORKER" in preserve

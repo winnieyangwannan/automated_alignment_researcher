@@ -16,9 +16,11 @@ from aar.research_loop.kimi_agent import KimiAgent
 from .semantic_worker import (
     AnalysisContext,
     MalformedSemanticOutcome,
+    MutationContext,
     WorkerContext,
     WorkerOutcome,
     parse_analysis_outcome,
+    parse_mutation_outcome,
     parse_semantic_outcome,
     semantic_task,
 )
@@ -226,4 +228,6 @@ class KimiWorker:
             )
         if isinstance(context, AnalysisContext):
             return parse_analysis_outcome(output, backend="Kimi")
+        if isinstance(context, MutationContext):
+            return parse_mutation_outcome(output, backend="Kimi")
         return parse_semantic_outcome(output, backend="Kimi")

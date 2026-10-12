@@ -1,10 +1,10 @@
-# Run 13 Canary Trial 5: supervisor ownership through `analyze_results`
+# Run 13 Canary Trial 5: supervisor-owned AutoData optimization
 
 **Experiment code branch:** `autodata`
 
 - Status: planned; not launched
 - Created: 2026-10-12 02:42 PT
-- Last updated: 2026-10-12 02:42 PT
+- Last updated: 2026-10-12 02:52 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -14,9 +14,9 @@ Recorded: 2026-10-12 02:42 PT
 Start from a fresh pre-AutoData recovery boundary and prove that the trusted
 lifecycle supervisor retains ownership after the original AAR Claude turn
 returns. Reconciliation must continue through the backend-neutral
-`analyze_results` action slice without treating completion of one model turn as
-completion of the experiment. The configured terminal boundary remains
-`training_smoke`; no evaluator may start.
+`analyze_results` and `mutate_candidate` action slices without treating
+completion of one model turn as completion of the experiment. The configured
+terminal boundary remains `training_smoke`; no evaluator may start.
 
 ## Context
 
@@ -28,23 +28,25 @@ AutoData state, workspace, actions, executions, production data, and training
 state. The manifest is operator-owned and must not enter Git, the immutable
 source snapshot, research-child environment, or model prompt.
 
-The lifecycle-coordinator patch under test owns reconciliation from
-`baseline_pending` through the native `analyze_results` action. It is intended
-to survive the end of the original AAR Claude turn and invoke typed semantic
-workers only for allowlisted actions. This patch does not claim that later
-execution actions are complete. Support for every later native action remains
-a separate launch prerequisite even though the final configured stop is
-`training_smoke`.
+The lifecycle coordinator owns reconciliation from `baseline_pending` through
+the repeated native `analyze_results → mutate_candidate` optimization cycle. A
+tool-free worker returns a typed complete replacement for only
+`recipe/generation_strategy.json`; trusted host code validates the binding,
+writes that file atomically, completes the native action, and verifies its
+receipt. AutoData continues to own all lifecycle transitions.
+
+The remaining launch prerequisite is backend-neutral host ownership of the
+verified production-handoff → training-submission → one-step-proof boundary.
 
 ## Launch
 
 Recorded: 2026-10-12 02:42 PT
 
-Do not launch yet. Trial 5 is planned and the current shared Run 13 launcher
-does not yet advertise reviewed Trial 5 recovery support. The wrapper fails
-closed until the reviewed lifecycle-coordinator commit is present, the shared
-launcher explicitly supports Trial 5, and an external owner-only mode-0600
-Trial 5 recovery manifest is supplied.
+Do not launch yet. The Run 13 launcher supports Trial 5 recovery and the native
+semantic action cycle is implemented, but the lifecycle owner does not yet
+submit and verify training after the production handoff. The wrapper remains
+fail-closed until that final host-owned boundary is reviewed and an external
+owner-only mode-0600 Trial 5 recovery manifest is supplied.
 
 After all gates are reviewed, launch from the matching isolated HPC checkout:
 
@@ -71,10 +73,11 @@ Recorded: 2026-10-12 02:42 PT
    a new AutoData workspace immediately before `clarify_design`.
 4. Verify that the lifecycle supervisor remains the sole owner when the
    original AAR Claude turn returns.
-5. Reconcile native state from `baseline_pending` through `analyze_results`,
-   using typed backend-neutral worker outcomes and native AutoData transitions.
-6. After later action slices are separately reviewed, continue through verified
-   production and exactly one Gemma optimizer step.
+5. Reconcile native state through every `analyze_results` and
+   `mutate_candidate` pair using typed backend-neutral worker outcomes and
+   native AutoData transitions.
+6. Continue through verified production and a host-owned submission of exactly
+   one Gemma optimizer step.
 7. Stop at `training_smoke`; do not publish a holdout or start evaluation.
 
 ## Model and execution roles
@@ -112,36 +115,37 @@ Trial 5 passes only if retained machine-readable evidence shows:
 - the attempt, team, proposal run, workspace, actions, and executions are fresh;
 - the supervisor remained alive and authoritative after the original AAR Claude
   turn completed;
-- native AutoData state advanced from `baseline_pending` through a completed,
-  receipt-verified `analyze_results` action without a duplicate `action begin`;
+- native AutoData state advanced from `baseline_pending` through every
+  receipt-verified `analyze_results` and `mutate_candidate` action without a
+  duplicate `action begin`;
 - each worker outcome was bound to the expected action ID, revision, and digest;
-- all later native actions used separately reviewed support and the run reached
-  a verified 1,000-row production export plus exactly one Gemma optimizer step;
+- only `recipe/generation_strategy.json` changed during optimization, and the
+  run reached a verified 1,000-row production export plus exactly one Gemma
+  optimizer step;
 - the terminal boundary was `training_smoke`, with no evaluator job, score,
   promotion, or later AAR iteration.
 
-Reaching `analyze_results` alone proves this coordinator slice but does not make
-the full Trial 5 canary a pass.
+Reaching the end of meta-optimization alone does not make Trial 5 a pass.
 
 ## Stop criteria
 
 Recorded: 2026-10-12 02:42 PT
 
-Stop before submission if the reviewed coordinator commit, explicit shared
-launcher support, external manifest, model mapping, or later-action support is
-missing. Stop during execution if any prior native identity or downstream
-artifact appears, supervisor ownership ends with the AAR Claude turn, an action
-is begun twice, a stale worker outcome is accepted, native receipt verification
-fails, an unsupported later action is reached, training exceeds one optimizer
-step, or any evaluator or scoring process starts.
+Stop before submission if the reviewed coordinator commit, external manifest,
+model mapping, or host-owned training submission/verification is missing. Stop
+during execution if any prior native identity or downstream artifact appears,
+supervisor ownership ends with the AAR Claude turn, an action is begun twice, a
+stale worker outcome is accepted, any file other than
+`recipe/generation_strategy.json` changes during optimization, native receipt
+verification fails, training exceeds one optimizer step, or any evaluator or
+scoring process starts.
 
 ## After a pass
 
 Recorded: 2026-10-12 02:42 PT
 
 Retain the manifest-verification and import receipts, fresh-state proof,
-supervisor-ownership timeline, action/revision receipts through
-`analyze_results`, resulting native phases exactly as returned, production
-export receipt, training-consumption receipt, and one-step adapter proof. Review
-those records before extending the coordinator to another action or enabling
-evaluation.
+supervisor-ownership timeline, action/revision receipts through every analysis
+and mutation, resulting native phases exactly as returned, production export
+receipt, training-consumption receipt, and one-step adapter proof. Review those
+records before enabling evaluation.

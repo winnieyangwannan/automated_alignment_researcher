@@ -59,8 +59,32 @@ class AnalysisOutcome:
     dashboard_summary: Mapping[str, str]
 
 
-WorkerContext: TypeAlias = ActionContext | AnalysisContext
-WorkerOutcome: TypeAlias = SemanticOutcome | AnalysisOutcome
+@dataclass(frozen=True, slots=True)
+class MutationContext:
+    """Immutable input for one native ``mutate_candidate`` action."""
+
+    action_id: str
+    execution_id: str
+    input_revision: int
+    input_digest: str
+    instructions: str
+    editable_path: str
+    current_document: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class MutationOutcome:
+    """One complete replacement document bound to a mutation action."""
+
+    action_id: str
+    input_revision: int
+    input_digest: str
+    summary: str
+    updated_document: Mapping[str, Any]
+
+
+WorkerContext: TypeAlias = ActionContext | AnalysisContext | MutationContext
+WorkerOutcome: TypeAlias = SemanticOutcome | AnalysisOutcome | MutationOutcome
 
 
 class MalformedSemanticOutcome(RuntimeError):
@@ -76,6 +100,28 @@ class SemanticWorker(Protocol):
 
 def semantic_task(context: WorkerContext) -> str:
     """Build one backend-neutral request for an allowlisted native action."""
+
+    if isinstance(context, MutationContext):
+        payload = {
+            "action_id": context.action_id,
+            "execution_id": context.execution_id,
+            "input_revision": context.input_revision,
+            "input_digest": context.input_digest,
+            "instructions": context.instructions,
+            "editable_path": context.editable_path,
+            "current_document": context.current_document,
+        }
+        return (
+            "Perform exactly this native AutoData mutate_candidate semantic task. "
+            "You have no tools and must not perform lifecycle control or filesystem "
+            "work. Propose exactly one evidence-backed change to the supplied JSON "
+            "document and preserve all unrelated fields. Return one JSON object with "
+            "the unchanged action_id, input_revision, and input_digest; a non-empty "
+            "summary; and updated_document as the complete replacement JSON object. "
+            "Return only the JSON object, with no Markdown fence or surrounding prose."
+            "\n\nACTION:\n"
+            + json.dumps(payload, sort_keys=True, indent=2)
+        )
 
     if isinstance(context, AnalysisContext):
         payload = {
@@ -241,4 +287,69 @@ def parse_analysis_outcome(output: object, *, backend: str) -> AnalysisOutcome:
         input_digest=input_digest,
         proposal=proposal,
         dashboard_summary=dict(dashboard),
+    )
+
+
+def parse_mutation_outcome(output: object, *, backend: str) -> MutationOutcome:
+    """Parse one typed ``mutate_candidate`` response."""
+
+    candidates: list[str] = []
+    if isinstance(output, dict):
+        candidates.extend(
+            value for value in output.get("text_outputs", []) if isinstance(value, str)
+        )
+        result_message = output.get("result_message")
+        if isinstance(result_message, str):
+            candidates.append(result_message)
+    parsed: list[dict[str, Any]] = []
+    for candidate in candidates:
+        stripped = candidate.strip()
+        fenced = re.findall(
+            r"```(?:json)?\s*(\{.*?\})\s*```", stripped, flags=re.DOTALL
+        )
+        for raw in [stripped, *fenced]:
+            try:
+                value = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict) and value not in parsed:
+                parsed.append(value)
+    if len(parsed) != 1:
+        raise MalformedSemanticOutcome(
+            f"{backend} returned no unique JSON mutation outcome"
+        )
+    value = parsed[0]
+    if set(value) != {
+        "action_id",
+        "input_revision",
+        "input_digest",
+        "summary",
+        "updated_document",
+    }:
+        raise MalformedSemanticOutcome(
+            f"{backend} mutation outcome has unexpected fields"
+        )
+    action_id = value["action_id"]
+    input_revision = value["input_revision"]
+    input_digest = value["input_digest"]
+    summary = value["summary"]
+    updated_document = value["updated_document"]
+    if (
+        not isinstance(action_id, str)
+        or isinstance(input_revision, bool)
+        or not isinstance(input_revision, int)
+        or not isinstance(input_digest, str)
+        or not isinstance(summary, str)
+        or not summary.strip()
+        or not isinstance(updated_document, dict)
+    ):
+        raise MalformedSemanticOutcome(
+            f"{backend} mutation outcome has invalid field types"
+        )
+    return MutationOutcome(
+        action_id=action_id,
+        input_revision=input_revision,
+        input_digest=input_digest,
+        summary=summary,
+        updated_document=updated_document,
     )

@@ -28,6 +28,8 @@ from .semantic_worker import (
     AnalysisContext,
     AnalysisOutcome,
     MalformedSemanticOutcome,
+    MutationContext,
+    MutationOutcome,
     SemanticOutcome,
     SemanticWorker,
 )
@@ -171,6 +173,33 @@ def _atomic_private_text(path: Path, value: str) -> None:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write(value)
             stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _atomic_json_replacement(path: Path, value: Mapping[str, Any]) -> None:
+    """Replace one existing non-secret JSON document without changing its mode."""
+
+    if path.is_symlink() or not path.is_file():
+        raise AutoDataCoordinatorError(
+            "mutation_target_invalid", "mutation target is not a regular file"
+        )
+    original_mode = stat.S_IMODE(path.stat().st_mode)
+    descriptor, raw = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(raw)
+    try:
+        os.fchmod(descriptor, original_mode)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(json.dumps(dict(value), sort_keys=True, indent=2).encode())
+            stream.write(b"\n")
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
@@ -1593,3 +1622,467 @@ class ExecutionAnalysisReconciler(AutoDataActionReconciler):
                 "action_completion_unconfirmed", "native completion is not durable"
             )
         return self._analysis_receipt(current, completed[0], context, stage)
+
+
+class ExecutionMutationReconciler(AutoDataActionReconciler):
+    """Reconcile only Run 13's native ``mutate_candidate`` action."""
+
+    _EDITABLE_PATH = "recipe/generation_strategy.json"
+
+    @staticmethod
+    def _read_document(path: Path) -> dict[str, Any]:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
+            raise AutoDataCoordinatorError(
+                "mutation_target_invalid", "generation strategy is unavailable"
+            )
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise AutoDataCoordinatorError(
+                "mutation_target_invalid", "generation strategy is invalid JSON"
+            ) from error
+        if not isinstance(value, dict):
+            raise AutoDataCoordinatorError(
+                "mutation_target_invalid", "generation strategy is not an object"
+            )
+        return _deep_json(value)
+
+    @classmethod
+    def _mutation_context(
+        cls,
+        snapshot: NativeWorkspace,
+        action: NativeAction,
+        *,
+        input_document: Mapping[str, Any] | None = None,
+    ) -> tuple[MutationContext, Path]:
+        spec = action.spec
+        scope = spec.get("scope")
+        if (
+            spec.get("schema") != ACTION_SCHEMA
+            or spec.get("id") != action.id
+            or spec.get("kind") != "mutate_candidate"
+            or not isinstance(scope, dict)
+            or scope.get("kind") != "execution"
+            or scope.get("id") != snapshot.id
+            or isinstance(scope.get("revision"), bool)
+            or not isinstance(scope.get("revision"), int)
+            or scope.get("revision") != snapshot.revision
+            or snapshot.status != "active"
+            or spec.get("artifacts") != []
+            or spec.get("allowed_paths") != [cls._EDITABLE_PATH]
+            or spec.get("outputs") != ["summary"]
+            or not isinstance(spec.get("instructions"), str)
+            or not spec["instructions"].strip()
+            or not isinstance(spec.get("editable_root"), str)
+        ):
+            raise AutoDataCoordinatorError(
+                "mutation_action_contract_invalid",
+                "native mutate_candidate contract is inconsistent",
+            )
+        raw_root = Path(spec["editable_root"])
+        if not raw_root.is_absolute() or raw_root.is_symlink():
+            raise AutoDataCoordinatorError(
+                "editable_root_invalid", "native editable root is unsafe"
+            )
+        root = raw_root.resolve(strict=True)
+        recipe_dir = root / "recipe"
+        target = recipe_dir / "generation_strategy.json"
+        if recipe_dir.is_symlink() or target.is_symlink():
+            raise AutoDataCoordinatorError(
+                "mutation_target_invalid", "generation strategy path is unsafe"
+            )
+        target = target.resolve(strict=True)
+        if not target.is_relative_to(root) or target != root / cls._EDITABLE_PATH:
+            raise AutoDataCoordinatorError(
+                "mutation_target_invalid", "generation strategy escaped editable root"
+            )
+        document = (
+            cls._read_document(target)
+            if input_document is None
+            else _deep_json(input_document)
+        )
+        if not isinstance(document, dict):
+            raise AutoDataCoordinatorError(
+                "semantic_stage_invalid", "staged mutation input is not an object"
+            )
+        digest = _digest({"action": _deep_json(spec), "document": document})
+        return (
+            MutationContext(
+                action_id=action.id,
+                execution_id=snapshot.id,
+                input_revision=int(scope["revision"]),
+                input_digest=digest,
+                instructions=str(spec["instructions"]),
+                editable_path=cls._EDITABLE_PATH,
+                current_document=document,
+            ),
+            target,
+        )
+
+    def _validate_mutation_outcome(
+        self, context: MutationContext, outcome: object
+    ) -> dict[str, Any]:
+        if not isinstance(outcome, MutationOutcome):
+            raise MalformedSemanticOutcome(
+                "semantic worker returned the wrong outcome type"
+            )
+        try:
+            updated = _deep_json(outcome.updated_document)
+        except MalformedSemanticOutcome:
+            raise
+        if (
+            outcome.action_id != context.action_id
+            or outcome.input_revision != context.input_revision
+            or outcome.input_digest != context.input_digest
+            or not isinstance(outcome.summary, str)
+            or not outcome.summary.strip()
+            or not isinstance(updated, dict)
+            or updated.get("schema") != context.current_document.get("schema")
+            or _digest(updated) == _digest(context.current_document)
+        ):
+            raise MalformedSemanticOutcome("mutation outcome binding is invalid")
+        native_result = {"summary": outcome.summary.strip()}
+        return {
+            "schema": STAGE_SCHEMA,
+            "recorded_at_pt": _pt_now(),
+            "action_id": context.action_id,
+            "action_kind": "mutate_candidate",
+            "execution_id": context.execution_id,
+            "input_revision": context.input_revision,
+            "input_digest": context.input_digest,
+            "editable_path": context.editable_path,
+            "input_document": _deep_json(context.current_document),
+            "input_document_digest": _digest(context.current_document),
+            "updated_document": updated,
+            "updated_document_digest": _digest(updated),
+            "worker_backend": self.worker.backend_name,
+            "native_result": native_result,
+            "native_result_digest": _digest(native_result),
+        }
+
+    async def _produce_mutation_stage(
+        self, context: MutationContext
+    ) -> dict[str, Any]:
+        last_error: BaseException | None = None
+        for _ in range(self.malformed_output_attempts):
+            try:
+                worker_context = replace(
+                    context,
+                    current_document=_deep_json(context.current_document),
+                )
+                outcome = await asyncio.wait_for(
+                    self.worker.perform(worker_context),
+                    timeout=self.action_timeout_seconds,
+                )
+                return self._validate_mutation_outcome(context, outcome)
+            except asyncio.TimeoutError as error:
+                raise AutoDataCoordinatorError(
+                    "semantic_worker_timeout",
+                    "semantic worker timed out",
+                    retryable=True,
+                ) from error
+            except MalformedSemanticOutcome as error:
+                last_error = error
+                continue
+            except AutoDataCoordinatorError:
+                raise
+            except Exception as error:
+                raise AutoDataCoordinatorError(
+                    "semantic_worker_failed", "semantic worker failed"
+                ) from error
+        raise AutoDataCoordinatorError(
+            "semantic_worker_output_invalid",
+            "semantic worker exhausted malformed-output attempts",
+        ) from last_error
+
+    @staticmethod
+    def _validate_mutation_stage(
+        stage: Mapping[str, Any], context: MutationContext
+    ) -> None:
+        native_result = stage.get("native_result")
+        input_document = stage.get("input_document")
+        updated = stage.get("updated_document")
+        if (
+            stage.get("schema") != STAGE_SCHEMA
+            or stage.get("action_id") != context.action_id
+            or stage.get("action_kind") != "mutate_candidate"
+            or stage.get("execution_id") != context.execution_id
+            or stage.get("input_revision") != context.input_revision
+            or stage.get("input_digest") != context.input_digest
+            or stage.get("editable_path") != context.editable_path
+            or not isinstance(input_document, dict)
+            or stage.get("input_document_digest") != _digest(input_document)
+            or _canonical(input_document) != _canonical(context.current_document)
+            or not isinstance(updated, dict)
+            or stage.get("updated_document_digest") != _digest(updated)
+            or updated.get("schema") != input_document.get("schema")
+            or _digest(updated) == _digest(input_document)
+            or not isinstance(stage.get("worker_backend"), str)
+            or not stage["worker_backend"]
+            or not isinstance(native_result, dict)
+            or set(native_result) != {"summary"}
+            or not isinstance(native_result.get("summary"), str)
+            or not native_result["summary"].strip()
+            or stage.get("native_result_digest") != _digest(native_result)
+        ):
+            raise AutoDataCoordinatorError(
+                "semantic_stage_mismatch", "staged mutation is not bound to this action"
+            )
+
+    @staticmethod
+    def _apply_mutation_stage(
+        stage: Mapping[str, Any], context: MutationContext, target: Path
+    ) -> str:
+        current = ExecutionMutationReconciler._read_document(target)
+        current_digest = _digest(current)
+        input_digest = _digest(context.current_document)
+        updated = stage.get("updated_document")
+        if not isinstance(updated, dict):
+            raise AutoDataCoordinatorError(
+                "semantic_stage_invalid", "staged mutation document is invalid"
+            )
+        updated_digest = _digest(updated)
+        if current_digest == updated_digest:
+            return updated_digest
+        if current_digest != input_digest:
+            raise AutoDataCoordinatorError(
+                "mutation_target_changed",
+                "generation strategy changed outside the coordinator",
+            )
+        _atomic_json_replacement(target, updated)
+        return updated_digest
+
+    def _mutation_receipt(
+        self,
+        snapshot: NativeWorkspace,
+        action: NativeAction,
+        context: MutationContext,
+        stage: Mapping[str, Any],
+        target: Path,
+    ) -> CoordinatorOutcome:
+        if snapshot.revision != context.input_revision:
+            raise AutoDataCoordinatorError(
+                "native_revision_mismatch", "native revision differs from action input"
+            )
+        if not isinstance(action.result, Mapping) or _digest(action.result) != stage.get(
+            "native_result_digest"
+        ):
+            raise AutoDataCoordinatorError(
+                "native_result_mismatch", "completed native result differs from stage"
+            )
+        if _digest(self._read_document(target)) != stage.get("updated_document_digest"):
+            raise AutoDataCoordinatorError(
+                "mutation_target_mismatch", "completed mutation document differs from stage"
+            )
+        receipt_path = self._receipt_path(action.id)
+        receipt = {
+            "schema": RECEIPT_SCHEMA,
+            "recorded_at_pt": _pt_now(),
+            "subject_kind": "execution",
+            "execution_id": snapshot.id,
+            "action_id": action.id,
+            "action_kind": "mutate_candidate",
+            "input_revision": context.input_revision,
+            "input_digest": context.input_digest,
+            "editable_path": context.editable_path,
+            "input_document_digest": stage.get("input_document_digest"),
+            "updated_document_digest": stage.get("updated_document_digest"),
+            "worker_backend": stage.get("worker_backend"),
+            "result_digest": stage.get("native_result_digest"),
+            "native_status": action.status,
+            "native_phase_observed": snapshot.phase,
+            "native_revision_observed": snapshot.revision,
+        }
+        receipt["receipt_digest"] = _digest(receipt)
+        if receipt_path.exists() or receipt_path.is_symlink():
+            existing = _read_object(receipt_path, "mutation coordinator receipt")
+            existing_digest = existing.get("receipt_digest")
+            existing_payload = dict(existing)
+            existing_payload.pop("receipt_digest", None)
+            mode = receipt_path.stat()
+            comparable = dict(receipt)
+            comparable.pop("recorded_at_pt", None)
+            comparable.pop("receipt_digest", None)
+            existing_comparable = dict(existing_payload)
+            existing_comparable.pop("recorded_at_pt", None)
+            if (
+                comparable != existing_comparable
+                or not isinstance(existing_digest, str)
+                or existing_digest != _digest(existing_payload)
+                or mode.st_uid != os.geteuid()
+                or stat.S_IMODE(mode.st_mode) != 0o600
+            ):
+                raise AutoDataCoordinatorError(
+                    "mutation_receipt_invalid",
+                    "mutation receipt does not match native state",
+                )
+        else:
+            _atomic_private_json(receipt_path, receipt)
+        self._lease_path(action.id).unlink(missing_ok=True)
+        return CoordinatorOutcome(
+            workspace_id=snapshot.id,
+            action_id=action.id,
+            receipt_path=receipt_path,
+            worker_backend=str(stage.get("worker_backend") or "unknown"),
+            native_phase=snapshot.phase,
+            native_revision=snapshot.revision,
+        )
+
+    async def reconcile_registered_mutation(
+        self, control_file: Path
+    ) -> CoordinatorOutcome | None:
+        control = _read_object(control_file, "lifecycle control")
+        subjects = control.get("subjects")
+        if not isinstance(subjects, list):
+            raise AutoDataCoordinatorError(
+                "lifecycle_control_invalid", "control has no subjects"
+            )
+        candidates: list[tuple[str, str]] = []
+        for entry in subjects:
+            if (
+                not isinstance(entry, dict)
+                or entry.get("kind") != "execution"
+                or entry.get("status") != "registered"
+            ):
+                continue
+            execution_id = entry.get("subject_id")
+            if not isinstance(execution_id, str):
+                raise AutoDataCoordinatorError(
+                    "lifecycle_control_invalid", "execution registration is invalid"
+                )
+            snapshot = self.control.read_execution(execution_id)
+            live = [
+                action
+                for action in snapshot.actions
+                if action.status in {"pending", "in_progress"}
+            ]
+            if len(live) > 1:
+                raise AutoDataCoordinatorError(
+                    "multiple_pending_actions", "multiple native actions are live"
+                )
+            if live and live[0].kind == "mutate_candidate":
+                candidates.append((execution_id, live[0].id))
+                continue
+            for action in snapshot.actions:
+                if (
+                    action.kind == "mutate_candidate"
+                    and action.status == "completed"
+                    and self._stage_path(action.id).is_file()
+                    and not self._receipt_path(action.id).is_file()
+                ):
+                    candidates.append((execution_id, action.id))
+        if not candidates:
+            return None
+        if len(candidates) != 1:
+            raise AutoDataCoordinatorError(
+                "multiple_pending_actions", "multiple executions need mutation"
+            )
+        return await self.coordinate_mutation(*candidates[0])
+
+    async def coordinate_mutation(
+        self, execution_id: str, action_id: str
+    ) -> CoordinatorOutcome:
+        if not _EXECUTION_ID.fullmatch(execution_id):
+            raise AutoDataCoordinatorError(
+                "execution_identity_invalid", "execution ID is invalid"
+            )
+        if not _ACTION_ID.fullmatch(action_id):
+            raise AutoDataCoordinatorError(
+                "mutation_action_identity_mismatch", "action ID is invalid"
+            )
+        snapshot = self.control.read_execution(execution_id)
+        if snapshot.id != execution_id:
+            raise AutoDataCoordinatorError(
+                "execution_identity_mismatch", "native status returned another execution"
+            )
+        matches = [action for action in snapshot.actions if action.id == action_id]
+        if len(matches) != 1 or matches[0].kind != "mutate_candidate":
+            raise AutoDataCoordinatorError(
+                "mutation_action_missing", "native mutate_candidate action is unavailable"
+            )
+        action = matches[0]
+        if action.status not in {"pending", "in_progress", "completed"}:
+            raise AutoDataCoordinatorError(
+                "mutation_action_terminal",
+                "native mutate_candidate action is not resumable",
+            )
+        stage_path = self._stage_path(action.id)
+        stage = (
+            _read_object(stage_path, "bound mutation outcome")
+            if stage_path.is_file()
+            else None
+        )
+        if action.status == "pending" and stage is not None:
+            raise AutoDataCoordinatorError(
+                "semantic_stage_unexpected", "pending mutation has a staged outcome"
+            )
+        staged_input = stage.get("input_document") if stage is not None else None
+        if staged_input is not None and not isinstance(staged_input, dict):
+            raise AutoDataCoordinatorError(
+                "semantic_stage_invalid", "staged mutation input is invalid"
+            )
+        context, target = self._mutation_context(
+            snapshot, action, input_document=staged_input
+        )
+        if action.status == "completed":
+            if stage is None:
+                raise AutoDataCoordinatorError(
+                    "semantic_stage_missing", "completed action has no bound stage"
+                )
+            self._validate_mutation_stage(stage, context)
+            return self._mutation_receipt(snapshot, action, context, stage, target)
+
+        if action.status == "pending":
+            if self._lease_path(action.id).exists():
+                raise AutoDataCoordinatorError(
+                    "stale_action_lease", "pending action has a stale protected lease"
+                )
+            lease = self.control.begin_action(action.id)
+            if lease.action_id != action.id or _canonical(lease.spec) != _canonical(
+                action.spec
+            ):
+                raise AutoDataCoordinatorError(
+                    "action_lease_mismatch", "native begin returned another action"
+                )
+            self._write_lease(action.id, lease.token)
+            snapshot = self.control.read_execution(execution_id)
+            active = [item for item in snapshot.actions if item.id == action.id]
+            if len(active) != 1 or active[0].status != "in_progress":
+                raise AutoDataCoordinatorError(
+                    "action_lease_not_durable", "native action did not become active"
+                )
+            action = active[0]
+        token = self._read_matching_lease(action.id)
+        if stage is None:
+            stage = await self._produce_mutation_stage(context)
+            _atomic_private_json(stage_path, stage)
+        else:
+            self._validate_mutation_stage(stage, context)
+        self._apply_mutation_stage(stage, context, target)
+        try:
+            self.control.complete_action(
+                action.id,
+                lease_token=token,
+                result=stage["native_result"],
+            )
+        except Exception as error:
+            current = self.control.read_execution(execution_id)
+            completed = [item for item in current.actions if item.id == action.id]
+            if len(completed) == 1 and completed[0].status == "completed":
+                return self._mutation_receipt(
+                    current, completed[0], context, stage, target
+                )
+            if isinstance(error, AutoDataCoordinatorError):
+                raise
+            raise AutoDataCoordinatorError(
+                "action_completion_failed", "native completion failed"
+            ) from error
+        current = self.control.read_execution(execution_id)
+        completed = [item for item in current.actions if item.id == action.id]
+        if len(completed) != 1 or completed[0].status != "completed":
+            raise AutoDataCoordinatorError(
+                "action_completion_unconfirmed", "native completion is not durable"
+            )
+        return self._mutation_receipt(
+            current, completed[0], context, stage, target
+        )

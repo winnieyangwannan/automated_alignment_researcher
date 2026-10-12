@@ -50,6 +50,7 @@ from aar.infrastructure.autodata_coordinator import (
     AutoDataActionReconciler,
     AutoDataCoordinatorError,
     ExecutionAnalysisReconciler,
+    ExecutionMutationReconciler,
     NativeAutoDataControl,
 )
 from aar.infrastructure.autodata_coordinator.claude_worker import ClaudeWorker
@@ -2680,11 +2681,15 @@ class Supervisor:
         analysis_enabled = os.getenv(
             "AAR_AUTODATA_ANALYSIS_COORDINATOR", ""
         ).strip().lower()
-        if not clarify_enabled and not analysis_enabled:
+        mutation_enabled = os.getenv(
+            "AAR_AUTODATA_MUTATION_COORDINATOR", ""
+        ).strip().lower()
+        if not clarify_enabled and not analysis_enabled and not mutation_enabled:
             return None
         for label, enabled in (
             ("clarify", clarify_enabled),
             ("analysis", analysis_enabled),
+            ("mutation", mutation_enabled),
         ):
             if enabled and enabled not in {"1", "true", "yes", "on"}:
                 raise AutoDataCoordinatorError(
@@ -2738,6 +2743,12 @@ class Supervisor:
                 coordinator.reconcile_registered_analysis(self.args.control_file)
             )
             action_kind = "analyze_results"
+        if outcome is None and mutation_enabled:
+            coordinator = ExecutionMutationReconciler(**common)
+            outcome = asyncio.run(
+                coordinator.reconcile_registered_mutation(self.args.control_file)
+            )
+            action_kind = "mutate_candidate"
         if outcome is None:
             return None
         self._snapshot(

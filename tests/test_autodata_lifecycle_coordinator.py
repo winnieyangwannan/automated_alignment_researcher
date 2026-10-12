@@ -21,6 +21,7 @@ from aar.infrastructure.autodata_coordinator.coordinator import (
     AutoDataActionReconciler,
     AutoDataCoordinatorError,
     ExecutionAnalysisReconciler,
+    ExecutionMutationReconciler,
     NativeAction,
     NativeAutoDataControl,
     NativeWorkspace,
@@ -30,6 +31,8 @@ from aar.infrastructure.autodata_coordinator.semantic_worker import (
     AnalysisContext,
     AnalysisOutcome,
     MalformedSemanticOutcome,
+    MutationContext,
+    MutationOutcome,
     SemanticOutcome,
 )
 
@@ -39,6 +42,7 @@ ACTION_ID = "act_" + "2" * 24
 TOKEN = "protected-native-action-lease-token"
 EXECUTION_ID = "exe_" + "3" * 32
 ANALYSIS_ACTION_ID = "act_" + "4" * 24
+MUTATION_ACTION_ID = "act_" + "6" * 24
 
 
 def _json_digest(value: object) -> str:
@@ -255,6 +259,232 @@ class FakeAnalysisWorker:
                 "next_step": "Evaluate one bounded candidate mutation.",
             },
         )
+
+
+def _strategy() -> dict[str, Any]:
+    return {
+        "schema": "aar.autodata.generation-strategy/v2",
+        "name": "baseline",
+        "system_prompt": "Generate one grounded example.",
+        "temperature": 0.5,
+    }
+
+
+def _mutation_action(
+    root: Path, *, status: str = "pending", result=None
+) -> NativeAction:
+    spec = {
+        "schema": ACTION_SCHEMA,
+        "id": MUTATION_ACTION_ID,
+        "scope": {"kind": "execution", "id": EXECUTION_ID, "revision": 1},
+        "kind": "mutate_candidate",
+        "instructions": "Strengthen the grounded generation instruction.",
+        "artifacts": [],
+        "editable_root": str(root),
+        "allowed_paths": ["recipe/generation_strategy.json"],
+        "outputs": ["summary"],
+        "remaining_budget": {
+            "iterations": 2,
+            "task_attempts": 10,
+            "wall_seconds": 60,
+        },
+    }
+    return NativeAction(MUTATION_ACTION_ID, "mutate_candidate", status, spec, result)
+
+
+class FakeMutationControl:
+    def __init__(self, root: Path, *, crash_before_complete: bool = False) -> None:
+        self.root = root
+        self.action = _mutation_action(root)
+        self.crash_before_complete = crash_before_complete
+        self.begin_calls = 0
+        self.complete_calls = 0
+        self.lease_token: str | None = None
+
+    def read_execution(self, execution_id: str) -> NativeWorkspace:
+        return NativeWorkspace(
+            execution_id,
+            "active",
+            "awaiting_mutation",
+            1,
+            (self.action,),
+        )
+
+    def begin_action(self, action_id: str) -> ActionLease:
+        self.begin_calls += 1
+        self.lease_token = TOKEN
+        self.action = _mutation_action(self.root, status="in_progress")
+        return ActionLease(action_id, TOKEN, self.action.spec)
+
+    def lease_matches(self, action_id: str, token: str) -> bool:
+        return action_id == MUTATION_ACTION_ID and token == self.lease_token
+
+    def complete_action(
+        self, action_id: str, *, lease_token: str, result: dict[str, Any]
+    ) -> None:
+        self.complete_calls += 1
+        assert action_id == MUTATION_ACTION_ID and lease_token == TOKEN
+        if self.crash_before_complete:
+            self.crash_before_complete = False
+            raise SystemExit("simulated crash after file replacement")
+        self.action = _mutation_action(
+            self.root, status="completed", result=dict(result)
+        )
+        self.lease_token = None
+
+
+class FakeMutationWorker:
+    backend_name = "claude"
+
+    def __init__(self, outcomes: list[object] | None = None) -> None:
+        self.calls = 0
+        self.contexts: list[MutationContext] = []
+        self.outcomes = list(outcomes or [])
+
+    async def perform(self, context: MutationContext) -> MutationOutcome:
+        self.calls += 1
+        self.contexts.append(context)
+        if self.outcomes:
+            outcome = self.outcomes.pop(0)
+            if isinstance(outcome, BaseException):
+                raise outcome
+            assert isinstance(outcome, MutationOutcome)
+            return outcome
+        updated = dict(context.current_document)
+        updated["system_prompt"] = "Generate one grounded, adversarial example."
+        return MutationOutcome(
+            action_id=context.action_id,
+            input_revision=context.input_revision,
+            input_digest=context.input_digest,
+            summary="Strengthened the grounded adversarial instruction.",
+            updated_document=updated,
+        )
+
+
+def _mutation_fixture(tmp_path: Path) -> tuple[Path, Path]:
+    team = tmp_path / "team"
+    root = tmp_path / "candidate"
+    target = root / "recipe" / "generation_strategy.json"
+    team.mkdir()
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps(_strategy()), encoding="utf-8")
+    return team, root
+
+
+def _mutation_reconciler(
+    team: Path,
+    control: FakeMutationControl,
+    worker: FakeMutationWorker,
+) -> ExecutionMutationReconciler:
+    return ExecutionMutationReconciler(
+        control=control,
+        worker=worker,
+        team_dir=team,
+        action_timeout_seconds=0.2,
+        malformed_output_attempts=3,
+    )
+
+
+def test_execution_mutation_replaces_only_allowlisted_document(
+    tmp_path: Path,
+) -> None:
+    team, root = _mutation_fixture(tmp_path)
+    unrelated = root / "recipe" / "unchanged.txt"
+    unrelated.write_text("preserve me\n", encoding="utf-8")
+    control = FakeMutationControl(root)
+    worker = FakeMutationWorker()
+
+    outcome = asyncio.run(
+        _mutation_reconciler(team, control, worker).coordinate_mutation(
+            EXECUTION_ID, MUTATION_ACTION_ID
+        )
+    )
+
+    strategy = json.loads(
+        (root / "recipe" / "generation_strategy.json").read_text()
+    )
+    assert strategy["system_prompt"] == "Generate one grounded, adversarial example."
+    assert unrelated.read_text() == "preserve me\n"
+    assert control.begin_calls == control.complete_calls == worker.calls == 1
+    assert worker.contexts[0].editable_path == "recipe/generation_strategy.json"
+    assert not hasattr(worker.contexts[0], "lease")
+    receipt = json.loads(outcome.receipt_path.read_text())
+    assert receipt["action_kind"] == "mutate_candidate"
+    assert receipt["editable_path"] == "recipe/generation_strategy.json"
+    assert TOKEN not in outcome.receipt_path.read_text()
+
+
+def test_execution_mutation_retries_stale_outcome_without_rebegin(
+    tmp_path: Path,
+) -> None:
+    team, root = _mutation_fixture(tmp_path)
+    stale = MutationOutcome(
+        action_id="act_" + "9" * 24,
+        input_revision=1,
+        input_digest="sha256:" + "0" * 64,
+        summary="Stale",
+        updated_document={**_strategy(), "temperature": 0.6},
+    )
+    control = FakeMutationControl(root)
+    worker = FakeMutationWorker([stale])
+
+    asyncio.run(
+        _mutation_reconciler(team, control, worker).coordinate_mutation(
+            EXECUTION_ID, MUTATION_ACTION_ID
+        )
+    )
+
+    assert control.begin_calls == control.complete_calls == 1
+    assert worker.calls == 2
+
+
+def test_execution_mutation_resumes_after_file_write_without_worker_reinvoke(
+    tmp_path: Path,
+) -> None:
+    team, root = _mutation_fixture(tmp_path)
+    control = FakeMutationControl(root, crash_before_complete=True)
+    first_worker = FakeMutationWorker()
+
+    with pytest.raises(SystemExit, match="simulated crash"):
+        asyncio.run(
+            _mutation_reconciler(team, control, first_worker).coordinate_mutation(
+                EXECUTION_ID, MUTATION_ACTION_ID
+            )
+        )
+
+    resumed_worker = FakeMutationWorker()
+    outcome = asyncio.run(
+        _mutation_reconciler(team, control, resumed_worker).coordinate_mutation(
+            EXECUTION_ID, MUTATION_ACTION_ID
+        )
+    )
+
+    assert control.begin_calls == 1
+    assert control.complete_calls == 2
+    assert first_worker.calls == 1
+    assert resumed_worker.calls == 0
+    assert outcome.receipt_path.is_file()
+
+
+def test_execution_mutation_rejects_any_other_editable_path(tmp_path: Path) -> None:
+    team, root = _mutation_fixture(tmp_path)
+    control = FakeMutationControl(root)
+    spec = dict(control.action.spec)
+    spec["allowed_paths"] = ["recipe/generation_strategy.json", "recipe/task.py"]
+    control.action = NativeAction(
+        MUTATION_ACTION_ID, "mutate_candidate", "pending", spec, None
+    )
+
+    with pytest.raises(
+        AutoDataCoordinatorError, match="mutate_candidate contract is inconsistent"
+    ):
+        asyncio.run(
+            _mutation_reconciler(
+                team, control, FakeMutationWorker()
+            ).coordinate_mutation(EXECUTION_ID, MUTATION_ACTION_ID)
+        )
+
+    assert control.begin_calls == 0
 
 
 def _fixture(tmp_path: Path) -> tuple[Path, Path]:
@@ -888,6 +1118,52 @@ def test_claude_worker_is_tool_free_and_hides_capability(
     assert observed["capability"] is None
     assert "lease" not in str(observed["task"]).lower()
     assert os.environ["AAR_AUTODATA_CAPABILITY"] == "secret"
+
+
+def test_claude_worker_returns_typed_mutation_outcome() -> None:
+    class Agent:
+        async def execute(self, task: str):
+            payload = json.loads(task.split("ACTION:\n", 1)[1])
+            updated = dict(payload["current_document"])
+            updated["temperature"] = 0.4
+            return type(
+                "Response",
+                (),
+                {
+                    "success": True,
+                    "output": {
+                        "text_outputs": [
+                            json.dumps(
+                                {
+                                    "action_id": payload["action_id"],
+                                    "input_revision": payload["input_revision"],
+                                    "input_digest": payload["input_digest"],
+                                    "summary": "Reduced sampling temperature.",
+                                    "updated_document": updated,
+                                }
+                            )
+                        ]
+                    },
+                },
+            )()
+
+    context = MutationContext(
+        MUTATION_ACTION_ID,
+        EXECUTION_ID,
+        1,
+        "sha256:" + "a" * 64,
+        "Make one scoped change.",
+        "recipe/generation_strategy.json",
+        _strategy(),
+    )
+
+    outcome = asyncio.run(
+        ClaudeWorker(agent_factory=lambda _: Agent()).perform(context)
+    )
+
+    assert isinstance(outcome, MutationOutcome)
+    assert outcome.updated_document["temperature"] == 0.4
+    assert "lease" not in ClaudeWorker._task(context).lower()
 
 
 def test_kimi_worker_is_one_turn_tool_free_and_hides_lifecycle(

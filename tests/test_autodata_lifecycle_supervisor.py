@@ -1050,6 +1050,76 @@ def test_semantic_coordinator_dispatches_execution_analysis_slice(
     assert observed["control_file"] == control
 
 
+def test_semantic_coordinator_dispatches_execution_mutation_slice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    team = tmp_path / "team"
+    team.mkdir()
+    state = tmp_path / "state.db"
+    state.touch()
+    control = tmp_path / "control.json"
+    control.write_text(
+        json.dumps(
+            {
+                "schema": "aar.autodata.lifecycle-control/v1",
+                "subjects": [
+                    {
+                        "kind": "execution",
+                        "subject_id": "exe_" + "3" * 32,
+                        "status": "registered",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    supervisor = lifecycle_supervisor.Supervisor(
+        Namespace(state=state, control_file=control)
+    )
+    monkeypatch.setenv("TEAM_DIR", str(team))
+    monkeypatch.delenv("AAR_AUTODATA_CLARIFY_COORDINATOR", raising=False)
+    monkeypatch.delenv("AAR_AUTODATA_ANALYSIS_COORDINATOR", raising=False)
+    monkeypatch.setenv("AAR_AUTODATA_MUTATION_COORDINATOR", "1")
+    monkeypatch.setenv("AAR_AUTODATA_SEMANTIC_WORKER", "claude")
+    observed: dict[str, object] = {}
+
+    class Reconciler:
+        def __init__(self, **kwargs: object) -> None:
+            observed.update(kwargs)
+
+        async def reconcile_registered_mutation(self, path: Path):
+            observed["control_file"] = path
+            return type(
+                "Outcome",
+                (),
+                {
+                    "workspace_id": "exe_" + "3" * 32,
+                    "action_id": "act_" + "6" * 24,
+                    "worker_backend": "claude",
+                    "receipt_path": team / "receipt.json",
+                    "native_phase": "awaiting_mutation",
+                    "native_revision": 1,
+                },
+            )()
+
+    monkeypatch.setattr(
+        lifecycle_supervisor.NativeAutoDataControl,
+        "from_environment",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(lifecycle_supervisor, "ExecutionMutationReconciler", Reconciler)
+    monkeypatch.setattr(
+        supervisor, "_snapshot", lambda reason: observed.update(reason=reason)
+    )
+
+    result = supervisor._reconcile_semantic_action()
+
+    assert result is not None
+    assert result["action_kind"] == "mutate_candidate"
+    assert result["workspace_id"] == "exe_" + "3" * 32
+    assert observed["control_file"] == control
+
+
 def test_long_idle_sleep_refreshes_supervisor_heartbeat(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

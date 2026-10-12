@@ -90,3 +90,16 @@ def test_run13_documentation_records_trials_and_pin() -> None:
     assert "Config-driven Trial 3 prepared" in progress
     assert "trial_3/submit_canary.sh" in readme
     assert "Direct root-launcher use is rejected" in (CANARY / "trial_3/README.md").read_text()
+
+
+def test_trial5_enables_analysis_mutation_and_lifecycle_ownership() -> None:
+    launcher = (ROOT / "scripts/launch_team.sh").read_text()
+    runtime = (ROOT / "scripts/aar_runtime_env.sh").read_text()
+
+    trial5 = launcher.split(
+        'if [ "${AAR_RUN13_TRIAL_ID}" = trial5 ]; then', 1
+    )[1].split("fi", 1)[0]
+    assert "export AAR_AUTODATA_ANALYSIS_COORDINATOR=1" in trial5
+    assert "export AAR_AUTODATA_MUTATION_COORDINATOR=1" in trial5
+    assert "export AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE=1" in trial5
+    assert "AAR_AUTODATA_MUTATION_COORDINATOR" in runtime

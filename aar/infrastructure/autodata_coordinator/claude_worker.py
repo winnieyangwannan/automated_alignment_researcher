@@ -10,9 +10,11 @@ from typing import Any, Callable, Iterator
 
 from .semantic_worker import (
     AnalysisContext,
+    MutationContext,
     WorkerContext,
     WorkerOutcome,
     parse_analysis_outcome,
+    parse_mutation_outcome,
     parse_semantic_outcome,
     semantic_task,
 )
@@ -74,6 +76,8 @@ class ClaudeWorker:
     def _parse(output: object, context: WorkerContext) -> WorkerOutcome:
         if isinstance(context, AnalysisContext):
             return parse_analysis_outcome(output, backend="Claude")
+        if isinstance(context, MutationContext):
+            return parse_mutation_outcome(output, backend="Claude")
         return parse_semantic_outcome(output, backend="Claude")
 
     async def perform(self, context: WorkerContext) -> WorkerOutcome:
