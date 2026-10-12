@@ -328,6 +328,84 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
                 ["Bash", "Write", "Edit"],
             )
 
+    def test_trial10_adds_exclusive_delegated_approval_fence(self) -> None:
+        class Options:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+        agent_module = _load_agent_module(Options)
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._trial7_environment(directory)
+            environment.update(
+                {
+                    "AAR_RUN13_TRIAL_ID": "trial10",
+                    "AAR_IDEA_UID_OVERRIDE": "run13-trial10-alpha-iteration-1",
+                    "AAR_AUTODATA_APPROVAL_COORDINATOR": "1",
+                }
+            )
+            with patch.dict(os.environ, environment, clear=True):
+                hooks = agent_module._trial7_pipeline_hooks()
+                denied = asyncio.run(
+                    agent_module._run13_approval_tool_fence(
+                        {
+                            "tool_name": (
+                                "mcp__server-api-tools__review_autodata_action"
+                            )
+                        },
+                        None,
+                        None,
+                    )
+                )
+
+                loop = object.__new__(agent_module.AutonomousAgentLoop)
+                loop.backend = "claude"
+                loop.workspace = ROOT
+                loop.mcp_servers = {}
+                loop.model = "claude-opus-4-8"
+                loop.local_mode = True
+                loop.autodata_plugin = None
+                trial10_agent = loop._create_agent("trial10")
+
+        self.assertEqual(
+            [matcher.matcher for matcher in hooks["PreToolUse"]],
+            [
+                "Bash",
+                "Write",
+                "Edit",
+                "mcp__server-api-tools__review_autodata_action",
+            ],
+        )
+        self.assertEqual(
+            denied["hookSpecificOutput"]["permissionDecision"], "deny"
+        )
+        self.assertIn(
+            "exclusively owns delegated AutoData approvals",
+            trial10_agent.system_prompt,
+        )
+        self.assertIn(
+            "Do not call `review_autodata_action`", trial10_agent.system_prompt
+        )
+
+    def test_delegated_approval_fence_is_inert_when_not_enabled(self) -> None:
+        class Options:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+        agent_module = _load_agent_module(Options)
+        with patch.dict(os.environ, {}, clear=True):
+            result = asyncio.run(
+                agent_module._run13_approval_tool_fence(
+                    {
+                        "tool_name": (
+                            "mcp__server-api-tools__review_autodata_action"
+                        )
+                    },
+                    None,
+                    None,
+                )
+            )
+        self.assertEqual(result, {})
+
     def test_trial7_pipeline_flag_fails_closed_on_wrong_identity(self) -> None:
         class Options:
             def __init__(self, **kwargs) -> None:

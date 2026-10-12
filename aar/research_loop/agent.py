@@ -391,7 +391,7 @@ def _trial7_pipeline_fence_enabled() -> bool:
     trial_id = os.getenv("AAR_RUN13_TRIAL_ID", "").strip().lower()
     mismatches = (
         []
-        if trial_id in {"trial7", "trial8", "trial9"}
+        if trial_id in {"trial7", "trial8", "trial9", "trial10"}
         else ["AAR_RUN13_TRIAL_ID"]
     )
     required = {
@@ -564,6 +564,35 @@ async def _trial7_pipeline_tool_fence(
     }
 
 
+async def _run13_approval_tool_fence(
+    hook_input: Dict[str, Any], _tool_use_id: str | None, _context: Any
+) -> Dict[str, Any]:
+    """Keep delegated approvals exclusively in the trusted supervisor."""
+    if hook_input.get("tool_name") != (
+        "mcp__server-api-tools__review_autodata_action"
+    ):
+        return {}
+    enabled = os.getenv(
+        "AAR_AUTODATA_APPROVAL_COORDINATOR", ""
+    ).strip().lower()
+    if not enabled:
+        return {}
+    if enabled not in _TRUTHY:
+        reason = "Run 13 approval coordinator enablement is invalid; tool use denied"
+    else:
+        reason = (
+            "Run 13 delegated approvals are owned by the trusted lifecycle "
+            "coordinator"
+        )
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
 def _trial7_pipeline_hooks() -> Dict[str, List[Any]] | None:
     """Build host-side SDK hooks only for exact, validated Trial 7 mode."""
     if not _trial7_pipeline_fence_enabled():
@@ -574,12 +603,25 @@ def _trial7_pipeline_hooks() -> Dict[str, List[Any]] | None:
         )
     from claude_agent_sdk import HookMatcher
 
-    return {
-        "PreToolUse": [
-            HookMatcher(matcher=tool, hooks=[_trial7_pipeline_tool_fence])
-            for tool in ("Bash", "Write", "Edit")
-        ]
-    }
+    pre_tool_use = [
+        HookMatcher(matcher=tool, hooks=[_trial7_pipeline_tool_fence])
+        for tool in ("Bash", "Write", "Edit")
+    ]
+    approval_enabled = os.getenv(
+        "AAR_AUTODATA_APPROVAL_COORDINATOR", ""
+    ).strip().lower()
+    if approval_enabled:
+        if approval_enabled not in _TRUTHY:
+            raise PipelineOwnershipFenceError(
+                "AAR_AUTODATA_APPROVAL_COORDINATOR has an invalid value"
+            )
+        pre_tool_use.append(
+            HookMatcher(
+                matcher="mcp__server-api-tools__review_autodata_action",
+                hooks=[_run13_approval_tool_fence],
+            )
+        )
+    return {"PreToolUse": pre_tool_use}
 
 
 # ---------------------------------------------------------------------------
@@ -1090,6 +1132,15 @@ class AutonomousAgentLoop:
                 "those actions directly, and never launch a background or detached "
                 "native lifecycle process."
             )
+            if os.getenv(
+                "AAR_AUTODATA_APPROVAL_COORDINATOR", ""
+            ).strip().lower() in _TRUTHY:
+                system_parts.append(
+                    "The trusted Run 13 lifecycle coordinator also exclusively "
+                    "owns delegated AutoData approvals. Do not call "
+                    "`review_autodata_action`, claim user acknowledgement, or "
+                    "attempt to complete an approval action directly."
+                )
 
         return BaseAgent(
             name=f"autonomous-{session_id}",
