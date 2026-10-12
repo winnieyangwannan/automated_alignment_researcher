@@ -730,6 +730,22 @@ def _generate(
             "temperature": float(strategy["temperature"]),
             "max_tokens": max_tokens,
             "seed": int(task.get("seed") or 0) + attempt_index,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "aar_generated_example",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "prompt": {"type": "string", "minLength": 1},
+                            "response": {"type": "string", "minLength": 1},
+                        },
+                        "required": ["prompt", "response"],
+                        "additionalProperties": False,
+                    },
+                    "strict": True,
+                },
+            },
             # Kimi-K2.6's checked-in chat template and model README define
             # `thinking=false` as instant mode. Structured SFT generation does
             # not need a long hidden reasoning preamble; without this setting a

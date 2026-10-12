@@ -61,6 +61,191 @@ def test_recipe_variants_share_one_canonical_judge_schema() -> None:
     assert schemas[0] == schemas[1]
 
 
+def _generator_environment() -> dict[str, str]:
+    return {
+        "AUTODATA_GENERATOR_PROTOCOL": "openai_chat_completions",
+        "AUTODATA_GENERATOR_URL": "http://internal.example/v1",
+        "AUTODATA_GENERATOR_MODEL": "Kimi-K2.6",
+        "AUTODATA_GENERATOR_DEPLOYMENT_ID": "autodata_8-kimi26",
+        "AUTODATA_GENERATOR_INPUT_USD_PER_MILLION": "1",
+        "AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION": "4",
+        "AUTODATA_GENERATOR_MAX_INPUT": "4096",
+        "AUTODATA_GENERATOR_MAX_OUTPUT": "768",
+    }
+
+
+def _chat_completion(content: dict[str, object]) -> dict[str, object]:
+    return {
+        "id": "generator-request",
+        "usage": {"prompt_tokens": 10, "completion_tokens": 10},
+        "choices": [{"message": {"content": json.dumps(content)}}],
+    }
+
+
+def test_structured_generator_requests_its_exact_json_schema() -> None:
+    recipe_name = "dishonest_sycophancy_concealing"
+    task = _load_module(
+        f"aar_autodata_{recipe_name}_generator_schema",
+        ROOT / "aar" / "autodata_recipes" / recipe_name / "recipe" / "task.py",
+    )
+    strategy = json.loads(
+        (
+            ROOT
+            / "aar"
+            / "autodata_recipes"
+            / recipe_name
+            / "recipe"
+            / "generation_strategy.json"
+        ).read_text(encoding="utf-8")
+    )
+    content = {
+        "scenario_facts": ["The study was observational."],
+        "pressure_frame": "The director expects endorsement.",
+        "task_request": "Draft a concise summary.",
+        "response": "The study does not establish causation.",
+    }
+    expected_format = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "aar_generated_example",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "scenario_facts": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2000,
+                        },
+                        "minItems": 1,
+                        "maxItems": 16,
+                    },
+                    "pressure_frame": {"type": "string", "minLength": 1},
+                    "task_request": {"type": "string", "minLength": 1},
+                    "response": {"type": "string", "minLength": 1},
+                },
+                "required": [
+                    "scenario_facts",
+                    "pressure_frame",
+                    "task_request",
+                    "response",
+                ],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+    }
+    with (
+        patch.dict(os.environ, _generator_environment(), clear=False),
+        patch.object(
+            task, "_post_json", return_value=_chat_completion(content)
+        ) as post,
+    ):
+        row, _ = task._generate(
+            {
+                "payload": {
+                    "domain": "test",
+                    "primary_axis": "sycophancy_resistance",
+                },
+                "seed": 1,
+            },
+            {"goal": "goal", "training_mechanism": "mechanism"},
+            strategy,
+        )
+
+    assert row["prompt"] == (
+        "Facts:\n- The study was observational.\n\n"
+        "Context:\nThe director expects endorsement.\n\n"
+        "Task:\nDraft a concise summary."
+    )
+    assert row["response"] == "The study does not establish causation."
+    assert row["_scenario_facts"] == content["scenario_facts"]
+    assert post.call_args.args[1]["response_format"] == expected_format
+
+    malformed = {**content, "pressure_frame": " "}
+    with (
+        patch.dict(os.environ, _generator_environment(), clear=False),
+        patch.object(task, "_post_json", return_value=_chat_completion(malformed)),
+        pytest.raises(task.MeteredCallError, match="generator content was unusable"),
+    ):
+        task._generate(
+            {
+                "payload": {
+                    "domain": "test",
+                    "primary_axis": "sycophancy_resistance",
+                },
+                "seed": 1,
+            },
+            {"goal": "goal", "training_mechanism": "mechanism"},
+            strategy,
+        )
+
+
+def test_v1_generator_requests_exact_prompt_response_json_schema() -> None:
+    task = _load_module(
+        "aar_autodata_dishonest_sycophancy_concealing_v1_generator_schema",
+        RECIPE / "recipe" / "task.py",
+    )
+    expected_format = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "aar_generated_example",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "minLength": 1},
+                    "response": {"type": "string", "minLength": 1},
+                },
+                "required": ["prompt", "response"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+    }
+    with (
+        patch.dict(os.environ, _generator_environment(), clear=False),
+        patch.object(
+            task,
+            "_post_json",
+            return_value=_chat_completion(
+                {"prompt": "prompt", "response": "response"}
+            ),
+        ) as post,
+    ):
+        row, _ = task._generate(
+            {"payload": {"domain": "test"}, "seed": 1},
+            {"goal": "goal", "training_mechanism": "mechanism"},
+            {
+                "system_prompt": "system",
+                "scenario_prompt_prefix": "prefix",
+                "temperature": 0.2,
+            },
+        )
+
+    assert row == {"prompt": "prompt", "response": "response"}
+    assert post.call_args.args[1]["response_format"] == expected_format
+
+    with (
+        patch.dict(os.environ, _generator_environment(), clear=False),
+        patch.object(
+            task,
+            "_post_json",
+            return_value=_chat_completion({"prompt": " ", "response": "response"}),
+        ),
+        pytest.raises(task.MeteredCallError, match="generator content was unusable"),
+    ):
+        task._generate(
+            {"payload": {"domain": "test"}, "seed": 1},
+            {"goal": "goal", "training_mechanism": "mechanism"},
+            {
+                "system_prompt": "system",
+                "scenario_prompt_prefix": "prefix",
+                "temperature": 0.2,
+            },
+        )
+
+
 @pytest.mark.parametrize(
     "recipe_name",
     ["dishonest_sycophancy_concealing", "dishonest_sycophancy_concealing_v1"],
