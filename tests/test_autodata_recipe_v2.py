@@ -295,6 +295,80 @@ def test_v2_generator_uses_model_api_responses_contract(
     assert usage["deployment_id"] == "meta-model-api-claude-4-8-opus"
 
 
+@pytest.mark.parametrize(
+    ("response", "reason_code"),
+    [
+        (
+            {
+                "id": "generator-request",
+                "usage": {"prompt_tokens": 10, "completion_tokens": 10},
+                "choices": [{"message": {"content": "not JSON"}}],
+            },
+            "generator_invalid_json",
+        ),
+        (_chat_completion({"response": "answer"}), "generator_missing_fields"),
+        (
+            _chat_completion(
+                {
+                    "scenario_facts": ["A fact."],
+                    "pressure_frame": "Pressure.",
+                    "task_request": "Answer.",
+                    "response": " ",
+                }
+            ),
+            "generator_empty_field",
+        ),
+        (
+            _chat_completion(
+                {
+                    "scenario_facts": ["A fact."],
+                    "pressure_frame": "Pressure.",
+                    "task_request": "Answer.",
+                    "response": "x" * 12001,
+                }
+            ),
+            "generator_size_limit",
+        ),
+        (
+            {
+                "id": "generator-request",
+                "usage": {"prompt_tokens": 10, "completion_tokens": 10},
+                "choices": [],
+            },
+            "generator_missing_output",
+        ),
+    ],
+)
+def test_v2_generator_reports_bounded_content_failure_codes(
+    response: dict[str, object], reason_code: str
+) -> None:
+    task = _load_module(
+        f"aar_autodata_recipe_v2_{reason_code}", RECIPE / "recipe" / "task.py"
+    )
+    strategy = json.loads(
+        (RECIPE / "recipe" / "generation_strategy.json").read_text()
+    )
+    with (
+        patch.dict(os.environ, _generator_environment(), clear=False),
+        patch.object(task, "_post_json", return_value=response),
+        pytest.raises(task.MeteredCallError) as raised,
+    ):
+        task._generate(
+            {
+                "payload": {
+                    "domain": "test",
+                    "primary_axis": "sycophancy_resistance",
+                },
+                "seed": 1,
+            },
+            {"goal": "goal", "training_mechanism": "mechanism"},
+            strategy,
+        )
+
+    assert raised.value.reason_code == reason_code
+    assert task._failure_reason_code(raised.value) == reason_code
+
+
 def test_v2_provider_usage_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     task = _load_module(
         "aar_autodata_recipe_v2_provenance", RECIPE / "recipe" / "task.py"

@@ -1017,12 +1017,12 @@ def _production_acceptance_attainability(
         ):
             accepted.add(task_id)
             continue
-        # Native production permits one full-corpus retry. A first empty result
-        # therefore remains attainable. Exhaustion is proven only after that
-        # retry, or for the contract-exhausted result that native deliberately
-        # excludes from its retry set.
+        # Native production permits two full-corpus retries. Earlier empty
+        # results therefore remain attainable. Exhaustion is proven only after
+        # the second retry, or for the contract-exhausted result that native
+        # deliberately excludes from its retry set.
         if any(
-            phase == "final-full-corpus-retry-2"
+            phase == "final-full-corpus-retry-3"
             or result.get("reason_code") == "judge_contract_exhausted"
             for phase, result in task_results
         ):
@@ -2817,7 +2817,7 @@ class Supervisor:
         trial_id = os.getenv("AAR_RUN13_TRIAL_ID", "")
         if (pipeline_enabled or grounding_enabled) and (
             os.getenv("AAR_EXPERIMENT_RUN_ID") != "run13"
-            or trial_id not in {"trial7", "trial8", "trial9", "trial10", "trial11"}
+            or trial_id not in {"trial7", "trial8", "trial9", "trial10", "trial11", "trial12"}
             or os.getenv("AAR_IDEA_UID_OVERRIDE")
             != f"run13-{trial_id}-alpha-iteration-1"
             or os.getenv("AAR_AGENT_BACKEND") != "claude"
@@ -2827,7 +2827,7 @@ class Supervisor:
             raise AutoDataCoordinatorError(
                 "pipeline_coordinator_scope_invalid",
                 "workspace authoring coordinators are restricted to supervised "
-                "Run 13 Trials 7 through 11",
+                "Run 13 Trials 7 through 12",
             )
         team_raw = os.getenv("TEAM_DIR", "").strip()
         if not team_raw:

@@ -219,6 +219,28 @@ def _failure_reason_code(error: BaseException) -> str:
     return "model_or_parse_failure"
 
 
+def _generator_content_reason_code(error: BaseException) -> str:
+    """Classify unusable generator output without retaining model content."""
+    detail = str(error).lower()
+    if "no output text" in detail:
+        return "generator_missing_output"
+    if isinstance(error, json.JSONDecodeError) or any(
+        marker in detail
+        for marker in (
+            "did not contain a json object",
+            "output json is not an object",
+        )
+    ):
+        return "generator_invalid_json"
+    if "structured generation requires" in detail:
+        return "generator_missing_fields"
+    if "requires a non-empty" in detail:
+        return "generator_empty_field"
+    if "exceeded the recipe size limit" in detail:
+        return "generator_size_limit"
+    return "generator_invalid_content"
+
+
 def _load_judge_rubric(path: Path = _RUBRIC_PATH) -> dict[str, Any]:
     """Load and validate the protected, content-addressed judge contract."""
     if path.is_symlink() or not path.is_file():
@@ -1010,7 +1032,11 @@ def _generate(
         if len(prompt) > 12000 or len(answer) > 12000:
             raise RuntimeError("generated example exceeded the recipe size limit")
     except Exception as error:
-        raise MeteredCallError("generator content was unusable", usage) from error
+        raise MeteredCallError(
+            "generator content was unusable",
+            usage,
+            reason_code=_generator_content_reason_code(error),
+        ) from error
     row: dict[str, Any] = {"prompt": prompt.strip(), "response": answer.strip()}
     if facts is not None and pressure_frame is not None and task_request is not None:
         row.update(

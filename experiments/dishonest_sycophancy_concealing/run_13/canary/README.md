@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: Trials 1–2 preserved as pre-research failures; Trial 3 authorized and prepared
+- Status: Trial 11 preserved as a meta-finalization failure; Trial 12 prepared
 - Created: 2026-10-11 21:42 PT
-- Last updated: 2026-10-11 23:32 PT
+- Last updated: 2026-10-12 16:53 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -47,8 +47,11 @@ reimplementation inside AAR. The user confirmed commit
 later delegated-approval, production-handoff, bounded-budget, provenance, and
 finalization-recovery work absent from the older observed `7d1020b` branch.
 The confirmed commit passed 29 focused native engine, delegated-approval, and
-plugin-bootstrap tests plus AAR's detached-checkout resolver. The execution
-checkout must be clean and detached at that exact commit.
+plugin-bootstrap tests plus AAR's detached-checkout resolver. Trial 12 advances
+the execution pin to focused child commit
+`f53bc2136905461ffdbba0a203a12e351e184aaf`, which changes only native final
+full-corpus evaluation from two passes to three and tests retained-result reuse.
+The execution checkout must be clean and detached at that exact child commit.
 
 For this document, the requested `opu 4.8` AutoData researcher is interpreted
 as Claude Opus 4.8, the same model family requested for the AAR researcher and
@@ -188,15 +191,16 @@ Recorded: 2026-10-11 23:20 PT
 - The native AutoData contract uses the combined v2 recipe, 64 tuning tasks,
   32 validation tasks, 32 test tasks, 3–10 meta-optimization iterations, 1,250
   production tasks, and exactly 1,000 retained rows.
-- The selected runtime profile uses per-chain task concurrency 8 and three
+- The selected runtime profile uses per-chain task concurrency 8 and five
   transport attempts per model request. Target-feedback and judge-format repair
   remain separately bounded by the run configuration.
-- The campaign ceiling is `max_cost_usd: 44448`. This is a fail-closed
+- Trial 12's campaign ceiling is `max_cost_usd: 62000`. This is a fail-closed
   worst-case reservation ceiling for the configured bounded lifecycle, not an
   expected-spend estimate.
-- The native AutoData source is pinned to confirmed commit
-  `51c18fdb0eaa69d8ad66a1805e9c08a507c5fbb1` and must execute from a clean,
-  detached snapshot of that exact revision.
+- The native AutoData source is pinned to
+  `f53bc2136905461ffdbba0a203a12e351e184aaf`, a focused child of confirmed
+  commit `51c18fdb0eaa69d8ad66a1805e9c08a507c5fbb1`, and must execute from a clean,
+  detached snapshot of the child revision.
 - The canonical launcher must set `bootstrap-canary` mode and preserve
   `bootstrap_canary.stop_after: training_smoke`. The lifecycle must stop after
   the verified one-step training receipt.

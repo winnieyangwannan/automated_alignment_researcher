@@ -16,7 +16,7 @@ broker:
   max_memory_mb: 2048
 execution:
   concurrency_per_chain: 8
-  model_request_max_attempts: 3
+  model_request_max_attempts: 5
   lifecycle_supervised: true
   reuse_policy: digest-verified
 providers:

@@ -25,7 +25,7 @@ from aar.infrastructure.autodata_coordinator.semantic_worker import (
     SemanticOutcome,
 )
 
-PIN = "51c18fdb0eaa69d8ad66a1805e9c08a507c5fbb1"
+PIN = "f53bc2136905461ffdbba0a203a12e351e184aaf"
 CHECKOUT = os.getenv("AAR_AUTODATA_PINNED_CHECKOUT", "").strip()
 
 pytestmark = pytest.mark.skipif(

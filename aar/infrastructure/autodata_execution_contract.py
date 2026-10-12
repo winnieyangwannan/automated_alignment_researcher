@@ -155,14 +155,15 @@ def operator_execution_settings(
         raise ValueError("campaign cost policy is incomplete") from error
     meta_evaluations = _meta_evaluation_attempts(settings["meta"])
     # Native finalization performs one initial full-corpus pass and may retry
-    # every tuning+validation task once.  Partial retry capacity is unsafe:
+    # every tuning+validation task twice. Partial retry capacity is unsafe:
     # native batches are concurrent, and exhausting the ledger mid-batch can
     # otherwise leave an execution without a complete terminal transition.
-    full_meta_retry = int(settings["meta"]["tuning_tasks"]) + int(
-        settings["meta"]["validation_tasks"]
+    full_meta_retry = 2 * (
+        int(settings["meta"]["tuning_tasks"])
+        + int(settings["meta"]["validation_tasks"])
     )
     meta_model_attempts = meta_evaluations + full_meta_retry
-    production_attempts = 2 * settings["production"]["initial_tasks"]
+    production_attempts = 3 * settings["production"]["initial_tasks"]
     finalization_rounds = _positive_integer(
         generation.get("target_feedback_max_attempts"),
         "target feedback max attempts",

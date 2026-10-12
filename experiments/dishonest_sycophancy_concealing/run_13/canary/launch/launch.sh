@@ -13,7 +13,7 @@ REPO="$(cd -- "${RUN13_DIR}/../../../.." && pwd -P)"
   echo "Run 13 launcher rejects an overridden experiment ID" >&2; exit 2;
 }
 EXPERIMENT_RUN_ID=run13
-AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/checkpoint/ram/${USER:?}/source-worktrees/autodata-51c18fd}"
+AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/checkpoint/ram/${USER:?}/source-worktrees/autodata-f53bc21}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"
 SECRET_ENV="$(realpath -e -- "${AAR_RUN13_SECRET_ENV:-${REPO}/.env}")"
 RECOVERY_BUNDLE="$(realpath -e -- "${AAR_RUN13_RECOVERY_BUNDLE:-/storage/home/${USER}/aar-recovery/run7_20261007T004406Z-1b3303d02821/baseline_salvage}")"
@@ -22,7 +22,7 @@ RECOVERED_SOURCES="${RECOVERY_BUNDLE}/source_artifacts"
 SV="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
 # Preserves provider provenance and enforces atomic, terminal budget handling.
-REQUIRED_AUTODATA_SHA=51c18fdb0eaa69d8ad66a1805e9c08a507c5fbb1
+REQUIRED_AUTODATA_SHA=f53bc2136905461ffdbba0a203a12e351e184aaf
 : "${AAR_RUN13_TRIAL_CONFIG:?launch through a validated run_13/canary/trial_N/submit_canary.sh wrapper}"
 RUN_CONFIG="$(realpath -e -- "${AAR_RUN13_TRIAL_CONFIG}")"
 trial_relative="${RUN_CONFIG#"${RUN13_DIR}/"}"
@@ -34,7 +34,7 @@ TRIAL_NUMBER="${BASH_REMATCH[1]}"
 TRIAL_ID="trial${TRIAL_NUMBER}"
 RECOVERY_MANIFEST_EXTERNAL=""
 case "${TRIAL_ID}" in
-  trial4|trial5|trial6|trial7|trial8|trial9|trial10|trial11)
+  trial4|trial5|trial6|trial7|trial8|trial9|trial10|trial11|trial12)
     : "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:?${TRIAL_ID} requires an external pre-AutoData recovery manifest}"
     if [ ! -f "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}" ] || \
         [ -L "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}" ]; then
@@ -60,7 +60,7 @@ case "${TRIAL_ID}" in
     ;;
   *)
     [ -z "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ] || {
-      echo "pre-AutoData recovery is allowlisted only for Run 13 Trial 4/5/6/7/8/9/10/11" >&2
+      echo "pre-AutoData recovery is allowlisted only for Run 13 Trials 4 through 12" >&2
       exit 2
     }
     ;;
@@ -111,7 +111,7 @@ AGENT_EFFORT="$(jq -r '.agent_effort // empty' <<<"${config_json}")"
 [ "${JUDGE_MODEL}" = gpt-5-6-luna ] || { echo "Run 13 judge model drifted" >&2; exit 2; }
 [ "$(jq -r '.target_model' <<<"${config_json}")" = gemma-4-31B-it ] || { echo "Run 13 target model drifted" >&2; exit 2; }
 [ "$(jq -r '.concurrency_per_chain' <<<"${config_json}")" = 8 ] || { echo "Run 13 concurrency must be 8" >&2; exit 2; }
-[ "$(jq -r '.model_request_max_attempts' <<<"${config_json}")" = 3 ] || { echo "Run 13 model requests must allow three attempts" >&2; exit 2; }
+[ "$(jq -r '.model_request_max_attempts' <<<"${config_json}")" = 5 ] || { echo "Run 13 model requests must allow five attempts" >&2; exit 2; }
 export AAR_RUN_STORAGE_ROOT="${RUN13_STORAGE_ROOT}"
 AAR_KEEP_CHECKPOINTS="$(jq -r 'if .keep_checkpoints then "1" else "0" end' <<<"${config_json}")"
 AAR_EVAL_MEM="$(jq -r '.evaluation_memory' <<<"${config_json}")"
@@ -211,7 +211,7 @@ mkdir -p "${attempt}/"{metadata,logs,secrets,chains,runtime}
 mkdir -p "${checkpoint_root}/chains"
 chmod 700 "${attempt}" "${attempt}/"{metadata,logs,secrets,chains}
 chmod 700 "${checkpoint_root}" "${checkpoint_root}/chains"
-if [[ "${TRIAL_ID}" =~ ^trial(4|5|6|7|8|9|10|11)$ ]]; then
+if [[ "${TRIAL_ID}" =~ ^trial(4|5|6|7|8|9|10|11|12)$ ]]; then
   RECOVERY_MANIFEST_SNAPSHOT="${attempt}/metadata/preautodata-recovery-manifest.json"
   install -m 400 -- "${RECOVERY_MANIFEST_EXTERNAL}" "${RECOVERY_MANIFEST_SNAPSHOT}"
   [ "$(sha256sum "${RECOVERY_MANIFEST_EXTERNAL}" | awk '{print $1}')" = \
@@ -454,7 +454,7 @@ base_reused=false
 [ -z "${REUSE_BASE_DEPLOYMENT}" ] || base_reused=true
 source_snapshots_sha256="sha256:$(sha256sum "${attempt}/metadata/source-snapshots.json" | awk '{print $1}')"
 recovery_manifest_sha256=none
-if [[ "${TRIAL_ID}" =~ ^trial(4|5|6|7|8|9|10|11)$ ]]; then
+if [[ "${TRIAL_ID}" =~ ^trial(4|5|6|7|8|9|10|11|12)$ ]]; then
   recovery_manifest_sha256="sha256:$(sha256sum "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}" | awk '{print $1}')"
 fi
 printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nsource_snapshot_root=%s\nautodata_commit=%s\nautodata_snapshot_root=%s\nsource_snapshots_sha256=%s\nrecovery_manifest_sha256=%s\nexperiment_run_id=%s\ntrial_id=%s\nrun_config_id=%s\nmode=%s\nstop_after=%s\nproduction_required_rows=%s\nresearch_backend=%s\nresearch_model=%s\nresearch_effort=%s\nresearcher_deployment=%s\nautodata_generator_model=%s\nautodata_generator_protocol=%s\nautodata_generator_deployment=%s\nautodata_profile=%s\nautodata_concurrency=%s\nautodata_model_request_attempts=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \

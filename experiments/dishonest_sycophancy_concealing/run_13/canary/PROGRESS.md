@@ -201,3 +201,55 @@ selected strict checked-in profile contract and launch a numbered Trial 3.
 
 Validate and synchronize the focused recovery commit, then launch only through
 `trial_3/submit_canary.sh`.
+
+<a id="run13-event-trial11-final-incomplete"></a>
+
+### 🔴 15:51 PT — FAIL: Trial 11 exhausted final full-corpus retries
+
+> [!CAUTION]
+> **Stopped before production.** Trial 11 completed native workspace authoring,
+> delegated approvals, and three meta-optimization iterations, then failed
+> closed during winning-pipeline finalization.
+
+```text
+✓ Pre-AutoData proposal recovery
+✓ AutoData workspace authoring and delegated approvals
+✓ Three meta-optimization iterations and early stop
+✗ Final full-corpus verification — incomplete after one retry
+○ Production generation and export
+○ Gemma training smoke
+○ Evaluator — disabled
+```
+
+- Attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run13-trial11-bootstrap-canary/20261012T213952Z-3a3a9e3e863f`.
+- Jobs: launcher `1858921` completed; chain `1859180` failed; controller
+  `1859181` failed; evaluator absent.
+- Meta execution: `exe_092e9fb1e30d48f88eff385ed39024f2`.
+- Retained state after two passes: 96 covered tasks, 95 successful task results,
+  and five accepted generated items.
+- First failure for `safety-sft-0078`: Luna request attempts exhausted on HTTP
+  429 responses. Final retry: Opus returned a successful metered response whose
+  content failed the recipe contract; target and judge were not called.
+
+<a id="run13-event-trial12-prepared"></a>
+
+### 🛠️ 16:53 PT — FIX: Trial 12 bounded finalization rerun prepared
+
+> [!IMPORTANT]
+> Trial 12 keeps concurrency at eight, raises per-request attempts from three to
+> five, and permits one additional digest-verified finalization pass. Existing
+> successes remain retained; only native pending work is submitted again.
+
+- AutoData pin: `f53bc2136905461ffdbba0a203a12e351e184aaf`, a focused child
+  of reviewed revision `51c18fdb0eaa69d8ad66a1805e9c08a507c5fbb1`.
+- Generator content failures now record bounded reason codes without retaining
+  raw model output.
+- Trial 12 config identity: `run13-canary-trial12`.
+- Attempt: not created.
+- Jobs: none.
+
+#### ⏭️ Next step
+
+Validate both focused commits, synchronize exact revisions to HPC, create a
+fresh detached AutoData snapshot, then launch Trial 12.

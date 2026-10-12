@@ -10,7 +10,7 @@ PROFILE = (
     ROOT
     / "configs/autodata/target_aware_model_api_claude_opus_4_8_c8_v1.yaml"
 )
-AUTODATA_SHA = "51c18fdb0eaa69d8ad66a1805e9c08a507c5fbb1"
+AUTODATA_SHA = "f53bc2136905461ffdbba0a203a12e351e184aaf"
 
 
 def test_run13_canary_configuration_is_bounded_to_training_smoke() -> None:
@@ -29,7 +29,7 @@ def test_run13_canary_configuration_is_bounded_to_training_smoke() -> None:
         "turn_timeout_seconds": 1800,
     }
     assert profile["execution"]["concurrency_per_chain"] == 8
-    assert profile["execution"]["model_request_max_attempts"] == 3
+    assert profile["execution"]["model_request_max_attempts"] == 5
     assert profile["providers"]["generator"]["protocol"] == "model_api_responses"
     assert profile["providers"]["generator"]["model"] == "claude-4-8-opus"
     assert profile["providers"]["judge"]["model"] == "gpt-5-6-luna"
@@ -51,7 +51,7 @@ def test_run13_owns_a_fail_closed_launcher_and_slurm_payloads() -> None:
     assert "AAR_AUTODATA_STOP_AFTER=training_smoke" in launcher
     assert "Run 13 canary requires exactly the alpha chain" in launcher
     assert "Run 13 concurrency must be 8" in launcher
-    assert "Run 13 model requests must allow three attempts" in launcher
+    assert "Run 13 model requests must allow five attempts" in launcher
     assert "AAR_RUN13_TRIAL_CONFIG" in launcher
     assert "trial_([1-9][0-9]*)/autodata_run" in launcher
     assert '${EXPERIMENT_RUN_ID}-${TRIAL_ID}-bootstrap-canary' in launcher
@@ -92,12 +92,12 @@ def test_run13_documentation_records_trials_and_pin() -> None:
     assert "Direct root-launcher use is rejected" in (CANARY / "trial_3/README.md").read_text()
 
 
-def test_trial5_through_trial11_enable_full_lifecycle_ownership() -> None:
+def test_trial5_through_trial12_enable_full_lifecycle_ownership() -> None:
     launcher = (ROOT / "scripts/launch_team.sh").read_text()
     runtime = (ROOT / "scripts/aar_runtime_env.sh").read_text()
 
     owned_trials = launcher.split(
-        'if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(5|6|7|8|9|10|11)$ ]]; then', 1
+        'if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(5|6|7|8|9|10|11|12)$ ]]; then', 1
     )[1].split("fi", 1)[0]
     assert "export AAR_AUTODATA_ANALYSIS_COORDINATOR=1" in owned_trials
     assert "export AAR_AUTODATA_MUTATION_COORDINATOR=1" in owned_trials
@@ -105,7 +105,7 @@ def test_trial5_through_trial11_enable_full_lifecycle_ownership() -> None:
     assert "export AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE=1" in owned_trials
     assert "AAR_AUTODATA_MUTATION_COORDINATOR" in runtime
     assert "AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR" in runtime
-    assert 'if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(7|8|9|10|11)$ ]]; then' in launcher
+    assert 'if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(7|8|9|10|11|12)$ ]]; then' in launcher
     assert "export AAR_AUTODATA_GROUNDING_COORDINATOR=1" in launcher
     assert "export AAR_AUTODATA_PIPELINE_COORDINATOR=1" in launcher
     assert "author_pipeline coordinator enablement must come from" in launcher
@@ -145,22 +145,22 @@ def test_run13_coordinator_contract_survives_sanitized_chain_export() -> None:
     assert required <= preserve
 
 
-def test_trial11_is_approval_owned_and_explicitly_allowlisted() -> None:
-    trial = CANARY / "trial_11"
+def test_trial12_is_approval_owned_and_explicitly_allowlisted() -> None:
+    trial = CANARY / "trial_12"
     run = yaml.safe_load((trial / "autodata_run.yaml").read_text())
     wrapper = (trial / "submit_canary.sh").read_text()
     launcher = (CANARY / "launch/launch.sh").read_text()
     pipeline = (CANARY / "slurm/pipeline.sbatch").read_text()
     controller = (CANARY / "slurm/chain_controller.sbatch").read_text()
 
-    assert run["run_id"] == "run13-canary-trial11"
+    assert run["run_id"] == "run13-canary-trial12"
     assert run["bootstrap_canary"] == {"stop_after": "training_smoke"}
     assert run["agent"]["backend"] == "claude"
     assert run["agent"]["model"] == "claude-opus-4-8"
-    assert "trial4|trial5|trial6|trial7|trial8|trial9|trial10|trial11)" in launcher
-    assert "trial4|trial5|trial6|trial7|trial8|trial9|trial10|trial11)" in pipeline
+    assert "trial4|trial5|trial6|trial7|trial8|trial9|trial10|trial11|trial12)" in launcher
+    assert "trial4|trial5|trial6|trial7|trial8|trial9|trial10|trial11|trial12)" in pipeline
     assert "AAR_RUN13_LIFECYCLE_COORDINATOR_COMMIT" in wrapper
-    assert "confirm-only" in (trial / "README.md").read_text()
+    assert "three full-corpus passes" in (trial / "README.md").read_text()
     retry_envelope = controller.split('case "${TRIAL_ID}" in', 1)[1].split(
         'for name in "${AAR_RESEARCH_CHAIN_ENV_ALLOWLIST[@]}"', 1
     )[0]

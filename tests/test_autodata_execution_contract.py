@@ -26,7 +26,7 @@ def _digest(path: Path) -> str:
 
 def _policy() -> dict[str, object]:
     return {
-        "max_cost_usd": "41775",
+        "max_cost_usd": "61854",
         "environment": "oci-runner-firecracker-large",
         "image": "python@sha256:" + "a" * 64,
         "expected_image_id": "b" * 64,
@@ -62,10 +62,10 @@ def _settings() -> dict[str, object]:
         "meta_wall_seconds": 604800,
         "production_wall_seconds": 604800,
         "meta_evaluation_attempts": 608,
-        "meta_finalization_retry_attempts": 96,
-        "meta_model_task_attempts": 704,
-        "meta_task_attempts": 707,
-        "production_task_attempts": 2500,
+        "meta_finalization_retry_attempts": 192,
+        "meta_model_task_attempts": 800,
+        "meta_task_attempts": 803,
+        "production_task_attempts": 3750,
     }
 
 
@@ -157,11 +157,11 @@ def test_operator_settings_come_from_resolved_config() -> None:
     }
     assert settings["concurrency"] == 32
     assert settings["meta_evaluation_attempts"] == 608
-    assert settings["meta_finalization_retry_attempts"] == 96
-    assert settings["meta_model_task_attempts"] == 704
-    assert settings["required_campaign_task_attempts"] == 3204
-    assert settings["required_campaign_round_reservations"] == 14004
-    assert settings["required_campaign_cost_usd"] == "41774.49216"
+    assert settings["meta_finalization_retry_attempts"] == 192
+    assert settings["meta_model_task_attempts"] == 800
+    assert settings["required_campaign_task_attempts"] == 4550
+    assert settings["required_campaign_round_reservations"] == 20734
+    assert settings["required_campaign_cost_usd"] == "61850.35136"
 
     mismatched_policy = _policy()
     mismatched_policy["required_solve_env"][
@@ -192,12 +192,12 @@ def test_operator_settings_come_from_resolved_config() -> None:
                 "minimum_successful_task_fraction": 0.95,
             },
         )
-    assert settings["required_judge_calls"] == 28008
+    assert settings["required_judge_calls"] == 41468
     assert settings["authoring_model_task_attempts"] == 32
     assert settings["finalization_model_rounds_per_task"] == 5
 
     truncated_retry = json.loads(json.dumps(_policy()))
-    truncated_retry["max_cost_usd"] = "41774.492159"
+    truncated_retry["max_cost_usd"] = "61850.351359"
     with pytest.raises(
         ValueError,
         match="including authoring and finalization feedback",
@@ -213,7 +213,7 @@ def test_operator_settings_come_from_resolved_config() -> None:
 
     insufficient = json.loads(json.dumps(_policy()))
     insufficient["max_cost_usd"] = "299"
-    with pytest.raises(ValueError, match="requires at least 41774.49216"):
+    with pytest.raises(ValueError, match="requires at least 61850.35136"):
         operator_execution_settings(
             resolved,
             campaign_policy=insufficient,
@@ -289,7 +289,7 @@ def _meta_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
             "max_iterations": 3,
             "min_iterations": 3,
             "early_stop_patience": 3,
-            "max_task_attempts": 707,
+            "max_task_attempts": 803,
             "max_wall_seconds": 604800,
         },
         "concurrency": 32,
@@ -431,7 +431,7 @@ def test_production_requires_contract_thresholds_and_disjoint_source(
             "split_seed": int(_digest(grounding).removeprefix("sha256:")[:8], 16),
             "budget": {
                 "max_iterations": 0,
-                "max_task_attempts": 2500,
+                "max_task_attempts": 3750,
                 "max_wall_seconds": 604800,
             },
             "concurrency": 32,
@@ -513,7 +513,7 @@ def test_trusted_orchestration_constructs_production_without_model_manifest(
     assert manifest["mode"] == "production"
     assert manifest["budget"] == {
         "max_iterations": 0,
-        "max_task_attempts": 2500,
+        "max_task_attempts": 3750,
         "max_wall_seconds": 604800,
     }
     assert manifest["finalization"] == {

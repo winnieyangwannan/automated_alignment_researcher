@@ -217,12 +217,12 @@ def _frozen_reconcile_fixture(
         "meta_wall_seconds": 604800,
         "production_wall_seconds": 604800,
         "meta_evaluation_attempts": 608,
-        "meta_finalization_retry_attempts": 96,
-        "meta_model_task_attempts": 704,
-        "meta_task_attempts": 707,
+        "meta_finalization_retry_attempts": 192,
+        "meta_model_task_attempts": 800,
+        "meta_task_attempts": 803,
         "pipeline_checks_per_iteration": 1,
         "trusted_pipeline_manifest": pipeline_manifest,
-        "production_task_attempts": 2500,
+        "production_task_attempts": 3750,
     }
     monkeypatch.setattr(
         lifecycle_supervisor, "_trusted_execution_settings", lambda **_: settings
@@ -415,7 +415,7 @@ def test_frozen_workspace_automatically_creates_registers_and_cleans_default(
     assert canonical_spec["budget"]["max_iterations"] == 3
     assert canonical_spec["budget"]["min_iterations"] == 3
     assert canonical_spec["budget"]["early_stop_patience"] == 3
-    assert canonical_spec["budget"]["max_task_attempts"] == 707
+    assert canonical_spec["budget"]["max_task_attempts"] == 803
     assert isinstance(canonical_spec["split_seed"], int)
     assert len(canonical_spec["tuning_task_ids"]) == 64
     assert len(canonical_spec["validation_task_ids"]) == 32
@@ -2190,13 +2190,24 @@ def _production_attainability_fixture(
             5,
             True,
         ),
-        # Boundary equality must continue after two sources have exhausted
-        # their one native retry.
+        # The first retry is still attainable now that native permits a second.
         (
             [
                 ("source-0", "final-full-corpus", True, None),
                 ("source-1", "final-full-corpus-retry-2", False, "judge_rejected"),
                 ("source-2", "final-full-corpus-retry-2", False, "judge_rejected"),
+            ],
+            5,
+            5,
+            True,
+        ),
+        # Boundary equality must continue after two sources have exhausted
+        # both native retries.
+        (
+            [
+                ("source-0", "final-full-corpus", True, None),
+                ("source-1", "final-full-corpus-retry-3", False, "judge_rejected"),
+                ("source-2", "final-full-corpus-retry-3", False, "judge_rejected"),
             ],
             3,
             3,
@@ -2206,9 +2217,9 @@ def _production_attainability_fixture(
         # two rows remain possible regardless of provider/native attempt count.
         (
             [
-                ("source-0", "final-full-corpus-retry-2", False, "judge_rejected"),
-                ("source-1", "final-full-corpus-retry-2", False, "judge_rejected"),
-                ("source-2", "final-full-corpus-retry-2", False, "judge_rejected"),
+                ("source-0", "final-full-corpus-retry-3", False, "judge_rejected"),
+                ("source-1", "final-full-corpus-retry-3", False, "judge_rejected"),
+                ("source-2", "final-full-corpus-retry-3", False, "judge_rejected"),
             ],
             3,
             2,

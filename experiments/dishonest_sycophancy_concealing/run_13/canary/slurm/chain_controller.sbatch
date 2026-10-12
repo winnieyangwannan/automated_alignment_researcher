@@ -219,18 +219,18 @@ submit_session() {
       export AAR_AUTODATA_CLARIFY_COORDINATOR=1
       export AAR_AUTODATA_SEMANTIC_WORKER=claude
       ;;
-    trial5|trial6|trial7|trial8|trial9|trial10|trial11)
+    trial5|trial6|trial7|trial8|trial9|trial10|trial11|trial12)
       export AAR_AUTODATA_CLARIFY_COORDINATOR=1
       export AAR_AUTODATA_ANALYSIS_COORDINATOR=1
       export AAR_AUTODATA_MUTATION_COORDINATOR=1
       export AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR=1
       export AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE=1
       export AAR_AUTODATA_SEMANTIC_WORKER=claude
-      if [[ "${TRIAL_ID}" =~ ^trial(7|8|9|10|11)$ ]]; then
+      if [[ "${TRIAL_ID}" =~ ^trial(7|8|9|10|11|12)$ ]]; then
         export AAR_AUTODATA_GROUNDING_COORDINATOR=1
         export AAR_AUTODATA_PIPELINE_COORDINATOR=1
       fi
-      if [[ "${TRIAL_ID}" =~ ^trial(10|11)$ ]]; then
+      if [[ "${TRIAL_ID}" =~ ^trial(10|11|12)$ ]]; then
         export AAR_AUTODATA_APPROVAL_COORDINATOR=1
       fi
       ;;
