@@ -748,3 +748,54 @@ from that exact revision. Any later model/config change requires reconfirmation.
 - Targeted correction: add validated YAML `research.forum_scope`, default it to
   `shared`, preserve `per_chain` as the explicit ablation, and bind both fresh
   launch and recovery to the same attempt-level forum.
+
+<a id="run15-event-shared-forum-relaunch"></a>
+
+### 🛠️ 17:32 PT — FIX: paper-aligned shared forum and fresh relaunch
+
+#### Important forum conclusion
+
+- The paper's default five-AAR design uses one shared finding forum and
+  leaderboard. Each scored result is published before that researcher advances
+  to its next proposal, and the published finding includes a method-code
+  snapshot that peers can inspect and extend.
+- Giving every chain a private forum prevents cross-chain learning and matches
+  the paper's forum-removal ablation, not its standard experimental setting.
+- Declarative runs now resolve omitted `research.forum_scope` to `shared`.
+  `per_chain` remains available only as an explicit no-communication ablation.
+- Run 15 explicitly sets `research.forum_scope: shared` and fails closed if the
+  resolved setting differs. Fresh launch and recovery bind all five chains to
+  the same attempt-level `forum/` directory while retaining separate training
+  queues, score directories, evaluators, live method trees, and chain memories.
+- Only public findings are shared. Held-out items, evaluator-private details,
+  credentials, and unsanitized failure data remain outside the forum.
+
+#### Cleanup and new submission
+
+- Commit `41041df` implemented the forum policy; launch commit `c853678` is its
+  synchronized descendant on both the devserver and HPC `autodata` worktrees.
+- Deleted both stopped full attempts from HPC checkpoint storage, including
+  `20261011T232739Z-88949395cbb1` and
+  `20261011T233758Z-88949395cbb1` (1.4 GiB total). The deletion is not
+  recoverable. Unrelated Run 12 jobs and outputs were not touched.
+- Fresh attempt:
+  `/checkpoint/ram/aar/winnieyangwn/run15_native_generation/full_attempts/20261012T003132Z-c853678bf5ce`
+- Launch job: `1822364`; source commit: `c853678bf5ce3fc009d9671b5cb2a66947719bab`.
+- Kimi endpoint, Bash tool, and MCP round-trip preflight passed. At 17:32 PT,
+  the launch job was pending scheduler allocation; child evaluator and research
+  job IDs had not yet been emitted, so the five chains were not yet reported
+  active.
+
+#### Lifecycle
+
+```text
+✓ Endpoint and MCP preflight
+✓ Paper-aligned shared-forum configuration
+✓ Old Run 15 checkpoint outputs removed
+⏳ Infrastructure bootstrap and suite publication — launch job 1822364 pending
+○ Five evaluator jobs
+○ Five research-chain jobs
+○ Method authoring and contract checks
+○ Proposal review, training, and evaluation
+○ 250 durable score/finding pairs
+```
