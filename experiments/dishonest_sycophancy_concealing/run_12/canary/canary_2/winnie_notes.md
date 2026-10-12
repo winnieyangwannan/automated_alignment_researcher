@@ -127,3 +127,66 @@ Minimal correction before another trial:
    corrected run shows genuine improvement without convergence.
 4. Monitor accepted-row yield, not only native task status, and stop early when
    the required production row count is mathematically unreachable.
+
+### 22:18 PT — Kimi skill loading, SDK, and ACP integration conclusions
+
+The authoritative AutoData implementation and instructions live in the pinned
+`autodata_pipelines/plugin/autodata` checkout. For Claude, AAR already registers
+the complete local plugin and explicitly enables its qualified
+`autodata:autodata` skill. The plugin currently publishes only that one skill;
+its Python wrapper, bootstrap code, and wheels are supporting resources invoked
+through Bash rather than additional plugin tools.
+
+Kimi Code 2.1.1 supports both skills and its own plugin system. The existing
+AutoData manifest is Claude-specific (`.claude-plugin/plugin.json`), whereas a
+native Kimi plugin expects `kimi.plugin.json` or `.kimi-plugin/plugin.json`.
+However, Kimi can load the same authoritative AutoData skill directly and
+without copying it by receiving:
+
+```bash
+--skills-dir "$AAR_AUTODATA_PLUGIN_ROOT/skills"
+```
+
+In Kimi the skill is named `autodata`, not the Claude-qualified
+`autodata:autodata`. AAR's current Kimi command does not pass `--skills-dir`, so
+the Kimi researcher has not been receiving this skill. This is a likely
+contributor to the no-op mutation behavior: the skill explicitly says that a
+`mutate_candidate` action must make one evidence-backed change.
+
+The current Kimi integration runs one noninteractive CLI invocation at a time.
+Within one AAR research session, `--continue` restores Kimi's conversation from
+the isolated `KIMI_CODE_HOME` session store. AAR then inspects durable lifecycle
+state and uses `_continuation_prompt()` to select the next checkpoint. This
+host-controlled continuation mechanism is separate from the AutoData skill and
+should not be removed as part of the small skill-loading repair. Contradictory
+generic wording, especially permission to adopt files unchanged during
+`mutate_candidate`, should be removed or specialized.
+
+The Kimi Code SDK and ACP provide two possible persistent integrations:
+
+- The SDK is a Node/TypeScript library embedded in a Node application. It
+  offers direct access to Kimi's agent engine but would require a maintained
+  Python-to-Node bridge because AAR is Python.
+- ACP is a language-neutral protocol. AAR can remain Python while managing a
+  persistent `kimi acp` subprocess over structured messages. It is therefore
+  the cleaner candidate for a Claude-SDK-like Kimi adapter unless an essential
+  capability is available only through the direct SDK.
+
+An SDK or ACP migration can reduce host-injected prompt drift by keeping one
+continuous agent session, but it does not by itself enforce a valid mutation.
+The shared native lifecycle must still reject an unchanged effective strategy,
+return precise feedback, retry within the same iteration, and avoid consuming
+iteration or patience budget for a no-op.
+
+Recommended sequencing:
+
+1. Make the verified pinned AutoData skill available to every initial and
+   continued Kimi invocation.
+2. Add deterministic no-op enforcement at the mutation boundary and remove the
+   conflicting mutation-specific continuation wording.
+3. Independently prove ACP or SDK parity for skill loading, MCP tools, tool
+   restrictions, request-policy enforcement, timeouts, cancellation, session
+   recovery, and structured logs.
+4. Replace the CLI integration only after the persistent adapter passes those
+   parity checks; do not combine that migration with the immediate canary
+   blocker repair.

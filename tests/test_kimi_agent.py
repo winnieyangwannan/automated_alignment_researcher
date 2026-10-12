@@ -43,6 +43,70 @@ class KimiAgentTest(unittest.TestCase):
             agent = KimiAgent("test-agent", Path.cwd(), cli_path="/bin/true")
         self.assertEqual(agent.max_continuations, 96)
 
+    def test_missing_skill_directory_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            missing = Path(temp) / "missing-skills"
+            with self.assertRaisesRegex(ValueError, "does not exist"):
+                KimiAgent(
+                    "test-agent",
+                    Path(temp),
+                    cli_path="/bin/true",
+                    skill_dirs=[missing],
+                )
+
+    def test_skill_directory_is_passed_to_initial_and_continued_turns(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            skills = root / "plugin" / "autodata" / "skills"
+            (skills / "autodata").mkdir(parents=True)
+            (skills / "autodata" / "SKILL.md").write_text(
+                "---\nname: autodata\ndescription: test\n---\n"
+            )
+            capture = root / "calls.jsonl"
+            cli = root / "kimi"
+            cli.write_text(
+                f"#!{sys.executable}\n"
+                "import json, os, sys\n"
+                "from pathlib import Path\n"
+                "home = Path(os.environ['KIMI_CODE_HOME'])\n"
+                "counter = home / 'skill-turns'\n"
+                "turn = int(counter.read_text()) + 1 if counter.exists() else 1\n"
+                "counter.write_text(str(turn))\n"
+                "with Path(os.environ['KIMI_TEST_CAPTURE']).open('a') as stream:\n"
+                "  stream.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                "if turn == 1:\n"
+                "  print(json.dumps({'role': 'assistant', 'content': 'working'}))\n"
+                "else:\n"
+                "  print(json.dumps({'role': 'assistant', 'content': 'done', "
+                "'tool_calls': [{'function': {'name': 'finish', "
+                "'arguments': '{}'}}]}))\n"
+            )
+            cli.chmod(0o755)
+            with patch.dict(
+                os.environ,
+                {"KIMI_TEST_CAPTURE": str(capture)},
+                clear=False,
+            ):
+                result = asyncio.run(
+                    KimiAgent(
+                        "test-agent",
+                        root,
+                        cli_path=str(cli),
+                        skill_dirs=[skills],
+                        completion_tool="finish",
+                        max_continuations=1,
+                    ).execute("complete the task")
+                )
+
+            self.assertTrue(result.success, result.error)
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            self.assertEqual(len(calls), 2)
+            for call in calls:
+                index = call.index("--skills-dir")
+                self.assertEqual(call[index + 1], str(skills.resolve()))
+            self.assertNotIn("--continue", calls[0])
+            self.assertIn("--continue", calls[1])
+
     def test_turn_timeout_terminates_cli_process_group(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

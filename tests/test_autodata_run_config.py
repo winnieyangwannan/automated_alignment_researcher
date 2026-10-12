@@ -36,6 +36,16 @@ CANARY2_RUN = (
     ROOT
     / "experiments/dishonest_sycophancy_concealing/run_12/canary/canary_2/trial_2/autodata_run.yaml"
 )
+TRIAL16_RUN = (
+    ROOT
+    / "experiments"
+    / "dishonest_sycophancy_concealing"
+    / "run_12"
+    / "canary"
+    / "canary_2"
+    / "trial_16"
+    / "autodata_run.yaml"
+)
 RUN17 = (
     ROOT
     / "experiments/dishonest_sycophancy_concealing/run_17/config/run.yaml"
@@ -218,6 +228,42 @@ def test_canary2_run_yaml_selects_and_enforces_its_shared_profile() -> None:
             repo=ROOT,
             profile_path=PROFILE,
         )
+
+
+def test_trial16_preserves_v2_lifecycle_contract(tmp_path: Path) -> None:
+    output = tmp_path / "trial16-compiled"
+    resolved = compile_run_config(
+        profile_path=PROFILE,
+        run_path=TRIAL16_RUN,
+        target_binding_path=_base_binding(tmp_path),
+        chain="alpha",
+        repo=ROOT,
+        output_dir=output,
+    )
+    runtime = (output / "autodata-runtime.env").read_text()
+
+    assert resolved["run"]["run_id"] == "run12-canary2-trial16"
+    assert resolved["run"]["meta_optimization"] == {
+        "maximum_iterations": 10,
+        "minimum_iterations": 3,
+        "early_stop_patience": 3,
+        "tuning_tasks": 64,
+        "validation_tasks": 32,
+        "test_tasks": 32,
+    }
+    assert resolved["run"]["production"]["required_rows"] == 1000
+    assert resolved["run"]["production"]["initial_tasks"] == 1250
+    assert resolved["run"]["recipe_root"] == (
+        "aar/autodata_recipes/dishonest_sycophancy_concealing_v2"
+    )
+    assert "export AAR_AUTODATA_CONCURRENCY=8\n" in runtime
+    assert "export AAR_AUTODATA_META_MAX_ITERATIONS=10\n" in runtime
+    assert "export AAR_AUTODATA_META_MIN_ITERATIONS=3\n" in runtime
+    assert "export AAR_AUTODATA_META_EARLY_STOP_PATIENCE=3\n" in runtime
+    assert (
+        "export AAR_AUTODATA_BOOTSTRAP_CANARY_STOP_AFTER=training_smoke\n"
+        in runtime
+    )
 
 
 def test_run17_compiles_claude_researcher_and_model_api_generator(

@@ -338,6 +338,7 @@ class KimiAgent:
         cli_path: Optional[str] = None,
         message_callback: Optional[Callable[[KimiAssistantMessage], None]] = None,
         system_prompt: Optional[str] = None,
+        skill_dirs: Optional[list[Path]] = None,
         include_prior_work: bool = True,
         completion_tool: Optional[str] = None,
         max_continuations: Optional[int] = None,
@@ -354,6 +355,20 @@ class KimiAgent:
         self.cli_path = cli_path
         self.message_callback = message_callback
         self.system_prompt = system_prompt
+        resolved_skill_dirs: list[Path] = []
+        for raw_skill_dir in skill_dirs or []:
+            skill_dir = Path(raw_skill_dir)
+            try:
+                resolved = skill_dir.resolve(strict=True)
+            except FileNotFoundError as error:
+                raise ValueError(
+                    f"Kimi skill directory does not exist: {skill_dir}"
+                ) from error
+            if not resolved.is_dir():
+                raise ValueError(f"Kimi skill path is not a directory: {resolved}")
+            if resolved not in resolved_skill_dirs:
+                resolved_skill_dirs.append(resolved)
+        self.skill_dirs = tuple(resolved_skill_dirs)
         self.include_prior_work = include_prior_work
         self.completion_tool = completion_tool
         if force_completion_tool_first_turn and not completion_tool:
@@ -632,6 +647,8 @@ class KimiAgent:
                     command = [executable]
                     if self.model:
                         command.extend(["--model", self.model])
+                    for skill_dir in self.skill_dirs:
+                        command.extend(["--skills-dir", str(skill_dir)])
                     if continuation_count:
                         command.append("--continue")
                         current_prompt = self._continuation_prompt(output)

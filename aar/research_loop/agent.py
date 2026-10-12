@@ -724,6 +724,7 @@ class AutonomousAgentLoop:
 
     def _create_agent(self, session_id: str, message_callback=None):
         meta_secure_web = os.getenv("AAR_WEB_MODE", "native_web") == "meta_secure"
+        autodata_plugin = getattr(self, "autodata_plugin", None)
         if getattr(self, "backend", "claude") == "kimi":
             autodata_stop_after = os.getenv("AAR_AUTODATA_STOP_AFTER", "").strip()
             if autodata_stop_after == "production":
@@ -771,6 +772,13 @@ class AutonomousAgentLoop:
                     " Use the repository's bounded arXiv helper for internet research. "
                     "Do not use curl, wget, or arbitrary network URLs."
                 )
+            if autodata_plugin is not None:
+                kimi_system_prompt += (
+                    " Before any AutoData work, load the `autodata` skill from "
+                    "the operator-pinned skill directory. In Kimi, `autodata` is "
+                    "the same skill that Claude identifies as "
+                    "`autodata:autodata`; follow the loaded skill and its references."
+                )
             return KimiAgent(
                 name=f"autonomous-{session_id}",
                 workspace=self.workspace,
@@ -778,6 +786,11 @@ class AutonomousAgentLoop:
                 cli_path=os.getenv("KIMI_CLI_PATH") or shutil.which("kimi"),
                 message_callback=message_callback,
                 system_prompt=kimi_system_prompt,
+                skill_dirs=(
+                    [autodata_plugin.root / "skills"]
+                    if autodata_plugin is not None
+                    else None
+                ),
                 include_prior_work=not self.local_mode,
                 completion_tool="share_finding",
                 auto_approve=True,
@@ -793,7 +806,6 @@ class AutonomousAgentLoop:
                 ],
             )
 
-        autodata_plugin = getattr(self, "autodata_plugin", None)
         allowed_tools = [
             "Read", "Write", "Edit", "Bash", "Glob", "Grep",
             "mcp__server-api-tools__evaluate_model",

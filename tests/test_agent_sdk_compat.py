@@ -7,6 +7,7 @@ import importlib.util
 import os
 import sys
 import types
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -54,6 +55,34 @@ def _load_agent_module(options_class: type) -> types.ModuleType:
 
 
 class AgentSdkCompatibilityTest(unittest.TestCase):
+    def test_kimi_receives_verified_autodata_skill_directory(self) -> None:
+        class Options:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+        agent_module = _load_agent_module(Options)
+        loop = object.__new__(agent_module.AutonomousAgentLoop)
+        loop.backend = "kimi"
+        loop.workspace = ROOT
+        loop.model = "kimi-test"
+        loop.local_mode = True
+
+        with tempfile.TemporaryDirectory() as temp:
+            plugin_root = Path(temp) / "plugin" / "autodata"
+            skills = plugin_root / "skills"
+            (skills / "autodata").mkdir(parents=True)
+            loop.autodata_plugin = types.SimpleNamespace(root=plugin_root)
+            with patch.dict(
+                os.environ,
+                {"KIMI_CLI_PATH": "/bin/true"},
+                clear=False,
+            ):
+                kimi = loop._create_agent("smoke")
+
+        self.assertEqual(kimi.skill_dirs, (skills.resolve(),))
+        self.assertIn("load the `autodata` skill", kimi.system_prompt)
+        self.assertIn("`autodata:autodata`", kimi.system_prompt)
+
     def test_research_subprocess_environment_hides_operator_secrets(self) -> None:
         class Options:
             def __init__(self) -> None:
