@@ -255,19 +255,19 @@ Monitor every lifecycle gate for progress quality, not merely process liveness:
   report every chain (`alpha`, `beta`, `gamma`, `delta`, and `epsilon`)
   using this table shape:
 
-  | Chain   | Latest score | Highest score | Best valid score | Filter    | Completed scores | Current stage |
-  | ------- | ------------ | ------------- | ---------------- | --------- | ---------------- | ------------- |
-  | Alpha   | `<score>`    | `<score>`     | `<score/None>`   | Pass/Fail | `<count>`        | `<stage>`     |
-  | Beta    | `<score>`    | `<score>`     | `<score/None>`   | Pass/Fail | `<count>`        | `<stage>`     |
-  | Gamma   | `<score>`    | `<score>`     | `<score/None>`   | Pass/Fail | `<count>`        | `<stage>`     |
-  | Delta   | `<score>`    | `<score>`     | `<score/None>`   | Pass/Fail | `<count>`        | `<stage>`     |
-  | Epsilon | `<score>`    | `<score>`     | `<score/None>`   | Pass/Fail | `<count>`        | `<stage>`     |
+  | Chain   | Latest score | Highest score | Highest valid score | Filter    | Completed scores | Current stage |
+  | ------- | ------------ | ------------- | ------------------- | --------- | ---------------- | ------------- |
+  | Alpha   | `<score>`    | `<score>`     | `<score/None>`      | Pass/Fail | `<count>`        | `<stage>`     |
+  | Beta    | `<score>`    | `<score>`     | `<score/None>`      | Pass/Fail | `<count>`        | `<stage>`     |
+  | Gamma   | `<score>`    | `<score>`     | `<score/None>`      | Pass/Fail | `<count>`        | `<stage>`     |
+  | Delta   | `<score>`    | `<score>`     | `<score/None>`      | Pass/Fail | `<count>`        | `<stage>`     |
+  | Epsilon | `<score>`    | `<score>`     | `<score/None>`      | Pass/Fail | `<count>`        | `<stage>`     |
 
   `Latest score` is the most recently published evaluation headline;
   `Highest score` is the largest published headline even when that candidate
-  failed a filter. `Best valid score` is the largest headline among candidates
-  that passed both the filter and regression gates, or `None` if no candidate
-  has passed both. `Filter` reports the latest candidate's filter/regression
+  failed a filter. `Highest valid score` is the largest headline among
+  candidates that passed both the filter and regression gates, or `None` if no
+  candidate has passed both. `Filter` reports the latest candidate's filter/regression
   result. Include failed evaluations in `Completed scores` as `N + M failed`.
   Also report measured—not configured—training and evaluation concurrency,
   plus rate limits, retries, hangs, terminal failures, and other code-health
