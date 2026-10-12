@@ -34,6 +34,12 @@ Serve API `proxy_info.json`, then starts the authenticated loopback bridge. For
 calls the pinned Model API Responses route directly. Missing and unknown
 protocols fail closed.
 
+Runtime validation consumes `AAR_AUTODATA_PROFILE_CONFIG` and requires its
+strict checked-in profile name to match `AAR_AUTODATA_PROFILE`. Runner,
+environment, concurrency, request attempts, lifecycle supervision, digest
+reuse, target gates, and provider protocol come from that validated config;
+unknown names are not maintained in a second runtime-only registry.
+
 The profile fixes the measured target-aware settings:
 
 - trusted local Bubblewrap broker;

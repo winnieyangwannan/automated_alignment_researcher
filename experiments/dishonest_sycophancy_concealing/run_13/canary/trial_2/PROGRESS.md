@@ -37,3 +37,21 @@ Append-only operational record. All timestamps use Pacific Time (`PT`).
 
 Validate and synchronize the exact protocol-aware source commit, then launch
 only through `trial_2/submit_canary.sh`.
+
+<a id="run13-trial2-profile-registry-failure"></a>
+
+### ❌ 23:32 PT — FAIL: Runtime rejected the strict Claude profile name
+
+- Preserved attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run13-trial2-bootstrap-canary/20261012T062700Z-d4ce938d0ef7`.
+- Launcher `1829776` completed; chain `1829799` failed `1:0`; controller
+  `1829800` classified it permanent and failed closed; evaluator absent.
+- The protocol-aware boundary passed. The next validator still used a
+  hard-coded legacy profile-name registry and rejected
+  `target-aware-model-api-claude-opus-4-8-c8-v1`.
+- No method, proposal, workspace, provider generation, production, training,
+  evaluator, score, or finding was created.
+
+#### ➡️ Next step
+
+Retain Trial 2 unchanged and use Trial 3 for the reviewed config-driven fix.

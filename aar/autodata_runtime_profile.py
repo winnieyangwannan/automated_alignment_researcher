@@ -26,6 +26,7 @@ class AutoDataRuntimeProfile:
     environment: str
     concurrency: int
     model_request_max_attempts: int
+    generator_protocol: str = "openai_chat_completions"
     lifecycle_supervised: bool = True
     reuse_policy: str = "digest-verified"
 
@@ -68,6 +69,46 @@ def runtime_profile(name: str) -> AutoDataRuntimeProfile:
         ) from error
 
 
+def runtime_profile_from_config(
+    path: Path, *, expected_name: str
+) -> AutoDataRuntimeProfile:
+    # Import lazily because autodata_run_config reaches this module through the
+    # legacy campaign-policy builder. The strict YAML loader remains the single
+    # source of truth for the checked-in profile schema.
+    from aar.autodata_run_config import load_runtime_profile
+
+    resolved = load_runtime_profile(path)
+    if resolved["name"] != expected_name:
+        raise ValueError(
+            "runtime profile name does not match the selected profile: "
+            f"{resolved['name']!r} != {expected_name!r}"
+        )
+    target = resolved["target"]
+    broker = resolved["broker"]
+    execution = resolved["execution"]
+    if target["enabled"] is not True:
+        raise ValueError("AutoData runtime profile must be target-aware")
+    if broker["runner"] != "local-bwrap":
+        raise ValueError("AutoData runtime profile requires local-bwrap")
+    if broker["environment"] != "oci-runner-firecracker-large":
+        raise ValueError("AutoData runtime profile environment is unsupported")
+    if execution["lifecycle_supervised"] is not True:
+        raise ValueError("AutoData runtime profile must supervise the lifecycle")
+    if execution["reuse_policy"] != "digest-verified":
+        raise ValueError("AutoData runtime profile requires digest-verified reuse")
+    return AutoDataRuntimeProfile(
+        name=resolved["name"],
+        target_enabled=target["enabled"],
+        broker_runner=broker["runner"],
+        environment=broker["environment"],
+        concurrency=execution["concurrency_per_chain"],
+        model_request_max_attempts=execution["model_request_max_attempts"],
+        generator_protocol=resolved["providers"]["generator"]["protocol"],
+        lifecycle_supervised=execution["lifecycle_supervised"],
+        reuse_policy=execution["reuse_policy"],
+    )
+
+
 def validate_campaign_policy(
     policy: Mapping[str, Any], profile: AutoDataRuntimeProfile
 ) -> None:
@@ -89,6 +130,10 @@ def validate_campaign_policy(
     if environment.get("AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS") != expected_attempts:
         raise ValueError(
             "campaign model-request attempts do not match the AutoData runtime profile"
+        )
+    if environment.get("AUTODATA_GENERATOR_PROTOCOL") != profile.generator_protocol:
+        raise ValueError(
+            "campaign generator protocol does not match the AutoData runtime profile"
         )
 
 
@@ -119,16 +164,18 @@ def validate_autodata_checkout(checkout: Path) -> None:
 def validate_runtime(
     *,
     profile_name: str,
+    profile_config_path: Path,
     campaign_policy_path: Path,
     autodata_checkout: Path,
     kimi_proxy_info: Path | None,
     generator_deployment_id: str,
 ) -> dict[str, Any]:
-    profile = runtime_profile(profile_name)
+    profile = runtime_profile_from_config(
+        profile_config_path, expected_name=profile_name
+    )
     policy = json.loads(campaign_policy_path.read_text(encoding="utf-8"))
     if not isinstance(policy, dict):
         raise ValueError("campaign policy must contain one JSON object")
-    validate_campaign_policy(policy, profile)
     environment = policy["required_solve_env"]
     generator_protocol = environment.get("AUTODATA_GENERATOR_PROTOCOL")
     if generator_protocol not in SUPPORTED_GENERATOR_PROTOCOLS:
@@ -136,6 +183,7 @@ def validate_runtime(
             "campaign generator protocol is missing or unsupported: "
             f"{generator_protocol!r}"
         )
+    validate_campaign_policy(policy, profile)
     if environment.get("AUTODATA_GENERATOR_DEPLOYMENT_ID") != generator_deployment_id:
         raise ValueError(
             "campaign generator deployment does not match requested routing"
@@ -164,6 +212,7 @@ def validate_runtime(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", required=True)
+    parser.add_argument("--profile-config", required=True, type=Path)
     parser.add_argument("--campaign-policy", required=True, type=Path)
     parser.add_argument("--autodata-checkout", required=True, type=Path)
     parser.add_argument("--kimi-proxy-info", type=Path)
@@ -171,6 +220,7 @@ def main() -> int:
     args = parser.parse_args()
     result = validate_runtime(
         profile_name=args.profile,
+        profile_config_path=args.profile_config,
         campaign_policy_path=args.campaign_policy,
         autodata_checkout=args.autodata_checkout,
         kimi_proxy_info=args.kimi_proxy_info,

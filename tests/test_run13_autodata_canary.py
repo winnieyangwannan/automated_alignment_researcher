@@ -5,7 +5,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CANARY = ROOT / "experiments/dishonest_sycophancy_concealing/run_13/canary"
-RUN_CONFIG = CANARY / "trial_2/autodata_run.yaml"
+RUN_CONFIG = CANARY / "trial_3/autodata_run.yaml"
 PROFILE = (
     ROOT
     / "configs/autodata/target_aware_model_api_claude_opus_4_8_c8_v1.yaml"
@@ -17,7 +17,7 @@ def test_run13_canary_configuration_is_bounded_to_training_smoke() -> None:
     run = yaml.safe_load(RUN_CONFIG.read_text())
     profile = yaml.safe_load(PROFILE.read_text())
 
-    assert run["run_id"] == "run13-canary-trial2"
+    assert run["run_id"] == "run13-canary-trial3"
     assert run["runtime_profile"] == str(PROFILE.relative_to(ROOT))
     assert run["chains"] == ["alpha"]
     assert run["target_pairs_per_chain"] == 1
@@ -37,7 +37,7 @@ def test_run13_canary_configuration_is_bounded_to_training_smoke() -> None:
 
 
 def test_run13_owns_a_fail_closed_launcher_and_slurm_payloads() -> None:
-    wrapper_path = CANARY / "trial_2/submit_canary.sh"
+    wrapper_path = CANARY / "trial_3/submit_canary.sh"
     launcher_path = CANARY / "launch/launch.sh"
     pipeline_path = CANARY / "slurm/pipeline.sbatch"
     controller_path = CANARY / "slurm/chain_controller.sbatch"
@@ -87,5 +87,6 @@ def test_run13_documentation_records_trials_and_pin() -> None:
     assert "20261012T060647Z-67ab7629e12e" in progress
     assert "Trial 1 stopped" in progress
     assert "Protocol-aware Trial 2 prepared" in progress
-    assert "trial_2/submit_canary.sh" in readme
-    assert "Direct root-launcher use is rejected" in (CANARY / "trial_2/README.md").read_text()
+    assert "Config-driven Trial 3 prepared" in progress
+    assert "trial_3/submit_canary.sh" in readme
+    assert "Direct root-launcher use is rejected" in (CANARY / "trial_3/README.md").read_text()

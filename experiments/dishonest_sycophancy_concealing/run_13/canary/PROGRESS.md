@@ -164,3 +164,40 @@ directory.
 
 Validate and synchronize the focused descendant commit, then launch only through
 `trial_2/submit_canary.sh`.
+
+<a id="run13-event-trial2-profile-registry-failure"></a>
+
+### ❌ 23:32 PT — FAIL: Trial 2 stopped at legacy profile-name validation
+
+- Preserved attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run13-trial2-bootstrap-canary/20261012T062700Z-d4ce938d0ef7`.
+- Launcher `1829776` completed; chain `1829799` failed `1:0`; controller
+  `1829800` classified the failure permanent and failed closed; evaluator absent.
+- Protocol-aware routing succeeded, but the Python runtime validator accepted
+  only three hard-coded legacy profile names and rejected the strict checked-in
+  Claude profile name `target-aware-model-api-claude-opus-4-8-c8-v1`.
+- The failure occurred before method authoring, proposal approval, workspace
+  registration, generation, training, score, or finding.
+
+#### ➡️ Next step
+
+Keep Trial 2 immutable. Replace runtime name lookup with validation of the
+selected strict checked-in profile contract and launch a numbered Trial 3.
+
+<a id="run13-event-trial3-prepared"></a>
+
+### 🛠️ 23:32 PT — FIX: Config-driven Trial 3 prepared
+
+- Runtime validation now derives runner, environment, concurrency, attempts,
+  lifecycle supervision, reuse, target gates, and protocol from the selected
+  strict profile config while requiring its name to match the compiled profile.
+- Malformed profiles, unsupported runners/environments/protocols, missing
+  fields, name/config disagreement, and weakened lifecycle/reuse/target gates
+  fail closed.
+- Trial 3 config identity: `run13-canary-trial3`.
+- Trial 3 jobs: none yet.
+
+#### ➡️ Next step
+
+Validate and synchronize the focused recovery commit, then launch only through
+`trial_3/submit_canary.sh`.

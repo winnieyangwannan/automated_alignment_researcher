@@ -108,10 +108,12 @@ aar_validate_autodata_runtime_profile() {
     return 0
   fi
   : "${AAR_AUTODATA_CAMPAIGN_POLICY:?missing AutoData campaign policy}"
+  : "${AAR_AUTODATA_PROFILE_CONFIG:?missing AutoData profile config}"
   : "${AAR_AUTODATA_CHECKOUT:?missing canonical AutoData checkout}"
   : "${AAR_AUTODATA_GENERATOR_DEPLOYMENT:?missing AutoData generator deployment}"
   local runtime_args=(
     --profile "${AAR_AUTODATA_PROFILE}"
+    --profile-config "${AAR_AUTODATA_PROFILE_CONFIG}"
     --campaign-policy "${AAR_AUTODATA_CAMPAIGN_POLICY}"
     --autodata-checkout "${AAR_AUTODATA_CHECKOUT}"
     --generator-deployment-id "${AAR_AUTODATA_GENERATOR_DEPLOYMENT}"

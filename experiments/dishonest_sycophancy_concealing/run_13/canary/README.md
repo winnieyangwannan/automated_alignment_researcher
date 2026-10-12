@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: Trial 1 preserved as a pre-research failure; Trial 2 authorized and prepared
+- Status: Trials 1–2 preserved as pre-research failures; Trial 3 authorized and prepared
 - Created: 2026-10-11 21:42 PT
-- Last updated: 2026-10-11 23:20 PT
+- Last updated: 2026-10-11 23:32 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -82,8 +82,8 @@ reimplementing it inside AAR. That part is correct.
 Recorded: 2026-10-11 22:13 PT
 
 New attempts must launch through a numbered trial wrapper. The current entrypoint
-is [`trial_2/submit_canary.sh`](trial_2/submit_canary.sh), which selects the exact
-Trial 2 config and delegates to the shared root launcher and Slurm engine. The
+is [`trial_3/submit_canary.sh`](trial_3/submit_canary.sh), which selects the exact
+Trial 3 config and delegates to the shared root launcher and Slurm engine. The
 root launcher rejects direct calls and any config outside an in-tree
 `trial_N/autodata_run.yaml`. It does not invoke the Run 12 launcher.
 
@@ -100,14 +100,16 @@ The operator command is:
 
 ```bash
 AAR_RUN13_CANARY_ROOT=<reviewed-proof-root> \
-  experiments/dishonest_sycophancy_concealing/run_13/canary/trial_2/submit_canary.sh
+  experiments/dishonest_sycophancy_concealing/run_13/canary/trial_3/submit_canary.sh
 ```
 
 Trial 1 is retained at
 `/checkpoint/ram/winnieyangwn/aar-runs/run13-bootstrap-canary/20261012T060647Z-67ab7629e12e`.
 It stopped before method authoring when protocol-blind runtime setup incorrectly
-required a Kimi proxy for the Claude Responses route. Trial 2 is the authorized
-protocol-aware recovery; see [its progress log](trial_2/PROGRESS.md).
+required a Kimi proxy for the Claude Responses route. Trial 2 corrected routing
+but exposed a hard-coded legacy profile-name registry before method authoring.
+Trial 3 is the config-driven recovery; see
+[its progress log](trial_3/PROGRESS.md).
 
 ## Plan
 
@@ -282,8 +284,13 @@ The current canary source package contains:
 
 ```text
 canary/
+├─ trial_3/                      # current config-driven recovery
+│  ├─ submit_canary.sh           # only operator entrypoint for Trial 3
+│  ├─ autodata_run.yaml          # Trial 3 machine-readable run contract
+│  ├─ README.md                  # Trial 3 specification
+│  └─ PROGRESS.md                # Trial 3 append-only history
 ├─ trial_2/
-│  ├─ submit_canary.sh           # only operator entrypoint for Trial 2
+│  ├─ submit_canary.sh           # preserved Trial 2 entrypoint
 │  ├─ autodata_run.yaml          # Trial 2 machine-readable run contract
 │  ├─ README.md                  # Trial 2 specification
 │  └─ PROGRESS.md                # Trial 2 append-only history

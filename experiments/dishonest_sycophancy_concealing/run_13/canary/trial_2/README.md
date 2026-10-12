@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: authorized; awaiting source validation and launch
+- Status: failed before method authoring; retained; superseded by Trial 3
 - Created: 2026-10-11 23:20 PT
-- Last updated: 2026-10-11 23:20 PT
+- Last updated: 2026-10-11 23:32 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
