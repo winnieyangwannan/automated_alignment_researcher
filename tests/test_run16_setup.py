@@ -212,6 +212,10 @@ def test_run16_launch_and_recovery_pin_claude_opus_48() -> None:
     assert 'validate_lifecycle_proof "${ONE_CHAIN_PROOF}" 1' in launcher
     assert 'validate_lifecycle_proof "${FIVE_CHAIN_PROOF}" 5' in launcher
     assert "five-chain proof is not bound to the supplied one-chain proof" in launcher
+    assert "AAR_RUN16_ALLOW_MIXED_SOURCE_PREREQUISITE" in launcher
+    assert 'scope:"five_chain_lifecycle_check_only"' in launcher
+    assert 'waived_field:"source_commit_consistent"' in launcher
+    assert "does_not_authorize_full_run:true" in launcher
 
 
 def test_run16_operator_scripts_are_executable_and_parse() -> None:

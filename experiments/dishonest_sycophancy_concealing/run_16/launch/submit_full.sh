@@ -52,10 +52,19 @@ export AAR_AUTODATA=0
 commit="$(git -C "${REPO}" rev-parse HEAD)"
 
 validate_lifecycle_proof() {
-  local proof="$1" expected_chains="$2"
-  [ "$(jq -r '.status' "${proof}")" = passed ] || {
-    echo "lifecycle proof is not passed: ${proof}" >&2; exit 2;
-  }
+  local proof="$1" expected_chains="$2" allow_mixed_source="${3:-0}"
+  local status waived=0
+  status="$(jq -r '.status' "${proof}")"
+  if [ "${status}" != passed ]; then
+    if [ "${allow_mixed_source}" = 1 ] && [ "${expected_chains}" = 1 ] && \
+       [ "${status}" = failed ] && \
+       [ "$(jq -r '.source_commit_consistent' "${proof}")" = false ]; then
+      waived=1
+    else
+      echo "lifecycle proof is not passed: ${proof}" >&2
+      exit 2
+    fi
+  fi
   [ "$(jq -r '.lifecycle_chain_count' "${proof}")" = "${expected_chains}" ] || {
     echo "lifecycle proof expected ${expected_chains} chain(s): ${proof}" >&2
     exit 2
@@ -63,11 +72,16 @@ validate_lifecycle_proof() {
   for field in score_result_pair fail_closed_markers merge_manifest_retained \
     ephemeral_merge_removed claude_research_preflight method_gpu_smoke \
     adapter_reload_validation on_demand_evaluator evaluation_item_contract \
-    autodata_disabled immutable_source source_commit_consistent; do
+    autodata_disabled immutable_source; do
     [ "$(jq -r --arg field "${field}" '.[$field]' "${proof}")" = true ] || {
       echo "lifecycle proof did not prove ${field}" >&2; exit 2;
     }
   done
+  if [ "${waived}" = 0 ] && \
+     [ "$(jq -r '.source_commit_consistent' "${proof}")" != true ]; then
+    echo "lifecycle proof did not prove source_commit_consistent" >&2
+    exit 2
+  fi
   git -C "${REPO}" merge-base --is-ancestor \
     "$(jq -r '.canary_git_commit' "${proof}")" HEAD || {
       echo "current commit does not descend from lifecycle commit" >&2; exit 2;
@@ -75,12 +89,18 @@ validate_lifecycle_proof() {
 }
 
 PREREQUISITE_PROOF=""
+PREREQUISITE_WAIVER=0
 if [ "${MODE}" = canary ] && \
    [ "${AAR_LIFECYCLE_PREREQUISITE_CHAIN_COUNT:-0}" -gt 0 ]; then
+  case "${AAR_RUN16_ALLOW_MIXED_SOURCE_PREREQUISITE:-0}" in
+    0|1) PREREQUISITE_WAIVER="${AAR_RUN16_ALLOW_MIXED_SOURCE_PREREQUISITE:-0}" ;;
+    *) echo "AAR_RUN16_ALLOW_MIXED_SOURCE_PREREQUISITE must be 0 or 1" >&2; exit 2 ;;
+  esac
   PREREQUISITE_PROOF="$(realpath -e -- \
     "${AAR_RUN16_PREREQUISITE_PROOF:?five-chain canary requires the one-chain proof}")"
   validate_lifecycle_proof \
-    "${PREREQUISITE_PROOF}" "${AAR_LIFECYCLE_PREREQUISITE_CHAIN_COUNT}"
+    "${PREREQUISITE_PROOF}" "${AAR_LIFECYCLE_PREREQUISITE_CHAIN_COUNT}" \
+    "${PREREQUISITE_WAIVER}"
 fi
 if [ "${MODE}" = full ]; then
   validate_lifecycle_proof "${ONE_CHAIN_PROOF}" 1
@@ -189,6 +209,24 @@ SNAPSHOT_RECOVERED_SOURCES="${SNAPSHOT_RECOVERY_ROOT}/source-artifacts"
 [ -z "${PREREQUISITE_PROOF}" ] || \
   cp -- "${PREREQUISITE_PROOF}" \
     "${attempt}/metadata/prerequisite_lifecycle_passed.json"
+if [ "${PREREQUISITE_WAIVER}" = 1 ]; then
+  prerequisite_sha256="$(sha256sum -- "${PREREQUISITE_PROOF}" | awk '{print $1}')"
+  approved_at_pt="$(TZ=America/Los_Angeles date '+%Y-%m-%d %H:%M:%S %Z')"
+  jq -n \
+    --arg prerequisite_proof "${PREREQUISITE_PROOF}" \
+    --arg prerequisite_sha256 "${prerequisite_sha256}" \
+    --arg approved_at_pt "${approved_at_pt}" \
+    '{schema:"aar.lifecycle-prerequisite-waiver/v1",status:"authorized",
+      scope:"five_chain_lifecycle_check_only",
+      waived_field:"source_commit_consistent",
+      reason:"The prerequisite completed every functional lifecycle field but resumed after the Serve proxy fix from a later commit.",
+      prerequisite_proof:$prerequisite_proof,
+      prerequisite_sha256:("sha256:" + $prerequisite_sha256),
+      approved_at_pt:$approved_at_pt,
+      does_not_authorize_full_run:true}' \
+    > "${attempt}/metadata/prerequisite_lifecycle_waiver.json"
+  chmod 400 "${attempt}/metadata/prerequisite_lifecycle_waiver.json"
+fi
 if [ "${MODE}" = full ]; then
   cp -- "${ONE_CHAIN_PROOF}" \
     "${attempt}/metadata/one_chain_lifecycle_passed.json"

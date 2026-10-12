@@ -73,3 +73,34 @@ training, evaluation, retry, or scientific configuration changed.
 ○ Fresh source-consistent one-chain proof
 ○ Five-chain topology launch
 ```
+
+### ✅ 19:08 PT — PASS: functional-prerequisite waiver authorized
+
+> [!IMPORTANT]
+> The user directed the operator to move on to the five-chain topology check.
+> The waiver is limited to the one known `source_commit_consistent=false`
+> prerequisite and does not authorize the full scientific run.
+
+The launcher remains fail-closed by default. With the explicit waiver flag, it
+requires the prerequisite's other functional fields—including method GPU
+smoke, adapter reload, vLLM markers, exact evaluation-item contract,
+score/finding pairing, merge manifest, and cleanup—to remain true. The new
+attempt retains the exact prerequisite proof, its SHA-256, the waived field,
+the reason, and the PT authorization time.
+
+```text
+✓ User authorization retained
+✓ Waiver limited to source_commit_consistent
+✓ Full-run authorization remains blocked
+○ Validate, commit, and synchronize waiver path
+○ Launch five parallel research chains
+```
+
+### 🔎 19:09 PT — OBSERVATION: monitoring contract expanded
+
+At the user's direction, five-chain monitoring now explicitly covers per-chain
+lifecycle progress, research/training/evaluator concurrency, Slurm pressure,
+HTTP 403/429 and Claude 529 signals, Serve timeouts, request-budget exhaustion,
+all retry classes, actionable failure feedback, hangs, and cross-chain code or
+artifact health. Each user-requested status report must include these signals
+and the exact score/finding-pair total.

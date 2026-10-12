@@ -1,6 +1,6 @@
 # Run 16 five-chain native-generation lifecycle check
 
-- Status: ready; blocked only on a fresh passed Run 16 one-chain proof
+- Status: authorized for topology-only launch with functional-prerequisite waiver
 - Created: 2026-10-11 01:49 PT
 - Last updated: 2026-10-11 19:05 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
@@ -34,6 +34,14 @@ hostname is added centrally to `no_proxy`/`NO_PROXY`, the advertised method
 budget and Slurm training limit are both 15 minutes, and terminal evaluator
 failures are not automatically retried with an unchanged adapter.
 
+On 2026-10-11 at 19:08 PT, the user explicitly authorized this topology check
+to proceed using the functionally complete mixed-source prerequisite. The
+launcher permits that single known failed field only when
+`AAR_RUN16_ALLOW_MIXED_SOURCE_PREREQUISITE=1` is supplied, requires every other
+one-chain proof field to be true, and retains a machine-readable waiver. This
+waiver is scoped to the five-chain topology check and cannot authorize the full
+scientific run.
+
 ## Launch
 
 Recorded: 2026-10-11 01:49 PT
@@ -44,6 +52,15 @@ Run 16 one-chain proof from that same revision, launch from the HPC
 
 ```bash
 experiments/dishonest_sycophancy_concealing/run_16/canary/five_chain_lifecycle_check/launch/launch.sh \
+  <one-chain-attempt>/metadata/canary_passed.json
+```
+
+For the user-authorized functional-prerequisite waiver, use the same committed
+launcher with the explicit flag:
+
+```bash
+AAR_RUN16_ALLOW_MIXED_SOURCE_PREREQUISITE=1 \
+  experiments/dishonest_sycophancy_concealing/run_16/canary/five_chain_lifecycle_check/launch/launch.sh \
   <one-chain-attempt>/metadata/canary_passed.json
 ```
 
@@ -86,7 +103,10 @@ the operational safeguards above do not alter any model role.
 
 Recorded: 2026-10-11 01:49 PT
 
-- The prerequisite is a passed one-chain proof from an ancestor commit.
+- Normally, the prerequisite is a passed one-chain proof from an ancestor
+  commit. The explicitly authorized topology-only waiver may accept a failed
+  proof only when `source_commit_consistent=false` and every functional field
+  is true.
 - The prerequisite and this gate each use one internally consistent immutable
   source revision; mixed-commit recovery evidence is ineligible.
 - Exactly five distinct research-chain jobs and five real-GPU smoke proofs
@@ -106,6 +126,36 @@ Recorded: 2026-10-11 01:49 PT
 Stop on a missing or stale prerequisite proof, any AutoData initialization,
 wrong child count, proposal or smoke failure, adapter mismatch, evaluator
 failure, or missing score/finding pair.
+
+## Monitoring goals
+
+Recorded: 2026-10-11 19:09 PT
+
+Every operator status report must show all five chains separately, including
+started sessions, completed score/finding pairs, completed lifecycle stages,
+the current stage, and relevant job IDs. It must also report:
+
+- research concurrency: five distinct chain jobs, their Slurm states, and any
+  chain making no substantive transcript or artifact progress;
+- training concurrency: queued/running training jobs and proof that no more
+  than the configured single training job runs at once;
+- evaluator concurrency: zero evaluators before all five GPU smoke proofs and
+  exactly one shared one-GPU evaluator afterward;
+- rate-limit and connectivity signals: HTTP 403/429 responses, Claude 529
+  overloads, Serve/API timeouts, sequential generation-budget exhaustion, and
+  any repeated identical request pattern;
+- retry health: Slurm restarts, agent-session retries, training resubmissions,
+  evaluator retries, and confirmation that a terminally failed adapter is not
+  automatically reevaluated;
+- code-health signals: exceptions, malformed tool calls, contract failures,
+  stale receipts, duplicate run IDs, cross-chain artifact mixing, missing
+  failure feedback, or a process that is alive without meaningful progress;
+- durable progress: per-chain method, receipt, smoke, score, and finding counts,
+  plus the total exact score/finding-pair count out of five.
+
+A status report must distinguish healthy queueing from a hang and bounded
+backoff from a retry loop. A failure report must state whether its feedback is
+specific enough to guide a correction without exposing evaluator-private data.
 
 ## After a pass
 
