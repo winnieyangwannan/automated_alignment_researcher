@@ -364,3 +364,29 @@ Validation at 16:40 PT:
 ✓ shell syntax and whitespace checks passed
 ✓ direct Bubblewrap visibility/read-only/isolation proof passed
 ```
+
+<a id="run16-event-full-run7-semantics-authorized"></a>
+
+### ⏭️ 19:53 PT — AUTHORIZED: full five-chain Run 16 with Run 7 semantics
+
+> [!IMPORTANT]
+> The user explicitly authorized bypassing the incomplete lifecycle proofs and
+> launching the full run with the confirmed Run 16 canary model roles.
+
+The full attempt uses five parallel Claude Opus 4.8 research chains and five
+isolated four-GPU Gemma evaluators over the full benchmark suite. Each chain may
+start at most 50 sessions. Failed sessions consume that ceiling, so the run is
+not required to produce 50 successful score/finding pairs per chain.
+
+The direct launch retains a source-bound `lifecycle_proof_override.json`. All
+ordinary method-contract, proposal-review, training-receipt, adapter-validation,
+merged-vLLM, evaluation-isolation, and score/finding-join checks remain active.
+
+```text
+✓ Model-role mapping confirmed
+✓ Five-chain / five-evaluator Run 7 topology selected
+✓ 50-started-session ceiling selected
+⏳ Focused source validation and HPC synchronization
+○ Full launcher and child job IDs
+○ Per-chain research, training, evaluation, scores, and findings
+```

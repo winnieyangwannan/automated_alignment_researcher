@@ -4,16 +4,17 @@
 
 Run 16's launchers and scheduled payload require this branch.
 
-- Status: fresh one-chain lifecycle canary running; five-chain gate remains closed
+- Status: full five-chain launch authorized with retained lifecycle-proof bypass
 - Created: 2026-10-11 01:49 PT
-- Last updated: 2026-10-11 16:01 PT
+- Last updated: 2026-10-11 19:53 PT
 
 ## Goal
 
-Run five independent Claude Opus 4.8 AAR research chains to 50 successful score/finding
-pairs per chain (250 total), with a ceiling of 60 research sessions per chain.
-Each researcher authors its own reproducible training-data generation without
-AutoData.
+Run five independent Claude Opus 4.8 AAR research chains for 50 started
+sessions per chain, matching Run 7 termination semantics. Failed sessions
+consume the ceiling, so each chain can publish at most 50 complete
+score/finding pairs. Each researcher authors its own reproducible training-data
+generation without AutoData.
 
 ## Context
 
@@ -29,7 +30,7 @@ Like Run 15, Run 16 starts only after the reusable failure-feedback,
 proposal-revision, and one-shot recovery fixes are committed, synchronized,
 and tested. Earlier run artifacts remain retained as incident evidence.
 
-Scale-up is ordered and fail-closed:
+The original scale-up plan was ordered and fail-closed:
 
 ```text
 one-chain lifecycle proof
@@ -37,10 +38,13 @@ one-chain lifecycle proof
   → full five-chain 5×50 run
 ```
 
-Run 16's fresh one-chain gate is active. The five-chain gate is not launched.
-The full gate is not launched. Their proofs must come from the final Run 16
-source revision; proofs from Run 15 or earlier are historical evidence, not
-authorization for this fresh researcher configuration.
+The one-chain lifecycle completed functionally but its proof rejected mixed
+source provenance. The five-chain topology attempt then stopped on a generated
+candidate's non-finite LoRA adapter before evaluation. On 2026-10-11, the user
+explicitly authorized launching the full Run 16 directly with the confirmed
+model mapping and Run 7's 50-started-session semantics. The launcher retains
+that decision as a source-bound machine-readable override; it does not weaken
+method, proposal, training-receipt, evaluator, or isolation checks.
 
 ## Directory layout
 
@@ -128,8 +132,8 @@ requires a new confirmation.
 | ---------------- | ------------------------------------------------- |
 | Research model   | Claude Opus 4.8 (`claude-opus-4-8`), max effort   |
 | Chains           | `alpha`, `beta`, `gamma`, `delta`, `epsilon`      |
-| Target per chain | 50 atomic score/result pairs                      |
-| Session ceiling  | 60 sessions per chain                             |
+| Target per chain | Up to 50 atomic score/result pairs                |
+| Session ceiling  | 50 started sessions per chain                     |
 | Training         | One decoupled GPU lane per isolated chain         |
 | Evaluation       | One four-GPU vLLM evaluator per isolated chain    |
 | Data generation  | Native method code authored by the research model |
@@ -158,8 +162,7 @@ experiments/dishonest_sycophancy_concealing/run_16/canary/five_chain_lifecycle_c
   <one-chain-attempt>/metadata/canary_passed.json
 ```
 
-After five complete score/finding pairs produce a passed topology proof, pass
-both exact proof files to the full launcher:
+The ordinary proof-gated launch accepts both exact proof files:
 
 ```bash
 experiments/dishonest_sycophancy_concealing/run_16/launch/submit_full.sh \
@@ -172,6 +175,14 @@ bound to the exact one-chain proof by SHA-256, copies both proofs into the new
 attempt, and records their hashes before submission. A command in this README
 is not launch authorization; reconfirm the documented model-role mapping before
 starting a new canary, continuation, recovery, or full attempt.
+
+For the user-authorized direct full launch recorded on 2026-10-11, use the
+explicit retained-override entrypoint:
+
+```bash
+experiments/dishonest_sycophancy_concealing/run_16/launch/submit_full.sh \
+  --user-authorized-without-lifecycle-proofs
+```
 
 The launchers print and retain the attempt directory and pipeline job ID.
 `metadata/children.tsv` records one evaluator and one research-chain job per
@@ -194,16 +205,13 @@ after exactly one finding is durably joined to the scored run ID.
 
 ## Pass criteria
 
-- The Run 16 one-chain proof passes all lifecycle checks.
-- A Run 16 five-chain proof passes for all five configured seeds and retains
-  the SHA-256 of the exact one-chain proof it consumed.
-- Full-attempt metadata retains the resolved YAML, both ordered proof files,
-  their hashes, the source commit, and five distinct research/evaluator job
-  pairs.
-- Each chain publishes 50 complete score/finding pairs joined by run ID; the
-  full run therefore produces 250 complete pairs. Started or failed sessions do
-  not count toward this target.
-- Each chain stays within its 60-session ceiling.
+- Full-attempt metadata retains the resolved YAML, source commit, five distinct
+  research/evaluator job pairs, and either both ordered proof files or the
+  source-bound user-authorized lifecycle-proof override.
+- Each chain starts at most 50 sessions. Failed sessions count toward this
+  ceiling; only matching durable score/finding pairs count as completed results.
+- The run may therefore finish with fewer than 250 complete pairs, exactly as
+  Run 7 could finish with fewer successful evaluations than started sessions.
 - Every counted result has a source-bound training receipt and the required
   fail-closed vLLM runtime and merged-adapter provenance.
 - Attempt metadata proves native generation and `AAR_AUTODATA=0`, with no
@@ -211,9 +219,9 @@ after exactly one finding is durably joined to the scored run ID.
 
 ## Stop criteria
 
-Stop before scale-up or submission if either ordered proof is missing, failed,
-stale, or not bound to the other; if the model-role mapping is unconfirmed; if
-the worktree is dirty or not at the retained source commit; or if baseline,
+Stop before submission if neither valid ordered proofs nor the explicit
+user-authorized override is present; if the model-role mapping is unconfirmed;
+if the worktree is dirty or not at the retained source commit; or if baseline,
 public-source, endpoint, runtime, secret, or storage validation fails.
 
 During execution, stop or use a state-preserving recovery if AutoData is
@@ -235,7 +243,7 @@ Track complete score/finding joins by run ID and append durable state changes to
 `PROGRESS.md` in PT. The existing finding-only recovery is deliberately narrow;
 it is not a general full-chain resume command. A full-run recovery must preserve
 existing results, reject duplicate active jobs, and subtract already-started
-sessions from each chain's 60-session budget.
+sessions from each chain's 50-session budget.
 
 ### Lifecycle-health monitoring goal
 

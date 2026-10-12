@@ -14,6 +14,7 @@ ATTEMPT="${AAR_RUN_ATTEMPT_DIR:?missing attempt}"
 RUN_CONFIG="${AAR_RUN_CONFIG:?missing run config}"
 EXPECTED_COMMIT="${AAR_BASELINE_GIT_COMMIT:?missing source commit}"
 SOURCE_SNAPSHOT="${AAR_SOURCE_SNAPSHOT:?missing immutable source snapshot}"
+LIFECYCLE_PROOF_POLICY="${AAR_RUN16_LIFECYCLE_PROOF_POLICY:-required}"
 REUSED_BASELINE="${AAR_REUSED_BASELINE:?missing baseline}"
 RECOVERED_SOURCES="${AAR_RECOVERED_BASELINE_SOURCES:?missing source bundle}"
 export HF_HOME="${ATTEMPT}/cache/huggingface"
@@ -31,6 +32,26 @@ fi
 case "${RUN_CONFIG}" in
   "${REPO}"/*) ;;
   *) echo "Run 16 config is not source-pinned" >&2; exit 2 ;;
+esac
+case "${LIFECYCLE_PROOF_POLICY}" in
+  required) ;;
+  user_authorized_bypass)
+    [ -s "${ATTEMPT}/metadata/lifecycle_proof_override.json" ] || {
+      echo "user-authorized lifecycle-proof override metadata is missing" >&2
+      exit 2
+    }
+    jq -e --arg git_commit "${EXPECTED_COMMIT}" \
+      '.schema == "aar.run16-lifecycle-proof-override/v1" and
+       .status == "user_authorized" and
+       .scope == "full-five-chain-5x50-sessions" and
+       .git_commit == $git_commit and
+       .researcher_deployment == "meta-claude-cli-opus-4-8"' \
+      "${ATTEMPT}/metadata/lifecycle_proof_override.json" >/dev/null || {
+        echo "user-authorized lifecycle-proof override metadata is invalid" >&2
+        exit 2
+      }
+    ;;
+  *) echo "invalid Run 16 lifecycle-proof policy" >&2; exit 2 ;;
 esac
 
 # shellcheck disable=SC1091
@@ -243,7 +264,7 @@ else
     exit 1
   }
 fi
-printf 'research_backend=claude\nresearch_model=claude-opus-4-8\nresearch_effort=max\ndata_generation_backend=native\nautodata=0\nchains=%s\ntarget_score_result_pairs=%s\nseeds=%s\n' \
-  "${#seeds[@]}" "${AAR_TARGET_SUCCESSFUL_ITERATIONS}" "${AAR_RESEARCH_SEEDS}" \
+printf 'research_backend=claude\nresearch_model=claude-opus-4-8\nresearch_effort=max\ndata_generation_backend=native\nautodata=0\nlifecycle_proof_policy=%s\nchains=%s\ntarget_score_result_pairs=%s\nseeds=%s\n' \
+  "${LIFECYCLE_PROOF_POLICY}" "${#seeds[@]}" "${AAR_TARGET_SUCCESSFUL_ITERATIONS}" "${AAR_RESEARCH_SEEDS}" \
   > "${ATTEMPT}/metadata/full-launch.env"
 echo "[run16] launched ${#seeds[@]} isolated native-generation chains"

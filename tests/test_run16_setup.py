@@ -39,7 +39,7 @@ def test_run16_is_fresh_native_5x50_configuration() -> None:
     assert config["research"] == {
         "seeds": ["alpha", "beta", "gamma", "delta", "epsilon"],
         "target_score_result_pairs": 50,
-        "max_sessions_per_chain": 60,
+        "max_sessions_per_chain": 50,
         "walltime_hours": 167,
     }
     assert config["data_generation"] == {
@@ -55,7 +55,7 @@ def test_run16_is_fresh_native_5x50_configuration() -> None:
     environment = _resolved_environment(config_path)
     assert "export AAR_AUTODATA=0" in environment
     assert "export AAR_TARGET_SUCCESSFUL_ITERATIONS=50" in environment
-    assert "export AAR_MAX_ITERATIONS_PER_CHAIN=60" in environment
+    assert "export AAR_MAX_ITERATIONS_PER_CHAIN=50" in environment
     assert "export AAR_MAX_SEQUENTIAL_TARGET_GENERATIONS=256" in environment
     assert "export EVAL_VLLM_LOG_STATS=1" in environment
     assert "export AAR_AGENT_BACKEND=claude" in environment
@@ -209,6 +209,9 @@ def test_run16_launch_and_recovery_pin_claude_opus_48() -> None:
 
     launcher = (RUN16 / "launch" / "submit_full.sh").read_text()
     assert 'usage: $0 <one-chain-proof.json> <five-chain-proof.json>' in launcher
+    assert "--user-authorized-without-lifecycle-proofs" in launcher
+    assert "aar.run16-lifecycle-proof-override/v1" in launcher
+    assert "full-five-chain-5x50-sessions" in launcher
     assert 'validate_lifecycle_proof "${ONE_CHAIN_PROOF}" 1' in launcher
     assert 'validate_lifecycle_proof "${FIVE_CHAIN_PROOF}" 5' in launcher
     assert "five-chain proof is not bound to the supplied one-chain proof" in launcher
@@ -216,6 +219,17 @@ def test_run16_launch_and_recovery_pin_claude_opus_48() -> None:
     assert 'scope:"five_chain_lifecycle_check_only"' in launcher
     assert 'waived_field:"source_commit_consistent"' in launcher
     assert "does_not_authorize_full_run:true" in launcher
+
+    pipeline = (RUN16 / "slurm" / "pipeline.sbatch").read_text()
+    assert "AAR_RUN16_LIFECYCLE_PROOF_POLICY" in pipeline
+    assert "user_authorized_bypass" in pipeline
+    assert "lifecycle_proof_override.json" in pipeline
+    assert '.researcher_deployment == "meta-claude-cli-opus-4-8"' in pipeline
+
+    recovery = (RUN16 / "recovery" / "resume_full.sh").read_text()
+    assert "retained lifecycle-proof policies disagree" in recovery
+    assert "user_authorized_bypass)" in recovery
+    assert "aar.run16-lifecycle-proof-override/v1" in recovery
 
 
 def test_run16_operator_scripts_are_executable_and_parse() -> None:
@@ -302,4 +316,4 @@ def test_run16_readmes_have_required_operator_sections() -> None:
     root = readmes[0].read_text()
     assert "**Experiment code branch:** `autodata`" in root
     assert "## Model and execution roles" in root
-    assert "not launched" in root
+    assert "full five-chain launch authorized" in root

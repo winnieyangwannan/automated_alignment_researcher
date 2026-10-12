@@ -11,10 +11,10 @@ research:
     - gamma
     - delta
     - epsilon
-  # Full Run 16 target: 50 successful score/finding pairs per chain.
-  # The 60-session ceiling leaves room for up to 10 unsuccessful sessions.
+  # Match Run 7 semantics: 50 started sessions per chain. Failed sessions
+  # consume the ceiling, so completed score/finding pairs may be below 50.
   target_score_result_pairs: 50
-  max_sessions_per_chain: 60
+  max_sessions_per_chain: 50
   walltime_hours: 167
 
 training:

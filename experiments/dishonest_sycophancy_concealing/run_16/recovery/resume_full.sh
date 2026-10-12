@@ -33,9 +33,7 @@ fi
 submission="${ATTEMPT}/metadata/submission.txt"
 full_launch="${ATTEMPT}/metadata/full-launch.env"
 children="${ATTEMPT}/metadata/children.tsv"
-for required in "${submission}" "${full_launch}" "${children}" \
-  "${ATTEMPT}/metadata/one_chain_lifecycle_passed.json" \
-  "${ATTEMPT}/metadata/five_chain_lifecycle_passed.json"; do
+for required in "${submission}" "${full_launch}" "${children}"; do
   [ -f "${required}" ] || { echo "missing retained attempt metadata: ${required}" >&2; exit 2; }
 done
 [ "$(sed -n 's/^attempt_dir=//p' "${submission}")" = "${ATTEMPT}" ] || {
@@ -51,6 +49,49 @@ original_commit="$(sed -n 's/^git_commit=//p' "${submission}")"
   echo "submission record has no full source commit" >&2
   exit 2
 }
+lifecycle_proof_policy="$(sed -n 's/^lifecycle_proof_policy=//p' "${submission}")"
+[ "${lifecycle_proof_policy}" = "$(sed -n 's/^lifecycle_proof_policy=//p' "${full_launch}")" ] || {
+  echo "retained lifecycle-proof policies disagree" >&2
+  exit 2
+}
+case "${lifecycle_proof_policy}" in
+  required)
+    [ ! -e "${ATTEMPT}/metadata/lifecycle_proof_override.json" ] || {
+      echo "proof-gated attempt unexpectedly retains an override" >&2
+      exit 2
+    }
+    for proof in one_chain_lifecycle_passed.json five_chain_lifecycle_passed.json; do
+      [ -f "${ATTEMPT}/metadata/${proof}" ] || {
+        echo "missing retained attempt metadata: ${ATTEMPT}/metadata/${proof}" >&2
+        exit 2
+      }
+    done
+    ;;
+  user_authorized_bypass)
+    for proof in one_chain_lifecycle_passed.json five_chain_lifecycle_passed.json; do
+      [ ! -e "${ATTEMPT}/metadata/${proof}" ] || {
+        echo "override attempt unexpectedly retains lifecycle proof ${proof}" >&2
+        exit 2
+      }
+    done
+    override="${ATTEMPT}/metadata/lifecycle_proof_override.json"
+    [ -s "${override}" ] || {
+      echo "user-authorized lifecycle-proof override metadata is missing" >&2
+      exit 2
+    }
+    jq -e --arg git_commit "${original_commit}" \
+      '.schema == "aar.run16-lifecycle-proof-override/v1" and
+       .status == "user_authorized" and
+       .scope == "full-five-chain-5x50-sessions" and
+       .git_commit == $git_commit and
+       .researcher_deployment == "meta-claude-cli-opus-4-8"' \
+      "${override}" >/dev/null || {
+        echo "user-authorized lifecycle-proof override metadata is invalid" >&2
+        exit 2
+      }
+    ;;
+  *) echo "invalid retained lifecycle-proof policy" >&2; exit 2 ;;
+esac
 git -C "${REPO}" merge-base --is-ancestor "${original_commit}" HEAD || {
   echo "current recovery source does not descend from ${original_commit}" >&2
   exit 2
@@ -137,7 +178,7 @@ eval "$("${HARNESS_PY}" "${REPO}/scripts/load_aar_run_config.py" "${CANONICAL_CO
 }
 [ "${AAR_RESEARCH_SEEDS:?}" = "alpha beta gamma delta epsilon" ] || exit 2
 [ "${AAR_TARGET_SUCCESSFUL_ITERATIONS:?}" = 50 ] || exit 2
-[ "${AAR_MAX_ITERATIONS_PER_CHAIN:?}" = 60 ] || exit 2
+[ "${AAR_MAX_ITERATIONS_PER_CHAIN:?}" = 50 ] || exit 2
 [ "${AAR_EVAL_WORKERS:?}" = 1 ] || exit 2
 [ "${AAR_EVAL_GPUS:?}" = 4 ] || exit 2
 [ "${AAR_EVAL_ON_DEMAND:?}" = 0 ] || exit 2
@@ -213,7 +254,7 @@ export AAR_RESUME_ALLOWED_SEEDS="alpha beta gamma delta epsilon"
 export AAR_RESUME_DEFAULT_SEEDS="alpha beta gamma delta epsilon"
 export AAR_RESUME_TEAM_PREFIX="run16-gemma4-31b-opus48-"
 export AAR_RESUME_TEAM_SUFFIX="-${launch_job}"
-export AAR_RESUME_MAX_SESSIONS=60
+export AAR_RESUME_MAX_SESSIONS=50
 export AAR_RESUME_HOURS="${AAR_RUN16_RESUME_HOURS:-167}"
 export AAR_RESUME_JOB_PREFIX="aar-${SUITE_NAME}-gemma4_31b-run16"
 export AAR_RESUME_RETRY_INTERRUPTED_TRAINING=1
