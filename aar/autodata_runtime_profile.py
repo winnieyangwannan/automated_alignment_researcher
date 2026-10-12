@@ -12,6 +12,10 @@ from typing import Any, Mapping
 TARGET_AWARE_LOCAL_PROFILE = "target-aware-local-v1"
 TARGET_AWARE_LOCAL_C32_PROFILE = "target-aware-local-c32-v1"
 QUESTION_ONLY_LOCAL_PROFILE = "question-only-local-v1"
+SUPPORTED_GENERATOR_PROTOCOLS = {
+    "model_api_responses",
+    "openai_chat_completions",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,14 +130,25 @@ def validate_runtime(
         raise ValueError("campaign policy must contain one JSON object")
     validate_campaign_policy(policy, profile)
     environment = policy["required_solve_env"]
+    generator_protocol = environment.get("AUTODATA_GENERATOR_PROTOCOL")
+    if generator_protocol not in SUPPORTED_GENERATOR_PROTOCOLS:
+        raise ValueError(
+            "campaign generator protocol is missing or unsupported: "
+            f"{generator_protocol!r}"
+        )
     if environment.get("AUTODATA_GENERATOR_DEPLOYMENT_ID") != generator_deployment_id:
         raise ValueError(
-            "campaign generator deployment does not match authenticated Kimi routing"
+            "campaign generator deployment does not match requested routing"
         )
     validate_autodata_checkout(autodata_checkout)
-    if profile.broker_runner == "local-bwrap":
+    if (
+        profile.broker_runner == "local-bwrap"
+        and generator_protocol == "openai_chat_completions"
+    ):
         if kimi_proxy_info is None or not kimi_proxy_info.is_file():
             raise ValueError("optimized local profile requires a Kimi proxy contract")
+    elif generator_protocol == "model_api_responses" and kimi_proxy_info is not None:
+        raise ValueError("Model API Responses routing does not use a Kimi proxy contract")
     return {
         "profile": profile.name,
         "broker_runner": profile.broker_runner,
@@ -142,6 +157,7 @@ def validate_runtime(
         "model_request_max_attempts": profile.model_request_max_attempts,
         "reuse_policy": profile.reuse_policy,
         "target_enabled": profile.target_enabled,
+        "generator_protocol": generator_protocol,
     }
 
 

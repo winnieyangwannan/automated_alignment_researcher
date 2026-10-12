@@ -18,15 +18,20 @@ from aar.autodata_runtime_profile import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _policy(attempts: str = "3") -> dict:
+def _policy(
+    attempts: str = "3", protocol: str | None = "openai_chat_completions"
+) -> dict:
+    solve_environment = {
+        "AUTODATA_TARGET_ENABLED": "1",
+        "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": attempts,
+        "AUTODATA_GENERATOR_DEPLOYMENT_ID": "kimi-generation",
+    }
+    if protocol is not None:
+        solve_environment["AUTODATA_GENERATOR_PROTOCOL"] = protocol
     return {
         "runner": "local-bwrap",
         "environment": "oci-runner-firecracker-large",
-        "required_solve_env": {
-            "AUTODATA_TARGET_ENABLED": "1",
-            "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": attempts,
-            "AUTODATA_GENERATOR_DEPLOYMENT_ID": "kimi-generation",
-        },
+        "required_solve_env": solve_environment,
     }
 
 
@@ -94,6 +99,103 @@ def test_runtime_validation_requires_optimized_checkout_and_proxy(
             kimi_proxy_info=proxy,
             generator_deployment_id="kimi-generation",
         )
+
+
+def test_runtime_validation_allows_model_api_responses_without_proxy(
+    tmp_path: Path,
+) -> None:
+    checkout = _optimized_checkout(tmp_path / "autodata")
+    policy = tmp_path / "policy.json"
+    value = _policy(protocol="model_api_responses")
+    value["required_solve_env"]["AUTODATA_GENERATOR_DEPLOYMENT_ID"] = (
+        "meta-model-api-claude-4-8-opus"
+    )
+    policy.write_text(json.dumps(value))
+
+    result = validate_runtime(
+        profile_name=TARGET_AWARE_LOCAL_PROFILE,
+        campaign_policy_path=policy,
+        autodata_checkout=checkout,
+        kimi_proxy_info=None,
+        generator_deployment_id="meta-model-api-claude-4-8-opus",
+    )
+
+    assert result["generator_protocol"] == "model_api_responses"
+
+
+def test_runtime_validation_rejects_missing_kimi_proxy(tmp_path: Path) -> None:
+    checkout = _optimized_checkout(tmp_path / "autodata")
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps(_policy()))
+
+    with pytest.raises(ValueError, match="requires a Kimi proxy"):
+        validate_runtime(
+            profile_name=TARGET_AWARE_LOCAL_PROFILE,
+            campaign_policy_path=policy,
+            autodata_checkout=checkout,
+            kimi_proxy_info=None,
+            generator_deployment_id="kimi-generation",
+        )
+
+
+@pytest.mark.parametrize("protocol", [None, "unknown_protocol"])
+def test_runtime_validation_rejects_missing_or_unknown_protocol(
+    tmp_path: Path, protocol: str | None
+) -> None:
+    checkout = _optimized_checkout(tmp_path / "autodata")
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps(_policy(protocol=protocol)))
+
+    with pytest.raises(ValueError, match="protocol is missing or unsupported"):
+        validate_runtime(
+            profile_name=TARGET_AWARE_LOCAL_PROFILE,
+            campaign_policy_path=policy,
+            autodata_checkout=checkout,
+            kimi_proxy_info=None,
+            generator_deployment_id="kimi-generation",
+        )
+
+
+def test_runtime_validation_rejects_kimi_proxy_for_model_api_responses(
+    tmp_path: Path,
+) -> None:
+    checkout = _optimized_checkout(tmp_path / "autodata")
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps(_policy(protocol="model_api_responses")))
+    proxy = tmp_path / "proxy_info.json"
+    proxy.write_text("{}\n")
+
+    with pytest.raises(ValueError, match="does not use a Kimi proxy"):
+        validate_runtime(
+            profile_name=TARGET_AWARE_LOCAL_PROFILE,
+            campaign_policy_path=policy,
+            autodata_checkout=checkout,
+            kimi_proxy_info=proxy,
+            generator_deployment_id="kimi-generation",
+        )
+
+
+def test_shell_profile_skips_kimi_proxy_for_model_api_responses(
+    tmp_path: Path,
+) -> None:
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps(_policy(protocol="model_api_responses")))
+    script = ROOT / "scripts/autodata_runtime_profile.sh"
+    command = f'''
+set -euo pipefail
+export AAR_AUTODATA=1
+export AAR_AUTODATA_PROFILE=target-aware-local-v1
+export AAR_AUTODATA_CAMPAIGN_POLICY="{policy}"
+export AAR_KIMI_PROXY_INFO="{tmp_path / 'missing-proxy.json'}"
+source "{script}"
+aar_set_autodata_runtime_profile
+printf '%s %s\n' "$AAR_AUTODATA_GENERATOR_PROTOCOL" "${{AAR_KIMI_PROXY_INFO-unset}}"
+'''
+    completed = subprocess.run(
+        ["bash", "-c", command], check=True, capture_output=True, text=True
+    )
+
+    assert completed.stdout.strip() == "model_api_responses unset"
 
 
 def test_shell_profile_sets_target_aware_defaults(tmp_path: Path) -> None:

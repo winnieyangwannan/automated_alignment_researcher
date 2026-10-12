@@ -63,14 +63,45 @@ aar_set_autodata_runtime_profile() {
     export AAR_AUTODATA_REUSE_POLICY=digest-verified
   fi
 
-  if [ -z "${AAR_KIMI_PROXY_INFO:-}" ] && [ -n "${AAR_AUTODATA_GENERATOR_DEPLOYMENT:-}" ]; then
-    export AAR_KIMI_PROXY_INFO="/checkpoint/ram/shared/vllm_deployments_v2/${AAR_AUTODATA_GENERATOR_DEPLOYMENT}/proxy_info.json"
+  local generator_protocol="${AAR_AUTODATA_GENERATOR_PROTOCOL:-}"
+  if [ -n "${AAR_AUTODATA_CAMPAIGN_POLICY:-}" ]; then
+    [ -f "${AAR_AUTODATA_CAMPAIGN_POLICY}" ] || {
+      echo "missing AutoData campaign policy: ${AAR_AUTODATA_CAMPAIGN_POLICY}" >&2
+      return 2
+    }
+    generator_protocol="$(jq -er \
+      '.required_solve_env.AUTODATA_GENERATOR_PROTOCOL | select(type == "string" and length > 0)' \
+      "${AAR_AUTODATA_CAMPAIGN_POLICY}")" || {
+      echo "AutoData campaign policy omitted generator protocol" >&2
+      return 2
+    }
+  elif [ -z "${generator_protocol}" ]; then
+    # Legacy static profiles predate explicit protocol configuration and are
+    # Serve API chat-completions profiles.
+    generator_protocol=openai_chat_completions
   fi
-  : "${AAR_KIMI_PROXY_INFO:?optimized AutoData profile requires AAR_KIMI_PROXY_INFO or AAR_AUTODATA_GENERATOR_DEPLOYMENT}"
-  [ -f "${AAR_KIMI_PROXY_INFO}" ] || {
-    echo "missing AutoData Kimi proxy contract: ${AAR_KIMI_PROXY_INFO}" >&2
-    return 2
-  }
+  export AAR_AUTODATA_GENERATOR_PROTOCOL="${generator_protocol}"
+
+  case "${generator_protocol}" in
+    openai_chat_completions)
+      if [ -z "${AAR_KIMI_PROXY_INFO:-}" ] && \
+          [ -n "${AAR_AUTODATA_GENERATOR_DEPLOYMENT:-}" ]; then
+        export AAR_KIMI_PROXY_INFO="/checkpoint/ram/shared/vllm_deployments_v2/${AAR_AUTODATA_GENERATOR_DEPLOYMENT}/proxy_info.json"
+      fi
+      : "${AAR_KIMI_PROXY_INFO:?chat-completions AutoData profile requires AAR_KIMI_PROXY_INFO or AAR_AUTODATA_GENERATOR_DEPLOYMENT}"
+      [ -f "${AAR_KIMI_PROXY_INFO}" ] || {
+        echo "missing AutoData Kimi proxy contract: ${AAR_KIMI_PROXY_INFO}" >&2
+        return 2
+      }
+      ;;
+    model_api_responses)
+      unset AAR_KIMI_PROXY_INFO
+      ;;
+    *)
+      echo "unsupported AutoData generator protocol: ${generator_protocol}" >&2
+      return 2
+      ;;
+  esac
 }
 
 aar_validate_autodata_runtime_profile() {
@@ -80,13 +111,18 @@ aar_validate_autodata_runtime_profile() {
   : "${AAR_AUTODATA_CAMPAIGN_POLICY:?missing AutoData campaign policy}"
   : "${AAR_AUTODATA_CHECKOUT:?missing canonical AutoData checkout}"
   : "${AAR_AUTODATA_GENERATOR_DEPLOYMENT:?missing AutoData generator deployment}"
+  local runtime_args=(
+    --profile "${AAR_AUTODATA_PROFILE}"
+    --campaign-policy "${AAR_AUTODATA_CAMPAIGN_POLICY}"
+    --autodata-checkout "${AAR_AUTODATA_CHECKOUT}"
+    --generator-deployment-id "${AAR_AUTODATA_GENERATOR_DEPLOYMENT}"
+  )
+  if [ -n "${AAR_KIMI_PROXY_INFO:-}" ]; then
+    runtime_args+=(--kimi-proxy-info "${AAR_KIMI_PROXY_INFO}")
+  fi
   PYTHONPATH="${REPO:?missing AAR repository}" \
     "${HARNESS_PY:?missing harness Python}" -m aar.autodata_runtime_profile \
-      --profile "${AAR_AUTODATA_PROFILE}" \
-      --campaign-policy "${AAR_AUTODATA_CAMPAIGN_POLICY}" \
-      --autodata-checkout "${AAR_AUTODATA_CHECKOUT}" \
-      --generator-deployment-id "${AAR_AUTODATA_GENERATOR_DEPLOYMENT}" \
-      --kimi-proxy-info "${AAR_KIMI_PROXY_INFO}" >/dev/null
+      "${runtime_args[@]}" >/dev/null
   if [ -n "${AAR_AUTODATA_RESOLVED_CONFIG:-}" ]; then
     PYTHONPATH="${REPO}" "${HARNESS_PY}" -m aar.autodata_run_config validate \
       --resolved "${AAR_AUTODATA_RESOLVED_CONFIG}" \
