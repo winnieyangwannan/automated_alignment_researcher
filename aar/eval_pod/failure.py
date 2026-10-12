@@ -62,6 +62,14 @@ def classify_failure_error_code(
     ):
         return "training_api_mismatch"
     if (
+        "list" in normalized
+        and "has no attribute" in normalized
+        and "map" in normalized
+    ):
+        return "training_dataset_interface_invalid"
+    if "methodconfig" in normalized and "has no attribute" in normalized:
+        return "training_method_config_invalid"
+    if (
         "nonetype" in normalized
         and any(operator in normalized for operator in (">", "<", ">=", "<="))
         and "int" in normalized

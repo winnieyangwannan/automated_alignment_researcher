@@ -715,6 +715,64 @@ class KimiAgentTest(unittest.TestCase):
         self.assertIn("training_dataset_empty", prompt)
         self.assertIn("chosen and rejected fields", prompt)
 
+    def test_training_failure_feedback_includes_known_sanitized_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            scores = root / "scores"
+            proposals = scores / ".proposals"
+            runs = proposals / "runs"
+            runs.mkdir(parents=True)
+            idea_uid = "kimi-dataset-interface"
+            run_id = f"{idea_uid}-candidate-1"
+            marker = {
+                "approved": True,
+                "execution_ready": True,
+                "journaled": True,
+                "idea_name": "kimi_candidate",
+                "code_hash": "abc123",
+                "run_id": run_id,
+                "paper": {},
+            }
+            (proposals / f"{idea_uid}.json").write_text(json.dumps(marker))
+            (runs / f"{run_id}.json").write_text(json.dumps(marker))
+            (scores / f"{run_id}.failed.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "status": "failed",
+                        "run_id": run_id,
+                        "stage": "training",
+                        "error_code": "training_python_exception",
+                        "retryable": False,
+                        "reason": (
+                            "AttributeError: 'list' object has no attribute 'map'; "
+                            "API_KEY=must-not-leak"
+                        ),
+                    }
+                )
+            )
+            agent = KimiAgent("test-agent", root, cli_path="/bin/true")
+
+            with patch.dict(
+                os.environ,
+                {
+                    "SCORES_DIR": str(scores),
+                    "TEAM_DIR": str(root),
+                    "IDEA_UID": idea_uid,
+                },
+                clear=False,
+            ), patch(
+                "aar.research_loop.kimi_agent._method_code",
+                return_value=("method code", "abc123"),
+            ):
+                prompt = agent._with_previous_failure_feedback("do research")
+
+        self.assertIn("training_dataset_interface_invalid", prompt)
+        self.assertIn("'list' object has no attribute 'map'", prompt)
+        self.assertIn("datasets.Dataset", prompt)
+        self.assertNotIn("must-not-leak", prompt)
+        self.assertIn("[REDACTED]", prompt)
+
     def test_launcher_selects_kimi_without_anthropic_credentials(self) -> None:
         observed = {}
 

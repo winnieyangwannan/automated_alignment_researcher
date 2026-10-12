@@ -3913,7 +3913,10 @@ class KimiAgent:
             or not isinstance(retryable, bool)
         ):
             return None
-        from aar.eval_pod.failure import classify_failure_error_code
+        from aar.eval_pod.failure import (
+            classify_failure_error_code,
+            sanitize_failure_text,
+        )
 
         public_reason = payload.get("reason") or payload.get("error") or error_code
         error_code = classify_failure_error_code(
@@ -3921,13 +3924,19 @@ class KimiAgent:
             error_code=error_code,
             reason=public_reason,
         )
+        public_summary = f"{stage} failed ({error_code})"
+        if error_code in {
+            "training_dataset_interface_invalid",
+            "training_method_config_invalid",
+        }:
+            public_summary += f": {sanitize_failure_text(public_reason, limit=500)}"
         feedback = build_failure_feedback(
             RuntimeError(error_code),
             error_code=error_code,
             stage=stage,
             retryable=retryable,
             disposition="advance_session",
-            public_summary=f"{stage} failed ({error_code})",
+            public_summary=public_summary,
         )
         feedback["run_id"] = run_id
         exception_type = payload.get("exception_type")

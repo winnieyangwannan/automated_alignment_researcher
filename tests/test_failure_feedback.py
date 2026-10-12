@@ -75,6 +75,20 @@ def test_every_literal_production_error_code_has_actionable_guidance() -> None:
     assert missing == []
 
 
+def test_training_interface_failures_have_specific_guidance() -> None:
+    dataset_guidance = failure_guidance(
+        "training", "training_dataset_interface_invalid"
+    )
+    config_guidance = failure_guidance(
+        "training", "training_method_config_invalid"
+    )
+
+    assert "datasets.Dataset" in dataset_guidance
+    assert "train_dataset" in dataset_guidance
+    assert "dry_run" in config_guidance
+    assert "smoke_run" in config_guidance
+
+
 def test_failure_summary_is_bounded_and_redacts_common_secret_forms() -> None:
     raw = (
         "request failed Authorization: Bearer-secret token=abc123 "

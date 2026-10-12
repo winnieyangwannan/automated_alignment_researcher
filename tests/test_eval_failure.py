@@ -53,6 +53,12 @@ def test_training_failure_classifier_covers_common_runtime_contracts() -> None:
         "ValueError: tokenizer padding token is not set": (
             "training_tokenizer_configuration_invalid"
         ),
+        "AttributeError: 'list' object has no attribute 'map'": (
+            "training_dataset_interface_invalid"
+        ),
+        "AttributeError: 'MethodConfig' object has no attribute 'dry_run'": (
+            "training_method_config_invalid"
+        ),
     }
 
     for reason, expected in cases.items():

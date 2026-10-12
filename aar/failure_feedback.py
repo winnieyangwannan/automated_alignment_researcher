@@ -55,6 +55,15 @@ _ERROR_GUIDANCE = {
         "Reconcile the candidate with the locked Transformers, TRL, PEFT, and Trainer "
         "signatures, then rerun the method contract and one-step smoke test."
     ),
+    "training_dataset_interface_invalid": (
+        "Convert Python list or dictionary rows to a datasets.Dataset before passing "
+        "train_dataset to Trainer or SFTTrainer, then validate one batch in the "
+        "one-step smoke test."
+    ),
+    "training_method_config_invalid": (
+        "Declare and initialize every required MethodConfig field, including output_dir, "
+        "dry_run, and smoke_run, then rerun the dry-run and one-step smoke contracts."
+    ),
     "training_optional_integer_invalid": (
         "Replace unset optional values used by arithmetic or comparisons with explicit "
         "validated integers, then exercise the full-data branch in the one-step smoke "
