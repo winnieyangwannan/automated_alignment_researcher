@@ -4292,7 +4292,8 @@ class KimiAgent:
         profile.write_text("\n".join(frontmatter))
         return profile
 
-    def _apply_serve_api_provider(self, env: dict[str, str]) -> None:
+    @staticmethod
+    def configure_serve_api_provider(env: dict[str, str]) -> None:
         """Resolve a live serve_api_v2 proxy without exposing its API key."""
         deployment = env.get("AAR_KIMI_SERVE_DEPLOYMENT", "").strip()
         if not deployment:
@@ -4379,6 +4380,11 @@ class KimiAgent:
                 ),
             }
         )
+
+    def _apply_serve_api_provider(self, env: dict[str, str]) -> None:
+        """Compatibility wrapper for the shared provider configurator."""
+
+        self.configure_serve_api_provider(env)
 
     @contextlib.contextmanager
     def _request_policy_proxy(

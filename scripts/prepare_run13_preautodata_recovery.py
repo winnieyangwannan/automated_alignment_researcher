@@ -183,7 +183,9 @@ def _under(path: Path, root: Path) -> bool:
     return True
 
 
-def verify_manifest(path: Path, *, snapshot: bool = False) -> VerifiedSource:
+def verify_manifest(
+    path: Path, *, snapshot: bool = False, target_trial_id: str = "trial4"
+) -> VerifiedSource:
     path = _require_private_manifest(path, snapshot=snapshot)
     raw = _read_regular_bytes(path, maximum=_MAX_JSON_BYTES)
     try:
@@ -210,8 +212,15 @@ def verify_manifest(path: Path, *, snapshot: bool = False) -> VerifiedSource:
         raise RecoveryImportError("recovery manifest artifacts must be an array")
     if source.get("experiment_run_id") != "run13" or source.get("trial_id") != "trial3":
         raise RecoveryImportError("recovery source must be Run 13 Trial 3")
-    if target.get("experiment_run_id") != "run13" or target.get("trial_id") != "trial4":
-        raise RecoveryImportError("recovery target must be Run 13 Trial 4")
+    if re.fullmatch(r"trial[4-9][0-9]*", target_trial_id) is None:
+        raise RecoveryImportError("recovery target trial identity is invalid")
+    if (
+        target.get("experiment_run_id") != "run13"
+        or target.get("trial_id") != target_trial_id
+    ):
+        raise RecoveryImportError(
+            f"recovery target must be Run 13 {target_trial_id}"
+        )
     if source.get("chain") != "alpha" or target.get("chain") != "alpha":
         raise RecoveryImportError("recovery is restricted to the alpha chain")
     if target.get("entry_boundary") != "fresh_autodata_workspace_before_clarify_design":
@@ -236,8 +245,10 @@ def verify_manifest(path: Path, *, snapshot: bool = False) -> VerifiedSource:
     source_idea_uid = _safe_component(source.get("source_idea_uid"), "source idea UID")
     idea_name = _safe_component(source.get("idea_name"), "idea name")
     target_uid = _safe_component(target.get("idea_uid"), "target idea UID")
-    if "trial4" not in target_uid or target_uid == source_idea_uid:
-        raise RecoveryImportError("target idea UID is not fresh for Trial 4")
+    if target_trial_id not in target_uid or target_uid == source_idea_uid:
+        raise RecoveryImportError(
+            f"target idea UID is not fresh for {target_trial_id}"
+        )
     code_hash = source.get("method_code_hash")
     if not isinstance(code_hash, str) or _BARE_SHA256.fullmatch(code_hash) is None:
         raise RecoveryImportError("source method code hash is invalid")
@@ -517,8 +528,13 @@ def prepare_import(
     python: Path,
     chain_id: str,
     idea_uid: str,
+    target_trial_id: str = "trial4",
 ) -> dict[str, Any]:
-    source = verify_manifest(manifest_path, snapshot=True)
+    source = verify_manifest(
+        manifest_path,
+        snapshot=True,
+        target_trial_id=target_trial_id,
+    )
     idea_name = str(source.manifest["source"]["idea_name"])
     expected_uid = str(source.manifest["target"]["idea_uid"])
     if idea_uid != expected_uid:
@@ -693,6 +709,7 @@ def _parser() -> argparse.ArgumentParser:
     verify = subparsers.add_parser("verify")
     verify.add_argument("--manifest", type=Path, required=True)
     verify.add_argument("--snapshot", action="store_true")
+    verify.add_argument("--target-trial-id", default="trial4")
 
     prepare = subparsers.add_parser("prepare")
     prepare.add_argument("--manifest", type=Path, required=True)
@@ -703,6 +720,7 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--python", type=Path, required=True)
     prepare.add_argument("--chain-id", required=True)
     prepare.add_argument("--idea-uid", required=True)
+    prepare.add_argument("--target-trial-id", default="trial4")
     return parser
 
 
@@ -711,7 +729,11 @@ def main() -> None:
     args = _parser().parse_args()
     try:
         if args.command == "verify":
-            source = verify_manifest(args.manifest, snapshot=args.snapshot)
+            source = verify_manifest(
+                args.manifest,
+                snapshot=args.snapshot,
+                target_trial_id=args.target_trial_id,
+            )
             result = {
                 "schema": SCHEMA,
                 "status": "verified",
@@ -728,6 +750,7 @@ def main() -> None:
                 python=args.python,
                 chain_id=args.chain_id,
                 idea_uid=args.idea_uid,
+                target_trial_id=args.target_trial_id,
             )
     except (OSError, RecoveryImportError, subprocess.SubprocessError) as error:
         print(f"pre-AutoData recovery rejected: {error}", file=sys.stderr)

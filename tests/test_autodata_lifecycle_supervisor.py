@@ -430,8 +430,7 @@ def test_frozen_workspace_automatically_creates_registers_and_cleans_default(
     )
     test_manifest = json.loads(
         (
-            canonical_pipeline
-            / canonical_spec["test_grounding"]["manifest_path"]
+            canonical_pipeline / canonical_spec["test_grounding"]["manifest_path"]
         ).read_text()
     )
     meta_ids = [task["id"] for task in meta_manifest["tasks"]]
@@ -471,8 +470,7 @@ def test_frozen_workspace_rejects_model_added_pipeline_check_before_native_cli(
     with pytest.raises(FailureFeedbackError) as failure:
         reconcile_frozen_workspace(args, workspace_id)
     assert (
-        failure.value.feedback["error_code"]
-        == "workspace_canonical_pipeline_invalid"
+        failure.value.feedback["error_code"] == "workspace_canonical_pipeline_invalid"
     )
     assert calls == []
 
@@ -559,9 +557,12 @@ def test_frozen_workspace_recovers_create_before_register_crash(
     assert result["execution_id"] == "exe_canonical"
     assert sum(call[:2] == ("execution", "create") for call in calls) == 2
     with sqlite3.connect(args.state) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM executions WHERE id='exe_canonical'"
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM executions WHERE id='exe_canonical'"
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_frozen_workspace_reconciliation_is_repeat_idempotent(
@@ -589,9 +590,12 @@ def test_frozen_workspace_preserves_progressed_default(
         reconcile_frozen_workspace(args, workspace_id)
     assert calls == []
     with sqlite3.connect(args.state) as connection:
-        assert connection.execute(
-            "SELECT status FROM executions WHERE id='exe_default'"
-        ).fetchone()[0] == "active"
+        assert (
+            connection.execute(
+                "SELECT status FROM executions WHERE id='exe_default'"
+            ).fetchone()[0]
+            == "active"
+        )
 
 
 def test_frozen_workspace_registration_sla_is_bounded(
@@ -614,9 +618,7 @@ def test_frozen_workspace_registration_sla_is_bounded(
 def test_supervisor_stops_three_unchanged_nonzero_steps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    supervisor = lifecycle_supervisor.Supervisor(
-        Namespace(state=tmp_path / "state.db")
-    )
+    supervisor = lifecycle_supervisor.Supervisor(Namespace(state=tmp_path / "state.db"))
     monkeypatch.setattr(supervisor, "_progress_signature", lambda: (("", 1, 2),))
     subject = lifecycle_supervisor.Subject(
         "execution", "exe_stuck", "final_pending", 60, 60
@@ -697,8 +699,7 @@ def test_supervisor_surfaces_allowlisted_native_contract_diagnostic(
             "native_task_attempt_budget_insufficient",
         ),
         (
-            "iterations budget insufficient for atomic batch: "
-            "requires 1, remaining 0",
+            "iterations budget insufficient for atomic batch: requires 1, remaining 0",
             "native_iteration_budget_insufficient",
         ),
         ("iterations budget exceeded", "native_iteration_budget_exceeded"),
@@ -808,7 +809,9 @@ def test_long_native_step_refreshes_supervisor_heartbeat(
         )
         supervisor = lifecycle_supervisor.Supervisor(args)
         writes: list[dict[str, object]] = []
-        monkeypatch.setattr(supervisor, "_write_status", lambda **value: writes.append(value))
+        monkeypatch.setattr(
+            supervisor, "_write_status", lambda **value: writes.append(value)
+        )
         monkeypatch.setattr(supervisor, "_progress_signature", lambda _subject: ())
         monkeypatch.setattr(supervisor, "_snapshot", lambda _reason: None)
         monkeypatch.setattr(lifecycle_supervisor.time, "sleep", lambda _seconds: None)
@@ -928,19 +931,29 @@ def test_semantic_coordinator_requires_explicit_worker_backend(
     assert raised.value.code == "semantic_worker_backend_invalid"
 
 
-def test_semantic_coordinator_rejects_kimi_backend(
+def test_semantic_coordinator_configures_kimi_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     supervisor = _semantic_coordinator_supervisor(tmp_path, monkeypatch)
     monkeypatch.setenv("AAR_AUTODATA_SEMANTIC_WORKER", "kimi")
+    observed: dict[str, object] = {}
 
-    with pytest.raises(
-        lifecycle_supervisor.AutoDataCoordinatorError,
-        match="unsupported semantic worker backend",
-    ) as raised:
-        supervisor._reconcile_semantic_action()
+    class Reconciler:
+        def __init__(self, **kwargs: object) -> None:
+            observed.update(kwargs)
 
-    assert raised.value.code == "semantic_worker_backend_invalid"
+        async def reconcile_registered_clarify(self, _control: Path) -> None:
+            return None
+
+    monkeypatch.setattr(
+        lifecycle_supervisor.NativeAutoDataControl,
+        "from_environment",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(lifecycle_supervisor, "AutoDataActionReconciler", Reconciler)
+
+    assert supervisor._reconcile_semantic_action() is None
+    assert isinstance(observed["worker"], lifecycle_supervisor.KimiWorker)
 
 
 def test_semantic_coordinator_configures_claude_worker(
@@ -966,6 +979,75 @@ def test_semantic_coordinator_configures_claude_worker(
 
     assert supervisor._reconcile_semantic_action() is None
     assert isinstance(observed["worker"], lifecycle_supervisor.ClaudeWorker)
+
+
+def test_semantic_coordinator_dispatches_execution_analysis_slice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    team = tmp_path / "team"
+    team.mkdir()
+    state = tmp_path / "state.db"
+    state.touch()
+    control = tmp_path / "control.json"
+    control.write_text(
+        json.dumps(
+            {
+                "schema": "aar.autodata.lifecycle-control/v1",
+                "subjects": [
+                    {
+                        "kind": "execution",
+                        "subject_id": "exe_" + "3" * 32,
+                        "status": "registered",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    supervisor = lifecycle_supervisor.Supervisor(
+        Namespace(state=state, control_file=control)
+    )
+    monkeypatch.setenv("TEAM_DIR", str(team))
+    monkeypatch.delenv("AAR_AUTODATA_CLARIFY_COORDINATOR", raising=False)
+    monkeypatch.setenv("AAR_AUTODATA_ANALYSIS_COORDINATOR", "1")
+    monkeypatch.setenv("AAR_AUTODATA_SEMANTIC_WORKER", "claude")
+    observed: dict[str, object] = {}
+
+    class Reconciler:
+        def __init__(self, **kwargs: object) -> None:
+            observed.update(kwargs)
+
+        async def reconcile_registered_analysis(self, path: Path):
+            observed["control_file"] = path
+            return type(
+                "Outcome",
+                (),
+                {
+                    "workspace_id": "exe_" + "3" * 32,
+                    "action_id": "act_" + "4" * 24,
+                    "worker_backend": "claude",
+                    "receipt_path": team / "receipt.json",
+                    "native_phase": "awaiting_analysis",
+                    "native_revision": 0,
+                },
+            )()
+
+    monkeypatch.setattr(
+        lifecycle_supervisor.NativeAutoDataControl,
+        "from_environment",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(lifecycle_supervisor, "ExecutionAnalysisReconciler", Reconciler)
+    monkeypatch.setattr(
+        supervisor, "_snapshot", lambda reason: observed.update(reason=reason)
+    )
+
+    result = supervisor._reconcile_semantic_action()
+
+    assert result is not None
+    assert result["action_kind"] == "analyze_results"
+    assert result["workspace_id"] == "exe_" + "3" * 32
+    assert observed["control_file"] == control
 
 
 def test_long_idle_sleep_refreshes_supervisor_heartbeat(
@@ -1142,9 +1224,7 @@ def test_run_wraps_every_reconciliation_edge_with_heartbeat(
 def test_supervisor_stops_repeated_failure_despite_database_mtime_progress(
     tmp_path: Path,
 ) -> None:
-    supervisor = lifecycle_supervisor.Supervisor(
-        Namespace(state=tmp_path / "state.db")
-    )
+    supervisor = lifecycle_supervisor.Supervisor(Namespace(state=tmp_path / "state.db"))
     supervisor.args.state.write_bytes(b"first")
     subject = lifecycle_supervisor.Subject(
         "execution", "exe_progressing", "final_pending", 60, 60
@@ -1165,9 +1245,7 @@ def test_supervisor_stops_repeated_failure_despite_database_mtime_progress(
 
 
 def test_supervisor_resets_nonzero_counter_on_phase_transition(tmp_path: Path) -> None:
-    supervisor = lifecycle_supervisor.Supervisor(
-        Namespace(state=tmp_path / "state.db")
-    )
+    supervisor = lifecycle_supervisor.Supervisor(Namespace(state=tmp_path / "state.db"))
     first = lifecycle_supervisor.Subject(
         "execution", "exe_progressing", "baseline_pending", 60, 60
     )
@@ -1433,7 +1511,9 @@ def test_completed_meta_transition_recovers_without_duplicate_production(
         "_study_reserved_task_ids",
         lambda *_: [f"task-{index:03d}" for index in range(128)],
     )
-    monkeypatch.setattr(lifecycle_supervisor, "_export_winner_idempotently", lambda *_, **__: None)
+    monkeypatch.setattr(
+        lifecycle_supervisor, "_export_winner_idempotently", lambda *_, **__: None
+    )
     monkeypatch.setattr(
         lifecycle_supervisor,
         "_copy_tree_with_production_grounding",
@@ -1468,7 +1548,9 @@ def test_completed_meta_transition_recovers_without_duplicate_production(
     monkeypatch.setattr(
         lifecycle_supervisor, "_execution_study", lambda *_: "study-one"
     )
-    monkeypatch.setattr(lifecycle_supervisor, "snapshot_database", lambda *_, **__: True)
+    monkeypatch.setattr(
+        lifecycle_supervisor, "snapshot_database", lambda *_, **__: True
+    )
     args = Namespace(
         state=tmp_path / "state.db",
         retained_state=retained,
@@ -1737,9 +1819,7 @@ def test_production_in_flight_source_remains_attainable(tmp_path: Path) -> None:
                 "execution",
                 execution_id,
                 "task_attempt.submitted",
-                json.dumps(
-                    {"task_id": "source-0", "phase": "final-full-corpus"}
-                ),
+                json.dumps({"task_id": "source-0", "phase": "final-full-corpus"}),
             ),
         )
 
@@ -1906,7 +1986,9 @@ def test_completed_production_publishes_one_verified_handoff(
         "_execution_finalization",
         lambda *_: {"dataset": {"digest": dataset_digest}},
     )
-    monkeypatch.setattr(lifecycle_supervisor, "snapshot_database", lambda *_, **__: True)
+    monkeypatch.setattr(
+        lifecycle_supervisor, "snapshot_database", lambda *_, **__: True
+    )
 
     def export_dataset(
         _args: Namespace, *, execution_id: str, destination: Path, expected_digest: str
@@ -1935,9 +2017,7 @@ def test_completed_production_publishes_one_verified_handoff(
             "verified_marker": str(marker),
         }
 
-    monkeypatch.setattr(
-        autodata_lifecycle, "publish_verified_handoff_marker", publish
-    )
+    monkeypatch.setattr(autodata_lifecycle, "publish_verified_handoff_marker", publish)
     args = Namespace(
         state=tmp_path / "state.db",
         retained_state=retained,
@@ -1959,9 +2039,7 @@ def test_completed_production_publishes_one_verified_handoff(
     handoff = json.loads((run_root / "training-handoff.json").read_text())
     assert handoff["state_db"] == str(retained)
     assert handoff["production_execution_id"] == production_id
-    assert handoff["consumption_receipt"] == str(
-        run_root / "training-consumption.json"
-    )
+    assert handoff["consumption_receipt"] == str(run_root / "training-consumption.json")
 
 
 def test_snapshot_removes_stale_retained_sidecars(tmp_path: Path) -> None:
@@ -2017,9 +2095,7 @@ def test_supervised_restore_rejects_retained_database_without_manifest(
     retained = tmp_path / "retained.db"
     _state(retained)
     with pytest.raises(RuntimeError, match="missing its snapshot manifest"):
-        restore_database(
-            retained, tmp_path / "restored.db", require_manifest=True
-        )
+        restore_database(retained, tmp_path / "restored.db", require_manifest=True)
 
 
 def test_snapshot_rejects_foreign_key_violation(tmp_path: Path) -> None:
@@ -2057,7 +2133,9 @@ def test_restore_accepts_previous_digest_during_atomic_publish_transition(
     assert restore_database(retained, tmp_path / "restored.db") is True
 
 
-def test_next_subject_pauses_for_actions_and_uses_phase_timeouts(tmp_path: Path) -> None:
+def test_next_subject_pauses_for_actions_and_uses_phase_timeouts(
+    tmp_path: Path,
+) -> None:
     state = tmp_path / "state.db"
     control = tmp_path / "control.json"
     _state(state)
@@ -2268,10 +2346,10 @@ def test_registration_rejects_semantic_duplicate_execution(tmp_path: Path) -> No
         state, control, kind="execution", subject_id="exe_primary"
     )
     assert registered["subject_id"] == "exe_primary"
-    with pytest.raises(RuntimeError, match="duplicates canonical execution exe_primary"):
-        register_subject(
-            state, control, kind="execution", subject_id="exe_duplicate"
-        )
+    with pytest.raises(
+        RuntimeError, match="duplicates canonical execution exe_primary"
+    ):
+        register_subject(state, control, kind="execution", subject_id="exe_duplicate")
 
 
 def test_execution_creation_key_is_content_bound_and_ignores_retry_labels(
@@ -2497,9 +2575,10 @@ def test_register_cli_snapshots_before_publishing_control(tmp_path: Path) -> Non
     assert json.loads(result.stdout)["registered"] is True
     assert retained.is_file()
     assert retained.with_name("state.db.snapshot.json").is_file()
-    assert json.loads(control.read_text(encoding="utf-8"))["subjects"][0][
-        "subject_id"
-    ] == "ws_cli"
+    assert (
+        json.loads(control.read_text(encoding="utf-8"))["subjects"][0]["subject_id"]
+        == "ws_cli"
+    )
 
 
 def test_registered_completion_is_reconciled_but_missing_registration_fails(
@@ -2535,7 +2614,9 @@ def test_registered_completion_is_reconciled_but_missing_registration_fails(
     registration["status"] = "registered"
     registration.pop("native_status")
     control.write_text(
-        json.dumps({"schema": "aar.autodata.lifecycle-control/v1", "subjects": [registration]}),
+        json.dumps(
+            {"schema": "aar.autodata.lifecycle-control/v1", "subjects": [registration]}
+        ),
         encoding="utf-8",
     )
     with pytest.raises(RuntimeError, match="is missing"):

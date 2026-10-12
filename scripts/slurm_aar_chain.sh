@@ -669,6 +669,83 @@ else
   _aar_research_result=$?
 fi
 rm -f -- "${_aar_research_pid_file}"
+if [ "${AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE:-0}" = 1 ]; then
+  [ "${AAR_AUTODATA_LIFECYCLE_SUPERVISED:-0}" = 1 ] || {
+    echo "[aar] ERROR: lifecycle ownership requires the AutoData supervisor" >&2
+    exit 2
+  }
+  if [ -z "${_autodata_supervisor_pid}" ] || \
+      ! kill -0 "${_autodata_supervisor_pid}" 2>/dev/null; then
+    echo "[aar] ERROR: lifecycle supervisor is unavailable after the semantic turn" >&2
+    exit 70
+  fi
+  _aar_lifecycle_marker_name=''
+  case "${AAR_AUTODATA_STOP_AFTER:-}" in
+    production) _aar_lifecycle_marker_name=production-canary-complete.json ;;
+    training_smoke) _aar_lifecycle_marker_name=training-smoke-canary-complete.json ;;
+    *)
+      echo "[aar] ERROR: coordinator-owned lifecycle has no supported terminal receipt" >&2
+      exit 2
+      ;;
+  esac
+  echo "[aar] semantic turn exited status=${_aar_research_result}; lifecycle supervisor remains authoritative until ${AAR_AUTODATA_STOP_AFTER}"
+  _aar_lifecycle_next_update=0
+  while true; do
+    shopt -s nullglob
+    _aar_lifecycle_markers=("${TEAM_DIR}"/autodata/*/"${_aar_lifecycle_marker_name}")
+    shopt -u nullglob
+    if [ "${#_aar_lifecycle_markers[@]}" -eq 1 ]; then
+      case "${AAR_AUTODATA_STOP_AFTER}" in
+        production)
+          jq -e --argjson required "${AAR_AUTODATA_PRODUCTION_ROWS:?}" '
+            .schema == "aar.autodata.production-canary-complete/v1"
+            and .stop_after == "production"
+            and .required_accepted_rows == $required
+            and .verification.available_rows >= $required
+            and .verification.run_id == .run_id
+          ' "${_aar_lifecycle_markers[0]}" >/dev/null || {
+            echo "[aar] ERROR: production terminal receipt is invalid" >&2
+            exit 2
+          }
+          ;;
+        training_smoke)
+          jq -e --argjson required "${AAR_AUTODATA_PRODUCTION_ROWS:?}" '
+            .schema == "aar.autodata.training-smoke-canary-complete/v1"
+            and .stop_after == "training_smoke"
+            and .required_accepted_rows == $required
+            and .verification.available_rows >= $required
+            and .training.consumed_rows == $required
+            and .training.optimizer_steps == 1
+            and .verification.run_id == .run_id
+          ' "${_aar_lifecycle_markers[0]}" >/dev/null || {
+            echo "[aar] ERROR: training-smoke terminal receipt is invalid" >&2
+            exit 2
+          }
+          ;;
+      esac
+      echo "[aar] verified terminal lifecycle receipt is ready: ${_aar_lifecycle_markers[0]}"
+      _aar_research_result=0
+      break
+    fi
+    if [ "${#_aar_lifecycle_markers[@]}" -gt 1 ]; then
+      echo "[aar] ERROR: multiple terminal lifecycle receipts are present" >&2
+      exit 2
+    fi
+    kill -0 "${_autodata_supervisor_pid}" 2>/dev/null || {
+      wait "${_autodata_supervisor_pid}" 2>/dev/null || true
+      echo "[aar] ERROR: lifecycle supervisor exited before its terminal receipt" >&2
+      exit 70
+    }
+    _aar_lifecycle_now="$(date +%s)"
+    if [ "${_aar_lifecycle_now}" -ge "${_aar_lifecycle_next_update}" ]; then
+      echo "[aar] waiting for coordinator-owned AutoData lifecycle (${AAR_AUTODATA_STOP_AFTER})"
+      _aar_lifecycle_next_update=$((_aar_lifecycle_now + 60))
+    fi
+    sleep 10
+  done
+  unset _aar_lifecycle_marker_name _aar_lifecycle_markers \
+    _aar_lifecycle_next_update _aar_lifecycle_now
+fi
 [ "${_aar_research_result}" -eq 0 ] || exit "${_aar_research_result}"
 if [ "${AAR_VERIFY_TWO_ITERATION_ARTIFACTS:-0}" = 1 ]; then
   "${PY}" "${REPO}/replication/verify_two_iteration_multidimensional.py" \

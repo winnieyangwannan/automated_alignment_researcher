@@ -255,6 +255,28 @@ def test_prepare_import_is_fresh_and_idempotent(tmp_path: Path, monkeypatch) -> 
     assert "synthetic-old-workspace" not in active
 
 
+def test_manifest_can_bind_a_fresh_trial5_target(tmp_path: Path) -> None:
+    helper = _load_helper()
+    manifest, _, _, _, _ = _fixture(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["target"]["trial_id"] = "trial5"
+    payload["target"]["idea_uid"] = "synthetic-trial5-idea"
+    _write_json(manifest, payload)
+    os.chmod(manifest, 0o600)
+
+    verified = helper.verify_manifest(manifest, target_trial_id="trial5")
+
+    assert verified.manifest["target"]["trial_id"] == "trial5"
+
+
+def test_manifest_target_must_match_requested_trial(tmp_path: Path) -> None:
+    helper = _load_helper()
+    manifest, _, _, _, _ = _fixture(tmp_path)
+
+    with pytest.raises(helper.RecoveryImportError, match="trial5"):
+        helper.verify_manifest(manifest, target_trial_id="trial5")
+
+
 def test_manifest_hash_drift_is_rejected(tmp_path: Path) -> None:
     helper = _load_helper()
     manifest, _, _, _, _ = _fixture(tmp_path)

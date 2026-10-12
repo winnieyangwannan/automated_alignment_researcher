@@ -47,11 +47,13 @@ from aar.infrastructure.autodata_execution_contract import (
     validate_runtime_campaign_policy_rewrite,
 )
 from aar.infrastructure.autodata_coordinator import (
-    AutoDataCoordinatorError,
     AutoDataActionReconciler,
+    AutoDataCoordinatorError,
+    ExecutionAnalysisReconciler,
     NativeAutoDataControl,
 )
 from aar.infrastructure.autodata_coordinator.claude_worker import ClaudeWorker
+from aar.infrastructure.autodata_coordinator.kimi_worker import KimiWorker
 
 META_TIMEOUT_SECONDS = 2 * 60 * 60
 PRODUCTION_TIMEOUT_SECONDS = 8 * 60 * 60
@@ -2670,16 +2672,25 @@ class Supervisor:
             self._write_status(state="running", last_snapshot_reason=reason)
 
     def _reconcile_semantic_action(self) -> dict[str, Any] | None:
-        """Reconcile clarify only when the run explicitly enables this slice."""
+        """Reconcile one explicitly allowlisted native semantic action."""
 
-        enabled = os.getenv("AAR_AUTODATA_CLARIFY_COORDINATOR", "").strip().lower()
-        if not enabled:
+        clarify_enabled = os.getenv(
+            "AAR_AUTODATA_CLARIFY_COORDINATOR", ""
+        ).strip().lower()
+        analysis_enabled = os.getenv(
+            "AAR_AUTODATA_ANALYSIS_COORDINATOR", ""
+        ).strip().lower()
+        if not clarify_enabled and not analysis_enabled:
             return None
-        if enabled not in {"1", "true", "yes", "on"}:
-            raise AutoDataCoordinatorError(
-                "semantic_coordinator_flag_invalid",
-                "clarify coordinator enablement flag is invalid",
-            )
+        for label, enabled in (
+            ("clarify", clarify_enabled),
+            ("analysis", analysis_enabled),
+        ):
+            if enabled and enabled not in {"1", "true", "yes", "on"}:
+                raise AutoDataCoordinatorError(
+                    "semantic_coordinator_flag_invalid",
+                    f"{label} coordinator enablement flag is invalid",
+                )
         team_raw = os.getenv("TEAM_DIR", "").strip()
         if not team_raw:
             raise AutoDataCoordinatorError(
@@ -2687,38 +2698,46 @@ class Supervisor:
                 "clarify coordinator has no team directory",
             )
         team_dir = Path(team_raw).resolve(strict=True)
-        registered_workspaces = [
-            entry
-            for entry in _load_control(self.args.control_file)["subjects"]
-            if entry.get("kind") == "workspace"
-            and entry.get("status") == "registered"
-        ]
-        if not self.args.state.is_file() or not registered_workspaces:
+        if not self.args.state.is_file():
             return None
         backend = os.getenv("AAR_AUTODATA_SEMANTIC_WORKER", "").strip().lower()
         if backend == "claude":
             worker = ClaudeWorker()
+        elif backend == "kimi":
+            worker = KimiWorker()
         else:
             raise AutoDataCoordinatorError(
                 "semantic_worker_backend_invalid",
-                "clarify coordinator names an unsupported semantic worker backend",
+                "semantic coordinator names an unsupported semantic worker backend",
             )
-        coordinator = AutoDataActionReconciler(
-            control=NativeAutoDataControl.from_environment(
-                team_dir / "autodata" / "action-native-results"
-            ),
-            worker=worker,
-            team_dir=team_dir,
-            action_timeout_seconds=float(
+        control = NativeAutoDataControl.from_environment(
+            team_dir / "autodata" / "action-native-results"
+        )
+        common = {
+            "control": control,
+            "worker": worker,
+            "team_dir": team_dir,
+            "action_timeout_seconds": float(
                 os.getenv("AAR_AUTODATA_CLARIFY_WORKER_SECONDS", "1800")
             ),
-            malformed_output_attempts=int(
+            "malformed_output_attempts": int(
                 os.getenv("AAR_AUTODATA_CLARIFY_OUTPUT_ATTEMPTS", "3")
             ),
-        )
-        outcome = asyncio.run(
-            coordinator.reconcile_registered_clarify(self.args.control_file)
-        )
+        }
+        outcome = None
+        action_kind = ""
+        if clarify_enabled:
+            coordinator = AutoDataActionReconciler(**common)
+            outcome = asyncio.run(
+                coordinator.reconcile_registered_clarify(self.args.control_file)
+            )
+            action_kind = "clarify_design"
+        if outcome is None and analysis_enabled:
+            coordinator = ExecutionAnalysisReconciler(**common)
+            outcome = asyncio.run(
+                coordinator.reconcile_registered_analysis(self.args.control_file)
+            )
+            action_kind = "analyze_results"
         if outcome is None:
             return None
         self._snapshot(
@@ -2727,7 +2746,7 @@ class Supervisor:
         return {
             "workspace_id": outcome.workspace_id,
             "action_id": outcome.action_id,
-            "action_kind": "clarify_design",
+            "action_kind": action_kind,
             "worker_backend": outcome.worker_backend,
             "receipt": str(outcome.receipt_path),
             "native_phase_observed": outcome.native_phase,

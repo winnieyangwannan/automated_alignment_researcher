@@ -3,10 +3,13 @@
 from .coordinator import (
     AutoDataActionReconciler,
     AutoDataCoordinatorError,
+    ExecutionAnalysisReconciler,
     NativeAutoDataControl,
 )
 from .semantic_worker import (
     ActionContext,
+    AnalysisContext,
+    AnalysisOutcome,
     MalformedSemanticOutcome,
     SemanticOutcome,
     SemanticWorker,
@@ -14,8 +17,11 @@ from .semantic_worker import (
 
 __all__ = [
     "ActionContext",
+    "AnalysisContext",
+    "AnalysisOutcome",
     "AutoDataActionReconciler",
     "AutoDataCoordinatorError",
+    "ExecutionAnalysisReconciler",
     "MalformedSemanticOutcome",
     "NativeAutoDataControl",
     "SemanticOutcome",

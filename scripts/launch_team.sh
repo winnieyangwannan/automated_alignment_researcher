@@ -146,18 +146,18 @@ echo "[team] TEAM_ID=${TEAM_ID}"
 echo "[team] axis=${SUITE}  model=${MODEL} (${TARGET_MODEL})"
 echo "[team] TEAM_DIR=${TEAM_DIR}  forum_scope=${AAR_FORUM_SCOPE:-per_chain}  forum=${FORUM}"
 
-# Run 13 Trial 4 alone may import a reviewed pre-AutoData proposal.  The helper
+# Allowlisted Run 13 recovery trials may import a reviewed pre-AutoData proposal. The helper
 # verifies the host-only manifest, recreates native proposal/method receipts in
 # this fresh team, and imports no AutoData or downstream state.  Ordinary teams
 # take the exact historical path when the opt-in variable is unset.
 if [ -n "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
   if [ "${AAR_EXPERIMENT_RUN_ID:-}" != run13 ] || \
-      [ "${AAR_RUN13_TRIAL_ID:-}" != trial4 ] || [ "${SEEDS}" != alpha ]; then
-    echo "[team] FATAL: pre-AutoData recovery is allowlisted only for Run 13 Trial 4 alpha" >&2
+      [[ ! "${AAR_RUN13_TRIAL_ID:-}" =~ ^trial(4|5)$ ]] || [ "${SEEDS}" != alpha ]; then
+    echo "[team] FATAL: pre-AutoData recovery is allowlisted only for Run 13 Trial 4/5 alpha" >&2
     exit 2
   fi
-  [ "${AAR_IDEA_UID_OVERRIDE:-}" = run13-trial4-alpha-iteration-1 ] || {
-    echo "[team] FATAL: Trial 4 recovery requires its fresh idea UID" >&2
+  [ "${AAR_IDEA_UID_OVERRIDE:-}" = "run13-${AAR_RUN13_TRIAL_ID}-alpha-iteration-1" ] || {
+    echo "[team] FATAL: recovery requires the fresh ${AAR_RUN13_TRIAL_ID} idea UID" >&2
     exit 2
   }
   _recovery_attempt="${AAR_RUN_ATTEMPT_DIR:?Trial 4 recovery requires the attempt directory}"
@@ -173,7 +173,8 @@ if [ -n "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
       --repo "${REPO}" \
       --python "${AAR_TRUSTED_HARNESS_PY:-${PY}}" \
       --chain-id "${_recovery_chain_id}" \
-      --idea-uid "${AAR_IDEA_UID_OVERRIDE}"
+      --idea-uid "${AAR_IDEA_UID_OVERRIDE}" \
+      --target-trial-id "${AAR_RUN13_TRIAL_ID}"
   )" || {
     echo "[team] FATAL: reviewed pre-AutoData recovery import failed" >&2
     exit 2
@@ -185,7 +186,14 @@ if [ -n "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
   export AAR_RESUME_APPROVED_PROPOSAL=1
   export AAR_RESUME_EXPECTED_RUN_ID="${_recovery_run_id}"
   export AAR_AUTODATA_CLARIFY_COORDINATOR=1
-  export AAR_AUTODATA_SEMANTIC_WORKER=claude
+  if [ "${AAR_RUN13_TRIAL_ID}" = trial5 ]; then
+    export AAR_AUTODATA_ANALYSIS_COORDINATOR=1
+    export AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE=1
+  fi
+  case "${AAR_AGENT_BACKEND:-}" in
+    claude|kimi) export AAR_AUTODATA_SEMANTIC_WORKER="${AAR_AGENT_BACKEND}" ;;
+    *) echo "[team] FATAL: clarify coordinator requires a supported agent backend" >&2; exit 2 ;;
+  esac
   # The operator manifest and its path are never part of the research child.
   unset AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST
   echo "[team] verified pre-AutoData proposal import; fresh AutoData bootstrap is pending"

@@ -60,6 +60,19 @@ def test_chain_propagates_service_death_and_bounds_cleanup() -> None:
     assert "aar.research-session-result/v1" in source
 
 
+def test_chain_can_keep_supervisor_alive_after_semantic_turn() -> None:
+    source = CHAIN.read_text()
+
+    ownership = source.index("AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE")
+    research_wait = source.index('if wait "${_aar_research_pid}"')
+    terminal_receipt = source.index("verified terminal lifecycle receipt is ready")
+    result_exit = source.index('[ "${_aar_research_result}" -eq 0 ] || exit')
+    assert research_wait < ownership < terminal_receipt < result_exit
+    assert "training-smoke-canary-complete.json" in source
+    assert "production-canary-complete.json" in source
+    assert "lifecycle supervisor exited before its terminal receipt" in source
+
+
 def test_chain_distinguishes_cancellation_from_internal_watchdog_failure() -> None:
     source = CHAIN.read_text()
 
