@@ -92,16 +92,16 @@ def test_run13_documentation_records_trials_and_pin() -> None:
     assert "Direct root-launcher use is rejected" in (CANARY / "trial_3/README.md").read_text()
 
 
-def test_trial5_enables_analysis_mutation_and_lifecycle_ownership() -> None:
+def test_trial5_and_trial6_enable_full_lifecycle_ownership() -> None:
     launcher = (ROOT / "scripts/launch_team.sh").read_text()
     runtime = (ROOT / "scripts/aar_runtime_env.sh").read_text()
 
-    trial5 = launcher.split(
-        'if [ "${AAR_RUN13_TRIAL_ID}" = trial5 ]; then', 1
+    owned_trials = launcher.split(
+        'if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(5|6)$ ]]; then', 1
     )[1].split("fi", 1)[0]
-    assert "export AAR_AUTODATA_ANALYSIS_COORDINATOR=1" in trial5
-    assert "export AAR_AUTODATA_MUTATION_COORDINATOR=1" in trial5
-    assert "export AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR=1" in trial5
-    assert "export AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE=1" in trial5
+    assert "export AAR_AUTODATA_ANALYSIS_COORDINATOR=1" in owned_trials
+    assert "export AAR_AUTODATA_MUTATION_COORDINATOR=1" in owned_trials
+    assert "export AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR=1" in owned_trials
+    assert "export AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE=1" in owned_trials
     assert "AAR_AUTODATA_MUTATION_COORDINATOR" in runtime
     assert "AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR" in runtime

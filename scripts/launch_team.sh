@@ -152,15 +152,15 @@ echo "[team] TEAM_DIR=${TEAM_DIR}  forum_scope=${AAR_FORUM_SCOPE:-per_chain}  fo
 # take the exact historical path when the opt-in variable is unset.
 if [ -n "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
   if [ "${AAR_EXPERIMENT_RUN_ID:-}" != run13 ] || \
-      [[ ! "${AAR_RUN13_TRIAL_ID:-}" =~ ^trial(4|5)$ ]] || [ "${SEEDS}" != alpha ]; then
-    echo "[team] FATAL: pre-AutoData recovery is allowlisted only for Run 13 Trial 4/5 alpha" >&2
+      [[ ! "${AAR_RUN13_TRIAL_ID:-}" =~ ^trial(4|5|6)$ ]] || [ "${SEEDS}" != alpha ]; then
+    echo "[team] FATAL: pre-AutoData recovery is allowlisted only for Run 13 Trial 4/5/6 alpha" >&2
     exit 2
   fi
   [ "${AAR_IDEA_UID_OVERRIDE:-}" = "run13-${AAR_RUN13_TRIAL_ID}-alpha-iteration-1" ] || {
     echo "[team] FATAL: recovery requires the fresh ${AAR_RUN13_TRIAL_ID} idea UID" >&2
     exit 2
   }
-  _recovery_attempt="${AAR_RUN_ATTEMPT_DIR:?Trial 4 recovery requires the attempt directory}"
+  _recovery_attempt="${AAR_RUN_ATTEMPT_DIR:?recovery requires the attempt directory}"
   _recovery_receipt="${_recovery_attempt}/metadata/preautodata-import-receipt.json"
   _recovery_chain_id="${MODEL}-explore-alpha"
   _recovery_json="$(
@@ -186,7 +186,7 @@ if [ -n "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
   export AAR_RESUME_APPROVED_PROPOSAL=1
   export AAR_RESUME_EXPECTED_RUN_ID="${_recovery_run_id}"
   export AAR_AUTODATA_CLARIFY_COORDINATOR=1
-  if [ "${AAR_RUN13_TRIAL_ID}" = trial5 ]; then
+  if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(5|6)$ ]]; then
     export AAR_AUTODATA_ANALYSIS_COORDINATOR=1
     export AAR_AUTODATA_MUTATION_COORDINATOR=1
     export AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR=1

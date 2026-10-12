@@ -282,6 +282,20 @@ def test_manifest_can_bind_a_fresh_trial5_target(tmp_path: Path) -> None:
     assert verified.manifest["target"]["trial_id"] == "trial5"
 
 
+def test_manifest_can_bind_a_fresh_trial6_target(tmp_path: Path) -> None:
+    helper = _load_helper()
+    manifest, _, _, _, _ = _fixture(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["target"]["trial_id"] = "trial6"
+    payload["target"]["idea_uid"] = "synthetic-trial6-idea"
+    _write_json(manifest, payload)
+    os.chmod(manifest, 0o600)
+
+    verified = helper.verify_manifest(manifest, target_trial_id="trial6")
+
+    assert verified.manifest["target"]["trial_id"] == "trial6"
+
+
 def test_manifest_target_must_match_requested_trial(tmp_path: Path) -> None:
     helper = _load_helper()
     manifest, _, _, _, _ = _fixture(tmp_path)
