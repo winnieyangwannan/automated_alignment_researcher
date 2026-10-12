@@ -126,3 +126,19 @@ def test_chain_keeps_privileged_service_logs_out_of_research_logs() -> None:
     assert '> "${_aar_broker_log}"' in source
     assert '--log-file "${_aar_supervisor_log}"' in source
     assert '"${TEAM_DIR}/logs/autodata-broker.log"' not in source
+
+
+def test_chain_exports_proposal_identity_before_supervisor_fork() -> None:
+    source = CHAIN.read_text()
+
+    identity = source.index(
+        'IDEA_UID="${AAR_IDEA_UID_OVERRIDE:-${MODEL:-qwen}-${SEED}-$(date +%s)}"'
+    )
+    supervisor = source.index(
+        '"${REPO}/scripts/autodata_lifecycle_supervisor.py" run'
+    )
+    research = source.index('run.py agent --idea-uid "${IDEA_UID}"')
+    assert identity < supervisor < research
+    assert source.count("IDEA_UID=\"") == 1
+    assert ': "${IDEA_UID:?approval coordinator requires IDEA_UID}"' in source
+    assert ': "${IDEA_NAME:?approval coordinator requires IDEA_NAME}"' in source

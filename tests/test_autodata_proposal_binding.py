@@ -240,6 +240,38 @@ def test_grounding_refuses_before_approved_proposal(tmp_path: Path) -> None:
             )
 
 
+def test_supervisor_identity_resolves_the_chain_proposal_marker(
+    tmp_path: Path,
+) -> None:
+    scores = tmp_path / "scores"
+    proposal_dir = scores / ".proposals"
+    proposal_dir.mkdir(parents=True)
+    marker = _marker(proposal_dir / "run12-alpha-iteration-1.json")
+    marker_payload = json.loads(marker.read_text())
+    marker_payload["idea_uid"] = "run12-alpha-iteration-1"
+    marker.write_text(json.dumps(marker_payload))
+
+    with (
+        mock.patch.dict(
+            os.environ,
+            {
+                "SCORES_DIR": str(scores),
+                "IDEA_UID": "run12-alpha-iteration-1",
+                "IDEA_NAME": "gemma4_31b-explore-alpha",
+            },
+            clear=False,
+        ),
+        mock.patch(
+            "aar.research_loop.tools.server_api_tools._proposal_approved",
+            return_value=(True, "approved"),
+        ),
+    ):
+        assert server_api_tools._proposal_marker_path() == marker
+        proposal = autodata_approval._current_proposal()
+
+    assert proposal["idea_uid"] == "run12-alpha-iteration-1"
+
+
 def test_one_proposal_binds_one_live_workspace_and_all_later_gates(
     tmp_path: Path,
 ) -> None:

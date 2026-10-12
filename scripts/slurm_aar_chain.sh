@@ -93,6 +93,12 @@ export AAR_IDEAS_DIR="${AAR_IDEAS_DIR:-${TEAM_DIR}/methods}"      # where the ag
 export SESSION_LOGS_DIR="${SESSION_LOGS_DIR:-${TEAM_DIR}/logs}"   # per-session transcripts (config.LOGS_DIR)
 export LIT_FORUM_DIR="${LIT_FORUM_DIR:-${TEAM_DIR}/litreview}"    # team's OWN in-run lit (private)
 export LIT_AXIS_DIR="${LIT_AXIS_DIR:-${REPO}/_runs/litreview/${AXIS:-sycophancy}}"  # axis baseline (read-only)
+# Establish the chain identity before any lifecycle child is forked.  The
+# supervisor-owned approval path resolves the approved proposal by IDEA_UID,
+# and must see the same identity later passed to the research agent.
+IDEA_UID="${AAR_IDEA_UID_OVERRIDE:-${MODEL:-qwen}-${SEED}-$(date +%s)}"
+export IDEA_UID
+export IDEA_NAME="${MODEL:-qwen}-${SEED}"
 echo "[aar] team=${TEAM_ID}  TEAM_DIR=${TEAM_DIR}"
 echo "[aar] forum=${LOCAL_FINDINGS_DIR}  methods=${AAR_IDEAS_DIR}  lit(team)=${LIT_FORUM_DIR}  lit(axis)=${LIT_AXIS_DIR}"
 
@@ -521,6 +527,10 @@ PY
   kill -0 "${_autodata_broker_pid}" 2>/dev/null || { echo "[aar] ERROR: AutoData broker is not running" >&2; exit 2; }
   echo "[aar] campaign-scoped AutoData broker ready (pid=${_autodata_broker_pid}, runner=${AAR_AUTODATA_BROKER_RUNNER}, concurrency=${AAR_AUTODATA_CONCURRENCY}, database=node-local)"
   if [ "${AAR_AUTODATA_LIFECYCLE_SUPERVISED:-0}" = 1 ]; then
+    if [[ "${AAR_AUTODATA_APPROVAL_COORDINATOR:-}" =~ ^(1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn])$ ]]; then
+      : "${IDEA_UID:?approval coordinator requires IDEA_UID}"
+      : "${IDEA_NAME:?approval coordinator requires IDEA_NAME}"
+    fi
     "${PY}" "${REPO}/scripts/autodata_lifecycle_supervisor.py" run \
       --python "${AAR_AUTODATA_WRAPPER_PYTHON}" \
       --state "${AAR_AUTODATA_STATE}" \
@@ -694,15 +704,6 @@ else
 fi
 
 echo "[aar] launching chain seed=${SEED} suite=${SUITE_NAME} target=${TARGET_MODEL} (max ${MAX_H}h)"
-# Export IDEA_UID/IDEA_NAME so share_finding's payload tags each forum finding
-# with its chain identity (the launcher previously only passed --idea-uid as a
-# CLI arg, so findings came back with idea_uid=None — fixed here). RUN_ID is left
-# UNSET on purpose so evaluate_model mints a unique per-call id (IDEA_UID+ts).
-# MODEL in the identity so a same-axis/different-model team gets distinct session
-# ids, method-dir prefixes, and forum finding tags (no cross-team collision).
-IDEA_UID="${AAR_IDEA_UID_OVERRIDE:-${MODEL:-qwen}-${SEED}-$(date +%s)}"
-export IDEA_UID
-export IDEA_NAME="${MODEL:-qwen}-${SEED}"
 # The evaluator was launched by the operator before this research job and
 # retains its credential environment.  Training needs no provider credential.
 # Keep raw credentials and every operator credential-file path out of the
