@@ -542,7 +542,10 @@ def prepare_import(
     chain_id = _safe_component(chain_id, "target chain ID")
     idea_uid = _safe_component(idea_uid, "target idea UID")
     repo = repo.resolve(strict=True)
-    python = python.resolve(strict=True)
+    # Preserve the virtual-environment entry point.  Resolving this path follows
+    # ``.venv/bin/python`` to the base interpreter and silently drops the
+    # virtual environment's site-packages when the validator is spawned.
+    python = Path(os.path.abspath(os.fspath(python.expanduser())))
     team = team_dir.resolve(strict=True)
     attempt = attempt_dir.resolve(strict=True)
     receipt_path = receipt_path.resolve(strict=False)
@@ -693,6 +696,8 @@ def prepare_import(
                 "method_proof_sha256": f"sha256:{_sha256_file(paths['proof'])}",
                 "proposal_marker_sha256": f"sha256:{_sha256_file(paths['marker'])}",
                 "proposal_stamp_sha256": f"sha256:{_sha256_file(stamp)}",
+                "validator_python": str(python),
+                "validator_python_realpath": str(python.resolve(strict=True)),
                 "first_native_action": "clarify_design",
                 "fresh_autodata_state": True,
             },

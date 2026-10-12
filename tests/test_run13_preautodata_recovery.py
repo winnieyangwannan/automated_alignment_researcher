@@ -202,7 +202,13 @@ def test_prepare_import_is_fresh_and_idempotent(tmp_path: Path, monkeypatch) -> 
 
     monkeypatch.setattr(config, "IDEAS_DIR", str(team / "methods"))
 
+    validator_python = tmp_path / "validator-venv" / "bin" / "python"
+    validator_python.parent.mkdir(parents=True)
+    validator_python.symlink_to(Path(sys.executable).resolve())
+    validator_commands: list[list[str]] = []
+
     def fake_validator(command, **kwargs):
+        validator_commands.append(command)
         proof = Path(command[command.index("--proof") + 1])
         method = Path(command[2])
         _write_json(
@@ -230,7 +236,7 @@ def test_prepare_import_is_fresh_and_idempotent(tmp_path: Path, monkeypatch) -> 
         "attempt_dir": attempt,
         "receipt_path": receipt,
         "repo": REPO,
-        "python": Path(sys.executable),
+        "python": validator_python,
         "chain_id": "synthetic-target-chain",
         "idea_uid": idea_uid,
     }
@@ -238,6 +244,13 @@ def test_prepare_import_is_fresh_and_idempotent(tmp_path: Path, monkeypatch) -> 
     second = helper.prepare_import(**arguments)
 
     assert second == first
+    assert len(validator_commands) == 1
+    assert Path(validator_commands[0][0]) == validator_python
+    assert Path(validator_commands[0][0]).is_symlink()
+    assert first["target"]["validator_python"] == str(validator_python)
+    assert first["target"]["validator_python_realpath"] == str(
+        Path(sys.executable).resolve()
+    )
     assert first["target"]["idea_uid"] == idea_uid
     assert first["target"]["run_id"].startswith(f"{idea_uid}-")
     assert first["target"]["first_native_action"] == "clarify_design"
