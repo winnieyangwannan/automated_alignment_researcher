@@ -799,3 +799,95 @@ from that exact revision. Any later model/config change requires reconfirmation.
 ○ Proposal review, training, and evaluation
 ○ 250 durable score/finding pairs
 ```
+
+## 2026-10-12
+
+<a id="run15-event-contract-recovery-hardening"></a>
+
+### 🛠️ 03:40 PT — FIX: actionable contract failures and bounded recovery
+
+#### Failures and diagnosis
+
+- Beta and Delta had approved proposals whose generated methods violated the
+  host training contract. Beta used an unbounded synchronous target-generation
+  loop; Delta reached model loading before its `dry_run` return.
+- The static validator found both defects, but then imported the generated
+  method. Heavy ML imports timed out and hid the actionable static diagnostic,
+  leaving the controller with a generic submission failure.
+- Proposal review trusted a researcher-writable contract-proof JSON file. That
+  receipt was source-bound but was not evidence that the trusted validator had
+  actually run.
+- A same-source orchestration incident could be retried repeatedly. Conversely,
+  a persisted incident halt could not reopen after a fixed source was deployed.
+- Gamma had a valid 4.95% public score that passed capability and regression
+  gates, but its Kimi session failed before `share_finding`; replaying training
+  or evaluation would have duplicated completed work.
+
+#### Corrective change
+
+- Commit `bafc1c5490fdb996e3a3c5d9a99a92dae65422a0` makes static contract
+  failures return before importing generated code, gives validation a bounded
+  configurable timeout, and turns submission-time contract rejection into a
+  typed `method_contract_failure` with `advance_session` disposition and the
+  exact sanitized validator error.
+- Proposal review now executes the trusted validator directly and separately
+  verifies that the whole method-package hash did not change during validation;
+  it no longer accepts a writable proof as authority.
+- The supervisor halts on a current-source or malformed orchestration incident.
+  It reopens a persisted incident halt only when a regular, valid retained
+  marker explicitly names a different source commit. Missing, malformed,
+  source-less, and same-source markers remain fail-closed.
+- Run 15's finding-only finalizer now imports AAR configuration only after
+  binding the attempt's shared forum, requires an exact full-run `run_id`, and
+  derives `worked` from the public score gates rather than hard-coding a canary
+  result.
+- Focused validation passed on both devserver and HPC: 153 tests and 43
+  subtests. An additional 104 recovery, memory, configuration, and failure-
+  feedback tests passed; 12 Run 14-only tests were deliberately deselected
+  because this worktree does not contain the Run 14 experiment directory.
+
+<a id="run15-event-five-chain-recovery"></a>
+
+### ⏳ 03:53 PT — RUNNING: five chains recovered under the new supervisor
+
+- Active attempt:
+  `/checkpoint/ram/aar/winnieyangwn/run15_native_generation/full_attempts/20261012T003846Z-384ce75d8a75`
+- Beta controller `1836648` and Delta controller `1836649` reuse evaluators
+  `1823377` and `1823381`. Each rejected its preserved invalid proposal in
+  approximately 2.3 seconds, published the exact typed contract failure, and
+  advanced automatically to a fresh research session.
+- Gamma's exact scored run
+  `gemma4_31b-explore-gamma-1791765798-gemma4_31b_explore_gamma__kimi_candidate-0a46b04e200194e8a16b`
+  was finalized exactly once in the shared forum. Finalizer job `1836856`
+  completed successfully; the first submission `1836646` failed before running
+  because Slurm spooled the script and changed `BASH_SOURCE`, and published no
+  finding. Gamma controller `1836907` now reuses evaluator `1823379`.
+- The obsolete supervisor state was moved, not deleted, to
+  `metadata/recovery_archive/20261012T034942-0700-supervisor-reset/`.
+  Supervisor `1836952` started from clean durable state, observed all five
+  controllers as active, and submitted no duplicate recovery.
+- Alpha controller `1834607` and Epsilon controller `1834556` continued without
+  interruption. Epsilon training `1836815` failed with exit `1:0`; the
+  controller advanced to a fresh session. No Model API 409 or explicit
+  rate-limit response was observed.
+
+| Chain   | Latest score | Highest score | Highest valid score | Filter | Completed scores | Current stage                              |
+| ------- | ------------ | ------------- | ------------------- | ------ | ---------------- | ------------------------------------------ |
+| Alpha   | 3.60%        | 3.60%         | 3.60%               | Pass   | 1 + 3 failed     | Session 8/60; proposal review              |
+| Beta    | 0.00%        | 3.15%         | 3.15%               | Pass   | 3 + 9 failed     | Session 16/60; method contract repair      |
+| Gamma   | 4.95%        | 31.82%        | 4.95%               | Pass   | 6 + 6 failed     | Session 16/60; fresh method authoring      |
+| Delta   | 3.15%        | 17.37%        | 3.15%               | Pass   | 3 + 8 failed     | Session 15/60; proposal review             |
+| Epsilon | 2.25%        | 3.45%         | 3.45%               | Pass   | 5 + 9 failed     | Session 18/60; method/proposal correction  |
+
+#### Lifecycle
+
+```text
+✓ Trusted method-contract diagnostics deployed
+✓ Beta and Delta preserved-state recovery
+✓ Gamma score/finding join repaired without replay
+✓ Five research controllers active
+✓ Five existing evaluators reused
+✓ Bounded multi-chain supervisor active
+⏳ Method, proposal, training, and evaluation cycles
+○ 250 durable score/finding pairs — 18 complete
+```
