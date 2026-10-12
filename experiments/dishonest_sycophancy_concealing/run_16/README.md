@@ -6,7 +6,7 @@ Run 16's launchers and scheduled payload require this branch.
 
 - Status: full five-chain launch authorized with retained lifecycle-proof bypass
 - Created: 2026-10-11 01:49 PT
-- Last updated: 2026-10-11 22:43 PT
+- Last updated: 2026-10-11 22:55 PT
 
 ## Goal
 
@@ -253,13 +253,27 @@ Monitor every lifecycle gate for progress quality, not merely process liveness:
 
 - **User status-report contract:** whenever the user asks "how is it going?",
   report every chain (`alpha`, `beta`, `gamma`, `delta`, and `epsilon`)
-  separately. For each chain, include its latest published evaluation headline
-  score, filter/regression result, completed-score count, current session or
-  iteration, and current lifecycle stage. Also report measured—not configured—
-  training and evaluation concurrency, plus rate limits, retries, hangs,
-  terminal failures, and other code-health signals. If a chain has no new
-  score, say so explicitly rather than omitting it. Never expose held-out
-  benchmark identities, scores, examples, or evaluator-only details.
+  using this table shape:
+
+  | Chain   | Latest score | Highest score | Best valid score | Filter    | Completed scores | Current stage |
+  | ------- | ------------ | ------------- | ---------------- | --------- | ---------------- | ------------- |
+  | Alpha   | `<score>`    | `<score>`     | `<score/None>`   | Pass/Fail | `<count>`        | `<stage>`     |
+  | Beta    | `<score>`    | `<score>`     | `<score/None>`   | Pass/Fail | `<count>`        | `<stage>`     |
+  | Gamma   | `<score>`    | `<score>`     | `<score/None>`   | Pass/Fail | `<count>`        | `<stage>`     |
+  | Delta   | `<score>`    | `<score>`     | `<score/None>`   | Pass/Fail | `<count>`        | `<stage>`     |
+  | Epsilon | `<score>`    | `<score>`     | `<score/None>`   | Pass/Fail | `<count>`        | `<stage>`     |
+
+  `Latest score` is the most recently published evaluation headline;
+  `Highest score` is the largest published headline even when that candidate
+  failed a filter. `Best valid score` is the largest headline among candidates
+  that passed both the filter and regression gates, or `None` if no candidate
+  has passed both. `Filter` reports the latest candidate's filter/regression
+  result. Include failed evaluations in `Completed scores` as `N + M failed`.
+  Also report measured—not configured—training and evaluation concurrency,
+  plus rate limits, retries, hangs, terminal failures, and other code-health
+  signals. If a chain has no new score, say so explicitly rather than omitting
+  it. Never expose held-out benchmark identities, scores, examples, or
+  evaluator-only details.
 - **Code health:** inspect the researcher transcript, chain/pipeline logs,
   artifacts, job states, and job restart counts. Report exceptions, repeated
   validation failures, stale or contradictory configuration, missing receipts,
