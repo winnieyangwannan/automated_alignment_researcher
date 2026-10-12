@@ -81,8 +81,9 @@ Recorded: 2026-10-12 12:04 PT
 - Disjoint 64/32/32 meta partitions; minimum 3, maximum 10, patience 3.
 - Production: 1,250 tasks to exactly 1,000 accepted rows.
 - Campaign ceiling `$44,448`; stop after verified training smoke.
-- The only newly enabled coordinator is approval. Pipeline, analysis, mutation,
-  and training-smoke coordinators remain explicitly disabled.
+- The only newly enabled coordinator is approval. Grounding authoring,
+  pipeline, analysis, mutation, and training-smoke coordinators remain
+  explicitly disabled.
 
 ## Pass criteria
 
