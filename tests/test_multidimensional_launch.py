@@ -13,6 +13,7 @@ from replication.preflight_multidimensional import (
     EXPECTED_BENCHMARKS,
     EXPECTED_CEILING_BENCHMARKS,
     require_exact_budget,
+    validate_evaluation_runtime,
     validate_launch_artifacts,
 )
 from replication.record_multidimensional_baseline import (
@@ -28,6 +29,40 @@ MODEL = "google/gemma-4-31B-it"
 
 
 class MultiDimensionalLaunchTest(unittest.TestCase):
+    def test_vllm_runtime_validation_ignores_legacy_batch(self) -> None:
+        env = {
+            "EVAL_INFERENCE_BACKEND": "vllm",
+            "EVAL_RUN_BATCH": "not-used",
+            "EVAL_VLLM_MAX_NUM_SEQS": "256",
+            "EVAL_VLLM_MAX_NUM_BATCHED_TOKENS": "32768",
+        }
+        with mock.patch.dict(os.environ, env, clear=True):
+            self.assertEqual(
+                validate_evaluation_runtime()["submission_mode"],
+                "whole_benchmark_wave",
+            )
+
+    def test_transformers_runtime_validation_keeps_batch_contract(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"EVAL_INFERENCE_BACKEND": "transformers", "EVAL_RUN_BATCH": "4"},
+            clear=True,
+        ):
+            with self.assertRaisesRegex(SystemExit, "EVAL_RUN_BATCH=2"):
+                validate_evaluation_runtime()
+
+    def test_vllm_runtime_validation_requires_explicit_scheduler_limits(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "EVAL_INFERENCE_BACKEND": "vllm",
+                "EVAL_VLLM_MAX_NUM_BATCHED_TOKENS": "32768",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(SystemExit, "EVAL_VLLM_MAX_NUM_SEQS"):
+                validate_evaluation_runtime()
+
     def test_source_baseline_publishes_without_nonexistent_override(self) -> None:
         job = (
             ROOT / "replication" / "baseline_concealing_multidimensional.sbatch"

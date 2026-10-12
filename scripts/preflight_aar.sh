@@ -18,6 +18,21 @@ source "${REPO}/scripts/axis_env.sh"
 pass() { echo "[preflight] PASS: $*"; }
 fail() { echo "[preflight] FAIL: $*" >&2; exit 1; }
 
+validate_evaluation_runtime() {
+  if [ "${EVAL_INFERENCE_BACKEND:-transformers}" = vllm ]; then
+    case "${EVAL_VLLM_MAX_NUM_SEQS:-}" in
+      ''|*[!0-9]*|0) fail "vLLM requires a positive EVAL_VLLM_MAX_NUM_SEQS" ;;
+    esac
+    case "${EVAL_VLLM_MAX_NUM_BATCHED_TOKENS:-}" in
+      ''|*[!0-9]*|0) fail "vLLM requires a positive EVAL_VLLM_MAX_NUM_BATCHED_TOKENS" ;;
+    esac
+    pass "vLLM whole-wave scheduler: max_num_seqs=${EVAL_VLLM_MAX_NUM_SEQS}, max_num_batched_tokens=${EVAL_VLLM_MAX_NUM_BATCHED_TOKENS}"
+  else
+    [ "${EVAL_RUN_BATCH:-}" = 2 ] || fail "Transformers evaluation requires EVAL_RUN_BATCH=2"
+    pass "Transformers fixed-chunk batch size 2"
+  fi
+}
+
 if [ -n "${AAR_EXPECTED_COMMIT:-}" ]; then
   [ -z "$(git -C "${REPO}" branch --show-current)" ] || \
     fail "commit-pinned source snapshot is not detached"
@@ -40,7 +55,7 @@ case "${SUITE_NAME}" in
   honesty_sycophancy)
     [ "${TARGET_MODEL}" = google/gemma-4-31B-it ] || fail "expected Gemma-4-31B target, got ${TARGET_MODEL}"
     [ "${HELD_OUT_BENCH}" = deceptionbench_reward,sycon_fp ] || fail "unexpected composed held-out ids"
-    [ "${EVAL_RUN_BATCH:-}" = 2 ] || fail "composed suite requires EVAL_RUN_BATCH=2"
+    validate_evaluation_runtime
     [ "${EVAL_RUN_GEN_CEILING:-}" = 8192 ] || fail "composed suite requires the 8192-token generation ceiling"
     [ "${EVAL_FAIL_ON_ALLOCATOR_WARNING:-}" = 1 ] || fail "allocator-warning gate is disabled"
     [ "${EVAL_MAX_TRUNCATION_RATE:-}" = 0.05 ] || fail "truncation gate must be 0.05"
@@ -51,7 +66,7 @@ case "${SUITE_NAME}" in
   honesty_sycophancy_concealing_uncertainty)
     [ "${TARGET_MODEL}" = google/gemma-4-31B-it ] || fail "expected Gemma-4-31B target, got ${TARGET_MODEL}"
     [ "${HELD_OUT_BENCH}" = deceptionbench_reward,sycon_fp,sciq_uncertainty ] || fail "unexpected three-dimension held-out ids"
-    [ "${EVAL_RUN_BATCH:-}" = 2 ] || fail "composed suite requires EVAL_RUN_BATCH=2"
+    validate_evaluation_runtime
     [ "${EVAL_RUN_GEN_CEILING:-}" = 8192 ] || fail "composed suite requires the 8192-token generation ceiling"
     [ "${EVAL_REQUIRE_EXACT_MAX_NEW_TOKENS:-}" = 1 ] || fail "exact generation-budget contract is disabled"
     [ "${EVAL_FAIL_ON_ALLOCATOR_WARNING:-}" = 1 ] || fail "allocator-warning gate is disabled"

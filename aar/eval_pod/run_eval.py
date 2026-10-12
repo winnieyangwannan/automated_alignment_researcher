@@ -35,6 +35,7 @@ from aar.benchmarks import registry
 from aar.benchmarks.base import BenchmarkSpec, DimensionSpec, SuiteSpec
 from aar.benchmarks.composite import compute_composite
 from aar.eval_pod.models import load_model, resolve_inference_backend
+from aar.eval_pod.runtime_profile import evaluation_runtime_profile
 from aar.phase_timing import phase
 
 
@@ -428,7 +429,16 @@ def _apply_golden(model, spec: BenchmarkSpec, suite_name: str) -> None:
     if kw:
         model.apply_decoding(**kw)
         grp = spec.baseline_group or ("capability" if spec.name in _CAP_BENCHES else suite_name)
-        print(f"  [decoding] {spec.id} ({grp}): batch={model.batch_size} "
+        runtime = evaluation_runtime_profile()
+        if runtime["inference_backend"] == "vllm":
+            scheduling = (
+                f"submission={runtime['submission_mode']} "
+                f"max_num_seqs={runtime['max_num_seqs']} "
+                f"max_num_batched_tokens={runtime['max_num_batched_tokens']}"
+            )
+        else:
+            scheduling = f"batch={model.batch_size}"
+        print(f"  [decoding] {spec.id} ({grp}): {scheduling} "
               f"ceiling={model._auto_ceiling} ngram={model._no_repeat_ngram} "
               f"max_new={model.max_new_tokens} temp={model._temperature} "
               f"top_p={model._top_p} seed={model._seed}", flush=True)
@@ -741,6 +751,8 @@ def _resolve_ngpu() -> int:
 
 def run(suite_path: str, model_ref: str, secret_dir: str = "", out: str = "scores.json",
         heldout_dir: str = "") -> dict[str, Any]:
+    inference_backend = resolve_inference_backend(model_ref)
+    runtime_profile = evaluation_runtime_profile(backend=inference_backend)
     with phase("eval.suite_loading"):
         registry.discover()
         suite, specs = load_suite_spec(suite_path)
@@ -769,7 +781,8 @@ def run(suite_path: str, model_ref: str, secret_dir: str = "", out: str = "score
     result = {
         "suite": suite_name,
         "model": model_ref,
-        "inference_backend": resolve_inference_backend(model_ref),
+        "inference_backend": inference_backend,
+        "evaluation_runtime": runtime_profile,
         **composite.to_dict(),
     }
     # Behavioral fingerprint (deterministic greedy probe of the model). Lets share_finding DEDUP

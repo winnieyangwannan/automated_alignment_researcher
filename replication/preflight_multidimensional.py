@@ -15,6 +15,7 @@ import yaml
 
 from aar.eval_pod.models import split_reasoning_and_answer_text
 from aar.eval_pod.run_eval import load_suite_spec
+from aar.eval_pod.runtime_profile import evaluation_runtime_profile
 from replication.preflight_v0 import api_json, require_judge_configuration
 
 
@@ -60,6 +61,23 @@ def require_exact_budget(name: str, expected: Decimal = Decimal("500")) -> str:
     if not amount.is_finite() or amount != expected:
         raise SystemExit(f"{name} must be exactly USD {expected}")
     return value
+
+
+def validate_evaluation_runtime() -> dict[str, object]:
+    try:
+        profile = evaluation_runtime_profile()
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    if profile["inference_backend"] == "vllm":
+        if not os.getenv("EVAL_VLLM_MAX_NUM_SEQS", "").strip():
+            raise SystemExit("vLLM evaluation requires EVAL_VLLM_MAX_NUM_SEQS")
+        if profile["max_num_batched_tokens"] is None:
+            raise SystemExit(
+                "vLLM evaluation requires EVAL_VLLM_MAX_NUM_BATCHED_TOKENS"
+            )
+    elif os.getenv("EVAL_RUN_BATCH") != "2":
+        raise SystemExit("Transformers evaluation requires EVAL_RUN_BATCH=2")
+    return profile
 
 
 def _read_json(path: Path) -> dict:
@@ -242,7 +260,6 @@ def _validate_environment() -> tuple[list[str], list[str]]:
         "MASK_JUDGE_MODEL": "gpt-5-6-luna",
         "AAR_MULTIDIM_SCORING_CONFIRMED": "1",
         "AAR_DIMENSIONS": "honesty,sycophancy,concealing_uncertainty",
-        "EVAL_RUN_BATCH": "2",
         "EVAL_RUN_GEN_CEILING": "8192",
         "EVAL_REQUIRE_EXACT_MAX_NEW_TOKENS": "1",
         "EVAL_FAIL_ON_ALLOCATOR_WARNING": "1",
@@ -263,6 +280,7 @@ def _validate_environment() -> tuple[list[str], list[str]]:
     for name, expected in expected_values.items():
         if os.getenv(name) != expected:
             raise SystemExit(f"{name} must equal {expected!r}")
+    validate_evaluation_runtime()
     actual = os.getenv("AAR_SUITE_BENCHMARKS", "").replace(",", " ").split()
     if actual != EXPECTED_BENCHMARKS:
         raise SystemExit(f"wrong composed suite filter: {actual!r}")
@@ -320,6 +338,7 @@ def main() -> None:
     require_exact_budget("AAR_CLAUDE_SPEND_CAP_USD")
     require_exact_budget("AAR_GPT_JUDGE_SPEND_CAP_USD")
     actual, ceiling = _validate_environment()
+    runtime_profile = validate_evaluation_runtime()
 
     baseline = Path(os.environ["AAR_BASELINE_OVERRIDES"])
     suite_path = (
@@ -373,6 +392,7 @@ def main() -> None:
                 "ok": True,
                 "git_commit": head,
                 "benchmarks": actual,
+                "evaluation_runtime": runtime_profile,
                 "generation_ceiling_benchmarks": ceiling,
                 "aggregation": "coverage_weighted_geometric_mean",
                 "safety_regression_gate": True,
