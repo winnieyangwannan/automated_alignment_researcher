@@ -27,6 +27,7 @@ autodata_state="${AAR_AUTODATA_STATE:-}"
 research_tool_dir="${AAR_RESEARCH_TOOL_DIR:-}"
 trusted_harness_py="${AAR_TRUSTED_HARNESS_PY:-${HARNESS_PY:-}}"
 trusted_harness_root=""
+trusted_harness_base_root=""
 
 [ -x "${real_cli}" ] || fail "real Claude CLI is not executable"
 [ -d "${repo}" ] || fail "repository does not exist"
@@ -92,6 +93,26 @@ if [ -n "${trusted_harness_py}" ]; then
         ;;
     esac
   done
+  trusted_harness_real="$(realpath -e -- "${trusted_harness_py}")"
+  case "${trusted_harness_real}" in
+    "${trusted_harness_root}"/*) ;;
+    *)
+      for hidden_root in "${hidden_roots[@]}"; do
+        case "${trusted_harness_real}" in
+          "${hidden_root}"/*)
+            trusted_harness_base_bin="$(dirname -- "${trusted_harness_real}")"
+            [ "$(basename -- "${trusted_harness_base_bin}")" = bin ] || \
+              fail "trusted harness Python target must be inside a bin directory"
+            trusted_harness_base_root="$(realpath -e -- "${trusted_harness_base_bin}/..")"
+            case "${trusted_harness_base_root}" in
+              "${hidden_root}") fail "unsafe trusted harness Python base root" ;;
+            esac
+            break
+            ;;
+        esac
+      done
+      ;;
+  esac
 fi
 
 declare -a bwrap_args=(
@@ -186,6 +207,16 @@ if [ -n "${trusted_harness_root}" ]; then
   case "${trusted_harness_root}" in
     "${repo}"|"${repo}"/*|"${runtime_root}"|"${runtime_root}"/*) ;;
     *) bind_visible_dir "${trusted_harness_root}" ro ;;
+  esac
+fi
+# uv-managed virtual environments may point bin/python at a base interpreter
+# elsewhere below the hidden home. Restore that already-resolved Python runtime
+# read-only as well; without it, the visible venv symlink remains broken.
+if [ -n "${trusted_harness_base_root}" ]; then
+  case "${trusted_harness_base_root}" in
+    "${trusted_harness_root}"|"${trusted_harness_root}"/*|\
+    "${repo}"|"${repo}"/*|"${runtime_root}"|"${runtime_root}"/*) ;;
+    *) bind_visible_dir "${trusted_harness_base_root}" ro ;;
   esac
 fi
 
