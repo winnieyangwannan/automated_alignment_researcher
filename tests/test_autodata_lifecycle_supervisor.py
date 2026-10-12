@@ -1137,6 +1137,106 @@ def test_semantic_coordinator_dispatches_execution_mutation_slice(
     assert observed["control_file"] == control
 
 
+def test_supervisor_reconciles_verified_handoff_into_training_smoke(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    team = tmp_path / "team"
+    team.mkdir()
+    state = tmp_path / "state.db"
+    state.touch()
+    control = tmp_path / "control.json"
+    meta_id = "exe_" + "1" * 32
+    production_id = "exe_" + "2" * 32
+    run_id = "run13-trial5-alpha-method-1"
+    control.write_text(
+        json.dumps(
+            {
+                "schema": "aar.autodata.lifecycle-control/v1",
+                "subjects": [
+                    {
+                        "kind": "execution",
+                        "subject_id": meta_id,
+                        "status": "completed",
+                        "production_execution_id": production_id,
+                        "training_handoff_sha256": "sha256:" + "3" * 64,
+                    },
+                    {
+                        "kind": "execution",
+                        "subject_id": production_id,
+                        "status": "completed",
+                        "parent_meta_execution_id": meta_id,
+                        "training_handoff_sha256": "sha256:" + "3" * 64,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    terminal = team / "autodata" / run_id / "training-smoke-canary-complete.json"
+    terminal.parent.mkdir(parents=True)
+    terminal.write_text("{}\n", encoding="utf-8")
+    observed: dict[str, object] = {}
+
+    class Coordinator:
+        def __init__(self, **kwargs: object) -> None:
+            observed.update(kwargs)
+
+        def reconcile(self, **kwargs: object):
+            observed.update(kwargs)
+            return type(
+                "Outcome",
+                (),
+                {
+                    "state": "complete",
+                    "run_id": run_id,
+                    "job_id": "12345",
+                    "terminal_receipt": terminal,
+                },
+            )()
+
+    monkeypatch.setenv("TEAM_DIR", str(team))
+    monkeypatch.setenv("AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR", "1")
+    monkeypatch.setenv("AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE", "1")
+    monkeypatch.setenv("AAR_AUTODATA_STOP_AFTER", "training_smoke")
+    monkeypatch.setenv("AAR_AUTODATA_PRODUCTION_ROWS", "1000")
+    monkeypatch.setattr(lifecycle_supervisor, "TrainingSmokeCoordinator", Coordinator)
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_run_binding",
+        lambda *_args: (
+            {},
+            {
+                "run_id": run_id,
+                "idea_name": "alpha__method",
+                "code_hash": "a" * 64,
+            },
+            team / "autodata" / run_id,
+        ),
+    )
+    supervisor = lifecycle_supervisor.Supervisor(
+        Namespace(state=state, control_file=control)
+    )
+
+    result = supervisor._reconcile_training_smoke()
+
+    assert result == {
+        "state": "complete",
+        "run_id": run_id,
+        "job_id": "12345",
+        "terminal_receipt": str(terminal),
+    }
+    assert observed["meta_execution_id"] == meta_id
+    assert observed["production_execution_id"] == production_id
+    updated = json.loads(control.read_text())
+    production = next(
+        entry
+        for entry in updated["subjects"]
+        if entry["subject_id"] == production_id
+    )
+    assert production["training_job_id"] == "12345"
+    assert production["training_smoke_receipt_sha256"].startswith("sha256:")
+
+
 def test_long_idle_sleep_refreshes_supervisor_heartbeat(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

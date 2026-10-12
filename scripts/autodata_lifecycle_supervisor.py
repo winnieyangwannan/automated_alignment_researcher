@@ -55,6 +55,10 @@ from aar.infrastructure.autodata_coordinator import (
 )
 from aar.infrastructure.autodata_coordinator.claude_worker import ClaudeWorker
 from aar.infrastructure.autodata_coordinator.kimi_worker import KimiWorker
+from aar.infrastructure.autodata_coordinator.training_smoke import (
+    TrainingSmokeCoordinator,
+    TrainingSmokeCoordinatorError,
+)
 
 META_TIMEOUT_SECONDS = 2 * 60 * 60
 PRODUCTION_TIMEOUT_SECONDS = 8 * 60 * 60
@@ -2515,6 +2519,8 @@ class Supervisor:
         self.status_lock = threading.RLock()
         self.failed_step_signature: tuple[Any, ...] | None = None
         self.failed_step_count = 0
+        self.training_smoke_coordinator: TrainingSmokeCoordinator | None = None
+        self.training_smoke_binding: tuple[Path, Path, int] | None = None
 
     def _failure_feedback(
         self,
@@ -2765,6 +2771,127 @@ class Supervisor:
             "receipt": str(outcome.receipt_path),
             "native_phase_observed": outcome.native_phase,
             "native_revision_observed": outcome.native_revision,
+        }
+
+    def _reconcile_training_smoke(self) -> dict[str, Any] | None:
+        """Reconcile only a verified production handoff into the terminal canary."""
+
+        enabled = os.getenv(
+            "AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR", ""
+        ).strip().lower()
+        if not enabled:
+            return None
+        if enabled not in {"1", "true", "yes", "on"}:
+            raise TrainingSmokeCoordinatorError(
+                "training_smoke_coordinator_flag_invalid",
+                "training smoke coordinator enablement flag is invalid",
+            )
+        if os.getenv("AAR_AUTODATA_STOP_AFTER", "").strip() != "training_smoke":
+            raise TrainingSmokeCoordinatorError(
+                "training_smoke_boundary_invalid",
+                "training smoke coordinator requires stop_after=training_smoke",
+            )
+        if os.getenv("AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE", "") != "1":
+            raise TrainingSmokeCoordinatorError(
+                "training_smoke_owner_invalid",
+                "training smoke coordinator requires lifecycle ownership",
+            )
+        entries = [
+            entry
+            for entry in _load_control(self.args.control_file)["subjects"]
+            if entry.get("kind") == "execution"
+            and entry.get("status") == "completed"
+            and isinstance(entry.get("parent_meta_execution_id"), str)
+            and isinstance(entry.get("training_handoff_sha256"), str)
+        ]
+        if not entries:
+            return None
+        if len(entries) != 1:
+            raise TrainingSmokeCoordinatorError(
+                "training_smoke_lineage_ambiguous",
+                "multiple production handoffs are eligible for training",
+            )
+        production = entries[0]
+        production_id = str(production["subject_id"])
+        meta_id = str(production["parent_meta_execution_id"])
+        meta = _registration_entry(
+            self.args.control_file, kind="execution", subject_id=meta_id
+        )
+        if (
+            meta.get("production_execution_id") != production_id
+            or meta.get("training_handoff_sha256")
+            != production.get("training_handoff_sha256")
+        ):
+            raise TrainingSmokeCoordinatorError(
+                "training_smoke_lineage_invalid",
+                "training handoff lineage is inconsistent",
+            )
+        _, bootstrap, _run_root = _run_binding(
+            self.args.state, self.args.control_file, meta_id
+        )
+        team_raw = os.getenv("TEAM_DIR", "").strip()
+        if not team_raw:
+            raise TrainingSmokeCoordinatorError(
+                "training_smoke_team_missing",
+                "training smoke coordinator has no team directory",
+            )
+        try:
+            required_rows = int(os.environ["AAR_AUTODATA_PRODUCTION_ROWS"])
+        except (KeyError, ValueError) as error:
+            raise TrainingSmokeCoordinatorError(
+                "training_smoke_rows_invalid",
+                "training smoke row target is invalid",
+            ) from error
+        repo = Path(__file__).resolve().parents[1]
+        team = Path(team_raw).resolve(strict=True)
+        binding = (repo, team, required_rows)
+        if self.training_smoke_binding not in {None, binding}:
+            raise TrainingSmokeCoordinatorError(
+                "training_smoke_binding_changed",
+                "training smoke coordinator binding changed",
+            )
+        if self.training_smoke_coordinator is None:
+            self.training_smoke_coordinator = TrainingSmokeCoordinator(
+                repo=repo,
+                team_dir=team,
+                required_rows=required_rows,
+                completion_grace_seconds=float(
+                    os.getenv("AAR_TRAINING_MARKER_GRACE_SECONDS", "120")
+                ),
+            )
+            self.training_smoke_binding = binding
+        outcome = self.training_smoke_coordinator.reconcile(
+            run_id=str(bootstrap["run_id"]),
+            idea_name=str(bootstrap["idea_name"]),
+            expected_code_hash=str(bootstrap["code_hash"]),
+            meta_execution_id=meta_id,
+            production_execution_id=production_id,
+        )
+        current_job = production.get("training_job_id")
+        if current_job not in {None, outcome.job_id}:
+            raise TrainingSmokeCoordinatorError(
+                "training_smoke_job_changed", "training job identity changed"
+            )
+        fields: dict[str, Any] = {"training_job_id": outcome.job_id}
+        if outcome.terminal_receipt is not None:
+            fields["training_smoke_receipt_sha256"] = (
+                "sha256:" + _sha256(outcome.terminal_receipt)
+            )
+        _update_registration(
+            self.args.control_file,
+            kind="execution",
+            subject_id=production_id,
+            **fields,
+        )
+        return {
+            "state": outcome.state,
+            "run_id": outcome.run_id,
+            "job_id": outcome.job_id,
+            "terminal_receipt": (
+                str(outcome.terminal_receipt)
+                if outcome.terminal_receipt is not None
+                else None
+            ),
         }
 
     def _progress_signature(self, subject: Subject | None = None) -> tuple[Any, ...]:
@@ -3114,6 +3241,20 @@ class Supervisor:
                         )
                     self._write_status(state="running", transition=transition)
                     continue
+                training_smoke = self._call_with_status_heartbeat(
+                    self._reconcile_training_smoke,
+                    state="training-smoke",
+                )
+                if training_smoke is not None:
+                    self._write_status(
+                        state="training-smoke", training_smoke=training_smoke
+                    )
+                    self._sleep_with_status_heartbeat(
+                        self.args.poll_seconds,
+                        state="training-smoke",
+                        training_smoke=training_smoke,
+                    )
+                    continue
                 semantic_action = self._call_with_status_heartbeat(
                     self._reconcile_semantic_action,
                     state="semantic-action",
@@ -3141,6 +3282,33 @@ class Supervisor:
                         public_summary="AutoData semantic action reconciliation failed",
                     )
                     self._snapshot("supervisor-semantic-action-failure")
+                    self._write_status(
+                        state="failed",
+                        error=feedback["summary"],
+                        failure=feedback,
+                    )
+                    return 2
+                if isinstance(error, TrainingSmokeCoordinatorError):
+                    feedback = self._failure_feedback(
+                        error,
+                        error_code=error.code,
+                        stage="training_smoke",
+                        retryable=error.retryable,
+                        public_summary="training smoke reconciliation failed",
+                    )
+                    if error.retryable:
+                        self._write_status(
+                            state="reconcile-retrying",
+                            error=feedback["summary"],
+                            failure=feedback,
+                        )
+                        self._sleep_with_status_heartbeat(
+                            self.args.error_backoff_seconds,
+                            state="reconcile-retrying",
+                            error=feedback["summary"],
+                            failure=feedback,
+                        )
+                        continue
                     self._write_status(
                         state="failed",
                         error=feedback["summary"],

@@ -101,5 +101,7 @@ def test_trial5_enables_analysis_mutation_and_lifecycle_ownership() -> None:
     )[1].split("fi", 1)[0]
     assert "export AAR_AUTODATA_ANALYSIS_COORDINATOR=1" in trial5
     assert "export AAR_AUTODATA_MUTATION_COORDINATOR=1" in trial5
+    assert "export AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR=1" in trial5
     assert "export AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE=1" in trial5
     assert "AAR_AUTODATA_MUTATION_COORDINATOR" in runtime
+    assert "AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR" in runtime

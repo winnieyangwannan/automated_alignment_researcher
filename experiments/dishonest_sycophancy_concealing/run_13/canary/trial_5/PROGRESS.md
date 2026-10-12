@@ -80,3 +80,41 @@ the full model-role mapping is reconfirmed.
 Move deterministic training submission and one-step receipt publication under
 the same backend-neutral lifecycle owner. Reconfirm the exact model-role mapping
 after that configuration revision, then launch Trial 5.
+
+<a id="run13-trial5-training-smoke-coordinator"></a>
+
+### 🛠️ 03:20 PT — FIX: host owns training-smoke completion
+
+> [!IMPORTANT]
+> **VALIDATED, NOT LAUNCHED.** The trusted supervisor now owns the verified
+> production-handoff → training-submission → one-step-proof boundary. Launch is
+> gated only on commit synchronization, prerequisite binding checks, and the
+> required model-role reconfirmation for this configuration revision.
+
+```text
+○ External pre-AutoData recovery verification
+○ Fresh Trial 5 proposal and AutoData workspace
+○ Original AAR Claude turn
+✓ Supervisor lifecycle ownership code
+✓ Typed analyze_results coordinator code
+✓ Typed mutate_candidate coordinator code
+✓ Host-owned training submission/verification code
+○ Production and verified export
+○ Training smoke
+○ Evaluator (disabled; must not start)
+```
+
+#### Validation
+
+- Training-smoke coordinator and launch wiring: `92 passed`.
+- Combined AutoData lifecycle, Kimi compatibility, Run 13, and shell contract
+  selection: `147 passed, 1 skipped, 65 deselected, 4 subtests passed`.
+- Shell syntax, ShellCheck, Python compilation, Ruff, and diff checks passed.
+- Submission uses the existing durable intent and final receipt rather than a
+  second queue; restarts reuse the recorded job ID.
+
+#### Next step
+
+Commit and synchronize this exact revision, inspect the external recovery and
+target bindings on HPC, then present the complete model-role mapping for user
+confirmation before submitting Trial 5.

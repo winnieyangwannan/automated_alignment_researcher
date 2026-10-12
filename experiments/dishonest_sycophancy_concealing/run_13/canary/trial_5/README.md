@@ -4,7 +4,7 @@
 
 - Status: planned; not launched
 - Created: 2026-10-12 02:42 PT
-- Last updated: 2026-10-12 02:52 PT
+- Last updated: 2026-10-12 03:20 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -35,18 +35,20 @@ tool-free worker returns a typed complete replacement for only
 writes that file atomically, completes the native action, and verifies its
 receipt. AutoData continues to own all lifecycle transitions.
 
-The remaining launch prerequisite is backend-neutral host ownership of the
-verified production-handoff → training-submission → one-step-proof boundary.
+The backend-neutral lifecycle owner also reconciles the verified production
+handoff into the existing crash-safe training submitter, waits for the one-step
+result without a model turn, and publishes the terminal receipt only after
+verifying dataset consumption, lineage, and adapter evidence.
 
 ## Launch
 
 Recorded: 2026-10-12 02:42 PT
 
-Do not launch yet. The Run 13 launcher supports Trial 5 recovery and the native
-semantic action cycle is implemented, but the lifecycle owner does not yet
-submit and verify training after the production handoff. The wrapper remains
-fail-closed until that final host-owned boundary is reviewed and an external
-owner-only mode-0600 Trial 5 recovery manifest is supplied.
+Launch only after the exact model-role mapping below is reconfirmed for this
+configuration revision, the reviewed coordinator commit is synced to the
+matching HPC worktree, and an external owner-only mode-0600 Trial 5 recovery
+manifest is supplied. The wrapper and supervisor fail closed if any of those
+bindings is absent or inconsistent.
 
 After all gates are reviewed, launch from the matching isolated HPC checkout:
 
@@ -132,8 +134,8 @@ Reaching the end of meta-optimization alone does not make Trial 5 a pass.
 Recorded: 2026-10-12 02:42 PT
 
 Stop before submission if the reviewed coordinator commit, external manifest,
-model mapping, or host-owned training submission/verification is missing. Stop
-during execution if any prior native identity or downstream artifact appears,
+or confirmed model mapping is missing. Stop during execution if any prior
+native identity or downstream artifact appears,
 supervisor ownership ends with the AAR Claude turn, an action is begun twice, a
 stale worker outcome is accepted, any file other than
 `recipe/generation_strategy.json` changes during optimization, native receipt
