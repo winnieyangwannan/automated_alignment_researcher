@@ -255,6 +255,39 @@ it is not a general full-chain resume command. A full-run recovery must preserve
 existing results, reject duplicate active jobs, and subtract already-started
 sessions from each chain's 60-session budget.
 
+For every user-facing response to "how is it going," report all five chains
+separately with the current session count, durable score/finding-pair count,
+ordered AAR lifecycle stages, and the latest authoritative public evaluation
+score for that chain. Identify the score's run ID and capability-filter outcome
+when published. If a chain has no published evaluation, say `none yet`; if a
+new candidate is still evaluating, distinguish that in-progress evaluation
+from the chain's latest already-published score. Never infer a score from logs
+or expose held-out item-level or evaluator-private results. End with the total
+durable pair count across all chains.
+
+Begin the report with this summary table, followed by the detailed per-chain
+lifecycle sections:
+
+```markdown
+| Chain   | Latest score | Highest score | Highest valid score | Filter | Completed scores | Current stage |
+| ------- | ------------ | ------------- | ------------------- | ------ | ---------------- | ------------- |
+| Alpha   | ...          | ...           | ...                 | ...    | ...              | ...           |
+| Beta    | ...          | ...           | ...                 | ...    | ...              | ...           |
+| Gamma   | ...          | ...           | ...                 | ...    | ...              | ...           |
+| Delta   | ...          | ...           | ...                 | ...    | ...              | ...           |
+| Epsilon | ...          | ...           | ...                 | ...    | ...              | ...           |
+```
+
+Calculate `Latest score` and `Highest score` from published public
+`headline_pct` values. `Highest valid score` is the maximum published headline
+whose candidate passed both the capability filter and regression gate, or
+`None` when none qualifies. `Filter` is the latest published score's capability
+filter result. `Completed scores` counts published scores and, when failures
+exist, appends the number of durable `*.failed.json` attempts as
+`<scores> + <failures> failed`. `Current stage` names the current overall
+session and lifecycle stage. These score counts are distinct from durable
+score/finding-pair counts.
+
 ### Evaluator-throughput monitoring goal
 
 Recorded: 2026-10-10 23:41 PT
