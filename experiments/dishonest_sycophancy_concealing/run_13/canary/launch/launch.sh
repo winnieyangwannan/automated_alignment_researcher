@@ -34,7 +34,7 @@ TRIAL_NUMBER="${BASH_REMATCH[1]}"
 TRIAL_ID="trial${TRIAL_NUMBER}"
 RECOVERY_MANIFEST_EXTERNAL=""
 case "${TRIAL_ID}" in
-  trial4|trial5|trial6|trial7|trial8)
+  trial4|trial5|trial6|trial7|trial8|trial9)
     : "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:?${TRIAL_ID} requires an external pre-AutoData recovery manifest}"
     if [ ! -f "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}" ] || \
         [ -L "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}" ]; then
@@ -60,7 +60,7 @@ case "${TRIAL_ID}" in
     ;;
   *)
     [ -z "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ] || {
-      echo "pre-AutoData recovery is allowlisted only for Run 13 Trial 4/5/6/7/8" >&2
+      echo "pre-AutoData recovery is allowlisted only for Run 13 Trial 4/5/6/7/8/9" >&2
       exit 2
     }
     ;;
@@ -211,7 +211,7 @@ mkdir -p "${attempt}/"{metadata,logs,secrets,chains,runtime}
 mkdir -p "${checkpoint_root}/chains"
 chmod 700 "${attempt}" "${attempt}/"{metadata,logs,secrets,chains}
 chmod 700 "${checkpoint_root}" "${checkpoint_root}/chains"
-if [[ "${TRIAL_ID}" =~ ^trial(4|5|6|7|8)$ ]]; then
+if [[ "${TRIAL_ID}" =~ ^trial(4|5|6|7|8|9)$ ]]; then
   RECOVERY_MANIFEST_SNAPSHOT="${attempt}/metadata/preautodata-recovery-manifest.json"
   install -m 400 -- "${RECOVERY_MANIFEST_EXTERNAL}" "${RECOVERY_MANIFEST_SNAPSHOT}"
   [ "$(sha256sum "${RECOVERY_MANIFEST_EXTERNAL}" | awk '{print $1}')" = \
@@ -454,7 +454,7 @@ base_reused=false
 [ -z "${REUSE_BASE_DEPLOYMENT}" ] || base_reused=true
 source_snapshots_sha256="sha256:$(sha256sum "${attempt}/metadata/source-snapshots.json" | awk '{print $1}')"
 recovery_manifest_sha256=none
-if [[ "${TRIAL_ID}" =~ ^trial(4|5|6|7|8)$ ]]; then
+if [[ "${TRIAL_ID}" =~ ^trial(4|5|6|7|8|9)$ ]]; then
   recovery_manifest_sha256="sha256:$(sha256sum "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}" | awk '{print $1}')"
 fi
 printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nsource_snapshot_root=%s\nautodata_commit=%s\nautodata_snapshot_root=%s\nsource_snapshots_sha256=%s\nrecovery_manifest_sha256=%s\nexperiment_run_id=%s\ntrial_id=%s\nrun_config_id=%s\nmode=%s\nstop_after=%s\nproduction_required_rows=%s\nresearch_backend=%s\nresearch_model=%s\nresearch_effort=%s\nresearcher_deployment=%s\nautodata_generator_model=%s\nautodata_generator_protocol=%s\nautodata_generator_deployment=%s\nautodata_profile=%s\nautodata_concurrency=%s\nautodata_model_request_attempts=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \

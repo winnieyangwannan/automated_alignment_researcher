@@ -307,25 +307,26 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
         self.assertIn("`author_pipeline`", trial7_agent.system_prompt)
         self.assertIn("background or detached", trial7_agent.system_prompt)
 
-    def test_trial8_reuses_the_reviewed_authoring_fence(self) -> None:
+    def test_trial8_and_trial9_reuse_the_reviewed_authoring_fence(self) -> None:
         class Options:
             def __init__(self, **kwargs) -> None:
                 self.kwargs = kwargs
 
         agent_module = _load_agent_module(Options)
-        with tempfile.TemporaryDirectory() as directory:
-            environment = self._trial7_environment(directory)
-            environment["AAR_RUN13_TRIAL_ID"] = "trial8"
-            environment["AAR_IDEA_UID_OVERRIDE"] = (
-                "run13-trial8-alpha-iteration-1"
-            )
-            with patch.dict(os.environ, environment, clear=True):
-                hooks = agent_module._trial7_pipeline_hooks()
+        for trial_id in ("trial8", "trial9"):
+            with self.subTest(trial_id=trial_id), tempfile.TemporaryDirectory() as directory:
+                environment = self._trial7_environment(directory)
+                environment["AAR_RUN13_TRIAL_ID"] = trial_id
+                environment["AAR_IDEA_UID_OVERRIDE"] = (
+                    f"run13-{trial_id}-alpha-iteration-1"
+                )
+                with patch.dict(os.environ, environment, clear=True):
+                    hooks = agent_module._trial7_pipeline_hooks()
 
-        self.assertEqual(
-            [matcher.matcher for matcher in hooks["PreToolUse"]],
-            ["Bash", "Write", "Edit"],
-        )
+            self.assertEqual(
+                [matcher.matcher for matcher in hooks["PreToolUse"]],
+                ["Bash", "Write", "Edit"],
+            )
 
     def test_trial7_pipeline_flag_fails_closed_on_wrong_identity(self) -> None:
         class Options:

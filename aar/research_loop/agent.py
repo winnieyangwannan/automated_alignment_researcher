@@ -389,7 +389,11 @@ def _trial7_pipeline_fence_enabled() -> bool:
             "AAR_AUTODATA_PIPELINE_COORDINATOR has an invalid value"
         )
     trial_id = os.getenv("AAR_RUN13_TRIAL_ID", "").strip().lower()
-    mismatches = [] if trial_id in {"trial7", "trial8"} else ["AAR_RUN13_TRIAL_ID"]
+    mismatches = (
+        []
+        if trial_id in {"trial7", "trial8", "trial9"}
+        else ["AAR_RUN13_TRIAL_ID"]
+    )
     required = {
         "AAR_EXPERIMENT_RUN_ID": "run13",
         "AAR_IDEA_UID_OVERRIDE": f"run13-{trial_id}-alpha-iteration-1",

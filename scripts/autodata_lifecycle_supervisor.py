@@ -2817,7 +2817,7 @@ class Supervisor:
         trial_id = os.getenv("AAR_RUN13_TRIAL_ID", "")
         if (pipeline_enabled or grounding_enabled) and (
             os.getenv("AAR_EXPERIMENT_RUN_ID") != "run13"
-            or trial_id not in {"trial7", "trial8"}
+            or trial_id not in {"trial7", "trial8", "trial9"}
             or os.getenv("AAR_IDEA_UID_OVERRIDE")
             != f"run13-{trial_id}-alpha-iteration-1"
             or os.getenv("AAR_AGENT_BACKEND") != "claude"
@@ -2827,7 +2827,7 @@ class Supervisor:
             raise AutoDataCoordinatorError(
                 "pipeline_coordinator_scope_invalid",
                 "workspace authoring coordinators are restricted to supervised "
-                "Run 13 Trials 7 and 8",
+                "Run 13 Trials 7 through 9",
             )
         team_raw = os.getenv("TEAM_DIR", "").strip()
         if not team_raw:

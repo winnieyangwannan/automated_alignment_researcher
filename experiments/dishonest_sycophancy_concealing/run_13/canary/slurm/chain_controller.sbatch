@@ -218,14 +218,14 @@ submit_session() {
       export AAR_AUTODATA_CLARIFY_COORDINATOR=1
       export AAR_AUTODATA_SEMANTIC_WORKER=claude
       ;;
-    trial5|trial6|trial7|trial8)
+    trial5|trial6|trial7|trial8|trial9)
       export AAR_AUTODATA_CLARIFY_COORDINATOR=1
       export AAR_AUTODATA_ANALYSIS_COORDINATOR=1
       export AAR_AUTODATA_MUTATION_COORDINATOR=1
       export AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR=1
       export AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE=1
       export AAR_AUTODATA_SEMANTIC_WORKER=claude
-      if [[ "${TRIAL_ID}" =~ ^trial(7|8)$ ]]; then
+      if [[ "${TRIAL_ID}" =~ ^trial(7|8|9)$ ]]; then
         export AAR_AUTODATA_GROUNDING_COORDINATOR=1
         export AAR_AUTODATA_PIPELINE_COORDINATOR=1
       fi
