@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: prepared; launch blocked pending reviewed coordinator and recovery-import wiring
+- Status: failed closed during meta-optimization baseline; evidence retained
 - Created: 2026-10-12 01:12 PT
-- Last updated: 2026-10-12 01:12 PT
+- Last updated: 2026-10-12 02:09 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -26,6 +26,17 @@ but the one-shot AAR Claude turn ended and the host tore down the lifecycle
 supervisor. Trial 4 avoids repeating the slow pre-AutoData research stages and
 tests the narrowly scoped, backend-neutral `clarify_design` coordinator.
 
+Trial 4 launched at source commit
+`2f73afec2815de788f3d48aeb65c6157cda4aa7c`. It proved the fresh recovery
+boundary and completed `clarify_design`, all remaining workspace-authoring
+actions, both delegated approvals, the authoring dry run, and workspace freeze.
+It then failed closed after creating the canonical meta-optimization execution:
+the one allowed AAR Claude session returned `Done`, the research process exited
+without the required training-smoke handoff, and cleanup stopped the lifecycle
+supervisor while the meta baseline was still active. See
+[`PROGRESS.md`](PROGRESS.md#run13-trial4-meta-lifetime-failure) for the retained
+evidence and exact boundary.
+
 The operator supplies an external, mode-0600 recovery manifest containing the
 reviewed source paths, exact SHA-256 digests, and negative native identities.
 It is snapshotted into host-owned attempt metadata and is never committed,
@@ -38,9 +49,10 @@ imported.
 
 Recorded: 2026-10-12 01:12 PT
 
-Do not launch yet. The wrapper fails closed until the reviewed
-`clarify_design` coordinator commit is an ancestor of the checkout and the
-shared Run 13 launcher contains the reviewed pre-AutoData recovery-import seam.
+Trial 4 has terminated and must not be relaunched into its retained attempt.
+The wrapper fails closed unless the reviewed `clarify_design` coordinator
+commit is an ancestor of the checkout and the shared Run 13 launcher contains
+the reviewed pre-AutoData recovery-import seam.
 
 After both gates pass, launch from the isolated HPC checkout:
 
@@ -54,8 +66,9 @@ AAR_RUN13_SECRET_ENV=<mode-600-secret-path> \
 ```
 
 The wrapper selects this exact config and verifies the external manifest before
-delegating to the shared Run 13 launcher. No launch has occurred from this
-directory.
+delegating to the shared Run 13 launcher. The command above documents the
+historical Trial 4 entrypoint; a successor must use a fresh trial identity and
+must first repair the supervisor lifetime boundary demonstrated by this run.
 
 ## Plan
 
