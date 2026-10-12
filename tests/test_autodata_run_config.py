@@ -51,6 +51,7 @@ TRIAL18_RUN = TRIAL16_RUN.parent.parent / "trial_18" / "autodata_run.yaml"
 TRIAL19_RUN = TRIAL16_RUN.parent.parent / "trial_19" / "autodata_run.yaml"
 TRIAL20_RUN = TRIAL16_RUN.parent.parent / "trial_20" / "autodata_run.yaml"
 TRIAL21_RUN = TRIAL16_RUN.parent.parent / "trial_21" / "autodata_run.yaml"
+TRIAL22_RUN = TRIAL16_RUN.parent.parent / "trial_22" / "autodata_run.yaml"
 RUN17 = (
     ROOT
     / "experiments/dishonest_sycophancy_concealing/run_17/config/run.yaml"
@@ -244,9 +245,10 @@ def test_canary2_run_yaml_selects_and_enforces_its_shared_profile() -> None:
         (TRIAL19_RUN, "run12-canary2-trial19"),
         (TRIAL20_RUN, "run12-canary2-trial20"),
         (TRIAL21_RUN, "run12-canary2-trial21"),
+        (TRIAL22_RUN, "run12-canary2-trial22"),
     ],
 )
-def test_trial16_through_trial21_preserve_v2_lifecycle_contract(
+def test_trial16_through_trial22_preserve_v2_lifecycle_contract(
     tmp_path: Path, run_path: Path, run_id: str
 ) -> None:
     output = tmp_path / f"{run_id}-compiled"
@@ -300,6 +302,17 @@ def test_trial21_preserves_coordinated_clarify_boundary() -> None:
     assert "export AAR_AUTODATA_SEMANTIC_WORKER=kimi" in wrapper
     assert "unset AAR_AUTODATA_ANALYSIS_COORDINATOR" in wrapper
     assert "unset AAR_AUTODATA_MUTATION_COORDINATOR" in wrapper
+    assert "unset AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE" in wrapper
+
+
+def test_trial22_preserves_only_coordinated_clarify() -> None:
+    wrapper = (TRIAL22_RUN.parent / "submit_canary.sh").read_text()
+
+    assert "export AAR_AUTODATA_CLARIFY_COORDINATOR=1" in wrapper
+    assert "export AAR_AUTODATA_SEMANTIC_WORKER=kimi" in wrapper
+    assert "unset AAR_AUTODATA_ANALYSIS_COORDINATOR" in wrapper
+    assert "unset AAR_AUTODATA_MUTATION_COORDINATOR" in wrapper
+    assert "unset AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR" in wrapper
     assert "unset AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE" in wrapper
 
 
