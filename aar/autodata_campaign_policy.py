@@ -120,6 +120,7 @@ def build_policy(
     required = {
         "AUTODATA_GENERATOR_URL": ("http://fair-cw-use2-1-ingress-slurm-ingress/v1"),
         "AUTODATA_GENERATOR_HOST_HEADER": "ram-inference-gateway.ingress.",
+        "AUTODATA_GENERATOR_PROTOCOL": "openai_chat_completions",
         "AUTODATA_GENERATOR_MODEL": "Kimi-K2.6",
         "AUTODATA_GENERATOR_DEPLOYMENT_ID": generator_deployment_id,
         "AUTODATA_GENERATOR_MAX_INPUT": "196608",

@@ -856,9 +856,7 @@ def _generate(
     preserve_prompt: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     base = _required_env("AUTODATA_GENERATOR_URL").rstrip("/")
-    protocol = os.environ.get(
-        "AUTODATA_GENERATOR_PROTOCOL", "openai_chat_completions"
-    ).strip()
+    protocol = _required_env("AUTODATA_GENERATOR_PROTOCOL")
     model = _required_env("AUTODATA_GENERATOR_MODEL")
     deployment = _required_env("AUTODATA_GENERATOR_DEPLOYMENT_ID")
     max_tokens = _bounded_positive_int_env(

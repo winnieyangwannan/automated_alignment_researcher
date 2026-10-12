@@ -76,9 +76,8 @@ aar_set_autodata_runtime_profile() {
       return 2
     }
   elif [ -z "${generator_protocol}" ]; then
-    # Legacy static profiles predate explicit protocol configuration and are
-    # Serve API chat-completions profiles.
-    generator_protocol=openai_chat_completions
+    echo "AutoData generator protocol is required" >&2
+    return 2
   fi
   export AAR_AUTODATA_GENERATOR_PROTOCOL="${generator_protocol}"
 

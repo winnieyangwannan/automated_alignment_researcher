@@ -21,6 +21,7 @@ execution:
   reuse_policy: digest-verified
 providers:
   generator:
+    protocol: openai_chat_completions
     url: http://fair-cw-use2-1-ingress-slurm-ingress/v1
     host_header: ram-inference-gateway.ingress.
     model: Kimi-K2.6

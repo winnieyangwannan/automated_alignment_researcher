@@ -117,6 +117,10 @@ class AutoDataCampaignPolicyTest(unittest.TestCase):
                 "aar_8-kimi26",
             )
             self.assertEqual(
+                policy["required_solve_env"]["AUTODATA_GENERATOR_PROTOCOL"],
+                "openai_chat_completions",
+            )
+            self.assertEqual(
                 policy["required_solve_env"]["AUTODATA_GENERATOR_MAX_INPUT"],
                 "196608",
             )

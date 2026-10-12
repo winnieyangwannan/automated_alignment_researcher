@@ -23,8 +23,15 @@ SV="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
 # Preserves provider provenance and enforces atomic, terminal budget handling.
 REQUIRED_AUTODATA_SHA=51c18fdb0eaa69d8ad66a1805e9c08a507c5fbb1
-CANONICAL_RUN_CONFIG="$(realpath -e -- "${RUN13_DIR}/autodata_run.yaml")"
-RUN_CONFIG="${CANONICAL_RUN_CONFIG}"
+: "${AAR_RUN13_TRIAL_CONFIG:?launch through a validated run_13/canary/trial_N/submit_canary.sh wrapper}"
+RUN_CONFIG="$(realpath -e -- "${AAR_RUN13_TRIAL_CONFIG}")"
+trial_relative="${RUN_CONFIG#"${RUN13_DIR}/"}"
+if [[ ! "${trial_relative}" =~ ^trial_([1-9][0-9]*)/autodata_run\.yaml$ ]]; then
+  echo "Run 13 trial config must be canary/trial_N/autodata_run.yaml" >&2
+  exit 2
+fi
+TRIAL_NUMBER="${BASH_REMATCH[1]}"
+TRIAL_ID="trial${TRIAL_NUMBER}"
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "Run 13 requires branch autodata" >&2; exit 2; }
 if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; then
   echo "tracked worktree is dirty" >&2
@@ -38,6 +45,9 @@ PROFILE_CONFIG="$(env PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m \
   --fallback-profile "${REPO}/configs/autodata/target_aware_model_api_claude_opus_4_8_c8_v1.yaml")"
 config_json="$(PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_run_config inspect \
   --profile "${PROFILE_CONFIG}" --run "${RUN_CONFIG}")"
+[ "$(jq -r '.run_id' <<<"${config_json}")" = "run13-canary-${TRIAL_ID}" ] || {
+  echo "Run 13 config identity does not match ${TRIAL_ID}" >&2; exit 2;
+}
 [ "$(jq -r '.target_enabled' <<<"${config_json}")" = true ] || {
   echo "Run 13 requires target-aware AutoData YAML" >&2; exit 2;
 }
@@ -161,7 +171,7 @@ fi
 
 commit="${SUBMITTED_COMMIT}"
 attempt_id="$(date -u +%Y%m%dT%H%M%SZ)-${commit:0:12}"
-run_namespace="${EXPERIMENT_RUN_ID}-bootstrap-canary"
+run_namespace="${EXPERIMENT_RUN_ID}-${TRIAL_ID}-bootstrap-canary"
 attempt="${RUN13_STORAGE_ROOT}/aar-runs/${run_namespace}/${attempt_id}"
 checkpoint_root="${RUN13_STORAGE_ROOT}/aar-checkpoints/${run_namespace}/${attempt_id}"
 mkdir -p "${attempt}/"{metadata,logs,secrets,chains,runtime}
@@ -384,21 +394,23 @@ export AAR_AUTODATA_APPROVAL_POLICY_VERSION="aar-autodata/${EXPERIMENT_RUN_ID}-v
 export AAR_AUTODATA_RESOURCES_READY=1
 export AAR_MONITOR_MODEL_API_KEY="${MODEL_API_KEY}"
 export AAR_RUN13_MODE="${RUN_MODE}"
+export AAR_RUN13_TRIAL_ID="${TRIAL_ID}"
 export AAR_RUN13_SEEDS="${SEEDS_RAW}"
 export AAR_RUN13_CHAIN_COUNT="${#seeds[@]}"
 export AAR_RUN13_TARGET_PAIRS="${TARGET_PAIRS}"
 export AAR_RUN13_MAX_CHAIN_ATTEMPTS=2
 
-job="$(sbatch --parsable --job-name="${EXPERIMENT_RUN_ID}-autodata-launch" \
+job="$(sbatch --parsable --job-name="${EXPERIMENT_RUN_ID}-${TRIAL_ID}-autodata-launch" \
   --output="${attempt}/logs/pipeline-%j.out" --export=ALL \
   "${SOURCE_REPO}/experiments/dishonest_sycophancy_concealing/run_13/canary/slurm/pipeline.sbatch")"
 base_reused=false
 [ -z "${REUSE_BASE_DEPLOYMENT}" ] || base_reused=true
 source_snapshots_sha256="sha256:$(sha256sum "${attempt}/metadata/source-snapshots.json" | awk '{print $1}')"
-printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nsource_snapshot_root=%s\nautodata_commit=%s\nautodata_snapshot_root=%s\nsource_snapshots_sha256=%s\nexperiment_run_id=%s\nmode=%s\nstop_after=%s\nproduction_required_rows=%s\nresearch_backend=%s\nresearch_model=%s\nresearch_effort=%s\nresearcher_deployment=%s\nautodata_generator_model=%s\nautodata_generator_protocol=%s\nautodata_generator_deployment=%s\nautodata_profile=%s\nautodata_concurrency=%s\nautodata_model_request_attempts=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \
+printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nsource_snapshot_root=%s\nautodata_commit=%s\nautodata_snapshot_root=%s\nsource_snapshots_sha256=%s\nexperiment_run_id=%s\ntrial_id=%s\nrun_config_id=%s\nmode=%s\nstop_after=%s\nproduction_required_rows=%s\nresearch_backend=%s\nresearch_model=%s\nresearch_effort=%s\nresearcher_deployment=%s\nautodata_generator_model=%s\nautodata_generator_protocol=%s\nautodata_generator_deployment=%s\nautodata_profile=%s\nautodata_concurrency=%s\nautodata_model_request_attempts=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \
   "${job}" "${attempt}" "${checkpoint_root}" "${commit}" \
   "${SOURCE_REPO}" "${REQUIRED_AUTODATA_SHA}" "${SOURCE_AUTODATA}" \
-  "${source_snapshots_sha256}" "${EXPERIMENT_RUN_ID}" "${RUN_MODE}" \
+  "${source_snapshots_sha256}" "${EXPERIMENT_RUN_ID}" "${TRIAL_ID}" \
+  "$(jq -r '.run_id' <<<"${config_json}")" "${RUN_MODE}" \
   "${AAR_AUTODATA_STOP_AFTER:-score-result}" "${AAR_AUTODATA_PRODUCTION_ROWS}" \
   "${AGENT_BACKEND}" "${AGENT_MODEL:-Kimi-K2.6}" "${AGENT_EFFORT:-default}" \
   "${RESEARCHER_DEPLOYMENT}" "${GENERATOR_MODEL}" "${GENERATOR_PROTOCOL}" \

@@ -11,6 +11,7 @@ chains:
 ```bash
 export AAR_AUTODATA=1
 export AAR_AUTODATA_PROFILE=target-aware-local-v1
+export AAR_AUTODATA_GENERATOR_PROTOCOL=openai_chat_completions
 export AAR_AUTODATA_GENERATOR_DEPLOYMENT=<serve_api_v2-deployment-id>
 export AAR_KIMI_PROXY_INFO=/checkpoint/ram/shared/vllm_deployments_v2/${AAR_AUTODATA_GENERATOR_DEPLOYMENT}/proxy_info.json
 source "${REPO}/scripts/autodata_runtime_profile.sh"
@@ -26,11 +27,20 @@ python -m aar.autodata_campaign_policy create-policy \
   ...
 ```
 
+Every campaign policy must declare one supported generator protocol. For
+`openai_chat_completions`, the runtime requires and validates the selected
+Serve API `proxy_info.json`, then starts the authenticated loopback bridge. For
+`model_api_responses`, the runtime removes any stale Kimi proxy variable and
+calls the pinned Model API Responses route directly. Missing and unknown
+protocols fail closed.
+
 The profile fixes the measured target-aware settings:
 
 - trusted local Bubblewrap broker;
-- concurrency 32;
-- three attempts for transient model requests;
+- profile-selected per-chain concurrency (8 by default, or 32 for the explicit
+  load-canary profile);
+- profile-selected transient request attempts (three by default, or one for the
+  explicit load-canary profile);
 - orchestration-owned lifecycle supervisor;
 - node-local native SQLite and broker ledger with retained snapshots;
 - authenticated loopback routing to the selected Kimi deployment; and

@@ -78,6 +78,7 @@ export AAR_CHAIN_MAX_HOURS=72 AAR_CHAIN_SANITIZE_ENV=1 AAR_RUNTIME_ENV_DISABLE_F
 export AAR_RESEARCH_ENV_ISOLATION=1 AAR_HIDE_EVAL_CONFIG=1
 
 export AAR_AUTODATA=1 AAR_AUTODATA_PROFILE=target-aware-local-v1
+export AAR_AUTODATA_GENERATOR_PROTOCOL=openai_chat_completions
 # shellcheck disable=SC1091
 source "${REPO}/scripts/autodata_runtime_profile.sh"
 aar_set_autodata_runtime_profile

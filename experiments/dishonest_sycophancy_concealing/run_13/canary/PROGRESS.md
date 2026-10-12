@@ -126,3 +126,41 @@ worktree before submission.
 Commit this exact source contract and fast-forward it to the matching HPC
 worktree. Separately obtain explicit approval before reusing the retained proof
 or submitting the canary.
+
+<a id="run13-event-trial1-runtime-profile-failure"></a>
+
+### ❌ 23:13 PT — FAIL: Trial 1 stopped at protocol-blind runtime validation
+
+- Preserved attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run13-bootstrap-canary/20261012T060647Z-67ab7629e12e`.
+- Launcher job `1829625` completed; chain job `1829639` failed `2:0`; controller
+  job `1829640` failed closed without retry; no evaluator existed.
+- The Claude Model API Responses generator was incorrectly treated as a Kimi
+  chat-completions deployment, so setup required a nonexistent
+  `proxy_info.json`.
+- The failure occurred before method authoring, proposal approval, workspace
+  registration, generation, training, score, or finding.
+
+#### ➡️ Next step
+
+Keep Trial 1 immutable and prepare a protocol-aware Trial 2 in a numbered
+directory.
+
+<a id="run13-event-trial2-prepared"></a>
+
+### 🛠️ 23:20 PT — FIX: Protocol-aware Trial 2 prepared
+
+- New launches now require an in-tree `trial_N/autodata_run.yaml` selected by
+  that trial's thin submit wrapper.
+- The shared engine records the trial in the run-config identity, attempt
+  namespace, Slurm names, team identity, idea identity, and submission metadata.
+- Kimi chat-completions requires and validates its proxy contract. Claude Model
+  API Responses removes stale Kimi proxy state and never starts the Kimi bridge.
+  Missing and unknown generator protocols fail closed.
+- Trial 2 config identity: `run13-canary-trial2`.
+- Trial 2 jobs: none yet.
+
+#### ➡️ Next step
+
+Validate and synchronize the focused descendant commit, then launch only through
+`trial_2/submit_canary.sh`.

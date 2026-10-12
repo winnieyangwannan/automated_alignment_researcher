@@ -418,6 +418,7 @@ def test_v1_generator_usage_binds_runtime_deployment(monkeypatch) -> None:
         RECIPE / "recipe" / "task.py",
     )
     environment = {
+        "AUTODATA_GENERATOR_PROTOCOL": "openai_chat_completions",
         "AUTODATA_GENERATOR_URL": "http://internal.example/v1",
         "AUTODATA_GENERATOR_MODEL": "Kimi-K2.6",
         "AUTODATA_GENERATOR_DEPLOYMENT_ID": "autodata_8-kimi26",

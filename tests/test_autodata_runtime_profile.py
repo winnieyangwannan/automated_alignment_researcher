@@ -206,6 +206,7 @@ def test_shell_profile_sets_target_aware_defaults(tmp_path: Path) -> None:
 set -euo pipefail
 export AAR_AUTODATA=1
 export AAR_AUTODATA_PROFILE=target-aware-local-v1
+export AAR_AUTODATA_GENERATOR_PROTOCOL=openai_chat_completions
 export AAR_KIMI_PROXY_INFO="{proxy}"
 source "{script}"
 aar_set_autodata_runtime_profile
@@ -220,6 +221,56 @@ printf '%s %s %s %s %s\n' "$AAR_AUTODATA_BROKER_RUNNER" \
     assert completed.stdout.strip() == "local-bwrap 8 3 1 digest-verified"
 
 
+def test_shell_profile_rejects_missing_kimi_proxy(tmp_path: Path) -> None:
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps(_policy()))
+    script = ROOT / "scripts/autodata_runtime_profile.sh"
+    command = f'''
+set -euo pipefail
+export AAR_AUTODATA=1
+export AAR_AUTODATA_PROFILE=target-aware-local-v1
+export AAR_AUTODATA_CAMPAIGN_POLICY="{policy}"
+export AAR_AUTODATA_GENERATOR_DEPLOYMENT=missing-kimi-deployment
+source "{script}"
+aar_set_autodata_runtime_profile
+'''
+    completed = subprocess.run(
+        ["bash", "-c", command], check=False, capture_output=True, text=True
+    )
+
+    assert completed.returncode != 0
+    assert "missing AutoData Kimi proxy contract" in completed.stderr
+
+
+@pytest.mark.parametrize(
+    ("protocol", "message"),
+    [
+        (None, "omitted generator protocol"),
+        ("unknown_protocol", "unsupported AutoData generator protocol"),
+    ],
+)
+def test_shell_profile_rejects_missing_or_unknown_protocol(
+    tmp_path: Path, protocol: str | None, message: str
+) -> None:
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps(_policy(protocol=protocol)))
+    script = ROOT / "scripts/autodata_runtime_profile.sh"
+    command = f'''
+set -euo pipefail
+export AAR_AUTODATA=1
+export AAR_AUTODATA_PROFILE=target-aware-local-v1
+export AAR_AUTODATA_CAMPAIGN_POLICY="{policy}"
+source "{script}"
+aar_set_autodata_runtime_profile
+'''
+    completed = subprocess.run(
+        ["bash", "-c", command], check=False, capture_output=True, text=True
+    )
+
+    assert completed.returncode != 0
+    assert message in completed.stderr
+
+
 def test_c32_profile_is_an_explicit_load_canary_profile(tmp_path: Path) -> None:
     profile = runtime_profile(TARGET_AWARE_LOCAL_C32_PROFILE)
 
@@ -232,6 +283,7 @@ def test_c32_profile_is_an_explicit_load_canary_profile(tmp_path: Path) -> None:
 set -euo pipefail
 export AAR_AUTODATA=1
 export AAR_AUTODATA_PROFILE=target-aware-local-c32-v1
+export AAR_AUTODATA_GENERATOR_PROTOCOL=openai_chat_completions
 export AAR_KIMI_PROXY_INFO="{proxy}"
 source "{script}"
 aar_set_autodata_runtime_profile

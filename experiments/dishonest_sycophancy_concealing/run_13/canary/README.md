@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: planned; dedicated launcher locally validated; prerequisites incomplete; not launched
+- Status: Trial 1 preserved as a pre-research failure; Trial 2 authorized and prepared
 - Created: 2026-10-11 21:42 PT
-- Last updated: 2026-10-11 22:29 PT
+- Last updated: 2026-10-11 23:20 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -31,7 +31,7 @@ evaluator, publish a score or research finding, or promote an adapter.
 
 ## Context
 
-Recorded: 2026-10-11 22:13 PT
+Recorded: 2026-10-11 23:20 PT
 
 The lifecycle contract comes from the
 [Run 12 lifecycle](../../run_12/doc/aar_lifecycle.md) and uses the same
@@ -81,45 +81,39 @@ reimplementing it inside AAR. That part is correct.
 
 Recorded: 2026-10-11 22:13 PT
 
-The dedicated entrypoint is [`launch/launch.sh`](launch/launch.sh). It owns the
-Run 13 submission pipeline and controller and does not invoke the Run 12
-launcher. It fails closed unless the checked-in configuration resolves to one
-`alpha` chain, Claude Opus 4.8, GPT-5.6 Luna, Gemma 4 31B IT, task concurrency
-8, three model-request attempts, and `stop_after: training_smoke`.
+New attempts must launch through a numbered trial wrapper. The current entrypoint
+is [`trial_2/submit_canary.sh`](trial_2/submit_canary.sh), which selects the exact
+Trial 2 config and delegates to the shared root launcher and Slurm engine. The
+root launcher rejects direct calls and any config outside an in-tree
+`trial_N/autodata_run.yaml`. It does not invoke the Run 12 launcher.
 
-The launcher is not ready to execute until the compatible retained proof and
-remaining deployment prerequisites exist. Once those are reviewed, the
-operator command will be:
+The engine fails closed unless the selected configuration resolves to one
+`alpha` chain, Claude Opus 4.8, GPT-5.6 Luna, Gemma 4 31B IT, task concurrency
+8, three model-request attempts, and `stop_after: training_smoke`. The reviewed
+Run 13-only prerequisite proof is
+`/checkpoint/ram/winnieyangwn/aar-runs/run13-adapter-target/20261012T060131Z-67ab7629e12e-isolated`.
+It is one-time integration evidence and need not be repeated unless a used
+route, model, protocol, checkpoint, verifier contract, or relevant source path
+changes.
+
+The operator command is:
 
 ```bash
 AAR_RUN13_CANARY_ROOT=<reviewed-proof-root> \
-  experiments/dishonest_sycophancy_concealing/run_13/canary/launch/launch.sh
+  experiments/dishonest_sycophancy_concealing/run_13/canary/trial_2/submit_canary.sh
 ```
 
-The user confirmed the final model, generation, and training-smoke contract on
-2026-10-11 at 22:29 PT. Launch remains blocked until all of the following are
-complete:
-
-1. Create the clean detached AutoData execution checkout on HPC and pin the
-   exact AAR source commit.
-2. Validate the resolved configuration, seed,
-   storage roots, session and phase budgets, production row contract, training
-   contract, and `training_smoke` stop boundary.
-3. Validate the fixed Gemma checkpoint and attempt-local logical target
-   deployment against the retained prerequisite proof.
-4. Validate endpoint and tool-protocol preflights without exposing credentials
-   or held-out data.
-5. Obtain explicit approval to reuse the retained prerequisite proof bundle.
-6. Commit the source-side package and fast-forward the exact commit to the
-   matching `autodata` HPC worktree before submission.
-
-Writing this README does not authorize a launch.
+Trial 1 is retained at
+`/checkpoint/ram/winnieyangwn/aar-runs/run13-bootstrap-canary/20261012T060647Z-67ab7629e12e`.
+It stopped before method authoring when protocol-blind runtime setup incorrectly
+required a Kimi proxy for the Claude Responses route. Trial 2 is the authorized
+protocol-aware recovery; see [its progress log](trial_2/PROGRESS.md).
 
 ## Plan
 
 Recorded: 2026-10-11 21:53 PT
 
-1. Use `autodata_run.yaml` as the one-chain declarative source and compile a
+1. Use the selected `trial_N/autodata_run.yaml` as the one-chain declarative source and compile a
    resolved, immutable attempt snapshot.
 2. Use the dedicated Run 13 launcher to enforce `bootstrap-canary`, one `alpha`
    chain, one structural target-pair count, this exact YAML, and the retained
@@ -184,7 +178,7 @@ adapter mode invalidates prior launch confirmation.
 
 ## Configuration and invariants
 
-Recorded: 2026-10-11 22:13 PT
+Recorded: 2026-10-11 23:20 PT
 
 - Exactly one `alpha` chain and one bounded bootstrap-canary attempt are in
   scope. `target_pairs_per_chain: 1` satisfies the dedicated controller contract;
@@ -288,10 +282,15 @@ The current canary source package contains:
 
 ```text
 canary/
-├─ launch/launch.sh              # dedicated fail-closed operator entrypoint
-├─ slurm/pipeline.sbatch         # attempt bootstrap and chain submission
-├─ slurm/chain_controller.sbatch # training-smoke completion controller
-├─ autodata_run.yaml             # validated machine-readable run contract
+├─ trial_2/
+│  ├─ submit_canary.sh           # only operator entrypoint for Trial 2
+│  ├─ autodata_run.yaml          # Trial 2 machine-readable run contract
+│  ├─ README.md                  # Trial 2 specification
+│  └─ PROGRESS.md                # Trial 2 append-only history
+├─ launch/launch.sh              # shared, wrapper-selected fail-closed engine
+├─ slurm/pipeline.sbatch         # shared attempt bootstrap and chain submission
+├─ slurm/chain_controller.sbatch # shared training-smoke completion controller
+├─ autodata_run.yaml             # preserved pre-trial-layout Trial 1 contract
 ├─ README.md                     # stable specification and operator guide
 ├─ PROGRESS.md                   # append-only PT operational history
 └─ winnie_nots.md                # AutoData revision comparison and pin decision

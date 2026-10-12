@@ -230,12 +230,9 @@ def _provider(
         expected.add("url")
     if host_header:
         expected.add("host_header")
-    data = _mapping_with_optional(
-        value,
-        label,
-        expected,
-        {"protocol"} if generator else set(),
-    )
+    if generator:
+        expected.add("protocol")
+    data = _mapping(value, label, expected)
     result: dict[str, Any] = {
         "model": _text(data["model"], f"{label}.model"),
         "max_input_tokens": _positive_integer(
@@ -265,7 +262,7 @@ def _provider(
         )
     if generator:
         protocol = _identifier(
-            data.get("protocol", "openai_chat_completions"),
+            data["protocol"],
             f"{label}.protocol",
         )
         if protocol not in GENERATOR_PROTOCOLS:
@@ -1057,6 +1054,7 @@ def inspect_configs(profile_path: Path, run_path: Path) -> dict[str, Any]:
     profile = load_runtime_profile(profile_path)
     run = load_run_config(run_path)
     return {
+        "run_id": run["run_id"],
         "profile_name": profile["name"],
         "concurrency_per_chain": profile["execution"]["concurrency_per_chain"],
         "model_request_max_attempts": profile["execution"][

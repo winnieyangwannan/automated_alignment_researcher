@@ -14,6 +14,10 @@ REPO="${AAR_REPO:?missing repository}"
   echo "Run 13 controller rejects another experiment identity" >&2; exit 2;
 }
 EXPERIMENT_RUN_ID=run13
+TRIAL_ID="${AAR_RUN13_TRIAL_ID:?missing Run 13 trial identity}"
+[[ "${TRIAL_ID}" =~ ^trial[1-9][0-9]*$ ]] || {
+  echo "invalid Run 13 trial identity" >&2; exit 2;
+}
 # Reapply the trusted runtime selection before the controller captures PY; the
 # controller is long-lived and resubmits research jobs after the launcher exits.
 # shellcheck disable=SC1091
@@ -202,11 +206,7 @@ submit_session() {
   # shellcheck disable=SC1091
   source "${REPO}/scripts/aar_runtime_env.sh"
   local attempt_number="$1" names=() name csv job intent key comment status match
-  if [ "${EXPERIMENT_RUN_ID}" = run13 ]; then
-    export AAR_IDEA_UID_OVERRIDE="run13-${SEED}-iteration-${next_iteration}"
-  else
-    export AAR_IDEA_UID_OVERRIDE="${EXPERIMENT_RUN_ID}-${SEED}-iteration-${next_iteration}"
-  fi
+  export AAR_IDEA_UID_OVERRIDE="run13-${TRIAL_ID}-${SEED}-iteration-${next_iteration}"
   export AAR_RESUME_APPROVED_PROPOSAL=1
   for name in "${AAR_RESEARCH_CHAIN_ENV_ALLOWLIST[@]}"; do
     [[ -v "${name}" ]] && names+=("${name}")

@@ -14,6 +14,10 @@ REPO="${AAR_REPO:?submit through run_13/canary/launch/launch.sh}"
   echo "Run 13 pipeline rejects another experiment identity" >&2; exit 2;
 }
 EXPERIMENT_RUN_ID=run13
+TRIAL_ID="${AAR_RUN13_TRIAL_ID:?missing Run 13 trial identity}"
+[[ "${TRIAL_ID}" =~ ^trial[1-9][0-9]*$ ]] || {
+  echo "invalid Run 13 trial identity" >&2; exit 2;
+}
 ATTEMPT="${AAR_RUN_ATTEMPT_DIR:?missing attempt}"
 EXPECTED_COMMIT="${AAR_BASELINE_GIT_COMMIT:?missing source commit}"
 SOURCE_SNAPSHOT="${AAR_SOURCE_SNAPSHOT:?missing immutable source snapshot}"
@@ -192,9 +196,9 @@ children="${ATTEMPT}/metadata/children.tsv"
 for seed in "${seeds[@]}"; do
   chain_root="${ATTEMPT}/chains/${seed}"
   agent_tag="${AAR_AGENT_BACKEND}"
-  team_id="${EXPERIMENT_RUN_ID}-gemma4-31b-${agent_tag}-${seed}-${SLURM_JOB_ID}"
+  team_id="${EXPERIMENT_RUN_ID}-${TRIAL_ID}-gemma4-31b-${agent_tag}-${seed}-${SLURM_JOB_ID}"
   export AAR_TEAM_ID="${team_id}"
-  export AAR_IDEA_UID_OVERRIDE="run13-${seed}-iteration-1"
+  export AAR_IDEA_UID_OVERRIDE="run13-${TRIAL_ID}-${seed}-iteration-1"
   export AAR_RESUME_APPROVED_PROPOSAL=0
   export AAR_AUTODATA_RUNTIME_ENV="${chain_root}/metadata/autodata-runtime.env"
   # shellcheck disable=SC1090
@@ -219,7 +223,7 @@ for seed in "${seeds[@]}"; do
     exit 1
   fi
   controller="$(sbatch --parsable --dependency="afterany:${chain}" \
-    --job-name="${EXPERIMENT_RUN_ID}-chain-controller" \
+    --job-name="${EXPERIMENT_RUN_ID}-${TRIAL_ID}-chain-controller" \
     --output="${chain_root}/logs/controller-%j.out" --export=ALL \
     "${REPO}/experiments/dishonest_sycophancy_concealing/run_13/canary/slurm/chain_controller.sbatch" \
     "${seed}" "${team_id}" "${chain}")"
@@ -228,8 +232,8 @@ for seed in "${seeds[@]}"; do
 done
 
 [ "$(wc -l < "${children}")" -eq "${CHAIN_COUNT}" ] || { echo "did not launch all configured chains" >&2; exit 1; }
-printf 'experiment_run_id=%s\nresearch_backend=%s\nresearch_model=%s\nresearch_effort=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\n' \
-  "${EXPERIMENT_RUN_ID}" "${AAR_AGENT_BACKEND}" \
+printf 'experiment_run_id=%s\ntrial_id=%s\nresearch_backend=%s\nresearch_model=%s\nresearch_effort=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\n' \
+  "${EXPERIMENT_RUN_ID}" "${TRIAL_ID}" "${AAR_AGENT_BACKEND}" \
   "${AAR_AGENT_MODEL:-Kimi-K2.6}" "${AAR_EFFORT:-default}" \
   "${CHAIN_COUNT}" "${TARGET_PAIRS}" "${SEEDS_RAW}" \
   > "${ATTEMPT}/metadata/canary-launch.env"

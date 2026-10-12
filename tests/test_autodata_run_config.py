@@ -328,6 +328,24 @@ def test_model_api_generator_profile_rejects_non_responses_endpoint(
         load_runtime_profile(path)
 
 
+@pytest.mark.parametrize("protocol", [None, "unknown_protocol"])
+def test_generator_profile_rejects_missing_or_unknown_protocol(
+    tmp_path: Path, protocol: str | None
+) -> None:
+    profile = yaml.safe_load(RUN17_PROFILE.read_text())
+    if protocol is None:
+        del profile["providers"]["generator"]["protocol"]
+        match = "missing=.*protocol"
+    else:
+        profile["providers"]["generator"]["protocol"] = protocol
+        match = "protocol is not supported"
+    path = tmp_path / "invalid-generator-protocol.yaml"
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=match):
+        load_runtime_profile(path)
+
+
 def test_compiler_rejects_cross_chain_target_binding(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="binding chain"):
         compile_run_config(
@@ -377,6 +395,7 @@ def test_run_config_rejects_invalid_operational_policy(
 def test_inspect_reports_static_yaml_values() -> None:
     inspected = inspect_configs(PROFILE, RUN)
     assert inspected == {
+        "run_id": "run12",
         "profile_name": "target-aware-local-v1",
         "concurrency_per_chain": 8,
         "model_request_max_attempts": 3,
