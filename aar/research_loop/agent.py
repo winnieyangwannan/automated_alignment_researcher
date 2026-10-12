@@ -376,7 +376,7 @@ _AUTODATA_WORKSPACE_ID = re.compile(r"^ws_[0-9a-f]{32}$")
 
 
 class PipelineOwnershipFenceError(RuntimeError):
-    """The trusted Trial 7 pipeline ownership boundary cannot be established."""
+    """The trusted Run 13 authoring ownership boundary cannot be established."""
 
 
 def _trial7_pipeline_fence_enabled() -> bool:
@@ -388,16 +388,18 @@ def _trial7_pipeline_fence_enabled() -> bool:
         raise PipelineOwnershipFenceError(
             "AAR_AUTODATA_PIPELINE_COORDINATOR has an invalid value"
         )
+    trial_id = os.getenv("AAR_RUN13_TRIAL_ID", "").strip().lower()
+    mismatches = [] if trial_id in {"trial7", "trial8"} else ["AAR_RUN13_TRIAL_ID"]
     required = {
         "AAR_EXPERIMENT_RUN_ID": "run13",
-        "AAR_IDEA_UID_OVERRIDE": "run13-trial7-alpha-iteration-1",
+        "AAR_IDEA_UID_OVERRIDE": f"run13-{trial_id}-alpha-iteration-1",
         "AAR_AGENT_BACKEND": "claude",
         "AAR_AUTODATA_SEMANTIC_WORKER": "claude",
     }
-    mismatches = [
+    mismatches.extend(
         name for name, expected in required.items()
         if os.getenv(name, "").strip().lower() != expected
-    ]
+    )
     for name in (
         "AAR_AUTODATA_LIFECYCLE_SUPERVISED",
         "AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE",
@@ -406,7 +408,7 @@ def _trial7_pipeline_fence_enabled() -> bool:
             mismatches.append(name)
     if mismatches:
         raise PipelineOwnershipFenceError(
-            "Trial 7 pipeline coordinator identity is incomplete: "
+            "Run 13 authoring coordinator identity is incomplete: "
             + ", ".join(sorted(mismatches))
         )
     return True
@@ -544,9 +546,9 @@ async def _trial7_pipeline_tool_fence(
         fenced = _trial7_pipeline_action_is_coordinator_owned()
     except Exception:
         fenced = True
-        reason = "Trial 7 pipeline ownership could not be verified; tool use denied"
+        reason = "Run 13 authoring ownership could not be verified; tool use denied"
     else:
-        reason = "Trial 7 native authoring action is owned by the lifecycle coordinator"
+        reason = "Run 13 native authoring action is owned by the lifecycle coordinator"
     if not fenced:
         return {}
     return {
@@ -1079,7 +1081,7 @@ class AutonomousAgentLoop:
                 f"`{action}`" for action in coordinator_actions
             )
             system_parts.append(
-                "The Run 13 Trial 7 lifecycle coordinator exclusively owns the "
+                "The Run 13 lifecycle coordinator exclusively owns the "
                 f"native {ownership} actions. Never begin, complete, or mutate "
                 "those actions directly, and never launch a background or detached "
                 "native lifecycle process."

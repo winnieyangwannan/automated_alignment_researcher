@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: prepared; not launched
+- Status: stopped after typed `author_pipeline`; receipt recovery failed
 - Created: 2026-10-12 10:41 PT
-- Last updated: 2026-10-12 11:10 PT
+- Last updated: 2026-10-12 12:10 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal

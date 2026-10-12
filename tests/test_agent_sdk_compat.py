@@ -40,6 +40,7 @@ def _load_agent_module(options_class: type) -> types.ModuleType:
 
     server_tools = types.ModuleType("aar.research_loop.tools.server_api_tools")
     server_tools.create_server_api_tools_server = lambda: None
+    server_tools._method_code = lambda *_args, **_kwargs: None
     prior_tools = types.ModuleType("aar.research_loop.tools.prior_work_tools")
     prior_tools.create_prior_work_tools_server = lambda: None
     findings = types.ModuleType("aar.research_loop.tools.findings_sync")
@@ -87,6 +88,7 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
             "AAR_AUTODATA_GROUNDING_COORDINATOR": "1",
             "AAR_AUTODATA_PIPELINE_COORDINATOR": "1",
             "AAR_EXPERIMENT_RUN_ID": "run13",
+            "AAR_RUN13_TRIAL_ID": "trial7",
             "AAR_IDEA_UID_OVERRIDE": "run13-trial7-alpha-iteration-1",
             "AAR_AGENT_BACKEND": "claude",
             "AAR_AUTODATA_SEMANTIC_WORKER": "claude",
@@ -304,6 +306,26 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
         self.assertIn("`author_grounding`", trial7_agent.system_prompt)
         self.assertIn("`author_pipeline`", trial7_agent.system_prompt)
         self.assertIn("background or detached", trial7_agent.system_prompt)
+
+    def test_trial8_reuses_the_reviewed_authoring_fence(self) -> None:
+        class Options:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+        agent_module = _load_agent_module(Options)
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._trial7_environment(directory)
+            environment["AAR_RUN13_TRIAL_ID"] = "trial8"
+            environment["AAR_IDEA_UID_OVERRIDE"] = (
+                "run13-trial8-alpha-iteration-1"
+            )
+            with patch.dict(os.environ, environment, clear=True):
+                hooks = agent_module._trial7_pipeline_hooks()
+
+        self.assertEqual(
+            [matcher.matcher for matcher in hooks["PreToolUse"]],
+            ["Bash", "Write", "Edit"],
+        )
 
     def test_trial7_pipeline_flag_fails_closed_on_wrong_identity(self) -> None:
         class Options:

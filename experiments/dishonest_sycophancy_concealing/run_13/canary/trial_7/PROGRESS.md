@@ -74,3 +74,26 @@ integration passed separately; Ruff, shell syntax checks, and `git diff --check`
 passed. The coordinator and Trial 7 preparation are committed locally. Trial 7
 remains unlaunched pending HPC synchronization, external recovery-manifest
 preparation, and exact model-role reconfirmation.
+
+<a id="run13-trial7-terminal"></a>
+
+### ❌ 12:10 PT — STOPPED: receipt ambiguity after typed pipeline success
+
+Trial 7 launched as attempt
+`20261012T183759Z-9a13e0c7a470`. Launch job `1855076` completed; chain job
+`1855529` exited `70`; controller `1855530` stopped permanently without a
+retry. No evaluator launched.
+
+The live run completed `clarify_design`, legacy `author_grounding`, trusted
+`approve_grounding`, and the typed confirm-only `author_pipeline`. The typed
+pipeline coordinator therefore worked and AutoData produced its valid native
+receipt. Immediately afterward, clarify recovery incorrectly selected receipts
+by workspace ID, saw the pipeline receipt as a second clarify receipt, and
+failed closed with `multiple_clarify_receipts` before the next workspace action.
+
+Review also found that the legacy grounding path retained its expired action
+lease in a mode-0600 session transcript. The native action and database lease
+were already completed/cleared, but this violated the intended worker boundary.
+The follow-up fix uses exact action-ID receipt lookup and a secure typed initial
+`author_grounding` coordinator. Trial 8 is the narrow live proof for those
+already-tested corrections.
