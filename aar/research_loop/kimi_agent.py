@@ -504,6 +504,8 @@ class KimiAgent:
         autodata_idle_deadline: float | None = None
         approval_wait_action_id: str | None = None
         approval_wait_deadline: float | None = None
+        clarify_wait_action_id: str | None = None
+        clarify_wait_deadline: float | None = None
 
         with tempfile.TemporaryDirectory(prefix="aar-kimi-") as temp_dir:
             overlay_home = Path(temp_dir)
@@ -646,6 +648,38 @@ class KimiAgent:
                             )
                             continue
                         autodata_idle_deadline = None
+                        if self._clarify_is_coordinator_owned(action):
+                            self._require_fresh_autodata_supervisor_status()
+                            timeout = float(
+                                os.getenv("AAR_AUTODATA_HOST_WAIT_SECONDS", "10800")
+                            )
+                            if timeout <= 0:
+                                raise RuntimeError(
+                                    "AAR_AUTODATA_HOST_WAIT_SECONDS must be positive"
+                                )
+                            if clarify_wait_action_id != action["id"]:
+                                clarify_wait_action_id = str(action["id"])
+                                clarify_wait_deadline = time.monotonic() + timeout
+                            assert clarify_wait_deadline is not None
+                            if time.monotonic() >= clarify_wait_deadline:
+                                raise _retain_process_failure(
+                                    error=TimeoutError(
+                                        "clarify coordinator timed out"
+                                    ),
+                                    error_code="clarify_coordinator_timeout",
+                                    stage="autodata_action",
+                                    public_summary=(
+                                        "shared clarify coordinator timed out"
+                                    ),
+                                )
+                            print(
+                                "[Kimi] waiting without a model turn for shared "
+                                f"clarify coordinator: {action['id']}"
+                            )
+                            await asyncio.sleep(2)
+                            continue
+                        clarify_wait_action_id = None
+                        clarify_wait_deadline = None
                         if self._approval_is_coordinator_owned(action):
                             self._require_fresh_autodata_supervisor_status()
                             timeout = float(
@@ -1468,6 +1502,11 @@ class KimiAgent:
                     )
                 if action is not None:
                     if action["kind"] == "clarify_design":
+                        if self._clarify_is_coordinator_owned(action):
+                            raise RuntimeError(
+                                "shared clarify coordinator action reached the Kimi "
+                                "model continuation path"
+                            )
                         self._autodata_prepare_editable_paths(action)
                         action_spec = json.dumps(
                             action.get("spec"), sort_keys=True
@@ -2142,6 +2181,7 @@ class KimiAgent:
             "reconciling",
             "reconcile-retrying",
             "approval-action",
+            "semantic-action",
         }:
             raise _retain_process_failure(
                 error=RuntimeError(
@@ -3373,6 +3413,19 @@ class KimiAgent:
             "approve_grounding",
             "approve_baseline",
         }
+
+    @staticmethod
+    def _clarify_is_coordinator_owned(action: dict[str, Any]) -> bool:
+        enabled = os.getenv(
+            "AAR_AUTODATA_CLARIFY_COORDINATOR", ""
+        ).strip().lower()
+        if enabled and enabled not in {"1", "true", "yes", "on"}:
+            raise RuntimeError(
+                "AAR_AUTODATA_CLARIFY_COORDINATOR must be a boolean"
+            )
+        return enabled in {"1", "true", "yes", "on"} and action.get("kind") == (
+            "clarify_design"
+        )
 
     def _owns_approved_run(self, output: dict[str, Any]) -> bool:
         """Return whether this session may advance the current durable proposal."""

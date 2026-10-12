@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
@@ -16,7 +17,7 @@ import types
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import requests
 
@@ -2809,6 +2810,17 @@ class KimiAgentTest(unittest.TestCase):
                     lease_path.unlink(missing_ok=True)
                     result_path.unlink(missing_ok=True)
 
+                with patch.dict(
+                    os.environ,
+                    {"AAR_AUTODATA_CLARIFY_COORDINATOR": "1"},
+                    clear=False,
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "shared clarify coordinator action reached",
+                    ):
+                        agent._continuation_prompt(output)
+
                 grounding_action = {
                     "spec": {
                         "editable_root": str(draft),
@@ -3421,29 +3433,33 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                         "autodata_supervisor_state_invalid",
                     )
 
-    def test_approval_coordinator_supervisor_state_is_runnable(self) -> None:
+    def test_coordinator_supervisor_states_are_runnable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             status = Path(temporary) / "status.json"
-            status.write_text(
-                json.dumps(
-                    {
-                        "schema": "aar.autodata.lifecycle-supervisor/v1",
-                        "updated_at": time.strftime(
-                            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
-                        ),
-                        "state": "approval-action",
-                    }
-                )
-            )
             environment = {
                 "AAR_AUTODATA_LIFECYCLE_SUPERVISED": "1",
                 "AAR_AUTODATA_SUPERVISOR_STATUS": str(status),
                 "AAR_AUTODATA_SUPERVISOR_HEARTBEAT_SLA_SECONDS": "180",
             }
-            with patch.dict(os.environ, environment, clear=False):
-                observed = KimiAgent._require_fresh_autodata_supervisor_status()
+            for state in ("approval-action", "semantic-action"):
+                with self.subTest(state=state):
+                    status.write_text(
+                        json.dumps(
+                            {
+                                "schema": "aar.autodata.lifecycle-supervisor/v1",
+                                "updated_at": time.strftime(
+                                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                                ),
+                                "state": state,
+                            }
+                        )
+                    )
+                    with patch.dict(os.environ, environment, clear=False):
+                        observed = (
+                            KimiAgent._require_fresh_autodata_supervisor_status()
+                        )
 
-            self.assertEqual(observed["state"], "approval-action")
+                    self.assertEqual(observed["state"], state)
 
     def test_completed_training_without_smoke_marker_fails_after_grace(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -4017,6 +4033,91 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                     {"kind": "approve_grounding"}
                 )
             )
+
+    def test_shared_clarify_coordinator_owns_only_clarify_design(self) -> None:
+        with patch.dict(
+            os.environ, {"AAR_AUTODATA_CLARIFY_COORDINATOR": "1"}, clear=False
+        ):
+            self.assertTrue(
+                KimiAgent._clarify_is_coordinator_owned(
+                    {"kind": "clarify_design"}
+                )
+            )
+            self.assertFalse(
+                KimiAgent._clarify_is_coordinator_owned(
+                    {"kind": "author_grounding"}
+                )
+            )
+
+    def test_shared_clarify_coordinator_is_default_off(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AAR_AUTODATA_CLARIFY_COORDINATOR", None)
+            self.assertFalse(
+                KimiAgent._clarify_is_coordinator_owned(
+                    {"kind": "clarify_design"}
+                )
+            )
+
+    def test_shared_clarify_coordinator_never_reenters_outer_kimi(self) -> None:
+        class WaitObserved(Exception):
+            pass
+
+        agent = KimiAgent(
+            "test-agent",
+            Path.cwd(),
+            cli_path="/bin/true",
+            completion_tool="share_finding",
+        )
+        action = {
+            "id": "act_" + "1" * 24,
+            "kind": "clarify_design",
+            "status": "in_progress",
+            "spec": {},
+        }
+
+        async def observe_wait(_: float) -> None:
+            raise WaitObserved
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "AAR_AUTODATA": "1",
+                    "AAR_AUTODATA_CLARIFY_COORDINATOR": "1",
+                },
+                clear=False,
+            ),
+            patch.object(agent, "_owns_approved_run", return_value=True),
+            patch.object(agent, "_approved_run_id", return_value="run-one"),
+            patch.object(agent, "_autodata_handoff_ready", return_value=False),
+            patch.object(agent, "_autodata_workspace_id", return_value="ws-one"),
+            patch.object(agent, "_autodata_status_subject", return_value="ws-one"),
+            patch.object(
+                agent, "_autodata_pending_action_record", return_value=action
+            ),
+            patch.object(
+                agent,
+                "_require_fresh_autodata_supervisor_status",
+                return_value={"state": "semantic-action"},
+            ),
+            patch.object(agent, "_build_environment", return_value={}),
+            patch.object(agent, "_write_agent_profile", return_value=None),
+            patch.object(
+                agent,
+                "_request_policy_proxy",
+                return_value=contextlib.nullcontext(Mock()),
+            ),
+            patch.object(agent, "_run_command", new_callable=AsyncMock) as run_command,
+            patch.object(agent, "_autodata_begin_action") as begin_action,
+            patch.object(agent, "_autodata_complete_action") as complete_action,
+            patch("aar.research_loop.kimi_agent.asyncio.sleep", observe_wait),
+            self.assertRaises(WaitObserved),
+        ):
+            asyncio.run(agent._execute_once("task", time.time()))
+
+        run_command.assert_not_awaited()
+        begin_action.assert_not_called()
+        complete_action.assert_not_called()
 
     def test_standard_mcp_bridge_emits_typed_text_content(self) -> None:
         content = _text_content({"status": "ok"})
