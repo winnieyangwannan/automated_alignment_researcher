@@ -43,3 +43,36 @@ iteration, production, model-role, or cost configuration changed.
 - Jobs: none.
 - Decision: no-go until commit, synchronization, HPC validation, and explicit
   Trial 17 role/configuration confirmation are complete.
+
+## 2026-10-12
+
+<a id="trial17-event-clarify-completion-framing"></a>
+
+### 🔴 00:01 PT — FAIL: first AutoData action completion was not executable
+
+> [!CAUTION]
+> **Stopped before native execution.** The scoped `clarify_design` workspace
+> edit succeeded, but Kimi printed the subsequent `Write` protocol as literal
+> assistant text. The required result file was never created.
+
+```text
+✓ Endpoint and infrastructure preflight
+✓ Mandatory pinned-skill activation
+✓ Literature, method authoring, and contract validation
+✓ Proposal review and approval
+✓ AutoData workspace registration
+✗ clarify_design completion handoff
+○ Meta-optimization
+○ Production
+○ Training smoke
+```
+
+- Source commit: `8183188f03e1e2e346506868f0adb5248f5a6962`.
+- Attempt: `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261012T055941Z-8183188f03e1`.
+- Jobs: launch `1829130` completed; research `1829169` failed after `00:07:52`;
+  dependency-blocked controller `1829170` cancelled; evaluator absent.
+- Failure: `required_checkpoint_missing` after two bounded retries.
+- Decision: preserve Trial 17. Trial 18 will give Kimi direct native-skill
+  control of the exact `clarify_design` action, including valid no-edit
+  confirmation; later lifecycle behavior and scientific configuration remain
+  unchanged.

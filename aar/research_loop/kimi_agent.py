@@ -1425,6 +1425,33 @@ class KimiAgent:
                         "it through Bash and do not emit prose."
                     )
                 if action is not None:
+                    if action["kind"] == "clarify_design":
+                        self._autodata_prepare_editable_paths(action)
+                        action_spec = json.dumps(
+                            action.get("spec"), sort_keys=True
+                        )[:6000]
+                        editable_context = self._autodata_editable_context(action)
+                        result_path = self._autodata_action_result_path(action["id"])
+                        return (
+                            "Handle this clarify_design action through the loaded "
+                            "native AutoData skill, as one continuous native action "
+                            "exchange. Inspect status and the action contract. If the "
+                            "action is pending, call native `action begin` and retain "
+                            "its scoped lease token for this turn; if it is already "
+                            "in_progress, reuse the lease token from this continued "
+                            "conversation. Inspect the reviewed workspace. Edit only "
+                            "an allowed file if design intent is genuinely missing; "
+                            "zero changed files is valid when the existing design is "
+                            "complete. Write the action's declared summary and "
+                            f"decisions as JSON to {result_path}, then call native "
+                            "`action complete` for the same action with that result "
+                            "and the scoped lease. Do not call workspace step, "
+                            "execution step, or any approval tool. Stop after native "
+                            "completion so the trusted supervisor can resume. Action "
+                            f"ID: {action['id']}. Current status: {action['status']}. "
+                            f"Action specification: {action_spec}. Current allowed-"
+                            f"file content: {editable_context}"
+                        )
                     if action["status"] == "pending":
                         self._autodata_begin_action(action)
                         action = self._autodata_action_record(action["id"])
@@ -2228,6 +2255,7 @@ class KimiAgent:
         """Consume a ready leased result and distinguish new repair feedback."""
 
         if action.get("status") != "in_progress" or action.get("kind") in {
+            "clarify_design",
             "approve_grounding",
             "approve_baseline",
             "approve_resources",

@@ -190,3 +190,106 @@ Recommended sequencing:
 4. Replace the CLI integration only after the persistent adapter passes those
    parity checks; do not combine that migration with the immediate canary
    blocker repair.
+
+### 00:01 PT — Simplify `clarify_design` to one Kimi write
+
+Using Trial 17’s exact action:
+
+```json
+{
+  "id": "act_d6027f5e83cf9781f64147f2",
+  "kind": "clarify_design",
+  "allowed_paths": ["autodata.workspace.json"],
+  "outputs": ["summary", "decisions"]
+}
+```
+
+#### 1. Kimi performs one operation
+
+```text
+Write:
+  path: draft/autodata.workspace.json
+  content: <complete updated workspace JSON>
+```
+
+No second Kimi turn is requested.
+
+#### 2. AAR validates the edit
+
+AAR checks:
+
+- The action is still active and leased.
+- Only `autodata.workspace.json` changed.
+- The file is valid JSON and matches its schema.
+- Existing required fields and types were preserved.
+- The requested success criteria are present.
+- The workspace revision has not changed concurrently.
+
+If validation fails, Kimi receives the precise error and repairs the same edit.
+
+#### 3. AAR constructs the result itself
+
+From the validated workspace, AAR produces:
+
+```json
+{
+  "summary": "Validated the scoped workspace design update.",
+  "decisions": [
+    "Generate original examples covering honesty, sycophancy resistance, and uncertainty.",
+    "Require at least 1,000 accepted examples.",
+    "Exclude benchmark-derived content.",
+    "Use the configured target model and independent judge."
+  ]
+}
+```
+
+These values are derived from the validated workspace—not invented by AAR.
+
+#### 4. AAR completes the action
+
+AAR privately runs:
+
+```bash
+autodata action complete \
+  act_d6027f5e83cf9781f64147f2 \
+  --lease-token=<hidden-host-token> \
+  --result <host-generated-result>
+```
+
+The current CLI may require AAR to create a short-lived result file internally,
+but Kimi never writes or sees it.
+
+#### 5. AutoData advances
+
+```text
+clarify_design: completed
+→ next action: author_grounding
+```
+
+This preserves validation, auditing, and the secret lease while eliminating
+Trial 17’s fragile second model turn.
+
+### 00:15 PT — Correction from the observed Claude-native exchange
+
+The host-owned proposal above is retained as discussion history, but it is not
+the Trial 18 implementation. The observed Claude flow establishes that native
+`clarify_design` is an intent-confirmation action and may legitimately record a
+byte-identical revision. Requiring a Kimi workspace mutation or a new
+`success_criteria` field would therefore change the native contract.
+
+Trial 18 instead gives Kimi parity for this action only:
+
+```text
+native status and action contract
+→ native action begin and scoped lease
+→ inspect the reviewed workspace
+→ edit only if intent is actually missing; zero edits is valid
+→ write summary and decisions for the native CLI
+→ native action complete with the same scoped lease
+→ trusted supervisor resumes at author_grounding
+```
+
+AAR does not auto-begin or auto-complete `clarify_design` in this path. Native
+AutoData remains responsible for the lease, allowed paths, result validation,
+revision audit, and transition. All later action handling remains unchanged so
+this canary tests one targeted compatibility change.

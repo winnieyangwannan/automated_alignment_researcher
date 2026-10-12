@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: staged; not launched
+- Status: failed safely during `clarify_design`; retained
 - Created: 2026-10-11 22:54 PT
-- Last updated: 2026-10-11 22:54 PT
+- Last updated: 2026-10-12 00:01 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -34,6 +34,14 @@ the skill loaded inline. Until that proof exists, the ordinary
 `_continuation_prompt()` state machine cannot run. The activation marker is
 excluded from lifecycle milestone accounting so literature discovery and all
 later checkpoints retain their prior order.
+
+Trial 17 launched from commit `8183188f03e1e2e346506868f0adb5248f5a6962`.
+The skill gate passed, method authoring and proposal approval completed, and the
+workspace was registered. Kimi then made the scoped `clarify_design` workspace
+edit, but its separate action-result `Write` was emitted as literal tool-call
+markup instead of an executable tool call. Research job `1829169` failed closed
+as `required_checkpoint_missing`; dependency-blocked controller `1829170` was
+cancelled. No native execution, meta-optimization, production, or training ran.
 
 ## Model and execution roles
 

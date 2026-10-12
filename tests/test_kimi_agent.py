@@ -2658,51 +2658,37 @@ class KimiAgentTest(unittest.TestCase):
                         (
                             action_id,
                             "clarify_design",
-                            "in_progress",
+                            "pending",
                             json.dumps(action_spec),
                         ),
                     )
                 lease_path = agent._autodata_action_lease_path(action_id)
-                agent._write_private_text(lease_path, "x" * 32)
                 result_path = agent._autodata_action_result_path(action_id)
                 result_path.unlink(missing_ok=True)
                 try:
-                    action_prompt = agent._continuation_prompt(output)
-                    self.assertIn("securely leased", action_prompt)
-                    self.assertIn(str(result_path), action_prompt)
+                    with patch.object(KimiAgent, "_autodata_cli") as native:
+                        action_prompt = agent._continuation_prompt(output)
+                    native.assert_not_called()
+                    self.assertIn("loaded native AutoData skill", action_prompt)
                     self.assertIn("Confirm the reviewed workspace intent", action_prompt)
-                    self.assertIn("preserve every existing key", action_prompt)
+                    self.assertIn("action begin", action_prompt)
+                    self.assertIn("action complete", action_prompt)
+                    self.assertIn("zero changed files is valid", action_prompt)
                     self.assertIn('\\"execution_defaults\\"', action_prompt)
                     self.assertIn('\\"concurrency\\": 8', action_prompt)
-                    self.assertEqual(agent._continuation_tool(output), "Write")
-
-                    result_path.write_text(
-                        json.dumps({"summary": "confirmed", "decisions": []})
+                    self.assertIn(str(result_path), action_prompt)
+                    self.assertIsNone(
+                        agent._continuation_tool(output, prompt=action_prompt)
                     )
-                    with (
-                        patch.object(
-                            KimiAgent,
-                            "_autodata_cli",
-                            return_value={"status": "completed"},
-                        ) as cli,
-                        patch.object(
-                            KimiAgent,
-                            "_autodata_native_status",
-                            return_value={"status": "active"},
-                        ),
-                    ):
-                        with self.assertRaisesRegex(
-                            RuntimeError,
-                            "deterministic waits must be handled without Kimi",
-                        ):
-                            agent._continuation_prompt(output)
-                    cli.assert_called_once_with(
-                        "action",
-                        "complete",
-                        action_id,
-                        "--lease-token=" + "x" * 32,
-                        "--result",
-                        str(result_path),
+                    self.assertIsNone(
+                        agent._autodata_consume_action_result(
+                            {
+                                "id": action_id,
+                                "kind": "clarify_design",
+                                "status": "in_progress",
+                                "spec": action_spec,
+                            }
+                        )
                     )
                     self.assertFalse(lease_path.exists())
                     self.assertFalse(result_path.exists())
@@ -3631,7 +3617,7 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
             action_id = "act_" + "1" * 24
             action = {
                 "id": action_id,
-                "kind": "clarify_design",
+                "kind": "author_pipeline",
                 "status": "in_progress",
                 "spec": {"outputs": ["summary", "decisions"]},
             }
@@ -3673,7 +3659,7 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
             action_id = "act_" + "2" * 24
             action = {
                 "id": action_id,
-                "kind": "clarify_design",
+                "kind": "author_pipeline",
                 "status": "in_progress",
                 "spec": {"outputs": ["summary", "decisions"]},
             }
