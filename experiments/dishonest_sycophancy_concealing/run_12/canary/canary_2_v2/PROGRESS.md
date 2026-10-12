@@ -193,3 +193,21 @@ bundle, `20261011T221515Z-b6db78771f9c`, and rejects a conflicting override.
 - Jobs: none.
 - Decision: commit and synchronize this targeted path repair, rerun wrapper
   gates, then relaunch from the exact new commit.
+
+<a id="canary2-v2-event-launched"></a>
+
+### ✅ 19:55 PT — COMPLETE: immutable launch and child registration
+
+The repaired wrapper launched from immutable AAR commit
+`65824ac1437c7e9a10fcab09ebdf20c49971f8c6` and native AutoData commit
+`51c18fdb0eaa69d8ad66a1805e9c08a507c5fbb1`. Fresh Kimi/MCP and fixed-Gemma
+probes passed. Launch job `1823267` completed successfully and durably recorded
+one alpha chain with no evaluator.
+
+- Attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261012T025121Z-65824ac1437c`.
+- Research/chain job: `1823293`, queued at this event.
+- Controller job: `1823294`, dependency-held until the research job exits.
+- Evaluator job: none (`-`).
+- Decision: lifecycle launch succeeded; the separate monitor tracks scheduler,
+  lifecycle, validity, yield, provider/retry health, and evaluator absence.

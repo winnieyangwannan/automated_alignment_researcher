@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: preflight-complete; launch retry pending after proof-path repair
+- Status: launched; research queued; separately monitored
 - Created: 2026-10-11 19:33 PT
-- Last updated: 2026-10-11 19:50 PT
+- Last updated: 2026-10-11 19:55 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
