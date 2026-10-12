@@ -1432,25 +1432,45 @@ class KimiAgent:
                         )[:6000]
                         editable_context = self._autodata_editable_context(action)
                         result_path = self._autodata_action_result_path(action["id"])
+                        if action["status"] == "pending":
+                            begin_command = (
+                                '"${AAR_AUTODATA_WRAPPER_PYTHON}" '
+                                '"${AAR_AUTODATA_PLUGIN_ROOT}/scripts/autodata.py" '
+                                '--state "${AAR_AUTODATA_STATE}" '
+                                '--artifacts "${AAR_AUTODATA_ARTIFACTS}" '
+                                '--workspaces "${AAR_AUTODATA_WORKSPACES}" '
+                                f"action begin {shlex.quote(str(action['id']))}"
+                            )
+                            return (
+                                "Call the native Bash tool exactly once now with "
+                                f"command={json.dumps(begin_command)}. This begins "
+                                "the pending clarify_design action through the loaded "
+                                "AutoData skill. Retain the returned scoped lease token "
+                                "in this continued conversation. Do not emit prose or "
+                                "call another tool."
+                            )
+                        if not result_path.is_file():
+                            return (
+                                "The native clarify_design action is in_progress. "
+                                "Call the native Write tool exactly once now. The "
+                                "reviewed workspace is included below. Edit an allowed "
+                                "workspace file only if design intent is genuinely "
+                                "missing; zero changed workspace files is valid when "
+                                "the design is complete. Otherwise write the action's "
+                                "declared summary and decisions as JSON directly to "
+                                f"{result_path}. Do not emit prose or use Bash yet. "
+                                f"Action specification: {action_spec}. Current allowed-"
+                                f"file content: {editable_context}"
+                            )
                         return (
-                            "Handle this clarify_design action through the loaded "
-                            "native AutoData skill, as one continuous native action "
-                            "exchange. Inspect status and the action contract. If the "
-                            "action is pending, call native `action begin` and retain "
-                            "its scoped lease token for this turn; if it is already "
-                            "in_progress, reuse the lease token from this continued "
-                            "conversation. Inspect the reviewed workspace. Edit only "
-                            "an allowed file if design intent is genuinely missing; "
-                            "zero changed files is valid when the existing design is "
-                            "complete. Write the action's declared summary and "
-                            f"decisions as JSON to {result_path}, then call native "
-                            "`action complete` for the same action with that result "
-                            "and the scoped lease. Do not call workspace step, "
-                            "execution step, or any approval tool. Stop after native "
-                            "completion so the trusted supervisor can resume. Action "
-                            f"ID: {action['id']}. Current status: {action['status']}. "
-                            f"Action specification: {action_spec}. Current allowed-"
-                            f"file content: {editable_context}"
+                            "Call the native Bash tool exactly once now to run native "
+                            f"`action complete` for {action['id']} with --result "
+                            f"{result_path} and the exact scoped lease token returned "
+                            "by your earlier native `action begin` call. Use the loaded "
+                            "AutoData skill and its configured wrapper environment. "
+                            "Emit an executable structured Bash tool call, not literal "
+                            "tool-call markup. Do not call workspace step, execution "
+                            "step, or any approval tool, and do not emit prose."
                         )
                     if action["status"] == "pending":
                         self._autodata_begin_action(action)

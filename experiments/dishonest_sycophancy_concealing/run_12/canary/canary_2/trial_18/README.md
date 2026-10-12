@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: staged; not launched
+- Status: failed safely before `clarify_design` began; retained
 - Created: 2026-10-12 00:01 PT
-- Last updated: 2026-10-12 00:15 PT
+- Last updated: 2026-10-12 00:44 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -32,6 +32,15 @@ completes, or requires a mutation for `clarify_design`; it exposes the action to
 Kimi's already-loaded pinned skill. Native AutoData retains the scoped lease,
 allowed-path enforcement, result validation, audit revision, and state
 transition. Later actions retain the existing trusted AAR bridge.
+
+Trial 18 launched from commit `0b654c85de9ae38ba8305f095a3bc7b83830aa5a`.
+Kimi loaded the pinned skill, produced a valid method after bounded repair,
+received proposal approval, and registered workspace
+`ws_f18c41ce839b4b7983cf59e04b90881f`. It correctly concluded that the reviewed
+design needed no edit, but twice described the native action sequence without
+issuing `action begin`. The no-progress guard failed the research job after
+`00:08:27`; the action remained pending at revision 0. No AutoData attempt,
+generation, training, or evaluator activity occurred.
 
 ## Model and execution roles
 

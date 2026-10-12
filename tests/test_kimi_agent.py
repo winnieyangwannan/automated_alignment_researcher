@@ -2667,19 +2667,49 @@ class KimiAgentTest(unittest.TestCase):
                 result_path.unlink(missing_ok=True)
                 try:
                     with patch.object(KimiAgent, "_autodata_cli") as native:
-                        action_prompt = agent._continuation_prompt(output)
+                        begin_prompt = agent._continuation_prompt(output)
+                        self.assertIn("action begin", begin_prompt)
+                        self.assertEqual(
+                            agent._continuation_tool(output, prompt=begin_prompt),
+                            "Bash",
+                        )
+
+                        with sqlite3.connect(state) as connection:
+                            connection.execute(
+                                "UPDATE actions SET status='in_progress' WHERE id=?",
+                                (action_id,),
+                            )
+                        result_prompt = agent._continuation_prompt(output)
+                        self.assertIn(
+                            "zero changed workspace files is valid", result_prompt
+                        )
+                        self.assertIn(
+                            "Confirm the reviewed workspace intent", result_prompt
+                        )
+                        self.assertIn('\\"execution_defaults\\"', result_prompt)
+                        self.assertIn('\\"concurrency\\": 8', result_prompt)
+                        self.assertIn(str(result_path), result_prompt)
+                        self.assertEqual(
+                            agent._continuation_tool(output, prompt=result_prompt),
+                            "Write",
+                        )
+
+                        result_path.write_text(
+                            json.dumps(
+                                {
+                                    "summary": "The reviewed design is complete.",
+                                    "decisions": ["No workspace edit is required."],
+                                }
+                            )
+                        )
+                        complete_prompt = agent._continuation_prompt(output)
+                        self.assertIn("action complete", complete_prompt)
+                        self.assertIn("exact scoped lease token", complete_prompt)
+                        self.assertEqual(
+                            agent._continuation_tool(output, prompt=complete_prompt),
+                            "Bash",
+                        )
                     native.assert_not_called()
-                    self.assertIn("loaded native AutoData skill", action_prompt)
-                    self.assertIn("Confirm the reviewed workspace intent", action_prompt)
-                    self.assertIn("action begin", action_prompt)
-                    self.assertIn("action complete", action_prompt)
-                    self.assertIn("zero changed files is valid", action_prompt)
-                    self.assertIn('\\"execution_defaults\\"', action_prompt)
-                    self.assertIn('\\"concurrency\\": 8', action_prompt)
-                    self.assertIn(str(result_path), action_prompt)
-                    self.assertIsNone(
-                        agent._continuation_tool(output, prompt=action_prompt)
-                    )
                     self.assertIsNone(
                         agent._autodata_consume_action_result(
                             {
@@ -2691,7 +2721,7 @@ class KimiAgentTest(unittest.TestCase):
                         )
                     )
                     self.assertFalse(lease_path.exists())
-                    self.assertFalse(result_path.exists())
+                    self.assertTrue(result_path.exists())
                 finally:
                     lease_path.unlink(missing_ok=True)
                     result_path.unlink(missing_ok=True)

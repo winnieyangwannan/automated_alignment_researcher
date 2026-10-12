@@ -48,6 +48,7 @@ TRIAL16_RUN = (
 )
 TRIAL17_RUN = TRIAL16_RUN.parent.parent / "trial_17" / "autodata_run.yaml"
 TRIAL18_RUN = TRIAL16_RUN.parent.parent / "trial_18" / "autodata_run.yaml"
+TRIAL19_RUN = TRIAL16_RUN.parent.parent / "trial_19" / "autodata_run.yaml"
 RUN17 = (
     ROOT
     / "experiments/dishonest_sycophancy_concealing/run_17/config/run.yaml"
@@ -238,9 +239,10 @@ def test_canary2_run_yaml_selects_and_enforces_its_shared_profile() -> None:
         (TRIAL16_RUN, "run12-canary2-trial16"),
         (TRIAL17_RUN, "run12-canary2-trial17"),
         (TRIAL18_RUN, "run12-canary2-trial18"),
+        (TRIAL19_RUN, "run12-canary2-trial19"),
     ],
 )
-def test_trial16_through_trial18_preserve_v2_lifecycle_contract(
+def test_trial16_through_trial19_preserve_v2_lifecycle_contract(
     tmp_path: Path, run_path: Path, run_id: str
 ) -> None:
     output = tmp_path / f"{run_id}-compiled"
