@@ -390,3 +390,29 @@ merged-vLLM, evaluation-isolation, and score/finding-join checks remain active.
 ○ Full launcher and child job IDs
 ○ Per-chain research, training, evaluation, scores, and findings
 ```
+
+<a id="run16-event-vllm-descendant-cleanup"></a>
+
+### 🛠️ 01:33 PT — FIX: terminate the complete parallel vLLM worker tree
+
+Gamma's first malformed-response failure reached the evaluator shutdown path,
+but terminating only the direct multiprocessing worker left its vLLM
+`EngineCore` descendant alive in the container's host PID namespace. The idle
+descendant retained approximately 257 GiB on one GPU, causing two later Gamma
+candidates to fail model initialization for insufficient free memory.
+
+The orphan was terminated explicitly and all four Gamma GPUs were verified
+free. Gamma then advanced normally to a fresh fifth method and submitted
+training job `1832410`; the five-chain attempt was not restarted.
+
+For future source snapshots, each parallel evaluator worker now starts in its
+own process group. Bounded shutdown sends `SIGTERM` to the complete group and
+then `SIGKILL` if any member remains, even when the direct Python worker has
+already exited. This is limited to evaluator-owned descendants and does not
+change training, scoring, retry, or scientific policy.
+
+```text
+✓ 6 focused evaluator-concurrency tests passed
+✓ 27 evaluator/vLLM tests plus 8 subtests passed
+✓ Ruff passed on the changed evaluator and test files
+```

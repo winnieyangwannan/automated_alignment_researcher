@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import queue
+import signal
 import subprocess
 import sys
 import tempfile
@@ -12,7 +13,11 @@ from unittest import mock
 
 import yaml
 
-from aar.eval_pod.run_eval import _collect_parallel_results, _gpu_worker
+from aar.eval_pod.run_eval import (
+    _collect_parallel_results,
+    _gpu_worker,
+    _gpu_worker_entry,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,18 +54,69 @@ class EvalConcurrencyTest(unittest.TestCase):
         completed = FakeProcess(100, alive=False)
         hung = FakeProcess(101, alive=True)
 
-        scores, errors, fingerprint = _collect_parallel_results(
-            results,
-            [completed, hung],
-            {"good": "safety", "bad": "capability_filter"},
-            shutdown_timeout_seconds=0.01,
-        )
+        with mock.patch("aar.eval_pod.run_eval.os.getpgid", return_value=999):
+            scores, errors, fingerprint = _collect_parallel_results(
+                results,
+                [completed, hung],
+                {"good": "safety", "bad": "capability_filter"},
+                shutdown_timeout_seconds=0.01,
+            )
 
         self.assertEqual(scores, {"good": score})
         self.assertIsNone(fingerprint)
         self.assertEqual(errors[0], ("bad", "DecodeError('malformed')"))
         self.assertEqual(errors[1][0], "worker_shutdown")
         self.assertTrue(hung.terminated)
+
+    def test_parallel_worker_entry_creates_own_process_group(self) -> None:
+        result_queue: queue.Queue = queue.Queue()
+        with (
+            mock.patch("aar.eval_pod.run_eval.os.setsid") as setsid,
+            mock.patch("aar.eval_pod.run_eval._gpu_worker") as worker,
+        ):
+            _gpu_worker_entry("2", object(), "model", "secret", result_queue)
+
+        setsid.assert_called_once_with()
+        worker.assert_called_once_with("2", mock.ANY, "model", "secret", result_queue)
+
+    def test_parallel_shutdown_kills_surviving_worker_process_group(self) -> None:
+        class FakeProcess:
+            pid = 321
+
+            def __init__(self) -> None:
+                self.alive = True
+
+            def is_alive(self) -> bool:
+                return self.alive
+
+            def terminate(self) -> None:
+                raise AssertionError("dedicated process group should be signaled")
+
+            def kill(self) -> None:
+                self.alive = False
+
+            def join(self, timeout=None) -> None:
+                del timeout
+                self.alive = False
+
+        process = FakeProcess()
+        with (
+            mock.patch("aar.eval_pod.run_eval.os.getpgid", return_value=process.pid),
+            mock.patch("aar.eval_pod.run_eval.os.killpg") as killpg,
+        ):
+            from aar.eval_pod.run_eval import _terminate_parallel_workers
+
+            terminated = _terminate_parallel_workers([process])
+
+        self.assertEqual(terminated, [process.pid])
+        self.assertEqual(
+            killpg.call_args_list,
+            [
+                mock.call(process.pid, signal.SIGTERM),
+                mock.call(process.pid, 0),
+                mock.call(process.pid, signal.SIGKILL),
+            ],
+        )
 
     def test_gpu_worker_reuses_loaded_model_for_fingerprint(self) -> None:
         tasks: queue.Queue = queue.Queue()

@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import signal
 import time
 from typing import Any
 
@@ -534,6 +535,25 @@ def _gpu_worker(
             q.put(("done", str(gpu), None, None))
 
 
+def _gpu_worker_entry(*args) -> None:
+    """Run one GPU worker in its own process group.
+
+    vLLM starts an EngineCore child process.  Giving each evaluator worker a
+    dedicated process group lets the coordinator terminate that whole tree if
+    model shutdown hangs, instead of killing only the Python worker and leaving
+    EngineCore alive on its GPU.
+    """
+    gpu = args[0]
+    result_queue = args[4]
+    try:
+        os.setsid()
+    except OSError as error:
+        result_queue.put(("worker_error", str(gpu), None, repr(error)))
+        result_queue.put(("done", str(gpu), None, None))
+        return
+    _gpu_worker(*args)
+
+
 def _parallel_worker_shutdown_timeout_seconds() -> float:
     raw = os.getenv("AAR_EVAL_WORKER_SHUTDOWN_TIMEOUT_SECONDS", "120")
     try:
@@ -551,10 +571,28 @@ def _parallel_worker_shutdown_timeout_seconds() -> float:
 
 def _terminate_parallel_workers(procs) -> list[int | None]:
     stuck = [process for process in procs if process.is_alive()]
+    process_groups: set[int] = set()
     for process in stuck:
-        process.terminate()
+        try:
+            process_group = os.getpgid(process.pid)
+        except (ProcessLookupError, TypeError):
+            process_group = None
+        if process_group == process.pid:
+            process_groups.add(process_group)
+            os.killpg(process_group, signal.SIGTERM)
+        else:
+            process.terminate()
     for process in stuck:
         process.join(timeout=10)
+    # A direct worker can exit before a vLLM descendant handles SIGTERM.  Check
+    # the groups we created independently of Process.is_alive(), then kill any
+    # group that still exists so an EngineCore cannot be reparented to PID 1.
+    for process_group in process_groups:
+        try:
+            os.killpg(process_group, 0)
+        except ProcessLookupError:
+            continue
+        os.killpg(process_group, signal.SIGKILL)
     for process in stuck:
         if process.is_alive():
             process.kill()
@@ -669,7 +707,7 @@ def _score_parallel(specs, model_ref, secret_dir, ngpu, suite_name=""):
     for g in range(nworkers):
         gpu = alloc[g] if g < len(alloc) else str(g)
         p = ctx.Process(
-            target=_gpu_worker,
+            target=_gpu_worker_entry,
             args=(gpu, tasks, model_ref, secret_dir, q, suite_name, g == 0),
         )
         p.start()
