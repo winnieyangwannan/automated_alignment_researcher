@@ -391,7 +391,7 @@ def _trial7_pipeline_fence_enabled() -> bool:
     trial_id = os.getenv("AAR_RUN13_TRIAL_ID", "").strip().lower()
     mismatches = (
         []
-        if trial_id in {"trial7", "trial8", "trial9", "trial10"}
+        if trial_id in {"trial7", "trial8", "trial9", "trial10", "trial11"}
         else ["AAR_RUN13_TRIAL_ID"]
     )
     required = {

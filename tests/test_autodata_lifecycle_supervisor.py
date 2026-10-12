@@ -1201,8 +1201,8 @@ def test_semantic_coordinator_dispatches_workspace_pipeline_slice(
     monkeypatch.setenv("AAR_AUTODATA_PIPELINE_COORDINATOR", "1")
     monkeypatch.setenv("AAR_AUTODATA_SEMANTIC_WORKER", "claude")
     monkeypatch.setenv("AAR_EXPERIMENT_RUN_ID", "run13")
-    monkeypatch.setenv("AAR_RUN13_TRIAL_ID", "trial7")
-    monkeypatch.setenv("AAR_IDEA_UID_OVERRIDE", "run13-trial7-alpha-iteration-1")
+    monkeypatch.setenv("AAR_RUN13_TRIAL_ID", "trial11")
+    monkeypatch.setenv("AAR_IDEA_UID_OVERRIDE", "run13-trial11-alpha-iteration-1")
     monkeypatch.setenv("AAR_AGENT_BACKEND", "claude")
     monkeypatch.setenv("AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE", "1")
     monkeypatch.setenv("AAR_AUTODATA_LIFECYCLE_SUPERVISED", "1")
@@ -1244,7 +1244,7 @@ def test_semantic_coordinator_dispatches_workspace_pipeline_slice(
     assert observed["control_file"] == supervisor.args.control_file
 
 
-def test_pipeline_coordinator_rejects_non_trial7_scope(
+def test_pipeline_coordinator_rejects_unapproved_trial_scope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     supervisor = _semantic_coordinator_supervisor(tmp_path, monkeypatch)

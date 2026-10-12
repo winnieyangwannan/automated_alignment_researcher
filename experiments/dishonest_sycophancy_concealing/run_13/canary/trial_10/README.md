@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: prepared; not launched
+- Status: failed closed before workspace creation
 - Created: 2026-10-12 14:24 PT
-- Last updated: 2026-10-12 14:24 PT
+- Last updated: 2026-10-12 14:37 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal

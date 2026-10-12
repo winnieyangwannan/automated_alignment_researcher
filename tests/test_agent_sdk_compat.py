@@ -328,7 +328,7 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
                 ["Bash", "Write", "Edit"],
             )
 
-    def test_trial10_adds_exclusive_delegated_approval_fence(self) -> None:
+    def test_trial11_adds_exclusive_delegated_approval_fence(self) -> None:
         class Options:
             def __init__(self, **kwargs) -> None:
                 self.kwargs = kwargs
@@ -338,8 +338,8 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
             environment = self._trial7_environment(directory)
             environment.update(
                 {
-                    "AAR_RUN13_TRIAL_ID": "trial10",
-                    "AAR_IDEA_UID_OVERRIDE": "run13-trial10-alpha-iteration-1",
+                    "AAR_RUN13_TRIAL_ID": "trial11",
+                    "AAR_IDEA_UID_OVERRIDE": "run13-trial11-alpha-iteration-1",
                     "AAR_AUTODATA_APPROVAL_COORDINATOR": "1",
                 }
             )
@@ -364,7 +364,7 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
                 loop.model = "claude-opus-4-8"
                 loop.local_mode = True
                 loop.autodata_plugin = None
-                trial10_agent = loop._create_agent("trial10")
+                trial11_agent = loop._create_agent("trial11")
 
         self.assertEqual(
             [matcher.matcher for matcher in hooks["PreToolUse"]],
@@ -380,10 +380,10 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
         )
         self.assertIn(
             "exclusively owns delegated AutoData approvals",
-            trial10_agent.system_prompt,
+            trial11_agent.system_prompt,
         )
         self.assertIn(
-            "Do not call `review_autodata_action`", trial10_agent.system_prompt
+            "Do not call `review_autodata_action`", trial11_agent.system_prompt
         )
 
     def test_delegated_approval_fence_is_inert_when_not_enabled(self) -> None:
