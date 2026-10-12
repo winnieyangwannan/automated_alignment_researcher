@@ -931,6 +931,23 @@ def test_semantic_coordinator_requires_explicit_worker_backend(
     assert raised.value.code == "semantic_worker_backend_invalid"
 
 
+def test_semantic_coordinator_waits_for_lifecycle_registration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    team = tmp_path / "team"
+    team.mkdir()
+    state = tmp_path / "state.db"
+    state.touch()
+    supervisor = lifecycle_supervisor.Supervisor(
+        Namespace(state=state, control_file=tmp_path / "control.json")
+    )
+    monkeypatch.setenv("TEAM_DIR", str(team))
+    monkeypatch.setenv("AAR_AUTODATA_CLARIFY_COORDINATOR", "1")
+    monkeypatch.delenv("AAR_AUTODATA_SEMANTIC_WORKER", raising=False)
+
+    assert supervisor._reconcile_semantic_action() is None
+
+
 def test_semantic_coordinator_configures_kimi_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

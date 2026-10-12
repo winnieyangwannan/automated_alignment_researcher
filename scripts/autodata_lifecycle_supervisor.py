@@ -2703,7 +2703,10 @@ class Supervisor:
                 "clarify coordinator has no team directory",
             )
         team_dir = Path(team_raw).resolve(strict=True)
-        if not self.args.state.is_file():
+        # Workspace creation publishes native state before registration is
+        # atomically added to the lifecycle control file.  That interval is an
+        # expected pre-action state, not a malformed durable record.
+        if not self.args.state.is_file() or not self.args.control_file.is_file():
             return None
         backend = os.getenv("AAR_AUTODATA_SEMANTIC_WORKER", "").strip().lower()
         if backend == "claude":
