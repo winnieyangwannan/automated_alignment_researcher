@@ -121,6 +121,50 @@ class ThinkingParserTests(unittest.TestCase):
         request = urlopen.call_args.args[0]
         self.assertEqual(json.loads(request.data)["max_tokens"], 8192)
 
+    def test_serve_client_bypasses_proxy_only_for_deployment_host(self) -> None:
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            def read(self):
+                return json.dumps({
+                    "choices": [{
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": "<|channel>thought\nmath<channel|>36"
+                        },
+                    }],
+                }).encode()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "proxy_info.json").write_text(json.dumps({
+                "url": "http://cpu-123-045:8100",
+                "api_key": "not-logged",
+                "model": "gemma-4-31B-it",
+            }))
+            environment = {
+                "HTTP_PROXY": "http://127.0.0.1:44927",
+                "HTTPS_PROXY": "http://127.0.0.1:44927",
+                "no_proxy": "localhost",
+                "NO_PROXY": "127.0.0.1",
+            }
+            with (
+                mock.patch.dict(os.environ, environment, clear=True),
+                mock.patch("urllib.request.urlopen", return_value=Response()),
+            ):
+                chat_completion([], deployment_dir=tmp)
+                self.assertEqual(os.environ["HTTP_PROXY"], environment["HTTP_PROXY"])
+                self.assertEqual(os.environ["HTTPS_PROXY"], environment["HTTPS_PROXY"])
+                self.assertEqual(
+                    os.environ["no_proxy"], "localhost,cpu-123-045"
+                )
+                self.assertEqual(
+                    os.environ["NO_PROXY"], "127.0.0.1,cpu-123-045"
+                )
+
     def test_serve_client_rejects_invalid_explicit_completion_budget(self) -> None:
         for invalid in (0, -1, True, 1.5):
             with self.subTest(invalid=invalid), self.assertRaisesRegex(

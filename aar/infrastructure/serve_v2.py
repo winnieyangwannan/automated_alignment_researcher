@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import urllib.request
+from urllib.parse import urlsplit
 from typing import Any
 
 from aar.eval_pod.models import split_reasoning_and_answer_text
@@ -28,6 +29,22 @@ def _deployment_info(deployment_dir: str | None = None) -> dict[str, Any]:
         if not info.get(key):
             raise RuntimeError(f"Serve API deployment metadata is missing {key!r}")
     return info
+
+
+def _allow_deployment_host_direct(info: dict[str, Any]) -> None:
+    """Bypass Claude's egress proxy only for the cluster-local Serve host."""
+    hostname = urlsplit(str(info["url"])).hostname
+    if not hostname:
+        raise RuntimeError("Serve API deployment metadata has an invalid URL")
+    for variable in ("no_proxy", "NO_PROXY"):
+        entries = [
+            entry.strip()
+            for entry in os.environ.get(variable, "").split(",")
+            if entry.strip()
+        ]
+        if hostname not in entries:
+            entries.append(hostname)
+        os.environ[variable] = ",".join(entries)
 
 
 def chat_completion(
@@ -61,6 +78,7 @@ def chat_completion(
     ):
         raise ValueError("max_tokens must be a positive integer or None")
     info = _deployment_info(deployment_dir)
+    _allow_deployment_host_direct(info)
     served_model = model or os.getenv("AAR_SERVE_V2_MODEL") or info["model"]
     body: dict[str, Any] = {
         "model": served_model,
