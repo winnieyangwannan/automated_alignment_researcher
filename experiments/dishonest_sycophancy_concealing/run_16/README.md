@@ -6,7 +6,7 @@ Run 16's launchers and scheduled payload require this branch.
 
 - Status: full five-chain launch authorized with retained lifecycle-proof bypass
 - Created: 2026-10-11 01:49 PT
-- Last updated: 2026-10-11 19:53 PT
+- Last updated: 2026-10-11 22:43 PT
 
 ## Goal
 
@@ -251,6 +251,15 @@ Recorded: 2026-10-11 16:01 PT
 
 Monitor every lifecycle gate for progress quality, not merely process liveness:
 
+- **User status-report contract:** whenever the user asks "how is it going?",
+  report every chain (`alpha`, `beta`, `gamma`, `delta`, and `epsilon`)
+  separately. For each chain, include its latest published evaluation headline
+  score, filter/regression result, completed-score count, current session or
+  iteration, and current lifecycle stage. Also report measured—not configured—
+  training and evaluation concurrency, plus rate limits, retries, hangs,
+  terminal failures, and other code-health signals. If a chain has no new
+  score, say so explicitly rather than omitting it. Never expose held-out
+  benchmark identities, scores, examples, or evaluator-only details.
 - **Code health:** inspect the researcher transcript, chain/pipeline logs,
   artifacts, job states, and job restart counts. Report exceptions, repeated
   validation failures, stale or contradictory configuration, missing receipts,
