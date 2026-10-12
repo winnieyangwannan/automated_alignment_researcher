@@ -51,8 +51,9 @@ the run and up to 10 unsuccessful sessions of headroom per chain.
    narrowly scoped recorded user override confirmed on 2026-10-11. Require
    five distinct research jobs and five distinct evaluator jobs in retained
    metadata before reporting the run active.
-8. Monitor each isolated chain until it reaches 50 complete pairs or exhausts
-   60 sessions. Preserve and report terminal state rather than resetting
+8. Monitor each chain until it reaches 50 complete pairs or exhausts 60
+   sessions. All five chains publish to and read from the paper-aligned shared
+   finding forum. Preserve and report terminal state rather than resetting
    retained work.
 
 ## Pass conditions

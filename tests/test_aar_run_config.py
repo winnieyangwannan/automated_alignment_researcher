@@ -15,6 +15,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 RUN10 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_10"
 RUN14 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_14"
+RUN15 = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_15"
 LIFECYCLE = RUN10 / "canary" / "one_chain_lifecycle_check"
 
 
@@ -55,6 +56,60 @@ def test_run10_config_emits_validated_environment() -> None:
     assert "export EVAL_MAX_TRUNCATION_RATE=0.2" in result.stdout
     assert "export AAR_EXPECTED_MAX_TRUNCATION_RATE=0.2" in result.stdout
     assert "export AAR_KIMI_TURN_TIMEOUT_SECONDS=1800" in result.stdout
+    assert "export AAR_FORUM_SCOPE=shared" in result.stdout
+
+
+def test_forum_scope_is_yaml_configurable_and_validated(tmp_path: Path) -> None:
+    for scope in ("shared", "per_chain"):
+        config_path = tmp_path / f"{scope}.yaml"
+        config_path.write_text(
+            yaml.safe_dump({"version": 1, "research": {"forum_scope": scope}})
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "load_aar_run_config.py"),
+                str(config_path),
+            ],
+            env={**os.environ, "USER": "test-user"},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert f"export AAR_FORUM_SCOPE={scope}" in result.stdout
+
+    invalid_path = tmp_path / "invalid.yaml"
+    invalid_path.write_text(
+        yaml.safe_dump({"version": 1, "research": {"forum_scope": "unknown"}})
+    )
+    invalid = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "load_aar_run_config.py"),
+            str(invalid_path),
+        ],
+        env={**os.environ, "USER": "test-user"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert invalid.returncode != 0
+    assert "research.forum_scope must be shared or per_chain" in invalid.stderr
+
+
+def test_run15_uses_paper_aligned_shared_forum_for_launch_and_recovery() -> None:
+    config = yaml.safe_load((RUN15 / "config" / "run.yaml").read_text())
+    pipeline = (RUN15 / "slurm" / "pipeline.sbatch").read_text()
+    recovery = (RUN15 / "recovery" / "resume_full.sh").read_text()
+    team_launcher = (ROOT / "scripts" / "launch_team.sh").read_text()
+    generic_recovery = (ROOT / "scripts" / "resume_aar_multiteam.sh").read_text()
+
+    assert config["research"]["forum_scope"] == "shared"
+    assert 'export AAR_SHARED_FORUM_DIR="${ATTEMPT}/forum"' in pipeline
+    assert '"${AAR_FORUM_SCOPE:?missing forum scope}" = shared' in pipeline
+    assert 'export AAR_SHARED_FORUM_DIR="${ATTEMPT}/forum"' in recovery
+    assert 'export LOCAL_FINDINGS_DIR="${FORUM}"' in team_launcher
+    assert 'shared) export LOCAL_FINDINGS_DIR=' in generic_recovery
 
 
 def test_lifecycle_config_is_bounded_and_emits_runtime_contract() -> None:

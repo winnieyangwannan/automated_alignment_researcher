@@ -159,6 +159,33 @@ def test_shared_team_journals_are_isolated_by_chain(tmp_path: Path) -> None:
     assert "gemma-alpha-run" not in beta.prompt_snapshot()
 
 
+def test_external_shared_forum_reconciles_only_the_owning_chain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alpha_team = _team(tmp_path / "alpha")
+    beta_team = _team(tmp_path / "beta")
+    shared_forum = tmp_path / "forum"
+    shared_forum.mkdir()
+
+    for team, run_id, idea_uid, headline in (
+        (alpha_team, "gemma-alpha-run", "gemma-alpha-uid", 1.0),
+        (beta_team, "gemma-beta-run", "gemma-beta-uid", 2.0),
+    ):
+        _publish_pair(team, run_id, idea_uid=idea_uid, headline=headline)
+        (team / "forum" / f"finding-{run_id}.json").replace(
+            shared_forum / f"finding-{run_id}.json"
+        )
+
+    monkeypatch.setenv("TEAM_DIR", str(alpha_team))
+    monkeypatch.setenv("LOCAL_FINDINGS_DIR", str(shared_forum))
+    alpha = ChainMemoryJournal.from_environment(
+        chain_id="gemma-alpha", idea_uid="gemma-alpha-uid"
+    )
+    assert alpha.reconcile() == 1
+    assert "gemma-alpha-run" in alpha.prompt_snapshot()
+    assert "gemma-beta-run" not in alpha.prompt_snapshot()
+
+
 def test_explicit_finding_uid_conflict_never_falls_back_to_names(tmp_path: Path) -> None:
     team = _team(tmp_path)
     run_id = "gemma-alpha-foreign"

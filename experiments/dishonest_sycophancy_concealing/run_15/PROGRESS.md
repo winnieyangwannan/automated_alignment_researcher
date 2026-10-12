@@ -732,3 +732,19 @@ from that exact revision. Any later model/config change requires reconfirmation.
 ○ Five distinct evaluator jobs
 ○ 250 durable score/finding pairs
 ```
+
+<a id="run15-event-stopped-forum-alignment"></a>
+
+### 🔴 17:27 PT — STOP: full attempt halted for paper-aligned forum correction
+
+- Cancelled all five research chains, all five evaluators, and the remaining
+  training job from attempt
+  `/checkpoint/ram/aar/winnieyangwn/run15_native_generation/full_attempts/20261011T233758Z-88949395cbb1`.
+- Slurm confirms that none of those eleven jobs remains active. Existing
+  attempt artifacts were retained and not deleted.
+- Diagnosis: the full-run launcher gave every chain a private forum. The paper's
+  standard setting instead gives parallel AARs one shared finding forum and
+  leaderboard; private forums correspond to the forum-removal ablation.
+- Targeted correction: add validated YAML `research.forum_scope`, default it to
+  `shared`, preserve `per_chain` as the explicit ablation, and bind both fresh
+  launch and recovery to the same attempt-level forum.

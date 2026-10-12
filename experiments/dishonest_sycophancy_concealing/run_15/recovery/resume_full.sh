@@ -163,6 +163,11 @@ eval "$("${HARNESS_PY}" "${REPO}/scripts/load_aar_run_config.py" "${CANONICAL_CO
   echo "Run 15 recovery requires retryable continuation exhaustion" >&2
   exit 2
 }
+[ "${AAR_FORUM_SCOPE:?missing forum scope}" = shared ] || {
+  echo "Run 15 recovery requires the paper-aligned shared forum" >&2
+  exit 2
+}
+export AAR_SHARED_FORUM_DIR="${ATTEMPT}/forum"
 [ "${AAR_RESEARCH_SEEDS:?}" = "alpha beta gamma delta epsilon" ] || exit 2
 [ "${AAR_TARGET_SUCCESSFUL_ITERATIONS:?}" = 50 ] || exit 2
 [ "${AAR_MAX_ITERATIONS_PER_CHAIN:?}" = 60 ] || exit 2

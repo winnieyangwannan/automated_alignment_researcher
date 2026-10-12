@@ -13,6 +13,9 @@ research:
     - gamma
     - delta
     - epsilon
+  # Paper-aligned: all five researchers read and publish to one finding forum.
+  # Use per_chain only for an explicit no-communication/forum ablation.
+  forum_scope: shared
   # Full Run 15 target: 50 successful score/finding pairs per chain.
   # The 60-session ceiling leaves room for up to 10 unsuccessful sessions.
   target_score_result_pairs: 50

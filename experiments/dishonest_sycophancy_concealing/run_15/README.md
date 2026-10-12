@@ -131,6 +131,7 @@ mode, backend, or role change requires a new confirmation before submission.
 | Chains           | `alpha`, `beta`, `gamma`, `delta`, `epsilon`      |
 | Target per chain | 50 atomic score/result pairs                      |
 | Session ceiling  | 60 sessions per chain                             |
+| Finding forum    | One shared forum and leaderboard for all chains   |
 | Training         | One decoupled GPU lane per isolated chain         |
 | Evaluation       | One four-GPU vLLM evaluator per isolated chain    |
 | Data generation  | Native method code authored by the research model |
@@ -306,9 +307,12 @@ loading, judge/API latency, scheduler queueing, or another observed stage.
 
 ## Isolation and provenance
 
-Each seed owns a separate team directory, forum, method tree, chain memory,
-submission queue, score directory, and evaluator. Attempts retain the resolved
-YAML, exact source commit, `metadata/source-snapshots.json` and its SHA-256,
+All seeds read and publish to one attempt-level finding forum and leaderboard,
+including the public method-code snapshots attached to findings. Each seed owns
+a separate team directory, live method tree, chain memory, submission queue,
+score directory, and evaluator. Set `research.forum_scope: per_chain` only for
+an explicit no-communication/forum ablation. Attempts retain the resolved YAML,
+exact source commit, `metadata/source-snapshots.json` and its SHA-256,
 attempt-local public sources and baseline inputs, Kimi endpoint preflight,
 evaluator runtime snapshot, and child job IDs. The launch-time checkout is used
 only to validate and create the snapshot; active jobs never execute from that

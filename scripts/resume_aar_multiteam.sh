@@ -562,7 +562,13 @@ for seed in "${requested_seeds[@]}"; do
   team_id="$(basename -- "${team}")"
   unset AAR_IDEA_UID_OVERRIDE AAR_RESUME_APPROVED_PROPOSAL
   export TEAM_DIR="${team}" TEAM_ID="${team_id}" AAR_TEAM_ID="${team_id}"
-  export LOCAL_FINDINGS_DIR="${team}/forum" SUBMISSIONS_DIR="${team}/submissions"
+  case "${AAR_FORUM_SCOPE:-per_chain}" in
+    shared) export LOCAL_FINDINGS_DIR="${AAR_SHARED_FORUM_DIR:-${ATTEMPT_DIR}/forum}" ;;
+    per_chain) export LOCAL_FINDINGS_DIR="${team}/forum" ;;
+    *) echo "AAR_FORUM_SCOPE must be shared or per_chain" >&2; exit 2 ;;
+  esac
+  mkdir -p "${LOCAL_FINDINGS_DIR}"
+  export SUBMISSIONS_DIR="${team}/submissions"
   export SCORES_DIR="${team}/scores" AAR_IDEAS_DIR="${team}/methods"
   export SESSION_LOGS_DIR="${team}/logs" LIT_FORUM_DIR="${team}/litreview"
 

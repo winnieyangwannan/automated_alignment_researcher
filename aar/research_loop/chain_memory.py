@@ -227,6 +227,7 @@ class ChainMemoryJournal:
         *,
         chain_id: str,
         idea_uid: str | None = None,
+        forum_dir: str | Path | None = None,
     ) -> None:
         requested_team = Path(team_dir)
         if requested_team.is_symlink():
@@ -241,7 +242,12 @@ class ChainMemoryJournal:
         )
         self.idea_uid = str(idea_uid or "")
         self.scores_dir = self.team_dir / "scores"
-        self.forum_dir = self.team_dir / "forum"
+        requested_forum = (
+            Path(forum_dir) if forum_dir is not None else self.team_dir / "forum"
+        )
+        if requested_forum.is_symlink():
+            raise ChainMemoryIntegrityError("public forum directory may not be a symlink")
+        self.forum_dir = requested_forum.resolve(strict=False)
         self.methods_dir = self.team_dir / "methods"
         self.root = self.team_dir / "host_memory" / self.chain_tag
         self.events_dir = self.root / "events"
@@ -281,6 +287,7 @@ class ChainMemoryJournal:
             team,
             chain_id=chain_id or os.getenv("IDEA_NAME", "chain"),
             idea_uid=idea_uid or os.getenv("IDEA_UID"),
+            forum_dir=os.getenv("LOCAL_FINDINGS_DIR", "").strip() or None,
         )
 
     @staticmethod

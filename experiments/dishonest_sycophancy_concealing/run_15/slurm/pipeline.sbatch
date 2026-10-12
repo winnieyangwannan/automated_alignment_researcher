@@ -117,6 +117,12 @@ export AAR_CHAIN_SANITIZE_ENV=1 AAR_RUNTIME_ENV_DISABLE_FILE=1
 export AAR_RESEARCH_ENV_ISOLATION=0 AAR_HIDE_EVAL_CONFIG=1
 
 [ "${AAR_AGENT_BACKEND:?}" = kimi ] || { echo "Run 15 requires Kimi" >&2; exit 2; }
+[ "${AAR_FORUM_SCOPE:?missing forum scope}" = shared ] || {
+  echo "Run 15 requires the paper-aligned shared forum" >&2
+  exit 2
+}
+export AAR_SHARED_FORUM_DIR="${ATTEMPT}/forum"
+mkdir -p "${AAR_SHARED_FORUM_DIR}"
 if [ "${AAR_RUN15_MODE:?}" = full ]; then
   [ "${AAR_KIMI_CONTINUATION_EXHAUSTION_RETRYABLE:?}" = 1 ] || {
     echo "full five-chain Run 15 requires retryable continuation exhaustion" >&2
@@ -271,7 +277,8 @@ else
     exit 1
   }
 fi
-printf 'research_backend=kimi\nresearch_model=Kimi-K2.6\nresearcher_deployment=autodata2_8-kimi26\ndata_generation_backend=native\nautodata=0\nlifecycle_proof_policy=%s\nchains=%s\ntarget_score_result_pairs=%s\nseeds=%s\n' \
+printf 'research_backend=kimi\nresearch_model=Kimi-K2.6\nresearcher_deployment=autodata2_8-kimi26\ndata_generation_backend=native\nautodata=0\nforum_scope=%s\nforum_dir=%s\nlifecycle_proof_policy=%s\nchains=%s\ntarget_score_result_pairs=%s\nseeds=%s\n' \
+  "${AAR_FORUM_SCOPE}" "${AAR_SHARED_FORUM_DIR}" \
   "${LIFECYCLE_PROOF_POLICY}" "${#seeds[@]}" "${AAR_TARGET_SUCCESSFUL_ITERATIONS}" "${AAR_RESEARCH_SEEDS}" \
   > "${ATTEMPT}/metadata/full-launch.env"
-echo "[run15] launched ${#seeds[@]} isolated native-generation chains"
+echo "[run15] launched ${#seeds[@]} native-generation chains with one shared forum"

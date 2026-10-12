@@ -98,6 +98,7 @@ def load_run_config(path: Path) -> dict[str, str]:
         research,
         {
             "seeds",
+            "forum_scope",
             "max_sessions_per_chain",
             "walltime_hours",
             "target_score_result_pairs",
@@ -184,6 +185,14 @@ def load_run_config(path: Path) -> dict[str, str]:
         if adapter_retention != "all":
             raise ValueError("storage.adapter_retention currently supports only 'all'")
         environment["AAR_ADAPTER_RETENTION"] = adapter_retention
+
+    # Paper-aligned default: parallel researchers communicate through one
+    # attempt-level finding forum.  `per_chain` remains available as the
+    # explicit no-communication ablation.
+    forum_scope = research.get("forum_scope", "shared")
+    if forum_scope not in {"shared", "per_chain"}:
+        raise ValueError("research.forum_scope must be shared or per_chain")
+    environment["AAR_FORUM_SCOPE"] = forum_scope
 
     if "seeds" in research:
         seeds = research["seeds"]

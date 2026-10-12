@@ -1,7 +1,8 @@
 #!/bin/bash
-# Launch ONE TEAM of AARs that share a fresh, private forum AND a fresh method
-# workspace — so a team can't see previous teams' forum, methods, or AGENT_LOGs
-# (true per-team independence; needed for per-seed forecasting validity).
+# Launch ONE TEAM of AARs with a fresh method workspace. By default its forum
+# is private; declarative experiment launchers set AAR_FORUM_SCOPE=shared and
+# AAR_SHARED_FORUM_DIR so parallel teams in one attempt use the paper-aligned
+# common finding forum and leaderboard.
 #
 #   [AXIS=<axis>] [MODEL=<model>] scripts/launch_team.sh ["seed1 seed2 ..."] [max_iters] [max_hours]
 #   e.g. scripts/launch_team.sh "alpha beta gamma" 100 47                 # default: sycophancy on qwen
@@ -11,11 +12,11 @@
 #   MODEL selects which of the 6 models to optimize (qwen|mistral|llama|olmo|gemma|phi, or a full HF id).
 #   The chains inherit the SAME axis AND model (one source: scripts/axis_env.sh + models.sh).
 #
-# OPTIONAL — seed this team's forum from a PRIOR team's findings (opt-in; default
-# is a fresh empty forum). The prior findings are COPIED in, so the new team
+# OPTIONAL — seed the resolved forum from a PRIOR team's findings. The prior findings
+# are COPIED in, so the new team
 # starts already aware of what's been tried (e.g. "diverse_antisyc_sft got 15.5%
 # but failed the capability filter") and builds on it — while the source forum is
-# left untouched and this team still accumulates into its OWN new forum.
+# left untouched and this launch accumulates into the configured forum.
 #   SEED_FORUM_FROM=<TEAM_ID>  scripts/launch_team.sh sycophancy
 #   SEED_FORUM_FROM=latest     scripts/launch_team.sh sycophancy   # most recent prior team
 # List prior teams to pick from:
@@ -118,8 +119,13 @@ done
 # BASELINE is shared per-axis at aar_litreview/<axis>/, read-only to every team.)
 # ===========================================================================
 export TEAM_DIR="${_AAR_TEAMS}/${TEAM_ID}"
-FORUM="${TEAM_DIR}/forum"
-mkdir -p "${RUNTIME_ROOT}" "${TEAM_DIR}"/{forum,submissions,scores,methods,logs,litreview,_train}
+case "${AAR_FORUM_SCOPE:-per_chain}" in
+  shared) FORUM="${AAR_SHARED_FORUM_DIR:-${RUNTIME_ROOT}/forum}" ;;
+  per_chain) FORUM="${TEAM_DIR}/forum" ;;
+  *) echo "[team] FATAL: AAR_FORUM_SCOPE must be shared or per_chain" >&2; exit 2 ;;
+esac
+mkdir -p "${RUNTIME_ROOT}" "${FORUM}" \
+  "${TEAM_DIR}"/{forum,submissions,scores,methods,logs,litreview,_train}
 # Cross-user channel perms: the eval user (also in group `shared`) must TRAVERSE
 # TEAM_DIR and READ submissions / WRITE scores. Mirror the legacy 2770-setgid queue
 # dirs; keep the team's other subdirs group-traversable-only.
@@ -128,7 +134,7 @@ chmod 2750 "${RUNTIME_ROOT}" "${TEAM_DIR}" 2>/dev/null || true
 chmod 2770 "${TEAM_DIR}/submissions" "${TEAM_DIR}/scores" 2>/dev/null || true
 # Export the per-team dirs so chains, the train jobs they spawn, and the dashboard
 # all agree (config.py also derives these from TEAM_DIR — belt and suspenders).
-export LOCAL_FINDINGS_DIR="${TEAM_DIR}/forum"
+export LOCAL_FINDINGS_DIR="${FORUM}"
 export SUBMISSIONS_DIR="${TEAM_DIR}/submissions"
 export SCORES_DIR="${TEAM_DIR}/scores"
 export AAR_IDEAS_DIR="${TEAM_DIR}/methods"
@@ -138,7 +144,7 @@ export LIT_AXIS_DIR="${LIT_AXIS_DIR:-${REPO}/_runs/litreview/${SUITE}}"    # axi
 cd "${REPO}"
 echo "[team] TEAM_ID=${TEAM_ID}"
 echo "[team] axis=${SUITE}  model=${MODEL} (${TARGET_MODEL})"
-echo "[team] TEAM_DIR=${TEAM_DIR}  (forum+submissions+scores+methods+logs+litreview all here)"
+echo "[team] TEAM_DIR=${TEAM_DIR}  forum_scope=${AAR_FORUM_SCOPE:-per_chain}  forum=${FORUM}"
 
 # --- HELD-OUT ISOLATION (enforced before ANY AAR starts). Baselines leave the held-out benchmarks'
 # data/scores in research scratch (_*baseline/); the AAR runs as THIS user with shell access, so it
