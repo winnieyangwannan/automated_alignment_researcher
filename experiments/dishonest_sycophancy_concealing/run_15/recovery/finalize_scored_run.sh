@@ -3,8 +3,8 @@
 set -euo pipefail
 umask 077
 
-[ "$#" -eq 1 ] || {
-  echo "usage: $0 <run15-attempt-directory>" >&2
+[ "$#" -ge 1 ] && [ "$#" -le 3 ] || {
+  echo "usage: $0 <run15-attempt-directory> [seed run_id]" >&2
   exit 2
 }
 
@@ -12,7 +12,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUN15_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 REPO="$(cd -- "${RUN15_DIR}/../../.." && pwd)"
 ATTEMPT="$(realpath -e -- "$1")"
-RUN_CONFIG="$(realpath -e -- "${RUN15_DIR}/canary/one_chain_lifecycle_check/config/run.yaml")"
+SEED="${2:-}"
+RUN_ID="${3:-}"
 SECRET_ENV="$(realpath -e -- "${AAR_RUN15_SECRET_ENV:-${REPO}/.env}")"
 
 [ -x "${REPO}/.venv/bin/python" ] || {
@@ -24,8 +25,25 @@ SECRET_ENV="$(realpath -e -- "${AAR_RUN15_SECRET_ENV:-${REPO}/.env}")"
   exit 2
 }
 case "${ATTEMPT}" in
-  /checkpoint/ram/aar/"${USER:?}"/run15_native_generation/canary_attempts/*) ;;
-  *) echo "not a Run 15 canary attempt: ${ATTEMPT}" >&2; exit 2 ;;
+  /checkpoint/ram/aar/"${USER:?}"/run15_native_generation/canary_attempts/*)
+    [ -z "${SEED}" ] && [ -z "${RUN_ID}" ] || {
+      echo "canary finding recovery does not take a seed or run_id" >&2
+      exit 2
+    }
+    RUN_CONFIG="$(realpath -e -- "${RUN15_DIR}/canary/one_chain_lifecycle_check/config/run.yaml")"
+    ;;
+  /checkpoint/ram/aar/"${USER:?}"/run15_native_generation/full_attempts/*)
+    [[ "${SEED}" =~ ^(alpha|beta|gamma|delta|epsilon)$ ]] || {
+      echo "full-attempt finding recovery requires one canonical seed" >&2
+      exit 2
+    }
+    [[ "${RUN_ID}" =~ ^[A-Za-z0-9._-]+$ ]] || {
+      echo "full-attempt finding recovery requires one safe run_id" >&2
+      exit 2
+    }
+    RUN_CONFIG="$(realpath -e -- "${RUN15_DIR}/config/run.yaml")"
+    ;;
+  *) echo "not a Run 15 attempt: ${ATTEMPT}" >&2; exit 2 ;;
 esac
 
 export AAR_REPO="${REPO}" HARNESS_ENV="${SECRET_ENV}"
@@ -54,5 +72,7 @@ export KIMI_MODEL_CAPABILITIES=tool_use KIMI_MODEL_MAX_CONTEXT_SIZE=262144
 export KIMI_MODEL_MAX_OUTPUT_SIZE=65536 KIMI_MODEL_MAX_COMPLETION_TOKENS=65536
 unset KIMI_AGENT_MODEL
 
+_finalizer_args=("${ATTEMPT}")
+[ -z "${SEED}" ] || _finalizer_args+=(--seed "${SEED}" --run-id "${RUN_ID}")
 exec timeout 2100 "${REPO}/.venv/bin/python" \
-  "${SCRIPT_DIR}/finalize_scored_run.py" "${ATTEMPT}"
+  "${SCRIPT_DIR}/finalize_scored_run.py" "${_finalizer_args[@]}"

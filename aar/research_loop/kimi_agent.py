@@ -30,6 +30,7 @@ from aar.failure_feedback import (
     FailureFeedbackError,
     build_failure_feedback,
     safe_failure_feedback_view,
+    sanitize_failure_summary,
 )
 from aar.research_loop.tools.server_api_tools import _method_code
 
@@ -3184,13 +3185,25 @@ class KimiAgent:
             run_id,
         ]
         try:
+            submission_timeout = float(
+                os.getenv("AAR_TRAIN_SUBMISSION_TIMEOUT_SECONDS", "360")
+            )
+        except ValueError as error:
+            raise RuntimeError(
+                "AAR_TRAIN_SUBMISSION_TIMEOUT_SECONDS must be numeric"
+            ) from error
+        if submission_timeout <= 0:
+            raise RuntimeError(
+                "AAR_TRAIN_SUBMISSION_TIMEOUT_SECONDS must be positive"
+            )
+        try:
             completed = subprocess.run(
                 command,
                 cwd=self.workspace,
                 env=os.environ.copy(),
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=submission_timeout,
                 check=False,
             )
         except subprocess.TimeoutExpired as error:
@@ -3208,16 +3221,62 @@ class KimiAgent:
             raise incident from error
         job_id = completed.stdout.strip()
         if completed.returncode != 0 or not re.fullmatch(r"[0-9]+", job_id):
+            contract_status, contract_errors = self._current_method_contract()
+            if contract_status != "passed":
+                from aar.eval_pod.failure import publish_failure
+
+                detail = sanitize_failure_summary(
+                    "; ".join(contract_errors[:8]), limit=1000
+                )
+                if not detail:
+                    detail = (
+                        "current passed method-contract proof is missing or "
+                        "incomplete; rerun the trusted validator"
+                    )
+                failure_path = publish_failure(
+                    scores_dir,
+                    run_id,
+                    detail,
+                    stage="method_contract",
+                    error_code="method_contract_failure",
+                    retryable=False,
+                    disposition="advance_session",
+                    exception_type="MethodContractError",
+                )
+                try:
+                    failure_payload = json.loads(failure_path.read_text())
+                except (OSError, json.JSONDecodeError):
+                    failure_payload = None
+                feedback = build_failure_feedback(
+                    RuntimeError(detail),
+                    error_code="method_contract_failure",
+                    stage="method_contract",
+                    retryable=False,
+                    disposition="advance_session",
+                    public_summary=f"method contract failed: {detail}",
+                )
+                feedback["run_id"] = run_id
+                if isinstance(failure_payload, dict):
+                    feedback["exception_type"] = failure_payload.get(
+                        "exception_type", "MethodContractError"
+                    )
+                raise FailureFeedbackError(feedback)
+            stderr_detail = sanitize_failure_summary(
+                (completed.stderr or "")[-4000:], limit=500
+            )
+            public_summary = (
+                "approved training submission wrapper failed "
+                f"(exit {completed.returncode})"
+            )
+            if stderr_detail:
+                public_summary += f": {stderr_detail}"
             failure_error = _retain_process_failure(
                 error=RuntimeError(
                     f"training submission exit {completed.returncode}"
                 ),
                 error_code="training_submission_failed",
                 stage="training_submission",
-                public_summary=(
-                    "approved training submission wrapper failed "
-                    f"(exit {completed.returncode})"
-                ),
+                public_summary=public_summary,
             )
             incident = OrchestrationIncident(
                 str(failure_error), failure=failure_error.feedback
@@ -4097,6 +4156,7 @@ class KimiAgent:
         if error_code in {
             "training_dataset_interface_invalid",
             "training_method_config_invalid",
+            "method_contract_failure",
         }:
             public_summary += f": {sanitize_failure_text(public_reason, limit=500)}"
         feedback = build_failure_feedback(

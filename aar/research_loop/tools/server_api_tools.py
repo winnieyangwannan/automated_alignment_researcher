@@ -14,13 +14,15 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
 from claude_agent_sdk import tool, create_sdk_mcp_server
 
-from aar.failure_feedback import feedback_from_exception
+from aar.failure_feedback import feedback_from_exception, sanitize_failure_summary
 from aar.phase_timing import timed_async_phase
 
 from .http_utils import get_server_url, async_http_post, async_http_get
@@ -1840,6 +1842,79 @@ def _missing_method_timing_phases(code: str) -> list[str]:
     return [name for name in REQUIRED_METHOD_PHASES if name not in observed]
 
 
+def _run_trusted_method_contract(
+    method_path: Path, *, expected_source_hash: str
+) -> str | None:
+    """Run the host validator and return a safe actionable error on failure."""
+
+    repository = Path(__file__).resolve().parents[3]
+    command = [
+        sys.executable,
+        str(repository / "scripts" / "validate_method_contract.py"),
+        str(method_path),
+        "--proof",
+        str(method_path.parent / ".aar-method-contract.json"),
+        "--run-dry-run",
+    ]
+    for variable, flag in (
+        ("AAR_REQUIRE_GEMMA4_TARGETS", "--require-gemma4-targets"),
+        ("AAR_REQUIRE_METHOD_SMOKE", "--require-smoke-run"),
+        ("AAR_AUTODATA", "--require-autodata-loader"),
+    ):
+        if os.getenv(variable, "0").lower() in ("1", "true", "yes", "on"):
+            command.append(flag)
+    try:
+        timeout_seconds = int(
+            os.getenv("AAR_METHOD_VALIDATOR_TIMEOUT_SECONDS", "300")
+        )
+    except ValueError:
+        timeout_seconds = 300
+    timeout_seconds = max(timeout_seconds, 1)
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=repository,
+            env=os.environ.copy(),
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return (
+            "trusted method-contract validation timed out after "
+            f"{timeout_seconds} seconds; make MethodConfig import and dry_run return "
+            "before model, dataset, or network initialization"
+        )
+    except OSError as error:
+        return sanitize_failure_summary(
+            f"trusted method-contract validator could not start: {error}", limit=1200
+        )
+
+    result: dict[str, Any] | None = None
+    for line in reversed(completed.stdout.splitlines()):
+        try:
+            candidate = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            result = candidate
+            break
+    if result is None:
+        detail = completed.stderr.strip() or "validator returned no structured result"
+        return sanitize_failure_summary(detail, limit=1200)
+    if result.get("source_sha256") != expected_source_hash:
+        return "run.py changed during method-contract validation; validate and submit again"
+    errors = result.get("errors")
+    if completed.returncode != 0 or result.get("status") != "passed" or errors:
+        if isinstance(errors, list) and errors:
+            detail = "; ".join(str(value) for value in errors[:8])
+        else:
+            detail = completed.stderr.strip() or "method contract did not pass"
+        return sanitize_failure_summary(detail, limit=2000)
+    return None
+
+
 def _proposal_journal_event_identity(
     marker: Dict[str, Any], *, chain_id: str
 ) -> tuple[Path, Dict[str, Any]]:
@@ -2149,6 +2224,41 @@ async def submit_idea_proposal(args: Dict[str, Any]) -> Dict[str, Any]:
                 "approved": False, "violations": [],
                 "error": f"No code at $AAR_IDEAS_DIR/{idea_name}/run.py — write your method package FIRST, then submit (the monitor judges the actual code).",
             }, code_hash=code_hash)
+        if code is not None and os.getenv("AAR_REQUIRE_METHOD_CONTRACT", "0").lower() in (
+            "1", "true", "yes", "on"
+        ):
+            from aar import config as _cfg
+
+            method_path = _cfg.resolve_idea_dir(idea_name) / "run.py"
+            try:
+                method_source_hash = hashlib.sha256(method_path.read_bytes()).hexdigest()
+            except OSError as error:
+                return _proposal_response(args, {
+                    "approved": False,
+                    "violations": ["METHOD_CONTRACT: trusted validation failed"],
+                    "error": (
+                        "Method contract is not ready: could not read current run.py: "
+                        f"{sanitize_failure_summary(error, limit=500)}."
+                    ),
+                }, code_hash=code_hash)
+            contract_error = _run_trusted_method_contract(
+                method_path, expected_source_hash=method_source_hash
+            )
+            _, current_code_hash = _method_code(idea_name)
+            if current_code_hash != code_hash:
+                contract_error = (
+                    "run.py changed during method-contract validation; validate and "
+                    "submit again"
+                )
+            if contract_error is not None:
+                return _proposal_response(args, {
+                    "approved": False,
+                    "violations": ["METHOD_CONTRACT: trusted validation failed"],
+                    "error": (
+                        f"Method contract is not ready: {contract_error}. Fix every "
+                        "reported error before proposal review."
+                    ),
+                }, code_hash=code_hash)
         if code is not None and os.getenv("AAR_REQUIRE_PHASE_TIMINGS", "0").lower() in (
             "1", "true", "yes", "on"
         ):

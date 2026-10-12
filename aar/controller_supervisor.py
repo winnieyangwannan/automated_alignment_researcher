@@ -35,6 +35,7 @@ class ChainSnapshot:
     sessions: int
     active_training_jobs: tuple[str, ...]
     unscored_claims: tuple[str, ...]
+    active_orchestration_incident: bool = False
 
 
 @dataclass(frozen=True)
@@ -200,6 +201,50 @@ def receipt_disposition(team: Path, controller_job: str) -> str | None:
     return disposition if disposition in {"complete", "recover", "halt"} else None
 
 
+def orchestration_incident_matches_source(team: Path, source_head: str) -> bool:
+    marker = team / ".orchestration_incident.json"
+    if not marker.exists() and not marker.is_symlink():
+        return False
+    value = _read_json(marker)
+    if value is None:
+        return True
+    marker_head = value.get("source_head")
+    if not isinstance(marker_head, str) or not marker_head:
+        return True
+    return marker_head == source_head
+
+
+def orchestration_incident_is_stale_source(team: Path, source_head: str) -> bool:
+    marker = team / ".orchestration_incident.json"
+    if not marker.is_file() or marker.is_symlink():
+        return False
+    value = _read_json(marker)
+    if value is None:
+        return False
+    marker_head = value.get("source_head")
+    return (
+        isinstance(marker_head, str)
+        and bool(marker_head)
+        and marker_head != source_head
+    )
+
+
+def reopen_source_blocked_chain(
+    chain_state: dict[str, object], team: Path, source_head: str
+) -> bool:
+    if (
+        chain_state.get("status") != "halted"
+        or chain_state.get("reason")
+        != "orchestration_incident_requires_new_source"
+        or not orchestration_incident_is_stale_source(team, source_head)
+    ):
+        return False
+    chain_state["status"] = "watching"
+    chain_state.pop("reason", None)
+    chain_state.pop("last_reason", None)
+    return True
+
+
 def decide_recovery(
     snapshot: ChainSnapshot,
     controller_status: JobStatus,
@@ -219,6 +264,8 @@ def decide_recovery(
     terminal = classify_state(controller_status.state)
     if not terminal.terminal:
         return RecoveryDecision("watch", "controller_active")
+    if snapshot.active_orchestration_incident:
+        return RecoveryDecision("halt", "orchestration_incident_requires_new_source")
     if restart_count >= max_restarts:
         return RecoveryDecision("halt", "controller_restart_limit_exhausted")
     if snapshot.active_training_jobs:
@@ -254,6 +301,13 @@ class Supervisor:
         self.state_path = self.metadata / "controller_supervisor.json"
         self.events_path = self.metadata / "controller_supervisor_events.jsonl"
         self.state = self._load_state()
+        repository = self.resume_script.parents[4]
+        self.source_head = subprocess.run(
+            ["git", "-C", str(repository), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
 
     def _load_state(self) -> dict[str, object]:
         value = _read_json(self.state_path)
@@ -388,12 +442,22 @@ class Supervisor:
         for seed in self.seeds:
             chain_state = chains[seed]
             assert isinstance(chain_state, dict)
-            if chain_state.get("status") in {"complete", "halted"}:
+            team = team_for_seed(self.attempt, seed)
+            if chain_state.get("status") == "complete":
                 continue
+            if chain_state.get("status") == "halted":
+                if not reopen_source_blocked_chain(
+                    chain_state, team, self.source_head
+                ):
+                    continue
+                self._event(
+                    seed,
+                    "reopen",
+                    reason="orchestration_incident_source_changed",
+                )
             all_terminal = False
             controller = controllers[seed]
             evaluator = evaluators[seed]
-            team = team_for_seed(self.attempt, seed)
             controller_status = self._job_status(controller)
             evaluator_status = self._job_status(evaluator)
             if not controller_status.state:
@@ -438,6 +502,9 @@ class Supervisor:
                 sessions=count_sessions(team, seed),
                 active_training_jobs=active_training_jobs(team, self._job_status),
                 unscored_claims=unscored_claims(team),
+                active_orchestration_incident=orchestration_incident_matches_source(
+                    team, self.source_head
+                ),
             )
             decision = decide_recovery(
                 snapshot,

@@ -2203,6 +2203,89 @@ class KimiAgentTest(unittest.TestCase):
 
             self.assertEqual(receipt.read_text(), f"run_id={run_id}\njob_id=12345\n")
 
+    def test_submission_contract_failure_advances_with_exact_feedback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            scores = root / "scores"
+            proposal_dir = scores / ".proposals"
+            runs = proposal_dir / "runs"
+            runs.mkdir(parents=True)
+            idea_uid = "chain-uid"
+            idea_name = "chain__kimi_candidate"
+            run_id = f"{idea_uid}-{idea_name}-1"
+            marker = {
+                "approved": True,
+                "execution_ready": True,
+                "journaled": True,
+                "idea_name": idea_name,
+                "code_hash": "hash-1",
+                "run_id": run_id,
+                "paper": {},
+            }
+            (proposal_dir / f"{idea_uid}.json").write_text(json.dumps(marker))
+            (runs / f"{run_id}.json").write_text(
+                json.dumps({**marker, "stamped_ts": 1})
+            )
+            method = root / "ideas" / idea_name / "run.py"
+            method.parent.mkdir(parents=True)
+            method.write_text("VALUE = 1\n")
+            (method.parent / ".aar-method-contract.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "status": "failed",
+                        "method_path": str(method.resolve()),
+                        "source_sha256": hashlib.sha256(
+                            method.read_bytes()
+                        ).hexdigest(),
+                        "requirements": {},
+                        "errors": ["dry-run must return before model loading"],
+                    }
+                )
+            )
+            agent = KimiAgent(
+                "test-agent", root, cli_path="/bin/true", completion_tool="share_finding"
+            )
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "AAR_AUTODATA": "0",
+                        "AAR_REQUIRE_TRAIN_RECEIPT": "1",
+                        "AAR_IDEAS_DIR": str(root / "ideas"),
+                        "SCORES_DIR": str(scores),
+                        "TEAM_DIR": str(root / "team"),
+                        "IDEA_UID": idea_uid,
+                        "IDEA_NAME": "chain",
+                    },
+                    clear=False,
+                ),
+                patch.object(agent, "_validate_protected_submission_files"),
+                patch(
+                    "aar.research_loop.kimi_agent._method_code",
+                    return_value=("method code", "hash-1"),
+                ),
+                patch(
+                    "aar.research_loop.kimi_agent.subprocess.run",
+                    return_value=subprocess.CompletedProcess(
+                        ["submit"], 1, "", "contract rejected"
+                    ),
+                ),
+                self.assertRaises(FailureFeedbackError) as raised,
+            ):
+                agent._ensure_approved_training_submission()
+
+            self.assertEqual(
+                raised.exception.feedback["error_code"], "method_contract_failure"
+            )
+            self.assertEqual(
+                raised.exception.feedback["disposition"], "advance_session"
+            )
+            self.assertIn("dry-run must return", raised.exception.feedback["summary"])
+            failure = json.loads((scores / f"{run_id}.failed.json").read_text())
+            self.assertEqual(failure["stage"], "method_contract")
+            self.assertEqual(failure["disposition"], "advance_session")
+
     def test_post_approval_method_mutation_prevents_host_submission(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

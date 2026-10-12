@@ -103,7 +103,11 @@ if [ "${AAR_REQUIRE_METHOD_CONTRACT:-0}" = "1" ]; then
   if [ "${AAR_AUTODATA:-0}" = "1" ]; then
     _contract_args+=(--require-autodata-loader)
   fi
-  timeout 60s "${AAR_METHOD_VALIDATOR_PY:-${HARNESS_PY:-python}}" \
+  _validator_timeout="${AAR_METHOD_VALIDATOR_TIMEOUT_SECONDS:-300}"
+  case "${_validator_timeout}" in
+    ''|*[!0-9]*|0) echo "submit_train_job: AAR_METHOD_VALIDATOR_TIMEOUT_SECONDS must be a positive integer" >&2; exit 2;;
+  esac
+  timeout "${_validator_timeout}s" "${AAR_METHOD_VALIDATOR_PY:-${HARNESS_PY:-python}}" \
     "${REPO}/scripts/validate_method_contract.py" \
     "${_contract_args[@]}" >&2
 fi

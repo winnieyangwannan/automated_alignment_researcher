@@ -1148,6 +1148,17 @@ def validate(
         errors.append(f"syntax error: {error}")
 
     if tree is not None:
+        if not any(
+            isinstance(node, ast.ClassDef) and node.name == "MethodConfig"
+            for node in tree.body
+        ):
+            errors.append("MethodConfig class is missing")
+        if not any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "run_experiment"
+            for node in tree.body
+        ):
+            errors.append("run_experiment callable is missing")
         missing = sorted(set(REQUIRED_METHOD_PHASES) - _required_phases(tree))
         if missing:
             near_misses = sorted(_phase_context_near_misses(tree))
@@ -1203,7 +1214,10 @@ def validate(
             errors.extend(_autodata_loader_errors(tree))
 
     module = None
-    if tree is not None:
+    # Static contract failures are already decisive.  Do not import a generated
+    # method after finding one: heavy ML imports can take minutes on shared CPU
+    # nodes and previously hid the actionable static error behind a shell timeout.
+    if tree is not None and not errors:
         module_name = f"aar_contract_{method_path.parent.name}"
         spec = importlib.util.spec_from_file_location(module_name, method_path)
         if spec is None or spec.loader is None:

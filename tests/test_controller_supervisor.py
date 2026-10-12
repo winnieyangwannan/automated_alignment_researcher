@@ -9,6 +9,8 @@ from aar.controller_supervisor import (
     JobStatus,
     decide_recovery,
     main,
+    orchestration_incident_matches_source,
+    reopen_source_blocked_chain,
 )
 
 
@@ -106,6 +108,80 @@ def test_controller_restart_budget_is_bounded() -> None:
         max_restarts=8,
     )
     assert decision.reason == "controller_restart_limit_exhausted"
+
+
+def test_current_source_orchestration_incident_halts_without_retry() -> None:
+    snapshot = _snapshot()
+    snapshot = ChainSnapshot(
+        **{
+            **snapshot.__dict__,
+            "active_orchestration_incident": True,
+        }
+    )
+    decision = decide_recovery(
+        snapshot,
+        JobStatus("FAILED", "1:0"),
+        JobStatus("RUNNING", "0:0"),
+        receipt="recover",
+        target_pairs=50,
+        session_ceiling=60,
+        restart_count=0,
+        max_restarts=8,
+    )
+    assert decision.reason == "orchestration_incident_requires_new_source"
+
+
+def test_malformed_orchestration_incident_fails_closed(tmp_path: Path) -> None:
+    marker = tmp_path / ".orchestration_incident.json"
+    marker.write_text("not json\n")
+    assert orchestration_incident_matches_source(tmp_path, "current-head")
+
+
+def test_source_less_orchestration_incident_fails_closed(tmp_path: Path) -> None:
+    marker = tmp_path / ".orchestration_incident.json"
+    marker.write_text('{"error": "unknown"}\n')
+    assert orchestration_incident_matches_source(tmp_path, "current-head")
+
+
+def test_stale_orchestration_incident_allows_new_source(tmp_path: Path) -> None:
+    marker = tmp_path / ".orchestration_incident.json"
+    marker.write_text('{"source_head": "old-head"}\n')
+    assert not orchestration_incident_matches_source(tmp_path, "new-head")
+
+
+def test_new_source_reopens_chain_halted_for_old_incident(tmp_path: Path) -> None:
+    marker = tmp_path / ".orchestration_incident.json"
+    marker.write_text('{"source_head": "old-head"}\n')
+    state: dict[str, object] = {
+        "status": "halted",
+        "reason": "orchestration_incident_requires_new_source",
+        "last_reason": "orchestration_incident_requires_new_source",
+    }
+
+    assert reopen_source_blocked_chain(state, tmp_path, "new-head")
+    assert state == {"status": "watching"}
+
+
+def test_same_source_keeps_incident_halt(tmp_path: Path) -> None:
+    marker = tmp_path / ".orchestration_incident.json"
+    marker.write_text('{"source_head": "same-head"}\n')
+    state: dict[str, object] = {
+        "status": "halted",
+        "reason": "orchestration_incident_requires_new_source",
+    }
+
+    assert not reopen_source_blocked_chain(state, tmp_path, "same-head")
+    assert state["status"] == "halted"
+
+
+def test_missing_incident_marker_keeps_persisted_halt(tmp_path: Path) -> None:
+    state: dict[str, object] = {
+        "status": "halted",
+        "reason": "orchestration_incident_requires_new_source",
+    }
+
+    assert not reopen_source_blocked_chain(state, tmp_path, "new-head")
+    assert state["status"] == "halted"
 
 
 def test_duplicate_supervisor_lock_fails_closed(

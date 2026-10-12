@@ -7,9 +7,8 @@ import argparse
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
-
-from aar.research_loop.kimi_agent import KimiAgent
 
 
 def _load_object(path: Path) -> dict:
@@ -19,29 +18,54 @@ def _load_object(path: Path) -> dict:
     return value
 
 
+def _select_team(attempt: Path, seed: str | None) -> Path:
+    teams = [path for path in (attempt / "aar_teams").iterdir() if path.is_dir()]
+    if seed:
+        matches = [path for path in teams if f"-{seed}-" in path.name]
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"expected one team for seed {seed}, found {len(matches)}"
+            )
+        return matches[0]
+    if len(teams) != 1:
+        raise RuntimeError(f"expected one team directory, found {len(teams)}")
+    return teams[0]
+
+
+def _select_proposal(team: Path, run_id: str | None) -> dict:
+    proposals = [
+        _load_object(path)
+        for path in sorted((team / "scores" / ".proposals").glob("*.json"))
+        if path.is_file()
+    ]
+    if run_id is not None:
+        proposals = [proposal for proposal in proposals if proposal.get("run_id") == run_id]
+    if len(proposals) != 1:
+        target = f" for run_id {run_id}" if run_id else ""
+        raise RuntimeError(
+            f"expected one chain proposal marker{target}, found {len(proposals)}"
+        )
+    return proposals[0]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("attempt", type=Path)
+    parser.add_argument("--seed")
+    parser.add_argument("--run-id")
     parser.add_argument("--max-continuations", type=int, default=6)
     args = parser.parse_args()
 
     attempt = args.attempt.resolve(strict=True)
     workspace = Path(os.environ["AAR_REPO"]).resolve(strict=True)
-    teams = [path for path in (attempt / "aar_teams").iterdir() if path.is_dir()]
-    if len(teams) != 1:
-        raise RuntimeError(f"expected one team directory, found {len(teams)}")
-    team = teams[0]
+    team = _select_team(attempt, args.seed)
+    findings_dir = attempt / "forum" if args.seed else team / "forum"
+    if args.seed and not args.run_id:
+        raise RuntimeError("full-attempt finding recovery requires --run-id")
+    if args.run_id and re.fullmatch(r"[A-Za-z0-9._-]+", args.run_id) is None:
+        raise RuntimeError("run_id contains unsafe characters")
 
-    proposal_markers = sorted(
-        path
-        for path in (team / "scores" / ".proposals").glob("*.json")
-        if path.is_file()
-    )
-    if len(proposal_markers) != 1:
-        raise RuntimeError(
-            f"expected one chain proposal marker, found {len(proposal_markers)}"
-        )
-    proposal = _load_object(proposal_markers[0])
+    proposal = _select_proposal(team, args.run_id)
     if proposal.get("approved") is not True:
         raise RuntimeError("proposal marker is not approved")
     run_id = proposal.get("run_id")
@@ -54,7 +78,7 @@ def main() -> None:
     score = _load_object(score_path)
     existing = [
         path
-        for path in (team / "forum").glob("*.json")
+        for path in findings_dir.glob("*.json")
         if _load_object(path).get("run_id") == run_id
     ]
     if len(existing) == 1:
@@ -65,7 +89,8 @@ def main() -> None:
 
     environment = {
         "TEAM_DIR": str(team),
-        "LOCAL_FINDINGS_DIR": str(team / "forum"),
+        "LOCAL_FINDINGS_DIR": str(findings_dir),
+        "AAR_SHARED_FORUM_DIR": str(findings_dir),
         "SUBMISSIONS_DIR": str(team / "submissions"),
         "SCORES_DIR": str(team / "scores"),
         "AAR_IDEAS_DIR": str(team / "methods"),
@@ -82,17 +107,26 @@ def main() -> None:
         "HARNESS_TRANSPORT": "fs",
     }
     os.environ.update(environment)
+    from aar.research_loop.kimi_agent import KimiAgent
 
     public_score = json.dumps(score, sort_keys=True)
+    headline = score.get("headline_pct")
+    worked = bool(
+        isinstance(headline, (int, float))
+        and not isinstance(headline, bool)
+        and headline > 0
+        and score.get("passes_filter") is True
+        and score.get("passes_regression") is not False
+    )
     task = (
         "Recover only the missing final finding for an experiment that is already "
         "approved, trained, and scored. Do not call literature, edit files, submit a "
         "proposal, train, or evaluate. Call the native structured MCP tool "
-        "share_finding with finding_type='result', worked=false, "
+        f"share_finding with finding_type='result', worked={str(worked).lower()}, "
         f"run_id={run_id!r}, and idea_name={idea_name!r}. Include a concise summary "
         "and a results_writeup of at least 80 characters covering the public "
         "benchmark movement, capability-filter behavior, likely mechanism, and the "
-        "two-item canary limitation. The authoritative public score is: "
+        "limitations of this run. The authoritative public score is: "
         f"{public_score}. Stop after share_finding succeeds."
     )
     result = asyncio.run(
@@ -136,7 +170,7 @@ def main() -> None:
 
     published = [
         path
-        for path in (team / "forum").glob("*.json")
+        for path in findings_dir.glob("*.json")
         if _load_object(path).get("run_id") == run_id
     ]
     if len(published) != 1:

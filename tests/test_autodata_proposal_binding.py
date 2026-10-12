@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
@@ -147,6 +148,73 @@ def test_atomic_proposal_write_failure_does_not_replace_ready_marker(
         "approved": True,
         "execution_ready": True,
     }
+
+
+def test_proposal_rejects_method_without_current_passed_contract(
+    tmp_path: Path,
+) -> None:
+    ideas = tmp_path / "ideas"
+    method_dir = ideas / "candidate"
+    method_dir.mkdir(parents=True)
+    (method_dir / "run.py").write_text("VALUE = 1\n")
+    (method_dir / ".aar-method-contract.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "passed",
+                "method_path": str((method_dir / "run.py").resolve()),
+                "source_sha256": "a" * 64,
+                "requirements": {
+                    "run_dry_run": True,
+                    "require_gemma4_targets": True,
+                    "require_smoke_run": True,
+                    "require_autodata_loader": False,
+                },
+                "errors": [],
+            }
+        )
+    )
+
+    def proposal_response(_args, verdict, **_kwargs):
+        return verdict
+
+    with (
+        mock.patch.dict(
+            os.environ,
+            {
+                "AAR_IDEAS_DIR": str(ideas),
+                "AAR_REQUIRE_METHOD_CONTRACT": "1",
+                "AAR_REQUIRE_GEMMA4_TARGETS": "1",
+                "AAR_REQUIRE_METHOD_SMOKE": "1",
+                "AAR_AUTODATA": "0",
+            },
+            clear=False,
+        ),
+        mock.patch(
+            "aar.research_loop.tools.server_api_tools._method_code",
+            return_value=("VALUE = 1", "package-hash"),
+        ),
+        mock.patch("aar.config.IDEAS_DIR", str(ideas)),
+        mock.patch(
+            "aar.research_loop.tools.server_api_tools._proposal_response",
+            side_effect=proposal_response,
+        ),
+        mock.patch(
+            "aar.research_loop.monitor.check_proposal"
+        ) as monitor,
+    ):
+        result = asyncio.run(
+            server_api_tools.submit_idea_proposal.handler(
+                {"idea_name": "candidate"}
+            )
+        )
+
+    assert result["approved"] is False
+    assert result["violations"] == [
+        "METHOD_CONTRACT: trusted validation failed"
+    ]
+    assert "MethodConfig class is missing" in result["error"]
+    monitor.assert_not_called()
 
 
 def test_grounding_refuses_before_approved_proposal(tmp_path: Path) -> None:

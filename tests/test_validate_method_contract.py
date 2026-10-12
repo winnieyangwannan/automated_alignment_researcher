@@ -15,6 +15,7 @@ from scripts.validate_method_contract import (
     _autodata_loader_errors,
     _undefined_name_errors,
     _unsafe_training_api_errors,
+    validate,
 )
 
 
@@ -28,6 +29,17 @@ class ValidateMethodContractTest(unittest.TestCase):
             submitter.index('"${REPO}/scripts/validate_method_contract.py"'),
             submitter.index("sbatch --parsable"),
         )
+
+    def test_static_failure_skips_generated_method_import(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            method = Path(temp) / "run.py"
+            method.write_text("import module_that_must_not_be_imported\n")
+
+            result = validate(method)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(any("missing required phase contexts" in error for error in result["errors"]))
+        self.assertFalse(any("method import failed" in error for error in result["errors"]))
 
     def test_autodata_loader_gate_matches_native_proposal_contract(self) -> None:
         missing = _autodata_loader_errors(ast.parse("items = json.load(handle)"))
