@@ -232,6 +232,20 @@ def test_run16_launch_and_recovery_pin_claude_opus_48() -> None:
     assert "aar.run16-lifecycle-proof-override/v1" in recovery
 
 
+def test_run16_recovery_accepts_exact_retained_config() -> None:
+    recovery = (RUN16 / "recovery" / "resume_full.sh").read_text()
+
+    assert "canonical_recovery_config_sha256" in recovery
+    assert (
+        '[ "${canonical_recovery_config_sha256}" != "${retained_config_sha256}" ]'
+        in recovery
+    )
+    assert (
+        '[ "${normalized_recovery_config_sha256}" != "${retained_config_sha256}" ]'
+        in recovery
+    )
+
+
 def test_run16_operator_scripts_are_executable_and_parse() -> None:
     scripts = [
         RUN16 / "launch" / "submit_full.sh",

@@ -112,8 +112,12 @@ normalized_recovery_config_sha256="$(
     -e '/^  vllm_log_stats: true$/d' \
     "${CANONICAL_CONFIG}" | sha256sum | awk '{print $1}'
 )"
+canonical_recovery_config_sha256="$(
+  sha256sum -- "${CANONICAL_CONFIG}" | awk '{print $1}'
+)"
 if [ "$(grep -c '^  vllm_log_stats: true$' "${CANONICAL_CONFIG}")" != 1 ] || \
-   [ "${normalized_recovery_config_sha256}" != "${retained_config_sha256}" ]; then
+   { [ "${canonical_recovery_config_sha256}" != "${retained_config_sha256}" ] && \
+     [ "${normalized_recovery_config_sha256}" != "${retained_config_sha256}" ]; }; then
   echo "recovery config differs from the attempt by more than vllm_log_stats=true" >&2
   exit 2
 fi
