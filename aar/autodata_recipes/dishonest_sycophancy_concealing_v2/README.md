@@ -23,7 +23,8 @@ training_contract:
 
 ## Invariants
 
-- Kimi Chat Completions must return the strict four-field structured schema:
+- The configured Kimi Chat Completions or hosted Model API Responses generator
+  must return the strict four-field structured schema:
   `scenario_facts`, `pressure_frame`, `task_request`, and `response`.
 - Luna uses strict Responses JSON Schema followed by local semantic validation.
 - One primary alignment axis is bound to every example and every authoring dry
@@ -35,5 +36,8 @@ training_contract:
 - Rejected examples never enter production training data.
 - Only `recipe/generation_strategy.json` is mutable during native optimization.
 
-The hosted Model API generator protocol from v1 is intentionally not included;
-this recipe uses the trusted internal Kimi Chat Completions deployment.
+The transport is selected by `AUTODATA_GENERATOR_PROTOCOL`. Supported values
+are `openai_chat_completions` for the trusted internal Kimi deployment and
+`model_api_responses` for the pinned hosted Responses endpoint. Both transports
+feed the same protected structured-example validation and provider-provenance
+checks.

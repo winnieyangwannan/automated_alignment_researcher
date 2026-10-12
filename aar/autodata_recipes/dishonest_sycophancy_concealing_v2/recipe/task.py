@@ -732,18 +732,19 @@ def _validate_provider_usage(
 
 def _generator_text(response: dict[str, Any]) -> str:
     choices = response.get("choices")
-    if not isinstance(choices, list) or not choices:
-        raise RuntimeError("generator response omitted choices")
-    message = choices[0].get("message") if isinstance(choices[0], dict) else None
-    if not isinstance(message, dict):
-        raise RuntimeError("generator response omitted message")
-    content = message.get("content")
-    if not isinstance(content, str) or not content.strip():
-        raise RuntimeError("generator response had no final content")
-    return content
+    if isinstance(choices, list) and choices:
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, str) and content.strip():
+            return content
+    return _responses_text(response, role="generator")
 
 
 def _judge_text(response: dict[str, Any]) -> str:
+    return _responses_text(response, role="judge")
+
+
+def _responses_text(response: dict[str, Any], *, role: str) -> str:
     direct = response.get("output_text")
     if isinstance(direct, str) and direct.strip():
         return direct
@@ -756,7 +757,7 @@ def _judge_text(response: dict[str, Any]) -> str:
                 if isinstance(content.get("text"), str):
                     pieces.append(content["text"])
     if not pieces:
-        raise RuntimeError("judge response had no output text")
+        raise RuntimeError(f"{role} response had no output text")
     return "".join(pieces)
 
 
@@ -855,15 +856,14 @@ def _generate(
     preserve_prompt: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     base = _required_env("AUTODATA_GENERATOR_URL").rstrip("/")
+    protocol = os.environ.get(
+        "AUTODATA_GENERATOR_PROTOCOL", "openai_chat_completions"
+    ).strip()
     model = _required_env("AUTODATA_GENERATOR_MODEL")
     deployment = _required_env("AUTODATA_GENERATOR_DEPLOYMENT_ID")
     max_tokens = _bounded_positive_int_env(
         "AUTODATA_GENERATOR_MAX_OUTPUT", "65536", maximum=65536
     )
-    headers = {"X-Deployment-Id": deployment}
-    host_header = os.environ.get("AUTODATA_GENERATOR_HOST_HEADER", "").strip()
-    if host_header:
-        headers["Host"] = host_header
     system = str(strategy["system_prompt"])
     primary_axis = _task_primary_axis(task) if "axis_strategies" in strategy else ""
     generation_prompt = (
@@ -898,9 +898,13 @@ def _generate(
             "response.\n"
             + json.dumps({"previous_attempt_feedback": feedback}, sort_keys=True)
         )
-    response = _post_json(
-        base + "/chat/completions",
-        {
+    if protocol == "openai_chat_completions":
+        endpoint = base + "/chat/completions"
+        headers = {"X-Deployment-Id": deployment}
+        host_header = os.environ.get("AUTODATA_GENERATOR_HOST_HEADER", "").strip()
+        if host_header:
+            headers["Host"] = host_header
+        payload = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system},
@@ -947,7 +951,24 @@ def _generate(
             # real canary exhausted the full output allowance before emitting
             # its JSON answer.
             "chat_template_kwargs": {"thinking": False},
-        },
+        }
+    elif protocol == "model_api_responses":
+        if base != "https://api.meta.ai/v1/responses":
+            raise RuntimeError("Model API generator endpoint is not pinned")
+        endpoint = base
+        headers = {
+            "Authorization": "Bearer " + _required_env("MODEL_API_KEY"),
+        }
+        payload = {
+            "model": model,
+            "input": f"SYSTEM:\n{system}\n\nUSER:\n{generation_prompt}",
+            "max_output_tokens": max_tokens,
+        }
+    else:
+        raise RuntimeError(f"unsupported generator protocol: {protocol}")
+    response = _post_json(
+        endpoint,
+        payload,
         role="generator",
         headers=headers,
         timeout=int(os.environ.get("AUTODATA_GENERATOR_TIMEOUT", "90")),

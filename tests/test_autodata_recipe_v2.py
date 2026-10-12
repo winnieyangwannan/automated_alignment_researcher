@@ -26,6 +26,7 @@ def _load_module(name: str, path: Path):
 
 def _generator_environment() -> dict[str, str]:
     return {
+        "AUTODATA_GENERATOR_PROTOCOL": "openai_chat_completions",
         "AUTODATA_GENERATOR_URL": "http://internal.example/v1",
         "AUTODATA_GENERATOR_MODEL": "Kimi-K2.6",
         "AUTODATA_GENERATOR_DEPLOYMENT_ID": "autodata_8-kimi26",
@@ -71,8 +72,8 @@ def test_v2_is_distinct_and_preserves_structured_recipe_invariants() -> None:
     assert "legal-document tasks" in constraints
     assert "historical AutoData recipes" in constraints
     assert "evaluation-source content" in constraints
-    assert "hosted Model API generator protocol" in readme
-    assert "model_api_responses" not in (RECIPE / "recipe" / "task.py").read_text()
+    assert "hosted Model API Responses generator" in readme
+    assert "model_api_responses" in (RECIPE / "recipe" / "task.py").read_text()
 
 
 def test_v2_authoring_dry_run_covers_all_three_axes() -> None:
@@ -218,6 +219,80 @@ def test_v2_generator_requests_exact_four_field_json_schema() -> None:
     assert row["_scenario_facts"] == content["scenario_facts"]
     assert post.call_args.args[1]["response_format"] == expected_format
     assert post.call_args.args[1]["chat_template_kwargs"] == {"thinking": False}
+
+
+def test_v2_generator_uses_model_api_responses_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = _load_module(
+        "aar_autodata_recipe_v2_model_api_generator",
+        RECIPE / "recipe" / "task.py",
+    )
+    strategy = json.loads(
+        (RECIPE / "recipe" / "generation_strategy.json").read_text()
+    )
+    environment = {
+        "AUTODATA_GENERATOR_PROTOCOL": "model_api_responses",
+        "AUTODATA_GENERATOR_URL": "https://api.meta.ai/v1/responses",
+        "AUTODATA_GENERATOR_MODEL": "claude-4-8-opus",
+        "AUTODATA_GENERATOR_DEPLOYMENT_ID": "meta-model-api-claude-4-8-opus",
+        "AUTODATA_GENERATOR_INPUT_USD_PER_MILLION": "1",
+        "AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION": "4",
+        "AUTODATA_GENERATOR_MAX_INPUT": "196608",
+        "AUTODATA_GENERATOR_MAX_OUTPUT": "65536",
+        "MODEL_API_KEY": "test-only-secret",
+    }
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    observed: dict[str, object] = {}
+    content = {
+        "scenario_facts": ["The study was observational."],
+        "pressure_frame": "The director expects endorsement.",
+        "task_request": "Draft a concise summary.",
+        "response": "The study does not establish causation.",
+    }
+
+    def fake_post_json(url, payload, **kwargs):
+        observed.update(url=url, payload=payload, kwargs=kwargs)
+        return {
+            "id": "model-api-generator-request",
+            "usage": {"input_tokens": 10, "output_tokens": 10},
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {"type": "output_text", "text": json.dumps(content)}
+                    ],
+                }
+            ],
+        }
+
+    monkeypatch.setattr(task, "_post_json", fake_post_json)
+    row, usage = task._generate(
+        {
+            "payload": {
+                "domain": "test",
+                "primary_axis": "sycophancy_resistance",
+            },
+            "seed": 1,
+        },
+        {"goal": "goal", "training_mechanism": "mechanism"},
+        strategy,
+    )
+
+    assert observed["url"] == "https://api.meta.ai/v1/responses"
+    payload = observed["payload"]
+    assert isinstance(payload, dict)
+    assert payload["model"] == "claude-4-8-opus"
+    assert payload["max_output_tokens"] == 65536
+    assert payload["input"].startswith("SYSTEM:\n")
+    assert "messages" not in payload
+    kwargs = observed["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert kwargs["headers"] == {"Authorization": "Bearer test-only-secret"}
+    assert row["_scenario_facts"] == content["scenario_facts"]
+    assert usage["model"] == "claude-4-8-opus"
+    assert usage["deployment_id"] == "meta-model-api-claude-4-8-opus"
 
 
 def test_v2_provider_usage_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
