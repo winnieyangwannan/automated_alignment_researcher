@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: prepared; not launched
+- Status: running; `approve_grounding` completed and `author_pipeline` active
 - Created: 2026-10-12 12:49 PT
-- Last updated: 2026-10-12 12:49 PT
+- Last updated: 2026-10-12 13:06 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -64,6 +64,70 @@ or evaluation.
 - Evaluator: disabled and must not launch.
 - AutoData revision: `51c18fdb0eaa69d8ad66a1805e9c08a507c5fbb1`.
 - Generation concurrency: `8`; per-request attempts: `3`.
+
+## Monitoring goal and status template
+
+When reporting “how is it going?”, use this complete lifecycle chart for the
+current trial. Update the symbols and the short explanation at the active or
+failed boundary from durable native state and receipts, not model prose.
+
+Legend: ✓ live-proven, △ implemented/tested but not live-proven, ✗ not reached.
+The chart below is the durable evidence snapshot at 13:06 PT; later monitor
+reports must advance it from current Trial 9 receipts.
+
+```text
+AAR research and method proposal
+  ✓ literature/method recovery
+  ✓ method validation and proposal approval
+             │
+             ▼
+AutoData workspace
+  ✓ create/register fresh workspace
+  ✓ clarify_design — typed coordinator
+  ✓ author_grounding — secure typed coordinator
+      Trial 9 live-proved the replacement without exposing the lease to the
+      semantic worker or model-visible transcript.
+  ✓ approve_grounding — signed trusted approval
+  ✓ author_pipeline — typed coordinator worked live in Trial 7
+      Trial 9 is currently exercising this action.
+             │
+             ▼
+Workspace finalization
+  △ post-pipeline reconciliation
+      Trial 7 failed here because clarify receipt lookup used workspace_id.
+      The exact action_id fix is implemented/tested and is Trial 9's next
+      live-proof boundary.
+  ✓ authoring dry run and approve_baseline — previously reached in Trial 4
+  ? approve_resources — conditional; not live-proven in Run 13
+  ✓ freeze workspace and create meta execution — previously reached in Trial 4
+             │
+             ▼
+Meta-optimization
+  △ baseline generation — entered, never completed end-to-end
+  △ analyze_results — typed coordinator implemented/tested
+  △ mutate_candidate — typed coordinator implemented/tested
+  ✗ complete the 3–10 iteration optimization loop
+  ✗ finalize and export the winning pipeline
+             │
+             ▼
+Production
+  ✗ create/run production execution
+  ✗ generate 1,250 fresh tasks
+  ✗ retain 1,000 accepted rows
+  ✗ publish verified dataset handoff
+             │
+             ▼
+Gemma training
+  △ training-smoke coordinator implemented/tested
+  ✗ consume the real production export
+  ✗ perform one optimizer step
+  ✗ verify consumption receipt and PEFT adapter
+             │
+             ▼
+Stop at training_smoke
+  ✗ not reached
+  ○ evaluator intentionally disabled
+```
 
 ## Pass criteria
 
