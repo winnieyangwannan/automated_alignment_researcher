@@ -112,11 +112,6 @@ def _sanitized_research_subprocess_environment():
     removing sensitive entries during that operation gives the child a clean
     environment, then restores the trusted Python parent's access.
     """
-    if os.getenv("AAR_RESEARCH_ENV_ISOLATION", "0").lower() not in {
-        "1", "true", "yes", "on"
-    }:
-        yield
-        return
     removed = {
         name: value
         for name, value in list(os.environ.items())

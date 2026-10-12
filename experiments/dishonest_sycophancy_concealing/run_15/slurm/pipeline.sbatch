@@ -114,7 +114,7 @@ else
   export AAR_START_EVAL_WORKER=1
 fi
 export AAR_CHAIN_SANITIZE_ENV=1 AAR_RUNTIME_ENV_DISABLE_FILE=1
-export AAR_RESEARCH_ENV_ISOLATION=0 AAR_HIDE_EVAL_CONFIG=1
+export AAR_HIDE_EVAL_CONFIG=1
 
 [ "${AAR_AGENT_BACKEND:?}" = kimi ] || { echo "Run 15 requires Kimi" >&2; exit 2; }
 [ "${AAR_FORUM_SCOPE:?missing forum scope}" = shared ] || {

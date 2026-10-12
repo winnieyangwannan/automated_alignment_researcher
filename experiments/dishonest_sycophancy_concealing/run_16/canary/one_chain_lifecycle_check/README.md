@@ -91,7 +91,7 @@ recipe, comparator, or production-export role.
 AAR control plane
 ├─ AAR researcher and native data-generation author
 │  └─ Claude Opus 4.8, model claude-opus-4-8 at maximum effort
-│     Meta Claude CLI with secure internet and research process isolation
+│     Meta Claude CLI with secure internet; no AAR Bubblewrap wrapper
 ├─ AAR proposal-approval monitor
 │  └─ claude-4-8-opus through Meta Model API
 │     Reviews method policy, reproducibility, leakage, and data provenance

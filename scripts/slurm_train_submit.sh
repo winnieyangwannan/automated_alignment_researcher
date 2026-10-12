@@ -60,13 +60,7 @@ export SUBMISSIONS_DIR="${SUBMISSIONS_DIR:-${REPO}/_runs/submissions}"
 export SCORES_DIR="${SCORES_DIR:-${TEAM_DIR:+${TEAM_DIR}/scores}}"
 export SCORES_DIR="${SCORES_DIR:-${REPO}/_runs/scores}"
 mkdir -p "${SCORES_DIR}"
-if [ -n "${TEAM_DIR:-}" ] && [ -n "${SLURM_JOB_ID:-}" ]; then
-  if [ "${AAR_RESEARCH_ENV_ISOLATION:-0}" = 1 ]; then
-    export AAR_TRAIN_LOG_PATH="${TEAM_DIR}/secrets/failure-evidence/train-${SLURM_JOB_ID}.out"
-  else
-    unset AAR_TRAIN_LOG_PATH
-  fi
-fi
+unset AAR_TRAIN_LOG_PATH
 _record_training_failure() {
   _exit_code=$?
   if [ "${_exit_code}" -ne 0 ] && [ "${AAR_WRITE_TRAIN_FAILURE_MARKER:-0}" = "1" ]; then

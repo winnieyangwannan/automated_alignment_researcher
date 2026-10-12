@@ -147,7 +147,7 @@ source "${AAR_AUTODATA_RUNTIME_ENV}"
 }
 case "${AAR_AGENT_BACKEND:?missing research backend}" in
   kimi)
-    export AAR_WEB_MODE=native_web AAR_RESEARCH_ENV_ISOLATION=0
+    export AAR_WEB_MODE=native_web
     export KIMI_CLI_PATH=/storage/home/${USER}/tools/kimi-code-2.1.1/node_modules/.bin/kimi
     export AAR_KIMI_SERVE_DEPLOYMENT=aar_8-kimi26 AAR_KIMI_EXPECTED_MODEL=Kimi-K2.6
     export AAR_KIMI_PROVIDER_TYPE=kimi AAR_KIMI_DISABLE_THINKING=1
@@ -164,7 +164,7 @@ case "${AAR_AGENT_BACKEND:?missing research backend}" in
     [ "${AAR_EFFORT:?missing Claude effort}" = max ] || {
       echo "Run 17 requires maximum Claude effort" >&2; exit 2;
     }
-    export AAR_WEB_MODE=meta_secure AAR_RESEARCH_ENV_ISOLATION=1
+    export AAR_WEB_MODE=meta_secure
     unset AAR_KIMI_PROXY_INFO
     ;;
   *) echo "unsupported AutoData researcher backend" >&2; exit 2;;

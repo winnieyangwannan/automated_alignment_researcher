@@ -61,7 +61,6 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
 
         agent_module = _load_agent_module(Options)
         operator_env = {
-            "AAR_RESEARCH_ENV_ISOLATION": "1",
             "SERVICE_STATUS_URL": "http://service.example:8123",
             "SANDOQ_FLEET_AUTH_TOKEN": "sandoq-secret",
             "HARNESS_ENV": "/operator/harness.env",
@@ -77,10 +76,7 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
                     "http://service.example:8123",
                 )
                 for name in operator_env:
-                    if name not in {
-                        "AAR_RESEARCH_ENV_ISOLATION",
-                        "SERVICE_STATUS_URL",
-                    }:
+                    if name != "SERVICE_STATUS_URL":
                         self.assertNotIn(name, os.environ)
 
             # The trusted parent regains its services and integrity-monitor
@@ -147,7 +143,6 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
             mcp_servers={},
         )
         operator_env = {
-            "AAR_RESEARCH_ENV_ISOLATION": "1",
             "SERVICE_STATUS_URL": "http://service.example:8123",
             "SANDOQ_FLEET_AUTH_TOKEN": "sandoq-secret",
             "MODEL_API_KEY": "operator-secret",

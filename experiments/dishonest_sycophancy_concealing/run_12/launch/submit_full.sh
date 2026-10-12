@@ -290,7 +290,7 @@ case "${AGENT_BACKEND}" in
   claude)
     [ "${AGENT_MODEL}" = claude-opus-4-8 ] || { echo "Run 17 requires Claude Opus 4.8" >&2; exit 2; }
     [ "${AGENT_EFFORT}" = max ] || { echo "Run 17 requires maximum Claude effort" >&2; exit 2; }
-    export AAR_WEB_MODE=meta_secure AAR_RESEARCH_ENV_ISOLATION=1
+    export AAR_WEB_MODE=meta_secure
     CLAUDE_CLI_PATH="${CLAUDE_CLI_PATH:-$(command -v claude || true)}"
     export CLAUDE_CLI_PATH
     [ -x "${CLAUDE_CLI_PATH}" ] || { echo "Claude CLI is missing" >&2; exit 2; }

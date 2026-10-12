@@ -101,7 +101,7 @@ a static product above 256 fails the method contract before GPU submission.
 
 - Researcher and native data-generation author: Claude Opus 4.8, model
   `claude-opus-4-8` at maximum effort, through the Meta Claude CLI in
-  secure-internet mode with the research mount/PID isolation boundary enabled.
+  secure-internet mode. The AAR-specific Bubblewrap wrapper is not used.
 - Proposal monitor: `claude-4-8-opus` through Meta Model API.
 - Training base and optional target probe: fixed Gemma 4 31B IT at
   `/checkpoint/ram/shared/models/google/gemma-4-31B-it`; training adds a new

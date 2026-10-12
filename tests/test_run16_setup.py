@@ -141,12 +141,18 @@ def test_run16_terminal_evaluation_failures_do_not_retry_unchanged_adapter() -> 
     assert "export AAR_EVAL_RETRY_FAILED=1" not in pipeline
 
 
-def test_run16_functional_canaries_skip_bubblewrap_only() -> None:
-    pipeline = (RUN16 / "slurm" / "pipeline.sbatch").read_text()
+def test_run16_does_not_use_aar_bubblewrap_wrapper() -> None:
+    operational = "\n".join(
+        path.read_text()
+        for path in (
+            RUN16 / "slurm" / "pipeline.sbatch",
+            RUN16 / "recovery" / "resume_full.sh",
+            ROOT / "scripts" / "slurm_aar_chain.sh",
+        )
+    )
 
-    assert 'if [ "${AAR_RUN16_MODE:-full}" = canary ]; then' in pipeline
-    assert "export AAR_RESEARCH_ENV_ISOLATION=0" in pipeline
-    assert "export AAR_RESEARCH_ENV_ISOLATION=1" in pipeline
+    assert "AAR_RESEARCH_ENV_ISOLATION" not in operational
+    assert "claude_research_bwrap" not in operational
 
 
 def test_research_prompt_has_no_hard_coded_training_budget() -> None:

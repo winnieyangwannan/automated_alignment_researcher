@@ -3865,14 +3865,6 @@ class KimiAgent:
         from aar.eval_pod.failure import publish_failure
 
         log_path = None
-        team_dir = os.environ.get("TEAM_DIR", "").strip()
-        if team_dir and os.getenv("AAR_RESEARCH_ENV_ISOLATION", "0") == "1":
-            log_path = (
-                Path(team_dir)
-                / "secrets"
-                / "failure-evidence"
-                / f"train-{job_id}.out"
-            )
         try:
             failure_path = publish_failure(
                 scores_dir,

@@ -133,13 +133,7 @@ def _configure_environment(
             "AAR_AUTODATA_SHA": pipeline_sha,
             "AAR_REPO": str(repo),
             "AAR_RUNTIME_ROOT": str(output_root),
-            "AAR_RESEARCH_ENV_ISOLATION": "1",
             "AAR_CLAUDE_REAL_CLI_PATH": str(real_claude_cli),
-            # Use Meta's native Claude sandbox for this credential-free plugin
-            # smoke. Nesting that sandbox inside AAR's production Bubblewrap
-            # wrapper is not portable on devservers because the outer user
-            # namespace does not map UID 0, which the native launcher needs
-            # while constructing its own sandbox.
             "CLAUDE_CLI_PATH": str(real_claude_cli),
             "AUTODATA_CACHE_DIR": str(output_root / "autodata" / "plugin-cache"),
             "TEAM_DIR": str(output_root / "team"),

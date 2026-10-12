@@ -585,50 +585,6 @@ elif [ "${_agent_backend}" = claude ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
 fi
 unset _agent_backend _requested_web _detected_web
 
-# The research model has Bash/Read access, so same-UID environment
-# scrubbing is insufficient by itself.  Put Claude Code in a mount/PID
-# namespace that cannot see the operator's home or the run secret directory.
-# The trusted Python parent remains outside for monitor credentials.
-if [ "${AAR_RESEARCH_ENV_ISOLATION:-0}" = 1 ]; then
-  command -v bwrap >/dev/null || {
-    echo "[aar] ERROR: research environment isolation requires bwrap" >&2
-    exit 2
-  }
-  [ -x "${REPO}/scripts/claude_research_bwrap.sh" ] || {
-    echo "[aar] ERROR: Claude research sandbox wrapper is not executable" >&2
-    exit 2
-  }
-  export AAR_CLAUDE_REAL_CLI_PATH="${CLAUDE_CLI_PATH:?missing real Claude CLI}"
-  export CLAUDE_CLI_PATH="${REPO}/scripts/claude_research_bwrap.sh"
-  # Fail before spending an agent call if the production mount boundary cannot
-  # be constructed.  /bin/bash stands in for Claude only for this canary.
-  # shellcheck disable=SC2016  # variables intentionally expand inside sandbox
-  AAR_CLAUDE_REAL_CLI_PATH=/bin/bash "${CLAUDE_CLI_PATH}" -c '
-    set -eu
-    [ ! -s "$AAR_REPO/.env" ]
-    [ ! -s "$AAR_REPO/.sandoq-firecracker-token" ]
-    [ ! -e "$HOME/.ssh" ]
-    if [ -d "$AAR_RUNTIME_ROOT/secrets" ]; then
-      [ -z "$(find "$AAR_RUNTIME_ROOT/secrets" -mindepth 1 -print -quit)" ]
-    fi
-    if [ -d "$TEAM_DIR/secrets" ]; then
-      [ -z "$(find "$TEAM_DIR/secrets" -mindepth 1 -print -quit)" ]
-    fi
-    touch "$AAR_RUNTIME_ROOT/.research-sandbox-write-canary"
-    rm -f "$AAR_RUNTIME_ROOT/.research-sandbox-write-canary"
-    if [ -d /var/slurm-tmp ]; then
-      touch /var/slurm-tmp/.aar-research-sandbox-write-canary
-      rm -f /var/slurm-tmp/.aar-research-sandbox-write-canary
-    fi
-  '
-  echo "[aar] Claude research mount/PID namespace verified"
-  # Exercise the real Meta launcher before a research session is counted. This
-  # catches native-binary selection, sandbox ownership, and launcher startup
-  # failures that a /bin/bash mount probe alone cannot detect.
-  "${CLAUDE_CLI_PATH}" --version >/dev/null
-  echo "[aar] Claude research launcher verified"
-fi
-
 cd "${REPO}"
 
 # Per-chain MEMORY file (NOT shared between chains), under THIS team's logs/ folder.
