@@ -52,6 +52,7 @@ from aar.infrastructure.autodata_coordinator import (
     ExecutionAnalysisReconciler,
     ExecutionMutationReconciler,
     NativeAutoDataControl,
+    WorkspacePipelineReconciler,
 )
 from aar.infrastructure.autodata_coordinator.claude_worker import ClaudeWorker
 from aar.infrastructure.autodata_coordinator.kimi_worker import KimiWorker
@@ -2687,13 +2688,19 @@ class Supervisor:
         analysis_enabled = os.getenv(
             "AAR_AUTODATA_ANALYSIS_COORDINATOR", ""
         ).strip().lower()
+        pipeline_enabled = os.getenv(
+            "AAR_AUTODATA_PIPELINE_COORDINATOR", ""
+        ).strip().lower()
         mutation_enabled = os.getenv(
             "AAR_AUTODATA_MUTATION_COORDINATOR", ""
         ).strip().lower()
-        if not clarify_enabled and not analysis_enabled and not mutation_enabled:
+        if not any(
+            (clarify_enabled, pipeline_enabled, analysis_enabled, mutation_enabled)
+        ):
             return None
         for label, enabled in (
             ("clarify", clarify_enabled),
+            ("pipeline", pipeline_enabled),
             ("analysis", analysis_enabled),
             ("mutation", mutation_enabled),
         ):
@@ -2702,6 +2709,18 @@ class Supervisor:
                     "semantic_coordinator_flag_invalid",
                     f"{label} coordinator enablement flag is invalid",
                 )
+        if pipeline_enabled and (
+            os.getenv("AAR_EXPERIMENT_RUN_ID") != "run13"
+            or os.getenv("AAR_IDEA_UID_OVERRIDE")
+            != "run13-trial7-alpha-iteration-1"
+            or os.getenv("AAR_AGENT_BACKEND") != "claude"
+            or os.getenv("AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE") != "1"
+            or os.getenv("AAR_AUTODATA_LIFECYCLE_SUPERVISED") != "1"
+        ):
+            raise AutoDataCoordinatorError(
+                "pipeline_coordinator_scope_invalid",
+                "author_pipeline coordinator is restricted to supervised Run 13 Trial 7",
+            )
         team_raw = os.getenv("TEAM_DIR", "").strip()
         if not team_raw:
             raise AutoDataCoordinatorError(
@@ -2746,6 +2765,12 @@ class Supervisor:
                 coordinator.reconcile_registered_clarify(self.args.control_file)
             )
             action_kind = "clarify_design"
+        if outcome is None and pipeline_enabled:
+            coordinator = WorkspacePipelineReconciler(**common)
+            outcome = asyncio.run(
+                coordinator.reconcile_registered_pipeline(self.args.control_file)
+            )
+            action_kind = "author_pipeline"
         if outcome is None and analysis_enabled:
             coordinator = ExecutionAnalysisReconciler(**common)
             outcome = asyncio.run(

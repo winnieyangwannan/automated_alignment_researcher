@@ -1067,6 +1067,75 @@ def test_semantic_coordinator_dispatches_execution_analysis_slice(
     assert observed["control_file"] == control
 
 
+def test_semantic_coordinator_dispatches_workspace_pipeline_slice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = _semantic_coordinator_supervisor(tmp_path, monkeypatch)
+    monkeypatch.delenv("AAR_AUTODATA_CLARIFY_COORDINATOR", raising=False)
+    monkeypatch.setenv("AAR_AUTODATA_PIPELINE_COORDINATOR", "1")
+    monkeypatch.setenv("AAR_AUTODATA_SEMANTIC_WORKER", "claude")
+    monkeypatch.setenv("AAR_EXPERIMENT_RUN_ID", "run13")
+    monkeypatch.setenv("AAR_IDEA_UID_OVERRIDE", "run13-trial7-alpha-iteration-1")
+    monkeypatch.setenv("AAR_AGENT_BACKEND", "claude")
+    monkeypatch.setenv("AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE", "1")
+    monkeypatch.setenv("AAR_AUTODATA_LIFECYCLE_SUPERVISED", "1")
+    observed: dict[str, object] = {}
+
+    class Reconciler:
+        def __init__(self, **kwargs: object) -> None:
+            observed.update(kwargs)
+
+        async def reconcile_registered_pipeline(self, path: Path):
+            observed["control_file"] = path
+            return type(
+                "Outcome",
+                (),
+                {
+                    "workspace_id": "ws_" + "1" * 32,
+                    "action_id": "act_" + "2" * 24,
+                    "worker_backend": "claude",
+                    "receipt_path": tmp_path / "receipt.json",
+                    "native_phase": "pipeline_pending",
+                    "native_revision": 3,
+                },
+            )()
+
+    monkeypatch.setattr(
+        lifecycle_supervisor.NativeAutoDataControl,
+        "from_environment",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(lifecycle_supervisor, "WorkspacePipelineReconciler", Reconciler)
+    monkeypatch.setattr(
+        supervisor, "_snapshot", lambda reason: observed.update(reason=reason)
+    )
+
+    result = supervisor._reconcile_semantic_action()
+
+    assert result is not None
+    assert result["action_kind"] == "author_pipeline"
+    assert observed["control_file"] == supervisor.args.control_file
+
+
+def test_pipeline_coordinator_rejects_non_trial7_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = _semantic_coordinator_supervisor(tmp_path, monkeypatch)
+    monkeypatch.delenv("AAR_AUTODATA_CLARIFY_COORDINATOR", raising=False)
+    monkeypatch.setenv("AAR_AUTODATA_PIPELINE_COORDINATOR", "1")
+    monkeypatch.setenv("AAR_AUTODATA_SEMANTIC_WORKER", "claude")
+    monkeypatch.setenv("AAR_EXPERIMENT_RUN_ID", "run13")
+    monkeypatch.setenv("AAR_IDEA_UID_OVERRIDE", "run13-trial6-alpha-iteration-1")
+    monkeypatch.setenv("AAR_AGENT_BACKEND", "claude")
+    monkeypatch.setenv("AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE", "1")
+    monkeypatch.setenv("AAR_AUTODATA_LIFECYCLE_SUPERVISED", "1")
+
+    with pytest.raises(lifecycle_supervisor.AutoDataCoordinatorError) as raised:
+        supervisor._reconcile_semantic_action()
+
+    assert raised.value.code == "pipeline_coordinator_scope_invalid"
+
+
 def test_semantic_coordinator_dispatches_execution_mutation_slice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

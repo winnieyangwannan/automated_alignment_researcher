@@ -370,6 +370,191 @@ def _add_supported_budget_options(options: Dict[str, Any]) -> None:
     options["max_budget_usd"] = budget
 
 
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+_AUTODATA_CONTROL_SCHEMA = "aar.autodata.lifecycle-control/v1"
+_AUTODATA_WORKSPACE_ID = re.compile(r"^ws_[0-9a-f]{32}$")
+
+
+class PipelineOwnershipFenceError(RuntimeError):
+    """The trusted Trial 7 pipeline ownership boundary cannot be established."""
+
+
+def _trial7_pipeline_fence_enabled() -> bool:
+    """Validate the exact experiment identity allowed to enable this fence."""
+    raw = os.getenv("AAR_AUTODATA_PIPELINE_COORDINATOR", "").strip().lower()
+    if not raw:
+        return False
+    if raw not in _TRUTHY:
+        raise PipelineOwnershipFenceError(
+            "AAR_AUTODATA_PIPELINE_COORDINATOR has an invalid value"
+        )
+    required = {
+        "AAR_EXPERIMENT_RUN_ID": "run13",
+        "AAR_IDEA_UID_OVERRIDE": "run13-trial7-alpha-iteration-1",
+        "AAR_AGENT_BACKEND": "claude",
+        "AAR_AUTODATA_SEMANTIC_WORKER": "claude",
+    }
+    mismatches = [
+        name for name, expected in required.items()
+        if os.getenv(name, "").strip().lower() != expected
+    ]
+    for name in (
+        "AAR_AUTODATA_LIFECYCLE_SUPERVISED",
+        "AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE",
+    ):
+        if os.getenv(name, "").strip().lower() not in _TRUTHY:
+            mismatches.append(name)
+    if mismatches:
+        raise PipelineOwnershipFenceError(
+            "Trial 7 pipeline coordinator identity is incomplete: "
+            + ", ".join(sorted(mismatches))
+        )
+    return True
+
+
+def _registered_trial7_workspace() -> str | None:
+    """Read the unique registered workspace from trusted lifecycle control."""
+    raw = os.getenv("AAR_AUTODATA_SUPERVISOR_CONTROL", "").strip()
+    if not raw:
+        raise PipelineOwnershipFenceError("lifecycle control path is missing")
+    path = Path(raw)
+    try:
+        status = path.lstat()
+        if path.is_symlink() or not path.is_file() or status.st_size > 2 * 1024 * 1024:
+            raise PipelineOwnershipFenceError("lifecycle control is not a safe file")
+        control = json.loads(path.read_text(encoding="utf-8"))
+    except PipelineOwnershipFenceError:
+        raise
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise PipelineOwnershipFenceError("lifecycle control is unreadable") from error
+    if (
+        not isinstance(control, dict)
+        or set(control) != {"schema", "subjects"}
+        or control.get("schema") != _AUTODATA_CONTROL_SCHEMA
+        or not isinstance(control.get("subjects"), list)
+    ):
+        raise PipelineOwnershipFenceError("lifecycle control schema is invalid")
+    seen: set[tuple[str, str]] = set()
+    registered: list[str] = []
+    for entry in control["subjects"]:
+        if not isinstance(entry, dict):
+            raise PipelineOwnershipFenceError("lifecycle registration is invalid")
+        kind = entry.get("kind")
+        subject_id = entry.get("subject_id")
+        subject_status = entry.get("status")
+        if (
+            kind not in {"workspace", "execution"}
+            or not isinstance(subject_id, str)
+            or not subject_id
+            or subject_status not in {"registered", "completed"}
+        ):
+            raise PipelineOwnershipFenceError("lifecycle registration is invalid")
+        key = (kind, subject_id)
+        if key in seen:
+            raise PipelineOwnershipFenceError("lifecycle registration is duplicated")
+        seen.add(key)
+        if kind == "workspace" and subject_status == "registered":
+            if not _AUTODATA_WORKSPACE_ID.fullmatch(subject_id):
+                raise PipelineOwnershipFenceError("workspace identity is invalid")
+            registered.append(subject_id)
+    if len(registered) > 1:
+        raise PipelineOwnershipFenceError("multiple workspaces are registered")
+    return registered[0] if registered else None
+
+
+def _trial7_pipeline_action_is_coordinator_owned() -> bool:
+    """Return whether legacy Claude mutation/execution tools must be fenced."""
+    workspace_id = _registered_trial7_workspace()
+    if workspace_id is None:
+        return False
+    team_raw = os.getenv("TEAM_DIR", "").strip()
+    if not team_raw:
+        raise PipelineOwnershipFenceError("team directory is missing")
+    try:
+        team_dir = Path(team_raw).resolve(strict=True)
+        from aar.infrastructure.autodata_coordinator import NativeAutoDataControl
+
+        control = NativeAutoDataControl.from_environment(
+            team_dir / "autodata" / "action-native-results"
+        )
+        snapshot = control.read_workspace(workspace_id)
+    except PipelineOwnershipFenceError:
+        raise
+    except Exception as error:
+        raise PipelineOwnershipFenceError(
+            "authoritative workspace status is unavailable"
+        ) from error
+    if snapshot.id != workspace_id:
+        raise PipelineOwnershipFenceError("native workspace identity changed")
+    live = [
+        action
+        for action in snapshot.actions
+        if action.status in {"pending", "in_progress"}
+    ]
+    if len(live) > 1:
+        raise PipelineOwnershipFenceError("multiple native actions are live")
+    pipeline = [
+        action
+        for action in snapshot.actions
+        if action.kind == "author_pipeline"
+        and action.status in {"pending", "in_progress", "completed"}
+    ]
+    if snapshot.phase == "pipeline_pending":
+        if len(pipeline) != 1 or (live and live[0].kind != "author_pipeline"):
+            raise PipelineOwnershipFenceError(
+                "pipeline phase does not expose one author_pipeline action"
+            )
+        return True
+    if any(action.status in {"pending", "in_progress"} for action in pipeline):
+        raise PipelineOwnershipFenceError(
+            "live author_pipeline action conflicts with native workspace phase"
+        )
+    return False
+
+
+async def _trial7_pipeline_tool_fence(
+    hook_input: Dict[str, Any], _tool_use_id: str | None, _context: Any
+) -> Dict[str, Any]:
+    """Deny legacy mutation/execution tools while the coordinator owns pipeline."""
+    tool_name = hook_input.get("tool_name")
+    if tool_name not in {"Bash", "Write", "Edit"}:
+        return {}
+    try:
+        fenced = _trial7_pipeline_action_is_coordinator_owned()
+    except Exception:
+        fenced = True
+        reason = "Trial 7 pipeline ownership could not be verified; tool use denied"
+    else:
+        reason = "Trial 7 author_pipeline is owned by the lifecycle coordinator"
+    if not fenced:
+        return {}
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
+def _trial7_pipeline_hooks() -> Dict[str, List[Any]] | None:
+    """Build host-side SDK hooks only for exact, validated Trial 7 mode."""
+    if not _trial7_pipeline_fence_enabled():
+        return None
+    if not _agent_sdk_supports_option("hooks"):
+        raise PipelineOwnershipFenceError(
+            "installed Claude Agent SDK cannot enforce Trial 7 pipeline ownership"
+        )
+    from claude_agent_sdk import HookMatcher
+
+    return {
+        "PreToolUse": [
+            HookMatcher(matcher=tool, hooks=[_trial7_pipeline_tool_fence])
+            for tool in ("Bash", "Write", "Edit")
+        ]
+    }
+
+
 # ---------------------------------------------------------------------------
 # Base agent (wraps Claude Agent SDK)
 # ---------------------------------------------------------------------------
@@ -393,6 +578,7 @@ class BaseAgent:
         strict_mcp_config: Optional[bool] = None,
         plugins: Optional[List[Dict[str, str]]] = None,
         skills: Optional[List[str]] = None,
+        hooks: Optional[Dict[str, List[Any]]] = None,
         progress_timeout_seconds: Optional[float] = None,
     ):
         self.name = name
@@ -409,6 +595,7 @@ class BaseAgent:
         self.strict_mcp_config = strict_mcp_config
         self.plugins = plugins
         self.skills = skills
+        self.hooks = hooks
         if progress_timeout_seconds is None:
             raw_timeout = os.getenv("AAR_AGENT_TURN_TIMEOUT_SECONDS", "").strip()
             progress_timeout_seconds = float(raw_timeout) if raw_timeout else None
@@ -441,6 +628,10 @@ class BaseAgent:
             if not _agent_sdk_supports_option("skills"):
                 raise RuntimeError("installed Claude Agent SDK does not support skills")
             options["skills"] = self.skills
+        if self.hooks is not None:
+            if not _agent_sdk_supports_option("hooks"):
+                raise RuntimeError("installed Claude Agent SDK does not support hooks")
+            options["hooks"] = self.hooks
         _add_supported_reasoning_options(options)
         _add_supported_budget_options(options)
         if self.cli_path:
@@ -856,6 +1047,15 @@ class AutonomousAgentLoop:
                     "Never add a retry/version suffix to an execution idempotency key."
                 )
 
+        pipeline_hooks = _trial7_pipeline_hooks()
+        if pipeline_hooks is not None:
+            system_parts.append(
+                "The Run 13 Trial 7 lifecycle coordinator exclusively owns the "
+                "native author_pipeline action. Never begin, complete, or mutate "
+                "that action directly, and never launch a background or detached "
+                "native lifecycle process."
+            )
+
         return BaseAgent(
             name=f"autonomous-{session_id}",
             allowed_tools=allowed_tools,
@@ -876,6 +1076,7 @@ class AutonomousAgentLoop:
                 else None
             ),
             skills=["autodata:autodata"] if autodata_plugin is not None else None,
+            hooks=pipeline_hooks,
         )
 
     def _ensure_approved_autodata_workspace(self) -> None:

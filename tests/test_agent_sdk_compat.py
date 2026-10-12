@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import os
 import sys
 import types
@@ -28,6 +29,14 @@ def _load_agent_module(options_class: type) -> types.ModuleType:
         "ToolUseBlock",
     ):
         setattr(sdk, name, type(name, (), {}))
+
+    class HookMatcher:
+        def __init__(self, *, matcher=None, hooks=None, timeout=None) -> None:
+            self.matcher = matcher
+            self.hooks = hooks or []
+            self.timeout = timeout
+
+    sdk.HookMatcher = HookMatcher
 
     server_tools = types.ModuleType("aar.research_loop.tools.server_api_tools")
     server_tools.create_server_api_tools_server = lambda: None
@@ -55,6 +64,37 @@ def _load_agent_module(options_class: type) -> types.ModuleType:
 
 
 class AgentSdkCompatibilityTest(unittest.TestCase):
+    @staticmethod
+    def _trial7_environment(directory: str) -> dict[str, str]:
+        team = Path(directory) / "team"
+        team.mkdir()
+        control = Path(directory) / "lifecycle-control.json"
+        control.write_text(
+            json.dumps(
+                {
+                    "schema": "aar.autodata.lifecycle-control/v1",
+                    "subjects": [
+                        {
+                            "kind": "workspace",
+                            "subject_id": "ws_" + "1" * 32,
+                            "status": "registered",
+                        }
+                    ],
+                }
+            )
+        )
+        return {
+            "AAR_AUTODATA_PIPELINE_COORDINATOR": "1",
+            "AAR_EXPERIMENT_RUN_ID": "run13",
+            "AAR_IDEA_UID_OVERRIDE": "run13-trial7-alpha-iteration-1",
+            "AAR_AGENT_BACKEND": "claude",
+            "AAR_AUTODATA_SEMANTIC_WORKER": "claude",
+            "AAR_AUTODATA_LIFECYCLE_SUPERVISED": "1",
+            "AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE": "1",
+            "AAR_AUTODATA_SUPERVISOR_CONTROL": str(control),
+            "TEAM_DIR": str(team),
+        }
+
     def test_kimi_receives_verified_autodata_skill_directory(self) -> None:
         class Options:
             def __init__(self, **kwargs) -> None:
@@ -220,6 +260,219 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
         self.assertNotIn("tools", ordinary)
         self.assertNotIn("setting_sources", ordinary)
         self.assertNotIn("strict_mcp_config", ordinary)
+
+    def test_trial7_pipeline_hooks_are_forwarded_only_in_exact_mode(self) -> None:
+        class Options:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+        agent_module = _load_agent_module(Options)
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(agent_module._trial7_pipeline_hooks())
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._trial7_environment(directory)
+            with patch.dict(os.environ, environment, clear=True):
+                hooks = agent_module._trial7_pipeline_hooks()
+
+        self.assertEqual(
+            [matcher.matcher for matcher in hooks["PreToolUse"]],
+            ["Bash", "Write", "Edit"],
+        )
+        options = agent_module.BaseAgent(
+            name="trial7",
+            allowed_tools=["Bash", "Write", "Edit"],
+            workspace=Path("/tmp/workspace"),
+            mcp_servers={},
+            hooks=hooks,
+        )._build_options_dict()
+        self.assertIs(options["hooks"], hooks)
+
+        loop = object.__new__(agent_module.AutonomousAgentLoop)
+        loop.backend = "claude"
+        loop.workspace = ROOT
+        loop.mcp_servers = {}
+        loop.model = "claude-opus-4-8"
+        loop.local_mode = True
+        loop.autodata_plugin = None
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._trial7_environment(directory)
+            with patch.dict(os.environ, environment, clear=True):
+                trial7_agent = loop._create_agent("trial7")
+        self.assertIn("exclusively owns", trial7_agent.system_prompt)
+        self.assertIn("background or detached", trial7_agent.system_prompt)
+
+    def test_trial7_pipeline_flag_fails_closed_on_wrong_identity(self) -> None:
+        class Options:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+        agent_module = _load_agent_module(Options)
+        with patch.dict(
+            os.environ,
+            {
+                "AAR_AUTODATA_PIPELINE_COORDINATOR": "1",
+                "AAR_EXPERIMENT_RUN_ID": "run13",
+                "AAR_IDEA_UID_OVERRIDE": "run13-trial6-alpha-iteration-1",
+            },
+            clear=True,
+        ), self.assertRaisesRegex(
+            agent_module.PipelineOwnershipFenceError, "identity is incomplete"
+        ):
+            agent_module._trial7_pipeline_hooks()
+
+    def test_trial7_pipeline_fence_blocks_mutating_tools_for_owned_action(self) -> None:
+        class Options:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+        agent_module = _load_agent_module(Options)
+        workspace_id = "ws_" + "1" * 32
+
+        for action_status in ("pending", "in_progress", "completed"):
+            snapshot = types.SimpleNamespace(
+                id=workspace_id,
+                phase="pipeline_pending",
+                actions=(
+                    types.SimpleNamespace(
+                        id="act_" + "2" * 24,
+                        kind="author_pipeline",
+                        status=action_status,
+                    ),
+                ),
+            )
+            native = types.SimpleNamespace(read_workspace=lambda _identity: snapshot)
+            with tempfile.TemporaryDirectory() as directory:
+                environment = self._trial7_environment(directory)
+                with (
+                    patch.dict(os.environ, environment, clear=True),
+                    patch(
+                        "aar.infrastructure.autodata_coordinator.NativeAutoDataControl.from_environment",
+                        return_value=native,
+                    ),
+                ):
+                    for tool in ("Bash", "Write", "Edit"):
+                        result = asyncio.run(
+                            agent_module._trial7_pipeline_tool_fence(
+                                {"tool_name": tool}, None, None
+                            )
+                        )
+                        self.assertEqual(
+                            result["hookSpecificOutput"]["permissionDecision"],
+                            "deny",
+                        )
+
+    def test_trial7_pipeline_fence_leaves_other_actions_unchanged(self) -> None:
+        class Options:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+        agent_module = _load_agent_module(Options)
+        workspace_id = "ws_" + "1" * 32
+        snapshot = types.SimpleNamespace(
+            id=workspace_id,
+            phase="grounding_pending",
+            actions=(
+                types.SimpleNamespace(
+                    id="act_" + "2" * 24,
+                    kind="author_grounding",
+                    status="pending",
+                ),
+            ),
+        )
+        native = types.SimpleNamespace(read_workspace=lambda _identity: snapshot)
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._trial7_environment(directory)
+            with (
+                patch.dict(os.environ, environment, clear=True),
+                patch(
+                    "aar.infrastructure.autodata_coordinator.NativeAutoDataControl.from_environment",
+                    return_value=native,
+                ),
+            ):
+                result = asyncio.run(
+                    agent_module._trial7_pipeline_tool_fence(
+                        {"tool_name": "Bash"}, None, None
+                    )
+                )
+        self.assertEqual(result, {})
+
+    def test_trial7_pipeline_fence_denies_ambiguous_or_malformed_state(self) -> None:
+        class Options:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+        agent_module = _load_agent_module(Options)
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._trial7_environment(directory)
+            control = Path(environment["AAR_AUTODATA_SUPERVISOR_CONTROL"])
+            malformed_states = (
+                "not-json",
+                json.dumps(
+                    {
+                        "schema": "aar.autodata.lifecycle-control/v1",
+                        "subjects": [
+                            {
+                                "kind": "workspace",
+                                "subject_id": "ws_" + "1" * 32,
+                                "status": "registered",
+                            },
+                            {
+                                "kind": "workspace",
+                                "subject_id": "ws_" + "2" * 32,
+                                "status": "registered",
+                            },
+                        ],
+                    }
+                ),
+            )
+            for value in malformed_states:
+                control.write_text(value)
+                with patch.dict(os.environ, environment, clear=True):
+                    result = asyncio.run(
+                        agent_module._trial7_pipeline_tool_fence(
+                            {"tool_name": "Bash"}, None, None
+                        )
+                    )
+                self.assertEqual(
+                    result["hookSpecificOutput"]["permissionDecision"], "deny"
+                )
+
+        workspace_id = "ws_" + "1" * 32
+        snapshot = types.SimpleNamespace(
+            id=workspace_id,
+            phase="pipeline_pending",
+            actions=(
+                types.SimpleNamespace(
+                    id="act_" + "2" * 24,
+                    kind="author_pipeline",
+                    status="pending",
+                ),
+                types.SimpleNamespace(
+                    id="act_" + "3" * 24,
+                    kind="unexpected",
+                    status="in_progress",
+                ),
+            ),
+        )
+        native = types.SimpleNamespace(read_workspace=lambda _identity: snapshot)
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._trial7_environment(directory)
+            with (
+                patch.dict(os.environ, environment, clear=True),
+                patch(
+                    "aar.infrastructure.autodata_coordinator.NativeAutoDataControl.from_environment",
+                    return_value=native,
+                ),
+            ):
+                result = asyncio.run(
+                    agent_module._trial7_pipeline_tool_fence(
+                        {"tool_name": "Write"}, None, None
+                    )
+                )
+        self.assertEqual(
+            result["hookSpecificOutput"]["permissionDecision"], "deny"
+        )
 
     def test_local_plugin_and_skill_are_forwarded_when_supported(self) -> None:
         class Options:

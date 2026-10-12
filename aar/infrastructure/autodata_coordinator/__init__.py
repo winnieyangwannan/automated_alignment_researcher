@@ -6,6 +6,7 @@ from .coordinator import (
     ExecutionAnalysisReconciler,
     ExecutionMutationReconciler,
     NativeAutoDataControl,
+    WorkspacePipelineReconciler,
 )
 from .semantic_worker import (
     ActionContext,
@@ -14,6 +15,7 @@ from .semantic_worker import (
     MalformedSemanticOutcome,
     MutationContext,
     MutationOutcome,
+    PipelineContext,
     SemanticOutcome,
     SemanticWorker,
 )
@@ -30,6 +32,8 @@ __all__ = [
     "MutationContext",
     "MutationOutcome",
     "NativeAutoDataControl",
+    "PipelineContext",
     "SemanticOutcome",
     "SemanticWorker",
+    "WorkspacePipelineReconciler",
 ]

@@ -36,6 +36,11 @@ class SemanticOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class PipelineContext(ActionContext):
+    """Immutable, lease-free input for one native ``author_pipeline`` action."""
+
+
+@dataclass(frozen=True, slots=True)
 class AnalysisContext:
     """Immutable execution evidence for one native ``analyze_results`` action."""
 
@@ -83,7 +88,9 @@ class MutationOutcome:
     updated_document: Mapping[str, Any]
 
 
-WorkerContext: TypeAlias = ActionContext | AnalysisContext | MutationContext
+WorkerContext: TypeAlias = (
+    ActionContext | PipelineContext | AnalysisContext | MutationContext
+)
 WorkerOutcome: TypeAlias = SemanticOutcome | AnalysisOutcome | MutationOutcome
 
 
@@ -100,6 +107,30 @@ class SemanticWorker(Protocol):
 
 def semantic_task(context: WorkerContext) -> str:
     """Build one backend-neutral request for an allowlisted native action."""
+
+    if isinstance(context, PipelineContext):
+        payload = {
+            "action_id": context.action_id,
+            "workspace_id": context.workspace_id,
+            "input_revision": context.input_revision,
+            "input_digest": context.input_digest,
+            "instructions": context.instructions,
+            "allowed_paths": list(context.allowed_paths),
+            "required_outputs": list(context.required_outputs),
+            "pipeline_review": context.workspace,
+        }
+        return (
+            "Perform exactly this native AutoData author_pipeline semantic task. "
+            "You have no tools and must not perform lifecycle control, lease handling, "
+            "or filesystem work. Review the already staged pipeline against the "
+            "approved workspace and grounding in pipeline_review. Return one JSON object with the "
+            "unchanged action_id, input_revision, and input_digest; a non-empty "
+            "summary; decisions as an array; decision='confirm'; and "
+            "updated_workspace=null. This first slice is confirm-only: do not propose "
+            "or claim any file edit. Return only the JSON object, with no "
+            "Markdown fence or surrounding prose.\n\nACTION:\n"
+            + json.dumps(payload, sort_keys=True, indent=2)
+        )
 
     if isinstance(context, MutationContext):
         payload = {

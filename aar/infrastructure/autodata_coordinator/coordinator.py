@@ -30,6 +30,7 @@ from .semantic_worker import (
     MalformedSemanticOutcome,
     MutationContext,
     MutationOutcome,
+    PipelineContext,
     SemanticOutcome,
     SemanticWorker,
 )
@@ -580,7 +581,13 @@ print(json.dumps(value, sort_keys=True, separators=(\",\", \":\")))
 
 
 class AutoDataActionReconciler:
-    """Reconcile native ``clarify_design``; later actions remain legacy-owned."""
+    """Reconcile one allowlisted native workspace action."""
+
+    action_kind = "clarify_design"
+    reject_other_live_actions = True
+    missing_action_code = "clarify_action_missing"
+    identity_error_code = "clarify_action_identity_mismatch"
+    multiple_completed_code = "multiple_clarify_actions"
 
     def __init__(
         self,
@@ -608,21 +615,20 @@ class AutoDataActionReconciler:
     def _receipt_path(self, action_id: str) -> Path:
         return self.team_dir / "autodata" / "action-receipts" / f"{action_id}.json"
 
-    @staticmethod
-    def _completed(snapshot: NativeWorkspace) -> NativeAction | None:
+    def _completed(self, snapshot: NativeWorkspace) -> NativeAction | None:
         matches = [
             action
             for action in snapshot.actions
-            if action.kind == "clarify_design" and action.status == "completed"
+            if action.kind == self.action_kind and action.status == "completed"
         ]
         if len(matches) > 1:
             raise AutoDataCoordinatorError(
-                "multiple_clarify_actions", "multiple completed clarify actions exist"
+                self.multiple_completed_code,
+                f"multiple completed {self.action_kind} actions exist",
             )
         return matches[0] if matches else None
 
-    @staticmethod
-    def _live(snapshot: NativeWorkspace) -> NativeAction | None:
+    def _live(self, snapshot: NativeWorkspace) -> NativeAction | None:
         live = [
             action
             for action in snapshot.actions
@@ -632,10 +638,10 @@ class AutoDataActionReconciler:
             raise AutoDataCoordinatorError(
                 "multiple_pending_actions", "multiple native actions are live"
             )
-        if live and live[0].kind != "clarify_design":
+        if live and live[0].kind != self.action_kind:
             raise AutoDataCoordinatorError(
                 "unexpected_pending_action",
-                "first coordinated action is not clarify_design",
+                f"live action is not {self.action_kind}",
             )
         return live[0] if live else None
 
@@ -1079,7 +1085,7 @@ class AutoDataActionReconciler:
         self._stage_context(stage, context)
         return context, stage
 
-    async def reconcile_registered_clarify(
+    async def reconcile_registered_action(
         self, control_file: Path
     ) -> CoordinatorOutcome | None:
         control = _read_object(control_file, "lifecycle control")
@@ -1118,22 +1124,28 @@ class AutoDataActionReconciler:
                     candidates.append(workspace_id)
                 continue
             if live:
-                if live[0].kind == "clarify_design":
+                if live[0].kind == self.action_kind:
                     candidates.append(workspace_id)
-                else:
+                elif self.reject_other_live_actions:
                     raise AutoDataCoordinatorError(
                         "unexpected_pending_action",
-                        "first coordinated action is not clarify_design",
+                        f"live action is not {self.action_kind}",
                     )
         if not candidates:
             return None
         if len(candidates) != 1:
             raise AutoDataCoordinatorError(
-                "multiple_pending_actions", "multiple workspaces need clarification"
+                "multiple_pending_actions",
+                f"multiple workspaces need {self.action_kind}",
             )
-        return await self.coordinate_clarify_design(candidates[0])
+        return await self.coordinate_action(candidates[0])
 
-    async def coordinate_clarify_design(self, workspace_id: str) -> CoordinatorOutcome:
+    async def reconcile_registered_clarify(
+        self, control_file: Path
+    ) -> CoordinatorOutcome | None:
+        return await self.reconcile_registered_action(control_file)
+
+    async def coordinate_action(self, workspace_id: str) -> CoordinatorOutcome:
         if not _WORKSPACE_ID.fullmatch(workspace_id):
             raise AutoDataCoordinatorError(
                 "workspace_identity_invalid", "workspace ID is invalid"
@@ -1148,11 +1160,12 @@ class AutoDataActionReconciler:
         action = completed or self._live(snapshot)
         if action is None:
             raise AutoDataCoordinatorError(
-                "clarify_action_missing", "native clarify action is not exposed"
+                self.missing_action_code,
+                f"native {self.action_kind} action is not exposed",
             )
         if not _ACTION_ID.fullmatch(action.id):
             raise AutoDataCoordinatorError(
-                "clarify_action_identity_mismatch", "native action ID is invalid"
+                self.identity_error_code, "native action ID is invalid"
             )
         stage_path = self._stage_path(action.id)
         if completed is not None:
@@ -1228,6 +1241,312 @@ class AutoDataActionReconciler:
                 "action_completion_unconfirmed", "native completion is not durable"
             )
         return self._finalize(current, done, context, stage)
+
+    async def coordinate_clarify_design(self, workspace_id: str) -> CoordinatorOutcome:
+        return await self.coordinate_action(workspace_id)
+
+
+class WorkspacePipelineReconciler(AutoDataActionReconciler):
+    """Confirm an already-staged native ``author_pipeline`` action."""
+
+    action_kind = "author_pipeline"
+    reject_other_live_actions = False
+    missing_action_code = "pipeline_action_missing"
+    identity_error_code = "pipeline_action_identity_mismatch"
+    multiple_completed_code = "multiple_pipeline_actions"
+    _IGNORED = {".git", ".autodata", "__pycache__", ".pytest_cache"}
+    _MAX_BUNDLE_BYTES = 4 * 1024 * 1024
+
+    @classmethod
+    def _review_bundle(cls, root: Path) -> dict[str, Any]:
+        editable: dict[str, str] = {}
+        protected: dict[str, str] = {}
+        total = 0
+        for current_raw, directories, filenames in os.walk(root, followlinks=False):
+            current = Path(current_raw)
+            kept = []
+            for name in directories:
+                path = current / name
+                if name in cls._IGNORED:
+                    continue
+                if path.is_symlink():
+                    raise AutoDataCoordinatorError(
+                        "pipeline_tree_invalid", "pipeline tree contains a symlink"
+                    )
+                kept.append(name)
+            directories[:] = kept
+            for name in filenames:
+                path = current / name
+                relative = path.relative_to(root).as_posix()
+                if name in cls._IGNORED:
+                    continue
+                if (
+                    path.is_symlink()
+                    or not path.is_file()
+                    or path.stat().st_nlink != 1
+                ):
+                    raise AutoDataCoordinatorError(
+                        "pipeline_tree_invalid", "pipeline tree contains an unsafe file"
+                    )
+                payload = path.read_bytes()
+                total += len(payload)
+                if total > cls._MAX_BUNDLE_BYTES:
+                    raise AutoDataCoordinatorError(
+                        "pipeline_context_too_large", "pipeline review exceeds its bound"
+                    )
+                if (
+                    relative == "autodata.workspace.json"
+                    or relative.startswith(("grounding/", "approval/"))
+                ):
+                    protected[relative] = (
+                        "sha256:" + hashlib.sha256(payload).hexdigest()
+                    )
+                    continue
+                try:
+                    editable[relative] = payload.decode("utf-8")
+                except UnicodeDecodeError as error:
+                    raise AutoDataCoordinatorError(
+                        "pipeline_tree_invalid", "pipeline file is not UTF-8 text"
+                    ) from error
+        return {
+            "workspace": _read_object(
+                root / "autodata.workspace.json", "workspace input"
+            ),
+            "grounding": _read_object(
+                root / "grounding/manifest.json", "grounding input"
+            ),
+            "editable_files": dict(sorted(editable.items())),
+            "protected_file_digests": dict(sorted(protected.items())),
+        }
+
+    def _completed(self, snapshot: NativeWorkspace) -> NativeAction | None:
+        if any(
+            action.kind == self.action_kind
+            and action.status in {"pending", "in_progress"}
+            for action in snapshot.actions
+        ):
+            return None
+        matches = [
+            action
+            for action in snapshot.actions
+            if action.kind == self.action_kind
+            and action.status == "completed"
+        ]
+        return matches[-1] if matches else None
+
+    def _context(
+        self,
+        snapshot: NativeWorkspace,
+        action: NativeAction,
+        *,
+        completed_input_digest: str | None = None,
+    ) -> tuple[PipelineContext, Path]:
+        spec = action.spec
+        scope = spec.get("scope")
+        if (
+            spec.get("schema") != ACTION_SCHEMA
+            or spec.get("id") != action.id
+            or spec.get("kind") != self.action_kind
+            or not isinstance(scope, dict)
+            or scope.get("kind") != "workspace"
+            or scope.get("id") != snapshot.id
+            or isinstance(scope.get("revision"), bool)
+            or not isinstance(scope.get("revision"), int)
+            or (
+                completed_input_digest is None
+                and scope.get("revision") != snapshot.revision
+            )
+            or (
+                completed_input_digest is not None
+                and scope.get("revision") > snapshot.revision
+            )
+            or snapshot.status != "active"
+            or spec.get("allowed_paths") != ["**"]
+            or spec.get("outputs") != ["summary", "decisions"]
+            or not isinstance(spec.get("instructions"), str)
+            or not spec["instructions"].strip()
+            or not isinstance(spec.get("editable_root"), str)
+        ):
+            raise AutoDataCoordinatorError(
+                "pipeline_action_contract_invalid",
+                "native author_pipeline contract is inconsistent",
+            )
+        root = Path(spec["editable_root"])
+        if root.is_symlink() or not root.is_absolute() or not root.is_dir():
+            raise AutoDataCoordinatorError(
+                "editable_root_invalid", "native editable root is unsafe"
+            )
+        root = root.resolve(strict=True)
+        try:
+            relative = root.relative_to(self.team_dir / "autodata")
+        except ValueError as error:
+            raise AutoDataCoordinatorError(
+                "editable_root_invalid",
+                "native editable root escapes the team AutoData tree",
+            ) from error
+        if len(relative.parts) != 2 or relative.parts[1] != "draft":
+            raise AutoDataCoordinatorError(
+                "editable_root_invalid",
+                "native editable root is not a run draft",
+            )
+        bundle = self._review_bundle(root)
+        digest = _digest({"action": _deep_json(spec), "pipeline_review": bundle})
+        if completed_input_digest is not None and digest != completed_input_digest:
+            raise AutoDataCoordinatorError(
+                "pipeline_changed_during_action",
+                "pipeline changed during confirm-only review",
+            )
+        return (
+            PipelineContext(
+                action_id=action.id,
+                workspace_id=snapshot.id,
+                input_revision=int(scope["revision"]),
+                input_digest=digest,
+                instructions=str(spec["instructions"]),
+                allowed_paths=("**",),
+                required_outputs=("summary", "decisions"),
+                workspace=_deep_json(bundle),
+            ),
+            root,
+        )
+
+    def _validate_outcome(
+        self, context: ActionContext, outcome: SemanticOutcome
+    ) -> dict[str, Any]:
+        if (
+            not isinstance(outcome, SemanticOutcome)
+            or outcome.decision != "confirm"
+            or outcome.updated_workspace is not None
+        ):
+            raise MalformedSemanticOutcome("pipeline review must be confirm-only")
+        stage = super()._validate_outcome(context, outcome)
+        stage["action_kind"] = self.action_kind
+        return stage
+
+    def _stage_context(self, stage: Mapping[str, Any], context: ActionContext) -> None:
+        if stage.get("action_kind") != self.action_kind:
+            raise AutoDataCoordinatorError(
+                "semantic_stage_mismatch", "pipeline stage kind is invalid"
+            )
+        super()._stage_context(stage, context)
+
+    @staticmethod
+    def _apply_stage(
+        stage: Mapping[str, Any], context: ActionContext, root: Path
+    ) -> str:
+        del stage
+        if _canonical(WorkspacePipelineReconciler._review_bundle(root)) != _canonical(
+            context.workspace
+        ):
+            raise AutoDataCoordinatorError(
+                "pipeline_changed_during_action",
+                "pipeline changed during confirm-only review",
+            )
+        return context.input_digest
+
+    def _finalize(
+        self,
+        snapshot: NativeWorkspace,
+        action: NativeAction,
+        context: ActionContext,
+        stage: Mapping[str, Any],
+    ) -> CoordinatorOutcome:
+        if not isinstance(action.result, Mapping) or _digest(action.result) != stage.get(
+            "native_result_digest"
+        ):
+            raise AutoDataCoordinatorError(
+                "native_result_mismatch", "completed native result differs from stage"
+            )
+        self._context(snapshot, action, completed_input_digest=context.input_digest)
+        receipt_path = self._receipt_path(action.id)
+        if receipt_path.exists() or receipt_path.is_symlink():
+            raise AutoDataCoordinatorError(
+                "pipeline_receipt_conflict", "pipeline receipt already exists"
+            )
+        receipt = {
+            "schema": RECEIPT_SCHEMA,
+            "recorded_at_pt": _pt_now(),
+            "workspace_id": snapshot.id,
+            "action_id": action.id,
+            "action_kind": self.action_kind,
+            "input_revision": context.input_revision,
+            "input_digest": context.input_digest,
+            "changed_paths": [],
+            "worker_backend": stage.get("worker_backend"),
+            "result_digest": stage.get("native_result_digest"),
+            "native_status": action.status,
+            "native_phase_observed": snapshot.phase,
+            "native_revision_observed": snapshot.revision,
+        }
+        receipt["receipt_digest"] = _digest(receipt)
+        _atomic_private_json(receipt_path, receipt)
+        self._lease_path(action.id).unlink(missing_ok=True)
+        return CoordinatorOutcome(
+            snapshot.id,
+            action.id,
+            receipt_path,
+            str(stage.get("worker_backend") or "unknown"),
+            snapshot.phase,
+            snapshot.revision,
+        )
+
+    def _existing_receipt(
+        self,
+        snapshot: NativeWorkspace,
+        action: NativeAction,
+        context: ActionContext,
+        stage: Mapping[str, Any],
+    ) -> CoordinatorOutcome | None:
+        path = self._receipt_path(action.id)
+        if not path.is_file() or path.is_symlink():
+            return None
+        value = _read_object(path, "pipeline coordinator receipt")
+        digest = value.get("receipt_digest")
+        payload = dict(value)
+        payload.pop("receipt_digest", None)
+        mode = path.stat()
+        if (
+            value.get("schema") != RECEIPT_SCHEMA
+            or value.get("workspace_id") != snapshot.id
+            or value.get("action_id") != action.id
+            or value.get("action_kind") != self.action_kind
+            or value.get("input_revision") != context.input_revision
+            or value.get("input_digest") != context.input_digest
+            or value.get("changed_paths") != []
+            or value.get("worker_backend") != stage.get("worker_backend")
+            or value.get("result_digest") != stage.get("native_result_digest")
+            or value.get("native_status") != "completed"
+            or not isinstance(action.result, Mapping)
+            or _digest(action.result) != stage.get("native_result_digest")
+            or not isinstance(value.get("native_phase_observed"), str)
+            or not value["native_phase_observed"]
+            or isinstance(value.get("native_revision_observed"), bool)
+            or not isinstance(value.get("native_revision_observed"), int)
+            or value["native_revision_observed"] < context.input_revision
+            or snapshot.revision < value["native_revision_observed"]
+            or digest != _digest(payload)
+            or mode.st_uid != os.geteuid()
+            or stat.S_IMODE(mode.st_mode) != 0o600
+        ):
+            raise AutoDataCoordinatorError(
+                "pipeline_receipt_invalid", "pipeline receipt is invalid"
+            )
+        return CoordinatorOutcome(
+            snapshot.id,
+            action.id,
+            path,
+            str(value.get("worker_backend") or "unknown"),
+            str(value.get("native_phase_observed") or snapshot.phase),
+            int(value.get("native_revision_observed") or snapshot.revision),
+        )
+
+    async def reconcile_registered_pipeline(
+        self, control_file: Path
+    ) -> CoordinatorOutcome | None:
+        return await self.reconcile_registered_action(control_file)
+
+    async def coordinate_pipeline(self, workspace_id: str) -> CoordinatorOutcome:
+        return await self.coordinate_action(workspace_id)
 
 
 class ExecutionAnalysisReconciler(AutoDataActionReconciler):
