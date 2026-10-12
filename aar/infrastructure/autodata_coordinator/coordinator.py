@@ -20,7 +20,7 @@ import tempfile
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 from zoneinfo import ZoneInfo
 
 from .semantic_worker import (
@@ -81,6 +81,17 @@ class CoordinatorOutcome:
     action_id: str
     receipt_path: Path
     worker_backend: str
+    native_phase: str
+    native_revision: int
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalCoordinatorOutcome:
+    workspace_id: str
+    action_id: str
+    action_kind: str
+    audit_path: Path
+    decision: str
     native_phase: str
     native_revision: int
 
@@ -578,6 +589,223 @@ print(json.dumps(value, sort_keys=True, separators=(\",\", \":\")))
             )
         finally:
             path.unlink(missing_ok=True)
+
+
+class WorkspaceApprovalReconciler:
+    """Route one delegated workspace approval through the shared trusted bridge."""
+
+    action_kinds = frozenset({"approve_grounding", "approve_baseline"})
+
+    def __init__(
+        self,
+        *,
+        control: AutoDataControl,
+        approval_handler: Callable[[str], Mapping[str, Any]],
+    ) -> None:
+        self.control = control
+        self.approval_handler = approval_handler
+
+    @staticmethod
+    def _validate_action(snapshot: NativeWorkspace, action: NativeAction) -> None:
+        scope = action.spec.get("scope")
+        if (
+            not _ACTION_ID.fullmatch(action.id)
+            or action.spec.get("schema") != ACTION_SCHEMA
+            or action.spec.get("id") != action.id
+            or action.spec.get("kind") != action.kind
+            or action.kind not in WorkspaceApprovalReconciler.action_kinds
+            or action.status not in {"pending", "in_progress"}
+            or not isinstance(scope, dict)
+            or scope.get("kind") != "workspace"
+            or scope.get("id") != snapshot.id
+            or not isinstance(scope.get("revision"), int)
+            or scope.get("revision") != snapshot.revision
+            or snapshot.status != "active"
+        ):
+            raise AutoDataCoordinatorError(
+                "approval_action_contract_invalid",
+                "native delegated approval contract is inconsistent",
+            )
+
+    @staticmethod
+    def _validate_audit(
+        action: NativeAction, audit: Mapping[str, Any]
+    ) -> tuple[Path, str]:
+        raw_path = audit.get("audit_path")
+        decision = audit.get("decision")
+        artifacts = action.spec.get("artifacts")
+        expected_digests = (
+            [item.get("digest") for item in artifacts]
+            if isinstance(artifacts, list)
+            and all(isinstance(item, dict) for item in artifacts)
+            else None
+        )
+        if (
+            audit.get("schema") != "aar.autodata.approval-audit/v1"
+            or audit.get("action_id") != action.id
+            or audit.get("action_kind") != action.kind
+            or audit.get("scope") != action.spec.get("scope")
+            or expected_digests is None
+            or audit.get("artifact_digests") != expected_digests
+            or not isinstance(raw_path, str)
+            or not raw_path
+            or not isinstance(decision, str)
+            or not decision
+        ):
+            raise AutoDataCoordinatorError(
+                "approval_audit_invalid",
+                "shared approval bridge returned an invalid audit",
+            )
+        path = Path(raw_path)
+        audit_root_raw = os.getenv("AAR_AUTODATA_APPROVAL_AUDIT_DIR", "").strip()
+        configured_root = Path(audit_root_raw).expanduser()
+        try:
+            audit_root = configured_root.resolve(strict=True)
+            resolved_path = path.resolve(strict=True)
+        except (OSError, RuntimeError) as error:
+            raise AutoDataCoordinatorError(
+                "approval_audit_invalid",
+                "shared approval bridge audit is unavailable",
+            ) from error
+        if (
+            not audit_root_raw
+            or configured_root.is_symlink()
+            or not audit_root.is_dir()
+            or not path.is_absolute()
+            or path.is_symlink()
+            or not path.is_file()
+            or resolved_path.parent != audit_root
+        ):
+            raise AutoDataCoordinatorError(
+                "approval_audit_invalid",
+                "shared approval bridge audit is unavailable",
+            )
+        info = resolved_path.stat()
+        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600:
+            raise AutoDataCoordinatorError(
+                "approval_audit_invalid",
+                "shared approval bridge audit is not protected",
+            )
+        persisted = _read_object(resolved_path, "delegated approval audit")
+        expected = dict(audit)
+        expected.pop("audit_path", None)
+        if persisted != expected:
+            raise AutoDataCoordinatorError(
+                "approval_audit_invalid",
+                "shared approval bridge audit does not match its result",
+            )
+        return resolved_path, decision
+
+    @staticmethod
+    def _validate_native_result(
+        action: NativeAction,
+        result: Mapping[str, Any],
+        audit: Mapping[str, Any],
+    ) -> None:
+        delegated = result.get("delegated_approval")
+        if (
+            result.get("decision") != audit.get("decision")
+            or result.get("feedback") != audit.get("feedback")
+            or result.get("target") != audit.get("target")
+            or not isinstance(delegated, Mapping)
+            or delegated.get("actor") != audit.get("actor")
+            or delegated.get("policy_version") != audit.get("policy_version")
+        ):
+            raise AutoDataCoordinatorError(
+                "approval_completion_invalid",
+                "native delegated approval result does not match its audit",
+            )
+
+    def reconcile_registered_approval(
+        self, control_file: Path
+    ) -> ApprovalCoordinatorOutcome | None:
+        lifecycle = _read_object(control_file, "lifecycle control")
+        subjects = lifecycle.get("subjects")
+        if not isinstance(subjects, list):
+            raise AutoDataCoordinatorError(
+                "lifecycle_control_invalid", "control has no subjects"
+            )
+        candidates: list[tuple[NativeWorkspace, NativeAction]] = []
+        for entry in subjects:
+            if (
+                not isinstance(entry, dict)
+                or entry.get("kind") != "workspace"
+                or entry.get("status") != "registered"
+            ):
+                continue
+            workspace_id = entry.get("subject_id")
+            if not isinstance(workspace_id, str) or not _WORKSPACE_ID.fullmatch(
+                workspace_id
+            ):
+                raise AutoDataCoordinatorError(
+                    "lifecycle_control_invalid",
+                    "workspace registration is invalid",
+                )
+            snapshot = self.control.read_workspace(workspace_id)
+            live = [
+                action
+                for action in snapshot.actions
+                if action.status in {"pending", "in_progress"}
+            ]
+            if len(live) > 1:
+                raise AutoDataCoordinatorError(
+                    "multiple_pending_actions", "multiple native actions are live"
+                )
+            if live and live[0].kind in self.action_kinds:
+                self._validate_action(snapshot, live[0])
+                candidates.append((snapshot, live[0]))
+        if not candidates:
+            return None
+        if len(candidates) != 1:
+            raise AutoDataCoordinatorError(
+                "multiple_pending_actions",
+                "multiple workspaces need delegated approval",
+            )
+        before, action = candidates[0]
+        try:
+            audit = self.approval_handler(action.id)
+        except AutoDataCoordinatorError:
+            raise
+        except Exception as error:
+            retryable = bool(getattr(error, "retryable", False))
+            feedback = getattr(error, "feedback", None)
+            if isinstance(feedback, Mapping):
+                retryable = feedback.get("retryable") is True
+            raise AutoDataCoordinatorError(
+                "delegated_approval_failed",
+                "shared delegated approval bridge failed",
+                retryable=retryable,
+            ) from error
+        if not isinstance(audit, Mapping):
+            raise AutoDataCoordinatorError(
+                "approval_audit_invalid",
+                "shared approval bridge returned no audit",
+            )
+        audit_path, decision = self._validate_audit(action, audit)
+        after = self.control.read_workspace(before.id)
+        matches = [item for item in after.actions if item.id == action.id]
+        if (
+            after.id != before.id
+            or len(matches) != 1
+            or matches[0].kind != action.kind
+            or matches[0].status != "completed"
+            or not isinstance(matches[0].result, Mapping)
+            or after.revision < before.revision
+        ):
+            raise AutoDataCoordinatorError(
+                "approval_completion_invalid",
+                "native delegated approval did not complete authoritatively",
+            )
+        self._validate_native_result(action, matches[0].result, audit)
+        return ApprovalCoordinatorOutcome(
+            workspace_id=after.id,
+            action_id=action.id,
+            action_kind=action.kind,
+            audit_path=audit_path,
+            decision=decision,
+            native_phase=after.phase,
+            native_revision=after.revision,
+        )
 
 
 class AutoDataActionReconciler:

@@ -931,6 +931,78 @@ def test_semantic_coordinator_requires_explicit_worker_backend(
     assert raised.value.code == "semantic_worker_backend_invalid"
 
 
+def test_approval_coordinator_uses_shared_bridge_without_semantic_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    team = tmp_path / "team"
+    team.mkdir()
+    state = tmp_path / "state.db"
+    state.touch()
+    control_file = tmp_path / "control.json"
+    control_file.write_text("{}", encoding="utf-8")
+    supervisor = lifecycle_supervisor.Supervisor(
+        Namespace(state=state, control_file=control_file)
+    )
+    monkeypatch.setenv("TEAM_DIR", str(team))
+    monkeypatch.setenv("AAR_AUTODATA_APPROVAL_COORDINATOR", "1")
+    monkeypatch.delenv("AAR_AUTODATA_SEMANTIC_WORKER", raising=False)
+    observed: dict[str, object] = {}
+
+    class Reconciler:
+        def __init__(self, **kwargs: object) -> None:
+            observed.update(kwargs)
+
+        def reconcile_registered_approval(self, path: Path):
+            observed["control_file"] = path
+            return type(
+                "Outcome",
+                (),
+                {
+                    "workspace_id": "ws_" + "1" * 32,
+                    "action_id": "act_" + "2" * 24,
+                    "action_kind": "approve_grounding",
+                    "decision": "approve",
+                    "audit_path": tmp_path / "audit.json",
+                    "native_phase": "pipeline_pending",
+                    "native_revision": 4,
+                },
+            )()
+
+    monkeypatch.setattr(
+        lifecycle_supervisor.NativeAutoDataControl,
+        "from_environment",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(lifecycle_supervisor, "WorkspaceApprovalReconciler", Reconciler)
+    monkeypatch.setattr(
+        supervisor,
+        "_snapshot",
+        lambda reason: observed.setdefault("snapshot", reason),
+    )
+
+    result = supervisor._reconcile_approval_action()
+
+    assert result is not None
+    assert result["action_kind"] == "approve_grounding"
+    assert observed["control_file"] == control_file
+    assert callable(observed["approval_handler"])
+    assert "worker" not in observed
+
+
+def test_approval_coordinator_rejects_invalid_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = lifecycle_supervisor.Supervisor(
+        Namespace(state=tmp_path / "state.db", control_file=tmp_path / "control.json")
+    )
+    monkeypatch.setenv("AAR_AUTODATA_APPROVAL_COORDINATOR", "sometimes")
+
+    with pytest.raises(lifecycle_supervisor.AutoDataCoordinatorError) as raised:
+        supervisor._reconcile_approval_action()
+
+    assert raised.value.code == "approval_coordinator_flag_invalid"
+
+
 def test_semantic_coordinator_waits_for_lifecycle_registration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

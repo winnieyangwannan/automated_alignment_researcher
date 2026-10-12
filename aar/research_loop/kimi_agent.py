@@ -502,6 +502,8 @@ class KimiAgent:
         repeated_contract_errors = 0
         autodata_wait_deadline: float | None = None
         autodata_idle_deadline: float | None = None
+        approval_wait_action_id: str | None = None
+        approval_wait_deadline: float | None = None
 
         with tempfile.TemporaryDirectory(prefix="aar-kimi-") as temp_dir:
             overlay_home = Path(temp_dir)
@@ -559,6 +561,8 @@ class KimiAgent:
                             workspace_id, status_subject
                         )
                         if action is None:
+                            approval_wait_action_id = None
+                            approval_wait_deadline = None
                             supervisor_status = (
                                 self._require_fresh_autodata_supervisor_status()
                             )
@@ -641,8 +645,40 @@ class KimiAgent:
                                 )
                             )
                             continue
-                        autodata_wait_deadline = None
                         autodata_idle_deadline = None
+                        if self._approval_is_coordinator_owned(action):
+                            self._require_fresh_autodata_supervisor_status()
+                            timeout = float(
+                                os.getenv("AAR_AUTODATA_HOST_WAIT_SECONDS", "10800")
+                            )
+                            if timeout <= 0:
+                                raise RuntimeError(
+                                    "AAR_AUTODATA_HOST_WAIT_SECONDS must be positive"
+                                )
+                            if approval_wait_action_id != action["id"]:
+                                approval_wait_action_id = str(action["id"])
+                                approval_wait_deadline = time.monotonic() + timeout
+                            assert approval_wait_deadline is not None
+                            if time.monotonic() >= approval_wait_deadline:
+                                raise _retain_process_failure(
+                                    error=TimeoutError(
+                                        "delegated approval coordinator timed out"
+                                    ),
+                                    error_code="approval_coordinator_timeout",
+                                    stage="autodata_approval",
+                                    public_summary=(
+                                        "shared delegated approval coordinator timed out"
+                                    ),
+                                )
+                            print(
+                                "[Kimi] waiting without a model turn for shared "
+                                f"approval coordinator: {action['id']}"
+                            )
+                            await asyncio.sleep(2)
+                            continue
+                        approval_wait_action_id = None
+                        approval_wait_deadline = None
+                        autodata_wait_deadline = None
                         if self._autodata_consume_action_result(action) == "completed":
                             continue
                     command = [executable]
@@ -1419,6 +1455,11 @@ class KimiAgent:
                     "approve_baseline",
                     "approve_resources",
                 }:
+                    if self._approval_is_coordinator_owned(action):
+                        raise RuntimeError(
+                            "shared approval coordinator action reached the Kimi "
+                            "model continuation path"
+                        )
                     return (
                         "Call the native structured MCP tool review_autodata_action "
                         f"exactly once now with action_id={action['id']}. This is a "
@@ -2100,6 +2141,7 @@ class KimiAgent:
             "idle",
             "reconciling",
             "reconcile-retrying",
+            "approval-action",
         }:
             raise _retain_process_failure(
                 error=RuntimeError(
@@ -3317,6 +3359,20 @@ class KimiAgent:
             return False
         run_id = self._approved_run_id()
         return run_id is not None and not self._autodata_handoff_ready(run_id)
+
+    @staticmethod
+    def _approval_is_coordinator_owned(action: dict[str, Any]) -> bool:
+        enabled = os.getenv(
+            "AAR_AUTODATA_APPROVAL_COORDINATOR", ""
+        ).strip().lower()
+        if enabled and enabled not in {"1", "true", "yes", "on"}:
+            raise RuntimeError(
+                "AAR_AUTODATA_APPROVAL_COORDINATOR must be a boolean"
+            )
+        return enabled in {"1", "true", "yes", "on"} and action.get("kind") in {
+            "approve_grounding",
+            "approve_baseline",
+        }
 
     def _owns_approved_run(self, output: dict[str, Any]) -> bool:
         """Return whether this session may advance the current durable proposal."""

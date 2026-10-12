@@ -54,6 +54,9 @@ from aar.infrastructure.autodata_coordinator import (
     NativeAutoDataControl,
     WorkspacePipelineReconciler,
 )
+from aar.infrastructure.autodata_coordinator.coordinator import (
+    WorkspaceApprovalReconciler,
+)
 from aar.infrastructure.autodata_coordinator.claude_worker import ClaudeWorker
 from aar.infrastructure.autodata_coordinator.kimi_worker import KimiWorker
 from aar.infrastructure.autodata_coordinator.training_smoke import (
@@ -2798,6 +2801,51 @@ class Supervisor:
             "native_revision_observed": outcome.native_revision,
         }
 
+    def _reconcile_approval_action(self) -> dict[str, Any] | None:
+        """Complete one delegated approval through the existing shared bridge."""
+
+        enabled = os.getenv(
+            "AAR_AUTODATA_APPROVAL_COORDINATOR", ""
+        ).strip().lower()
+        if not enabled:
+            return None
+        if enabled not in {"1", "true", "yes", "on"}:
+            raise AutoDataCoordinatorError(
+                "approval_coordinator_flag_invalid",
+                "approval coordinator enablement flag is invalid",
+            )
+        team_raw = os.getenv("TEAM_DIR", "").strip()
+        if not team_raw:
+            raise AutoDataCoordinatorError(
+                "approval_coordinator_team_missing",
+                "approval coordinator has no team directory",
+            )
+        if not self.args.state.is_file() or not self.args.control_file.is_file():
+            return None
+        from aar.research_loop.autodata_approval import review_and_complete_action
+
+        control = NativeAutoDataControl.from_environment(
+            Path(team_raw).resolve(strict=True)
+            / "autodata"
+            / "action-native-results"
+        )
+        outcome = WorkspaceApprovalReconciler(
+            control=control,
+            approval_handler=review_and_complete_action,
+        ).reconcile_registered_approval(self.args.control_file)
+        if outcome is None:
+            return None
+        self._snapshot(f"approval-action:{outcome.workspace_id}:{outcome.action_id}")
+        return {
+            "action_kind": outcome.action_kind,
+            "workspace_id": outcome.workspace_id,
+            "action_id": outcome.action_id,
+            "decision": outcome.decision,
+            "audit_path": str(outcome.audit_path),
+            "native_phase": outcome.native_phase,
+            "native_revision": outcome.native_revision,
+        }
+
     def _reconcile_training_smoke(self) -> dict[str, Any] | None:
         """Reconcile only a verified production handoff into the terminal canary."""
 
@@ -3280,6 +3328,15 @@ class Supervisor:
                         training_smoke=training_smoke,
                     )
                     continue
+                approval_action = self._call_with_status_heartbeat(
+                    self._reconcile_approval_action,
+                    state="approval-action",
+                )
+                if approval_action is not None:
+                    self._write_status(
+                        state="running", approval_action=approval_action
+                    )
+                    continue
                 semantic_action = self._call_with_status_heartbeat(
                     self._reconcile_semantic_action,
                     state="semantic-action",
@@ -3304,9 +3361,9 @@ class Supervisor:
                         error_code=error.code,
                         stage="autodata_action",
                         retryable=error.retryable,
-                        public_summary="AutoData semantic action reconciliation failed",
+                        public_summary="AutoData coordinated action reconciliation failed",
                     )
-                    self._snapshot("supervisor-semantic-action-failure")
+                    self._snapshot("supervisor-coordinated-action-failure")
                     self._write_status(
                         state="failed",
                         error=feedback["summary"],

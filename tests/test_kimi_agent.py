@@ -3421,6 +3421,30 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                         "autodata_supervisor_state_invalid",
                     )
 
+    def test_approval_coordinator_supervisor_state_is_runnable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            status = Path(temporary) / "status.json"
+            status.write_text(
+                json.dumps(
+                    {
+                        "schema": "aar.autodata.lifecycle-supervisor/v1",
+                        "updated_at": time.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                        ),
+                        "state": "approval-action",
+                    }
+                )
+            )
+            environment = {
+                "AAR_AUTODATA_LIFECYCLE_SUPERVISED": "1",
+                "AAR_AUTODATA_SUPERVISOR_STATUS": str(status),
+                "AAR_AUTODATA_SUPERVISOR_HEARTBEAT_SLA_SECONDS": "180",
+            }
+            with patch.dict(os.environ, environment, clear=False):
+                observed = KimiAgent._require_fresh_autodata_supervisor_status()
+
+            self.assertEqual(observed["state"], "approval-action")
+
     def test_completed_training_without_smoke_marker_fails_after_grace(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             agent = KimiAgent(
@@ -3959,6 +3983,40 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
         self.assertIn("review_autodata_action", names)
         options = create_server("server-api-tools").create_initialization_options()
         self.assertIsNotNone(options.capabilities.tools)
+
+    def test_shared_approval_coordinator_owns_only_requested_gates(self) -> None:
+        with patch.dict(
+            os.environ, {"AAR_AUTODATA_APPROVAL_COORDINATOR": "1"}, clear=False
+        ):
+            self.assertTrue(
+                KimiAgent._approval_is_coordinator_owned(
+                    {"kind": "approve_grounding"}
+                )
+            )
+            self.assertTrue(
+                KimiAgent._approval_is_coordinator_owned(
+                    {"kind": "approve_baseline"}
+                )
+            )
+            self.assertFalse(
+                KimiAgent._approval_is_coordinator_owned(
+                    {"kind": "approve_resources"}
+                )
+            )
+            self.assertFalse(
+                KimiAgent._approval_is_coordinator_owned(
+                    {"kind": "author_grounding"}
+                )
+            )
+
+    def test_shared_approval_coordinator_is_default_off(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AAR_AUTODATA_APPROVAL_COORDINATOR", None)
+            self.assertFalse(
+                KimiAgent._approval_is_coordinator_owned(
+                    {"kind": "approve_grounding"}
+                )
+            )
 
     def test_standard_mcp_bridge_emits_typed_text_content(self) -> None:
         content = _text_content({"status": "ok"})
