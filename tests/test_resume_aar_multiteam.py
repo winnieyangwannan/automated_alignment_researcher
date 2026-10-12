@@ -550,6 +550,47 @@ def test_run14_recovery_declares_decoupled_execution() -> None:
     assert "export AAR_NO_LOCAL_GPU=true" in source
 
 
+def test_recovery_reuses_one_active_evaluator(tmp_path: Path) -> None:
+    repo, attempt, _fake_bin, env = _fixture(tmp_path)
+    env["AAR_RESUME_REUSE_EVALUATOR"] = "1"
+    env["AAR_RESUME_REQUIRE_AUTHORITATIVE_JOB_STATE"] = "1"
+    env["ACTIVE_JOBS"] = "101"
+    env["JOB_STATES"] = "102=FAILED"
+
+    completed = subprocess.run(
+        [str(repo / "scripts" / ENGINE.name), str(attempt), "alpha"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert not Path(env["EVAL_LOG"]).exists()
+    registry = (attempt / "metadata" / "recovery_jobs.tsv").read_text()
+    assert "\tevaluator_reused\talpha\t101\t" in registry
+
+
+def test_recovery_waits_for_active_evaluation_claim(tmp_path: Path) -> None:
+    repo, attempt, _fake_bin, env = _fixture(tmp_path)
+    env["AAR_RESUME_REUSE_EVALUATOR"] = "1"
+    env["AAR_RESUME_REQUIRE_AUTHORITATIVE_JOB_STATE"] = "1"
+    env["ACTIVE_JOBS"] = "105"
+    env["JOB_STATES"] = "106=FAILED"
+
+    completed = subprocess.run(
+        [str(repo / "scripts" / ENGINE.name), str(attempt), "gamma"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 75
+    assert "waiting for active evaluator 105" in completed.stderr
+    assert not Path(env["SBATCH_LOG"]).exists()
+
+
 def test_missing_run_id_is_planned_without_mutation(tmp_path: Path) -> None:
     repo, attempt, _fake_bin, env = _fixture(tmp_path)
     env["AAR_RESUME_PLAN_ONLY"] = "1"

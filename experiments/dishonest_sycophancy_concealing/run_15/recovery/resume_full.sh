@@ -23,10 +23,6 @@ case "${ATTEMPT}" in
   /checkpoint/ram/aar/"${USER:?}"/run15_native_generation/full_attempts/*) ;;
   *) echo "not a Run 15 full attempt: ${ATTEMPT}" >&2; exit 2;;
 esac
-[ "$(git -C "${REPO}" branch --show-current)" = autodata ] || {
-  echo "Run 15 recovery requires branch autodata" >&2
-  exit 2
-}
 if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; then
   echo "tracked worktree is dirty" >&2
   exit 2
@@ -51,6 +47,26 @@ original_commit="$(sed -n 's/^git_commit=//p' "${submission}")"
   echo "submission record has no full source commit" >&2
   exit 2
 }
+current_branch="$(git -C "${REPO}" branch --show-current)"
+if [ "${AAR_RESUME_ALLOW_DETACHED_SOURCE:-0}" = 1 ]; then
+  [ -z "${current_branch}" ] || {
+    echo "automatic Run 15 recovery requires a detached source snapshot" >&2
+    exit 2
+  }
+  [ "${REPO}" = "${ATTEMPT}/runtime/aar-source" ] || {
+    echo "automatic Run 15 recovery requires the attempt-local source snapshot" >&2
+    exit 2
+  }
+  [ "$(git -C "${REPO}" rev-parse HEAD)" = "${original_commit}" ] || {
+    echo "automatic Run 15 recovery source must equal ${original_commit}" >&2
+    exit 2
+  }
+else
+  [ "${current_branch}" = autodata ] || {
+    echo "Run 15 recovery requires branch autodata" >&2
+    exit 2
+  }
+fi
 lifecycle_proof_policy="$(sed -n 's/^lifecycle_proof_policy=//p' "${submission}")"
 [ "${lifecycle_proof_policy}" = "$(sed -n 's/^lifecycle_proof_policy=//p' "${full_launch}")" ] || {
   echo "retained lifecycle-proof policies disagree" >&2

@@ -56,10 +56,6 @@ read -r -a allowed_seeds <<< "${AAR_RESUME_ALLOWED_SEEDS}"
 [ "${#requested_seeds[@]}" -gt 0 ] || { echo "no recovery seeds requested" >&2; exit 2; }
 
 current_branch="$(git -C "${REPO}" branch --show-current)"
-[ "${current_branch}" = "${AAR_RESUME_EXPECTED_BRANCH}" ] || {
-  echo "recovery requires branch ${AAR_RESUME_EXPECTED_BRANCH}; found ${current_branch}" >&2
-  exit 2
-}
 if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; then
   echo "tracked worktree is dirty" >&2
   exit 2
@@ -86,6 +82,21 @@ original_commit="$(sed -n 's/^git_commit=//p' "${submission}")"
   echo "submission metadata has no full source commit" >&2
   exit 2
 }
+if [ "${AAR_RESUME_ALLOW_DETACHED_SOURCE:-0}" = 1 ]; then
+  [ -z "${current_branch}" ] || {
+    echo "automatic recovery requires a detached source snapshot" >&2
+    exit 2
+  }
+  [ "$(git -C "${REPO}" rev-parse HEAD)" = "${original_commit}" ] || {
+    echo "automatic recovery source must equal original commit ${original_commit}" >&2
+    exit 2
+  }
+else
+  [ "${current_branch}" = "${AAR_RESUME_EXPECTED_BRANCH}" ] || {
+    echo "recovery requires branch ${AAR_RESUME_EXPECTED_BRANCH}; found ${current_branch}" >&2
+    exit 2
+  }
+fi
 git -C "${REPO}" merge-base --is-ancestor "${original_commit}" HEAD || {
   echo "recovery source does not descend from original commit ${original_commit}" >&2
   exit 2
@@ -116,9 +127,17 @@ for seed in "${requested_seeds[@]}"; do
 done
 
 job_active() {
-  local job="$1"
+  local job="$1" queued="" state=""
   [[ "${job}" =~ ^[0-9]+$ ]] || return 1
-  [ -n "$(squeue -h -j "${job}" -o '%T' 2>/dev/null | head -1)" ]
+  queued="$(squeue -h -j "${job}" -o '%T' 2>/dev/null | head -1)"
+  [ -z "${queued}" ] || return 0
+  [ "${AAR_RESUME_REQUIRE_AUTHORITATIVE_JOB_STATE:-0}" = 1 ] || return 1
+  state="$(job_state "${job}")"
+  case "${state}" in
+    BOOT_FAIL|CANCELLED|COMPLETED|DEADLINE|FAILED|NODE_FAIL|OUT_OF_MEMORY|PREEMPTED|REVOKED|TIMEOUT) return 1;;
+    PENDING|RUNNING|CONFIGURING|COMPLETING|RESIZING|SUSPENDED|STAGE_OUT) return 0;;
+    *) echo "authoritative scheduler state is unavailable for job ${job}" >&2; exit 75;;
+  esac
 }
 
 job_state() {
@@ -135,19 +154,46 @@ flock -n 9 || { echo "another recovery is already running for this attempt" >&2;
 # Fail closed before moving any stale state.  Original evaluator/chain jobs,
 # earlier recovery jobs, and retained training receipts all participate.
 active_jobs=()
+declare -A reusable_evaluator_by_seed=()
+register_active_evaluator() {
+  local seed="$1" job="$2" existing="${reusable_evaluator_by_seed[${seed}]:-}"
+  if [ -n "${existing}" ] && [ "${existing}" != "${job}" ]; then
+    echo "${seed} has multiple active evaluator jobs: ${existing} ${job}" >&2
+    exit 2
+  fi
+  reusable_evaluator_by_seed["${seed}"]="${job}"
+}
 while IFS=$'\t' read -r seed evaluator chain extra; do
   [ -z "${extra:-}" ] || { echo "invalid children.tsv row for ${seed}" >&2; exit 2; }
   valid_seed "${seed}" || { echo "invalid child seed: ${seed}" >&2; exit 2; }
   seed_requested "${seed}" || continue
   for job in "${evaluator}" "${chain}"; do
     [[ "${job}" =~ ^[0-9]+$ ]] || { echo "invalid child job id: ${job}" >&2; exit 2; }
-    job_active "${job}" && active_jobs+=("${job}")
   done
+  if job_active "${evaluator}"; then
+    if [ "${AAR_RESUME_REUSE_EVALUATOR:-0}" = 1 ]; then
+      register_active_evaluator "${seed}" "${evaluator}"
+    else
+      active_jobs+=("${evaluator}")
+    fi
+  fi
+  job_active "${chain}" && active_jobs+=("${chain}")
 done < "${children}"
 if [ -f "${registry}" ]; then
   while IFS=$'\t' read -r _timestamp _kind _seed job _rest; do
     seed_requested "${_seed}" || continue
-    job_active "${job:-}" && active_jobs+=("${job}")
+    if job_active "${job:-}"; then
+      case "${_kind}" in
+        evaluator|evaluator_reused)
+          if [ "${AAR_RESUME_REUSE_EVALUATOR:-0}" = 1 ]; then
+            register_active_evaluator "${_seed}" "${job}"
+          else
+            active_jobs+=("${job}")
+          fi
+          ;;
+        chain) active_jobs+=("${job}");;
+      esac
+    fi
   done < "${registry}"
 fi
 for seed in "${requested_seeds[@]}"; do
@@ -403,6 +449,10 @@ for seed in "${requested_seeds[@]}"; do
       echo "unscored claim has no submitted adapter: ${claim}" >&2
       exit 2
     }
+    if [ -n "${reusable_evaluator_by_seed[${seed}]:-}" ]; then
+      echo "${seed} recovery is waiting for active evaluator ${reusable_evaluator_by_seed[${seed}]} to resolve claim ${run_id}" >&2
+      exit 75
+    fi
     stale_claim_records+=("${seed}|${run_id}|${claim}")
     timing="${team}/_eval_private/timings/${run_id}.eval.jsonl"
     [ ! -e "${timing}" ] || stale_eval_timing_records+=("${seed}|${run_id}|${timing}")
@@ -572,12 +622,17 @@ for seed in "${requested_seeds[@]}"; do
   export SCORES_DIR="${team}/scores" AAR_IDEAS_DIR="${team}/methods"
   export SESSION_LOGS_DIR="${team}/logs" LIT_FORUM_DIR="${team}/litreview"
 
-  eval_log="${ATTEMPT_DIR}/metadata/recovery_eval_${seed}_${recovery_stamp}.txt"
-  "${REPO}/scripts/launch_eval_worker.sh" "${SUITE_NAME}" "${AAR_EVAL_IDLE_SECONDS}" 1 \
-    | tee "${eval_log}"
-  evaluator="$(awk '/^\[launch\] evaluator 1\/1 -> job [0-9]+$/{print $NF}' "${eval_log}")"
-  [[ "${evaluator}" =~ ^[0-9]+$ ]] || { echo "missing evaluator job for ${seed}" >&2; exit 2; }
-  record_event evaluator "${seed}" "${evaluator}" "team=${team_id}"
+  evaluator="${reusable_evaluator_by_seed[${seed}]:-}"
+  if [ -n "${evaluator}" ]; then
+    record_event evaluator_reused "${seed}" "${evaluator}" "team=${team_id}"
+  else
+    eval_log="${ATTEMPT_DIR}/metadata/recovery_eval_${seed}_${recovery_stamp}.txt"
+    "${REPO}/scripts/launch_eval_worker.sh" "${SUITE_NAME}" "${AAR_EVAL_IDLE_SECONDS}" 1 \
+      | tee "${eval_log}"
+    evaluator="$(awk '/^\[launch\] evaluator 1\/1 -> job [0-9]+$/{print $NF}' "${eval_log}")"
+    [[ "${evaluator}" =~ ^[0-9]+$ ]] || { echo "missing evaluator job for ${seed}" >&2; exit 2; }
+    record_event evaluator "${seed}" "${evaluator}" "team=${team_id}"
+  fi
 
   if [ -n "${resume_uid_by_seed[${seed}]:-}" ]; then
     export AAR_IDEA_UID_OVERRIDE="${resume_uid_by_seed[${seed}]}"
@@ -650,7 +705,7 @@ for seed in "${requested_seeds[@]}"; do
     "${AAR_RESUME_HOURS}" "${remaining}" "${team_id}")"
   chain="${chain%%;*}"
   [[ "${chain}" =~ ^[0-9]+$ ]] || { echo "invalid chain job id for ${seed}: ${chain}" >&2; exit 2; }
-  details="team=${team_id};started=${started_by_seed[${seed}]};remaining=${remaining}"
+  details="team=${team_id};started=${started_by_seed[${seed}]};remaining=${remaining};origin=${AAR_RESUME_RECOVERY_ORIGIN:-operator}"
   [ -z "${resume_run_by_seed[${seed}]:-}" ] || \
     details="${details};resume_run_id=${resume_run_by_seed[${seed}]}"
   [ -z "${feedback_uid_by_seed[${seed}]:-}" ] || \

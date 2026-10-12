@@ -51,6 +51,18 @@ agent:
   preflight_timeout_seconds: 180
   preflight_cache_ttl_seconds: 21600
 
+recovery:
+  # A lightweight host-owned supervisor resumes only terminal controllers from
+  # durable state. It never retries an active training or evaluation operation.
+  enabled: true
+  max_controller_restarts_per_chain: 8
+  max_plan_failures_per_chain: 3
+  poll_seconds: 60
+  backoff_seconds: 300
+  unknown_state_timeout_seconds: 900
+  time_limit: 7-00:00:00
+  reuse_evaluator: true
+
 data_generation:
   # The research model authors and validates each method's data-generation code.
   # No AutoData plugin, broker, recipe, workspace, or production export is used.

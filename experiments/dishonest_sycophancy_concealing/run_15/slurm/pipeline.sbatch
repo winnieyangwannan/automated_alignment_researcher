@@ -281,4 +281,38 @@ printf 'research_backend=kimi\nresearch_model=Kimi-K2.6\nresearcher_deployment=a
   "${AAR_FORUM_SCOPE}" "${AAR_SHARED_FORUM_DIR}" \
   "${LIFECYCLE_PROOF_POLICY}" "${#seeds[@]}" "${AAR_TARGET_SUCCESSFUL_ITERATIONS}" "${AAR_RESEARCH_SEEDS}" \
   > "${ATTEMPT}/metadata/full-launch.env"
+if [ "${AAR_RUN15_MODE}" = full ] && [ "${AAR_CONTROLLER_RECOVERY_ENABLED:-0}" = 1 ]; then
+  [ "${AAR_RESUME_REUSE_EVALUATOR:?missing evaluator recovery policy}" = 1 ] || {
+    echo "Run 15 automatic recovery requires evaluator reuse" >&2
+    exit 2
+  }
+  export AAR_RUN15_SECRET_ENV="${HARNESS_ENV:?missing secret environment path}"
+  export PYTHONPATH="${REPO}${PYTHONPATH:+:${PYTHONPATH}}"
+  supervisor_job="$(sbatch --parsable --requeue \
+    --account="${AAR_SLURM_ACCOUNT}" --partition="${AAR_SLURM_PARTITION}" \
+    --qos="${AAR_AGENT_QOS}" --cpus-per-task=1 --mem=2G \
+    --time="${AAR_CONTROLLER_SUPERVISOR_TIME:?missing supervisor time limit}" \
+    --job-name="aar-run15-controller-supervisor" \
+    --output="${ATTEMPT}/logs/controller-supervisor-%j.out" --export=ALL \
+    "${REPO}/scripts/supervise_aar_multiteam.py" \
+    --attempt "${ATTEMPT}" \
+    --resume-script "${REPO}/experiments/dishonest_sycophancy_concealing/run_15/recovery/resume_full.sh" \
+    --seeds "${seeds[@]}" \
+    --target-pairs "${AAR_TARGET_SUCCESSFUL_ITERATIONS}" \
+    --session-ceiling "${AAR_MAX_ITERATIONS_PER_CHAIN}" \
+    --max-restarts "${AAR_CONTROLLER_MAX_RESTARTS:?missing controller restart limit}" \
+    --max-plan-failures "${AAR_CONTROLLER_MAX_PLAN_FAILURES:?missing recovery-plan limit}" \
+    --poll-seconds "${AAR_CONTROLLER_POLL_SECONDS:?missing controller poll interval}" \
+    --backoff-seconds "${AAR_CONTROLLER_BACKOFF_SECONDS:?missing controller backoff}" \
+    --unknown-state-timeout-seconds "${AAR_CONTROLLER_UNKNOWN_TIMEOUT_SECONDS:?missing scheduler-state timeout}")"
+  supervisor_job="${supervisor_job%%;*}"
+  [[ "${supervisor_job}" =~ ^[0-9]+$ ]] || {
+    echo "invalid controller-supervisor job id: ${supervisor_job}" >&2
+    exit 2
+  }
+  printf 'supervisor_job_id=%s\n' "${supervisor_job}" \
+    | tee "${ATTEMPT}/metadata/controller-supervisor.env" \
+    >> "${ATTEMPT}/metadata/full-launch.env"
+  echo "[run15] controller supervisor -> job ${supervisor_job}"
+fi
 echo "[run15] launched ${#seeds[@]} native-generation chains with one shared forum"

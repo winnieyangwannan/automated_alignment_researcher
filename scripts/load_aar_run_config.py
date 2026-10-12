@@ -73,6 +73,7 @@ def load_run_config(path: Path) -> dict[str, str]:
             "evaluation",
             "agent",
             "data_generation",
+            "recovery",
         },
         "top-level",
     )
@@ -88,6 +89,7 @@ def load_run_config(path: Path) -> dict[str, str]:
     data_generation = _mapping(
         payload.get("data_generation"), "data_generation"
     )
+    recovery = _mapping(payload.get("recovery"), "recovery")
     _reject_unknown(
         lifecycle, {"name", "prerequisite_chain_count"}, "lifecycle"
     )
@@ -144,6 +146,20 @@ def load_run_config(path: Path) -> dict[str, str]:
         data_generation,
         {"backend", "max_sequential_target_generations"},
         "data_generation",
+    )
+    _reject_unknown(
+        recovery,
+        {
+            "enabled",
+            "max_controller_restarts_per_chain",
+            "max_plan_failures_per_chain",
+            "poll_seconds",
+            "backoff_seconds",
+            "unknown_state_timeout_seconds",
+            "time_limit",
+            "reuse_evaluator",
+        },
+        "recovery",
     )
 
     environment: dict[str, str] = {}
@@ -411,6 +427,61 @@ def load_run_config(path: Path) -> dict[str, str]:
                 "data_generation.max_sequential_target_generations",
                 maximum=100000,
             )
+        )
+
+    if "enabled" in recovery:
+        environment["AAR_CONTROLLER_RECOVERY_ENABLED"] = _boolean(
+            recovery["enabled"], "recovery.enabled"
+        )
+    if "max_controller_restarts_per_chain" in recovery:
+        environment["AAR_CONTROLLER_MAX_RESTARTS"] = str(
+            _integer(
+                recovery["max_controller_restarts_per_chain"],
+                "recovery.max_controller_restarts_per_chain",
+                maximum=100,
+            )
+        )
+    if "max_plan_failures_per_chain" in recovery:
+        environment["AAR_CONTROLLER_MAX_PLAN_FAILURES"] = str(
+            _integer(
+                recovery["max_plan_failures_per_chain"],
+                "recovery.max_plan_failures_per_chain",
+                maximum=100,
+            )
+        )
+    if "poll_seconds" in recovery:
+        environment["AAR_CONTROLLER_POLL_SECONDS"] = str(
+            _integer(
+                recovery["poll_seconds"],
+                "recovery.poll_seconds",
+                minimum=5,
+                maximum=3600,
+            )
+        )
+    if "backoff_seconds" in recovery:
+        environment["AAR_CONTROLLER_BACKOFF_SECONDS"] = str(
+            _integer(
+                recovery["backoff_seconds"],
+                "recovery.backoff_seconds",
+                minimum=0,
+                maximum=86400,
+            )
+        )
+    if "unknown_state_timeout_seconds" in recovery:
+        environment["AAR_CONTROLLER_UNKNOWN_TIMEOUT_SECONDS"] = str(
+            _integer(
+                recovery["unknown_state_timeout_seconds"],
+                "recovery.unknown_state_timeout_seconds",
+                maximum=86400,
+            )
+        )
+    if "time_limit" in recovery:
+        environment["AAR_CONTROLLER_SUPERVISOR_TIME"] = _time_limit(
+            recovery["time_limit"], "recovery.time_limit"
+        )
+    if "reuse_evaluator" in recovery:
+        environment["AAR_RESUME_REUSE_EVALUATOR"] = _boolean(
+            recovery["reuse_evaluator"], "recovery.reuse_evaluator"
         )
 
     return environment

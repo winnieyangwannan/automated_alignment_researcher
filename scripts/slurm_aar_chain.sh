@@ -112,6 +112,7 @@ _autodata_native_state_retained=''
 _aar_chain_pid="$$"
 _aar_research_started=0
 _aar_research_pid=''
+_aar_research_started_at_epoch=0
 _aar_termination_signal=""
 _aar_termination_category=""
 _aar_research_pid_file="${TEAM_DIR}/logs/.research-process-${SLURM_JOB_ID:-$$}.pid"
@@ -182,7 +183,9 @@ finalize_aar_chain() {
   fi
   "${PY}" - "${TEAM_DIR}/logs/research-session-result-${SLURM_JOB_ID:-$$}.json" \
     "${SLURM_JOB_ID:-}" "${result}" "${category}" "${phase}" \
-    "${_aar_termination_signal}" <<'PY'
+    "${_aar_termination_signal}" "${TEAM_DIR}" "${SEED#explore-}" \
+    "${AAR_TARGET_SUCCESSFUL_ITERATIONS:-0}" \
+    "${_aar_research_started_at_epoch}" <<'PY'
 import json
 import os
 import pathlib
@@ -191,6 +194,62 @@ import sys
 from datetime import datetime, timezone
 
 path = pathlib.Path(sys.argv[1])
+team = pathlib.Path(sys.argv[7])
+seed = sys.argv[8]
+target_pairs = int(sys.argv[9] or "0")
+research_started_at = int(sys.argv[10] or "0")
+
+summary = None
+summary_path = team / "logs" / "run_summary.json"
+try:
+    if summary_path.stat().st_mtime >= research_started_at:
+        candidate = json.loads(summary_path.read_text(encoding="utf-8"))
+        if isinstance(candidate, dict):
+            summary = candidate
+except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    pass
+
+used_sessions = sum(1 for _ in (team / "logs").glob(f"session_*_{seed}_*.log"))
+scores = set()
+for score_path in (team / "scores").glob("*.json"):
+    if score_path.name.endswith(".failed.json"):
+        continue
+    try:
+        score = json.loads(score_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        continue
+    run_id = score.get("run_id") if isinstance(score, dict) else None
+    scores.add(run_id if isinstance(run_id, str) and run_id else score_path.stem)
+findings = set()
+for finding_path in (team / ".finding_dedup").glob("runid_*/post.json"):
+    try:
+        finding = json.loads(finding_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        continue
+    run_id = finding.get("run_id") if isinstance(finding, dict) else None
+    if isinstance(run_id, str):
+        findings.add(run_id)
+completed_pairs = len(scores & findings)
+stop_reason = summary.get("stop_reason") if summary is not None else None
+
+if completed_pairs >= target_pairs > 0:
+    disposition = "complete"
+elif sys.argv[4] in {"cancelled", "configuration_or_startup_failure"}:
+    disposition = "halt"
+elif sys.argv[4] in {"research_process_failure", "runtime_service_failure"}:
+    disposition = "recover"
+elif int(sys.argv[3]) == 0 and stop_reason in {
+    "max_iterations",
+    "timeout",
+    "orchestration_incident",
+    "permanent_session_failure",
+}:
+    disposition = "recover"
+elif int(sys.argv[3]) == 0 and stop_reason == "successful_iterations":
+    disposition = "halt"
+else:
+    disposition = "halt"
+
 value = {
     "schema": "aar.research-session-result/v1",
     "job_id": sys.argv[2] or None,
@@ -198,7 +257,11 @@ value = {
     "category": sys.argv[4],
     "phase": sys.argv[5],
     "termination_signal": sys.argv[6] or None,
-    "retryable": False,
+    "retryable": disposition == "recover",
+    "recovery_disposition": disposition,
+    "stop_reason": stop_reason,
+    "completed_pairs": completed_pairs,
+    "used_sessions": used_sessions,
     "finished_at": datetime.now(timezone.utc).isoformat(),
 }
 path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -658,6 +721,7 @@ if [ "${AAR_HIDE_EVAL_CONFIG:-0}" = "1" ]; then
   unset HOLDOUT_DIR HELDOUT_SCORES_DIR AAR_SUITE_BENCHMARKS AAR_BASELINE_OVERRIDES
 fi
 _aar_research_started=1
+_aar_research_started_at_epoch="$(date +%s)"
 PYTHONUNBUFFERED=1 "${PY}" -u run.py agent --idea-uid "${IDEA_UID}" --idea-name "${IDEA_NAME}" \
   --max-iterations "${MAX_ITERS}" --max-runtime "${FULL_AUTO_MAX_RUNTIME_SECONDS}" --local &
 _aar_research_pid=$!

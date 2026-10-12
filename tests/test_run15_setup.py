@@ -41,6 +41,7 @@ def test_run15_is_fresh_native_5x50_configuration() -> None:
     assert config["storage"]["adapter_retention"] == "all"
     assert config["research"] == {
         "seeds": ["alpha", "beta", "gamma", "delta", "epsilon"],
+        "forum_scope": "shared",
         "target_score_result_pairs": 50,
         "max_sessions_per_chain": 60,
         "walltime_hours": 167,
@@ -56,6 +57,16 @@ def test_run15_is_fresh_native_5x50_configuration() -> None:
     assert config["agent"]["max_continuations"] == 32
     assert config["agent"]["progress_stall_limit"] == 3
     assert config["agent"]["progress_stall_grace_continuations"] == 8
+    assert config["recovery"] == {
+        "enabled": True,
+        "max_controller_restarts_per_chain": 8,
+        "max_plan_failures_per_chain": 3,
+        "poll_seconds": 60,
+        "backoff_seconds": 300,
+        "unknown_state_timeout_seconds": 900,
+        "time_limit": "7-00:00:00",
+        "reuse_evaluator": True,
+    }
 
     environment = _resolved_environment(config_path)
     assert "export AAR_AUTODATA=0" in environment
@@ -68,6 +79,10 @@ def test_run15_is_fresh_native_5x50_configuration() -> None:
     assert "export AAR_KIMI_PROGRESS_STALL_LIMIT=3" in environment
     assert "export AAR_KIMI_PROGRESS_STALL_GRACE_CONTINUATIONS=8" in environment
     assert "export EVAL_VLLM_LOG_STATS=1" in environment
+    assert "export AAR_CONTROLLER_RECOVERY_ENABLED=1" in environment
+    assert "export AAR_CONTROLLER_MAX_RESTARTS=8" in environment
+    assert "export AAR_CONTROLLER_MAX_PLAN_FAILURES=3" in environment
+    assert "export AAR_RESUME_REUSE_EVALUATOR=1" in environment
 
     evaluator = (ROOT / "scripts" / "eval_worker.sh").read_text()
     assert "prune_submission_artifacts.py" in evaluator
@@ -169,6 +184,10 @@ def test_run15_launch_and_recovery_are_isolated_from_run14() -> None:
     assert '.git_commit == $git_commit' in pipeline
     assert '.researcher_deployment == "autodata2_8-kimi26"' in pipeline
     assert "full five-chain Run 15 requires retryable continuation exhaustion" in pipeline
+    assert "supervise_aar_multiteam.py" in pipeline
+    assert "AAR_CONTROLLER_MAX_RESTARTS" in pipeline
+    assert "AAR_RESUME_REUSE_EVALUATOR" in pipeline
+    assert "controller-supervisor-%j.out" in pipeline
 
     recovery = (RUN15 / "recovery" / "resume_full.sh").read_text()
     assert 'lifecycle_proof_policy="$(sed -n' in recovery
@@ -336,6 +355,18 @@ def test_run15_recovery_accepts_identical_and_telemetry_only_configs(
         )
         + "\n"
     )
+    recovery_legacy = tmp_path / "recovery-legacy.yaml"
+    recovery_lines: list[str] = []
+    skipping_recovery = False
+    for line in canonical.read_text().splitlines():
+        if line == "recovery:":
+            skipping_recovery = True
+            continue
+        if skipping_recovery and line and not line.startswith((" ", "#")):
+            skipping_recovery = False
+        if not skipping_recovery:
+            recovery_lines.append(line)
+    recovery_legacy.write_text("\n".join(recovery_lines) + "\n")
     incompatible = tmp_path / "incompatible.yaml"
     incompatible.write_text(canonical.read_text().replace("workers: 1", "workers: 2"))
 
@@ -359,6 +390,7 @@ def test_run15_recovery_accepts_identical_and_telemetry_only_configs(
     assert compatible(identical).returncode == 0
     assert compatible(telemetry_legacy).returncode == 0
     assert compatible(continuation_legacy).returncode == 0
+    assert compatible(recovery_legacy).returncode == 0
     assert compatible(incompatible).returncode != 0
 
 

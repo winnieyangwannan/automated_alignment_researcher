@@ -24,7 +24,11 @@ run15_recovery_config_compatible() {
     -e '/^  max_continuations: 32$/d' \
     -e '/^  progress_stall_limit: 3$/d' \
     -e '/^  progress_stall_grace_continuations: 8$/d' \
-      "${source}" > "${destination}"
+      "${source}" | awk '
+        /^recovery:$/ { skip=1; next }
+        skip && /^[^[:space:]#]/ { skip=0 }
+        !skip { print }
+      ' > "${destination}"
   done
   cmp -s -- "${normalized_retained}" "${normalized_canonical}" && result=0
   rm -f -- "${normalized_retained}" "${normalized_canonical}"

@@ -95,6 +95,16 @@ def test_chain_retains_signal_marker_before_bounded_child_cleanup() -> None:
     assert "dir_fd=directory" in source
 
 
+def test_chain_terminal_receipt_contains_outer_recovery_state() -> None:
+    source = CHAIN.read_text()
+
+    assert '"recovery_disposition": disposition' in source
+    assert '"stop_reason": stop_reason' in source
+    assert '"completed_pairs": completed_pairs' in source
+    assert '"used_sessions": used_sessions' in source
+    assert 'disposition = "recover"' in source
+
+
 def test_chain_keeps_privileged_service_logs_out_of_research_logs() -> None:
     source = CHAIN.read_text()
 
