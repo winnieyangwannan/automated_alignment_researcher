@@ -156,7 +156,10 @@ flock -n 9 || { echo "another recovery is already running for this attempt" >&2;
 active_jobs=()
 declare -A reusable_evaluator_by_seed=()
 register_active_evaluator() {
-  local seed="$1" job="$2" existing="${reusable_evaluator_by_seed[${seed}]:-}"
+  local seed job existing
+  seed="$1"
+  job="$2"
+  existing="${reusable_evaluator_by_seed["${seed}"]:-}"
   if [ -n "${existing}" ] && [ "${existing}" != "${job}" ]; then
     echo "${seed} has multiple active evaluator jobs: ${existing} ${job}" >&2
     exit 2

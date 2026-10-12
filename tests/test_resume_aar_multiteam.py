@@ -591,6 +591,33 @@ def test_recovery_waits_for_active_evaluation_claim(tmp_path: Path) -> None:
     assert not Path(env["SBATCH_LOG"]).exists()
 
 
+def test_recovery_reuses_registry_evaluator_for_nonfinal_requested_seed(
+    tmp_path: Path,
+) -> None:
+    repo, attempt, _fake_bin, env = _fixture(tmp_path)
+    registry = attempt / "metadata" / "recovery_jobs.tsv"
+    registry.write_text(
+        "2026-10-12T00:00:00-0700\trecovery_start\t-\t-\tcommit\tdetails\n"
+        "2026-10-12T00:00:01-0700\tevaluator\tbeta\t8123\tcommit\tteam=beta\n"
+    )
+    env["AAR_RESUME_REUSE_EVALUATOR"] = "1"
+    env["AAR_RESUME_REQUIRE_AUTHORITATIVE_JOB_STATE"] = "1"
+    env["ACTIVE_JOBS"] = "8123"
+    env["JOB_STATES"] = "103=COMPLETED 104=FAILED"
+
+    completed = subprocess.run(
+        [str(repo / "scripts" / ENGINE.name), str(attempt), "beta"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert not Path(env["EVAL_LOG"]).exists()
+    assert "\tevaluator_reused\tbeta\t8123\t" in registry.read_text()
+
+
 def test_missing_run_id_is_planned_without_mutation(tmp_path: Path) -> None:
     repo, attempt, _fake_bin, env = _fixture(tmp_path)
     env["AAR_RESUME_PLAN_ONLY"] = "1"
