@@ -858,6 +858,116 @@ def test_synchronous_host_work_refreshes_supervisor_heartbeat(
     )
 
 
+def test_semantic_worker_invocation_refreshes_supervisor_heartbeat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = lifecycle_supervisor.Supervisor(
+        Namespace(status_file=tmp_path / "status.json")
+    )
+    writes: list[dict[str, object]] = []
+    monkeypatch.setattr(lifecycle_supervisor, "DEFAULT_STATUS_HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_atomic_json",
+        lambda _path, value: writes.append(value),
+    )
+
+    result = supervisor._call_with_status_heartbeat(
+        lambda: lifecycle_supervisor.time.sleep(0.04),
+        state="semantic-action",
+    )
+
+    assert result is None
+    semantic = [value for value in writes if value["state"] == "semantic-action"]
+    assert len(semantic) >= 3
+
+
+def _semantic_coordinator_supervisor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> lifecycle_supervisor.Supervisor:
+    team = tmp_path / "team"
+    team.mkdir()
+    state = tmp_path / "state.db"
+    state.touch()
+    control = tmp_path / "control.json"
+    control.write_text(
+        json.dumps(
+            {
+                "schema": "aar.autodata.lifecycle-control/v1",
+                "subjects": [
+                    {
+                        "kind": "workspace",
+                        "subject_id": "ws_" + "1" * 32,
+                        "status": "registered",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    supervisor = lifecycle_supervisor.Supervisor(
+        Namespace(state=state, control_file=control)
+    )
+    monkeypatch.setenv("TEAM_DIR", str(team))
+    monkeypatch.setenv("AAR_AUTODATA_CLARIFY_COORDINATOR", "1")
+    return supervisor
+
+
+def test_semantic_coordinator_requires_explicit_worker_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = _semantic_coordinator_supervisor(tmp_path, monkeypatch)
+    monkeypatch.delenv("AAR_AUTODATA_SEMANTIC_WORKER", raising=False)
+
+    with pytest.raises(
+        lifecycle_supervisor.AutoDataCoordinatorError,
+        match="unsupported semantic worker backend",
+    ) as raised:
+        supervisor._reconcile_semantic_action()
+
+    assert raised.value.code == "semantic_worker_backend_invalid"
+
+
+def test_semantic_coordinator_rejects_kimi_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = _semantic_coordinator_supervisor(tmp_path, monkeypatch)
+    monkeypatch.setenv("AAR_AUTODATA_SEMANTIC_WORKER", "kimi")
+
+    with pytest.raises(
+        lifecycle_supervisor.AutoDataCoordinatorError,
+        match="unsupported semantic worker backend",
+    ) as raised:
+        supervisor._reconcile_semantic_action()
+
+    assert raised.value.code == "semantic_worker_backend_invalid"
+
+
+def test_semantic_coordinator_configures_claude_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = _semantic_coordinator_supervisor(tmp_path, monkeypatch)
+    monkeypatch.setenv("AAR_AUTODATA_SEMANTIC_WORKER", "claude")
+    observed: dict[str, object] = {}
+
+    class Reconciler:
+        def __init__(self, **kwargs: object) -> None:
+            observed.update(kwargs)
+
+        async def reconcile_registered_clarify(self, _control: Path) -> None:
+            return None
+
+    monkeypatch.setattr(
+        lifecycle_supervisor.NativeAutoDataControl,
+        "from_environment",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(lifecycle_supervisor, "AutoDataActionReconciler", Reconciler)
+
+    assert supervisor._reconcile_semantic_action() is None
+    assert isinstance(observed["worker"], lifecycle_supervisor.ClaudeWorker)
+
+
 def test_long_idle_sleep_refreshes_supervisor_heartbeat(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -898,6 +1008,23 @@ def test_signal_handler_does_not_reenter_atomic_status_writer(
     assert supervisor.stop_requested is True
     assert supervisor.stop_signal == signal.SIGTERM
     assert [value["state"] for value in writes] == ["running"]
+
+
+def test_supervisor_lock_prevents_duplicate_semantic_worker_owner(
+    tmp_path: Path,
+) -> None:
+    lock_file = tmp_path / "supervisor.lock"
+    first = lifecycle_supervisor.Supervisor(Namespace(lock_file=lock_file))
+    second = lifecycle_supervisor.Supervisor(Namespace(lock_file=lock_file))
+    first._lock()
+    try:
+        with pytest.raises(
+            RuntimeError, match="another AutoData lifecycle supervisor owns this run"
+        ):
+            second._lock()
+    finally:
+        assert first.lock_handle is not None
+        first.lock_handle.close()
 
 
 def test_run_serially_publishes_signal_stop_states(

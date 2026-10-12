@@ -11,6 +11,7 @@ flight and whenever a step returns.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import fcntl
 import hashlib
 import json
@@ -45,6 +46,12 @@ from aar.infrastructure.autodata_execution_contract import (
     operator_execution_settings,
     validate_runtime_campaign_policy_rewrite,
 )
+from aar.infrastructure.autodata_coordinator import (
+    AutoDataCoordinatorError,
+    AutoDataActionReconciler,
+    NativeAutoDataControl,
+)
+from aar.infrastructure.autodata_coordinator.claude_worker import ClaudeWorker
 
 META_TIMEOUT_SECONDS = 2 * 60 * 60
 PRODUCTION_TIMEOUT_SECONDS = 8 * 60 * 60
@@ -2662,6 +2669,71 @@ class Supervisor:
         ) and publish_status:
             self._write_status(state="running", last_snapshot_reason=reason)
 
+    def _reconcile_semantic_action(self) -> dict[str, Any] | None:
+        """Reconcile clarify only when the run explicitly enables this slice."""
+
+        enabled = os.getenv("AAR_AUTODATA_CLARIFY_COORDINATOR", "").strip().lower()
+        if not enabled:
+            return None
+        if enabled not in {"1", "true", "yes", "on"}:
+            raise AutoDataCoordinatorError(
+                "semantic_coordinator_flag_invalid",
+                "clarify coordinator enablement flag is invalid",
+            )
+        team_raw = os.getenv("TEAM_DIR", "").strip()
+        if not team_raw:
+            raise AutoDataCoordinatorError(
+                "semantic_coordinator_team_missing",
+                "clarify coordinator has no team directory",
+            )
+        team_dir = Path(team_raw).resolve(strict=True)
+        registered_workspaces = [
+            entry
+            for entry in _load_control(self.args.control_file)["subjects"]
+            if entry.get("kind") == "workspace"
+            and entry.get("status") == "registered"
+        ]
+        if not self.args.state.is_file() or not registered_workspaces:
+            return None
+        backend = os.getenv("AAR_AUTODATA_SEMANTIC_WORKER", "").strip().lower()
+        if backend == "claude":
+            worker = ClaudeWorker()
+        else:
+            raise AutoDataCoordinatorError(
+                "semantic_worker_backend_invalid",
+                "clarify coordinator names an unsupported semantic worker backend",
+            )
+        coordinator = AutoDataActionReconciler(
+            control=NativeAutoDataControl.from_environment(
+                team_dir / "autodata" / "action-native-results"
+            ),
+            worker=worker,
+            team_dir=team_dir,
+            action_timeout_seconds=float(
+                os.getenv("AAR_AUTODATA_CLARIFY_WORKER_SECONDS", "1800")
+            ),
+            malformed_output_attempts=int(
+                os.getenv("AAR_AUTODATA_CLARIFY_OUTPUT_ATTEMPTS", "3")
+            ),
+        )
+        outcome = asyncio.run(
+            coordinator.reconcile_registered_clarify(self.args.control_file)
+        )
+        if outcome is None:
+            return None
+        self._snapshot(
+            f"semantic-action:{outcome.workspace_id}:{outcome.action_id}"
+        )
+        return {
+            "workspace_id": outcome.workspace_id,
+            "action_id": outcome.action_id,
+            "action_kind": "clarify_design",
+            "worker_backend": outcome.worker_backend,
+            "receipt": str(outcome.receipt_path),
+            "native_phase_observed": outcome.native_phase,
+            "native_revision_observed": outcome.native_revision,
+        }
+
     def _progress_signature(self, subject: Subject | None = None) -> tuple[Any, ...]:
         """Return native semantic progress, never SQLite/WAL write activity."""
         if subject is None or not self.args.state.is_file():
@@ -3009,6 +3081,15 @@ class Supervisor:
                         )
                     self._write_status(state="running", transition=transition)
                     continue
+                semantic_action = self._call_with_status_heartbeat(
+                    self._reconcile_semantic_action,
+                    state="semantic-action",
+                )
+                if semantic_action is not None:
+                    self._write_status(
+                        state="running", semantic_action=semantic_action
+                    )
+                    continue
                 subject = next_subject(
                     self.args.state,
                     self.args.control_file,
@@ -3018,6 +3099,21 @@ class Supervisor:
             except Exception as error:
                 if self.stop_requested:
                     break
+                if isinstance(error, AutoDataCoordinatorError):
+                    feedback = self._failure_feedback(
+                        error,
+                        error_code=error.code,
+                        stage="autodata_action",
+                        retryable=error.retryable,
+                        public_summary="AutoData semantic action reconciliation failed",
+                    )
+                    self._snapshot("supervisor-semantic-action-failure")
+                    self._write_status(
+                        state="failed",
+                        error=feedback["summary"],
+                        failure=feedback,
+                    )
+                    return 2
                 if workspace_id is not None:
                     entry = _registration_entry(
                         self.args.control_file,
