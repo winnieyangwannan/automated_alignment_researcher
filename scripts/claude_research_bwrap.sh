@@ -26,6 +26,7 @@ autodata_plugin_root="${AAR_AUTODATA_PLUGIN_ROOT:-}"
 autodata_state="${AAR_AUTODATA_STATE:-}"
 research_tool_dir="${AAR_RESEARCH_TOOL_DIR:-}"
 trusted_harness_py="${AAR_TRUSTED_HARNESS_PY:-${HARNESS_PY:-}}"
+trusted_harness_entry=""
 trusted_harness_root=""
 trusted_harness_base_root=""
 
@@ -52,6 +53,8 @@ if [ -n "${research_tool_dir}" ]; then
 fi
 if [ -n "${trusted_harness_py}" ]; then
   [ -x "${trusted_harness_py}" ] || fail "trusted harness Python is not executable"
+  trusted_harness_bin="$(realpath -e -- "$(dirname -- "${trusted_harness_py}")")"
+  trusted_harness_entry="${trusted_harness_bin}/$(basename -- "${trusted_harness_py}")"
 fi
 if [ -n "${autodata_plugin_root}" ]; then
   [ -d "${autodata_plugin_root}" ] || fail "AutoData plugin does not exist"
@@ -78,9 +81,8 @@ fi
 # approved source/runtime bind remain visible without another mount.
 if [ -n "${trusted_harness_py}" ]; then
   for hidden_root in "${hidden_roots[@]}"; do
-    case "${trusted_harness_py}" in
+    case "${trusted_harness_entry}" in
       "${hidden_root}"/*)
-        trusted_harness_bin="$(dirname -- "${trusted_harness_py}")"
         [ "$(basename -- "${trusted_harness_bin}")" = bin ] || \
           fail "trusted harness Python must be inside a virtual-environment bin directory"
         trusted_harness_root="$(realpath -e -- "${trusted_harness_bin}/..")"
@@ -93,7 +95,7 @@ if [ -n "${trusted_harness_py}" ]; then
         ;;
     esac
   done
-  trusted_harness_real="$(realpath -e -- "${trusted_harness_py}")"
+  trusted_harness_real="$(realpath -e -- "${trusted_harness_entry}")"
   case "${trusted_harness_real}" in
     "${trusted_harness_root}"/*) ;;
     *)
@@ -364,7 +366,9 @@ unset git_common cli_dir masked_file hidden_root storage_home autodata_plugin_ro
 unset autodata_state autodata_state_root autodata_state_visible
 unset artifact_root artifact_team_eval_private resolved_team_dir secret_root
 unset claude_native_cache dotslash_cache
-unset research_tool_dir trusted_harness_py trusted_harness_bin trusted_harness_root
+unset research_tool_dir trusted_harness_py trusted_harness_entry trusted_harness_bin
+unset trusted_harness_root trusted_harness_real trusted_harness_base_bin
+unset trusted_harness_base_root
 while IFS= read -r env_name; do
   upper_name="${env_name^^}"
   case "${upper_name}" in
