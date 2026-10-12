@@ -1,8 +1,8 @@
 # Run 16 five-chain native-generation lifecycle check
 
-- Status: planned; blocked on the Run 16 one-chain proof
+- Status: ready; blocked only on a fresh passed Run 16 one-chain proof
 - Created: 2026-10-11 01:49 PT
-- Last updated: 2026-10-11 01:49 PT
+- Last updated: 2026-10-11 19:05 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -21,16 +21,25 @@ This is the ordered gate between the one-chain lifecycle check and the full
 Run 16 experiment. It consumes and retains the exact passed one-chain proof;
 its own proof records the prerequisite file's SHA-256.
 
-No Run 16 prerequisite proof exists yet. Earlier canaries are retained as
-historical evidence, but this fresh researcher configuration requires proofs
-produced by the final Run 16 source revision.
+No eligible Run 16 prerequisite proof exists yet. The retained recovery attempt
+completed training, evaluation, score publication, finding publication, and
+ephemeral-checkpoint cleanup, but its fail-closed proof correctly rejected a
+mixed source commit: research began at `384ce75`, while recovered training used
+the Serve proxy fix at `6436be8`. It remains functional evidence, not the
+prerequisite for this gate.
+
+The shared execution path now includes the operational safeguards established
+by the one-chain work: the AAR Bubblewrap wrapper is removed, the current Serve
+hostname is added centrally to `no_proxy`/`NO_PROXY`, the advertised method
+budget and Slurm training limit are both 15 minutes, and terminal evaluator
+failures are not automatically retried with an unchanged adapter.
 
 ## Launch
 
 Recorded: 2026-10-11 01:49 PT
 
-After synchronizing the final clean source revision, confirming the model-role
-mapping, and obtaining the Run 16 one-chain proof, launch from the HPC
+After synchronizing the final clean source revision and obtaining a fresh
+Run 16 one-chain proof from that same revision, launch from the HPC
 `autodata` worktree with that exact proof:
 
 ```bash
@@ -68,12 +77,16 @@ The role mapping is identical to the one-chain gate: Claude Opus 4.8 model
 the fixed training base and the vLLM evaluator base plus each promoted adapter.
 `verbalized_ece` is rule-scored, so no evaluator-judge model is used. AutoData
 has no generator, probe, judge, broker, workspace, comparator, or export role.
+The user previously confirmed this unchanged mapping for both lifecycle gates;
+the operational safeguards above do not alter any model role.
 
 ## Pass criteria
 
 Recorded: 2026-10-11 01:49 PT
 
 - The prerequisite is a passed one-chain proof from an ancestor commit.
+- The prerequisite and this gate each use one internally consistent immutable
+  source revision; mixed-commit recovery evidence is ineligible.
 - Exactly five distinct research-chain jobs and five real-GPU smoke proofs
   exist for the five configured seeds.
 - All five exact adapters produce a two-item score and one matching finding.
