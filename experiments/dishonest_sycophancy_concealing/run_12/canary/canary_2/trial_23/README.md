@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: staged; not launched
+- Status: failed; evidence preserved
 - Created: 2026-10-12 12:04 PT
-- Last updated: 2026-10-12 12:04 PT
+- Last updated: 2026-10-12 12:48 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -28,16 +28,28 @@ to invoke the approval tool. Trial 23 makes the supervisor own that trigger for
 `approve_grounding` and `approve_baseline` while reusing the existing trusted
 approval implementation unchanged.
 
+The attempt launched from source commit
+`ccd83ed6ed0bb874fe978830c4872291c56613bd` and failed at
+`clarify_design`. Proposal approval and workspace bootstrap succeeded, but the
+coordinator and outer Kimi both tried to own action
+`act_0ccaeac074c619914ada0f00`. No native completion receipt was created, and
+grounding approval, baseline approval, production, and training did not begin.
+This was an ownership collision, not a rate-limit failure; no HTTP 429 was
+observed.
+
 ## Launch
 
 Recorded: 2026-10-12 12:04 PT
 
-Not launched. After the focused source commit is synchronized and the exact
-model-role mapping is confirmed:
+Launched once and failed; do not relaunch this preserved attempt. The command
+used was:
 
 ```bash
 bash experiments/dishonest_sycophancy_concealing/run_12/canary/canary_2/trial_23/submit_canary.sh
 ```
+
+Use the separately staged Trial 24 folder for the next fresh attempt after the
+ownership correction is committed, synchronized, and verified.
 
 ## Plan
 
