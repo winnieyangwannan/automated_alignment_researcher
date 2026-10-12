@@ -31,6 +31,12 @@ def main() -> None:
     if len(teams) != 1:
         raise RuntimeError(f"expected one team directory, found {len(teams)}")
     team = teams[0]
+    forum = (
+        attempt / "forum"
+        if os.environ.get("AAR_FORUM_SCOPE", "shared") == "shared"
+        else team / "forum"
+    )
+    forum.mkdir(parents=True, exist_ok=True)
 
     proposal_markers = sorted(
         path
@@ -54,7 +60,7 @@ def main() -> None:
     score = _load_object(score_path)
     existing = [
         path
-        for path in (team / "forum").glob("*.json")
+        for path in forum.glob("*.json")
         if _load_object(path).get("run_id") == run_id
     ]
     if len(existing) == 1:
@@ -65,7 +71,7 @@ def main() -> None:
 
     environment = {
         "TEAM_DIR": str(team),
-        "LOCAL_FINDINGS_DIR": str(team / "forum"),
+        "LOCAL_FINDINGS_DIR": str(forum),
         "SUBMISSIONS_DIR": str(team / "submissions"),
         "SCORES_DIR": str(team / "scores"),
         "AAR_IDEAS_DIR": str(team / "methods"),
@@ -121,7 +127,7 @@ def main() -> None:
 
     published = [
         path
-        for path in (team / "forum").glob("*.json")
+        for path in forum.glob("*.json")
         if _load_object(path).get("run_id") == run_id
     ]
     if len(published) != 1:

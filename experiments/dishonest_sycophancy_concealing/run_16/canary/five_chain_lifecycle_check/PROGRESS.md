@@ -50,3 +50,26 @@ Its training job was `1822735`, evaluator job was `1822958`, and the exact
 score/finding pair is durable. The next action is a fresh one-chain launch from
 one immutable source revision; only its passed proof may be supplied to this
 gate.
+
+### 🛠️ 19:03 PT — FIX: verifier follows the configured shared forum
+
+Fresh prerequisite pipeline `1823008` was cancelled while still pending; it
+used no compute and launched no research, training, or evaluator child. The
+pre-launch forum audit found that Run 16 correctly resolves
+`AAR_FORUM_SCOPE=shared` to `<attempt>/forum`, but the verifier searched only
+`<team>/forum`. A normal successful chain would therefore have published its
+finding correctly and then failed proof generation falsely.
+
+The targeted repair makes verification read both the configured attempt-level
+shared forum and the supported per-team recovery forum. Finding-only recovery
+now writes to the same resolved forum as the main run. No model, prompt,
+training, evaluation, retry, or scientific configuration changed.
+
+```text
+✓ Pending prerequisite stopped before compute
+✓ Shared-forum path mismatch identified
+✓ Verifier and finding recovery aligned with AAR_FORUM_SCOPE=shared
+○ Validate and synchronize the focused fix
+○ Fresh source-consistent one-chain proof
+○ Five-chain topology launch
+```

@@ -102,7 +102,11 @@ def main() -> None:
     )
 
     scores = list(attempt.glob("aar_teams/*/scores/*.json"))
-    findings = list(attempt.glob("aar_teams/*/forum/*.json"))
+    # Declarative Run 16 uses AAR_FORUM_SCOPE=shared, so ordinary chains write
+    # findings to the attempt-level forum.  Include per-team forums as well for
+    # retained recovery attempts and for the supported per-chain fallback.
+    findings = list((attempt / "forum").glob("*.json"))
+    findings.extend(attempt.glob("aar_teams/*/forum/*.json"))
     successful_scores = {
         path.stem: path
         for path in scores

@@ -141,6 +141,16 @@ def test_run16_terminal_evaluation_failures_do_not_retry_unchanged_adapter() -> 
     assert "export AAR_EVAL_RETRY_FAILED=1" not in pipeline
 
 
+def test_run16_shared_forum_verification_and_recovery_are_consistent() -> None:
+    verifier = (RUN16 / "canary" / "verify_run_16_canary.py").read_text()
+    recovery = (RUN16 / "recovery" / "finalize_scored_run.py").read_text()
+
+    assert '(attempt / "forum").glob("*.json")' in verifier
+    assert 'attempt.glob("aar_teams/*/forum/*.json")' in verifier
+    assert 'os.environ.get("AAR_FORUM_SCOPE", "shared") == "shared"' in recovery
+    assert '"LOCAL_FINDINGS_DIR": str(forum)' in recovery
+
+
 def test_run16_does_not_use_aar_bubblewrap_wrapper() -> None:
     operational = "\n".join(
         path.read_text()

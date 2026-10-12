@@ -60,7 +60,9 @@ Recorded: 2026-10-11 01:49 PT
 
 1. Validate the supplied one-chain proof and source ancestry.
 2. Start `alpha`, `beta`, `gamma`, `delta`, and `epsilon` together in one
-   isolated team, with one research session per chain.
+   isolated team, with one research session per chain. All five chains use the
+   attempt-level shared forum, while methods, run IDs, receipts, scores, and
+   transcripts remain chain-namespaced.
 3. Require five proposal-approved, source-bound, real-GPU one-step adapters.
 4. Stage all five verified adapters, then start the same single one-GPU
    evaluator used by the one-chain gate to drain the shared queue.
@@ -89,6 +91,8 @@ Recorded: 2026-10-11 01:49 PT
   source revision; mixed-commit recovery evidence is ineligible.
 - Exactly five distinct research-chain jobs and five real-GPU smoke proofs
   exist for the five configured seeds.
+- The verifier joins findings from the configured attempt-level shared forum to
+  scores by exact run ID; it does not rely on aggregate file counts.
 - All five exact adapters produce a two-item score and one matching finding.
 - The evaluator records the required vLLM 0.25.1, language-model-only, and
   merged-checkpoint markers for every candidate.
