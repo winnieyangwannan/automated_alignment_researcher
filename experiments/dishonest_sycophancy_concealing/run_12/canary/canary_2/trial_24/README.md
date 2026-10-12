@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: staged; not launched
+- Status: failed; evidence preserved
 - Created: 2026-10-12 12:48 PT
-- Last updated: 2026-10-12 12:48 PT
+- Last updated: 2026-10-12 13:08 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -36,9 +36,15 @@ lifecycle setting. Its only configuration change is the fresh run ID
 
 Recorded: 2026-10-12 12:48 PT
 
-Not launched. The focused ownership correction is committed as `f210df8`; the
-exact model-role mapping is covered by the operator's standing approval. After
-exact-commit synchronization and config validation:
+Launched from immutable source commit
+`e97698ce57bda8cd3cc8e28294296891bf45a9b0`. Launch job `1856501` completed;
+research job `1856549` later failed after the lifecycle supervisor stopped at
+`approve_grounding`. Dependent controller `1856550` is retained with the
+attempt:
+
+`/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261012T195430Z-e97698ce57bd`
+
+The committed operator entrypoint is:
 
 ```bash
 bash experiments/dishonest_sycophancy_concealing/run_12/canary/canary_2/trial_24/submit_canary.sh
@@ -59,6 +65,87 @@ Recorded: 2026-10-12 12:48 PT
    trusted approval bridge while Kimi waits without a model turn.
 6. Leave pipeline authoring and meta-optimization on their Trial 23 paths.
 7. Continue through production and verified one-step training smoke, then stop.
+
+## Monitoring and status-report contract
+
+Recorded: 2026-10-12 13:06 PT
+
+The monitor must derive every status from current Trial 24 Slurm state, native
+AutoData state, action records, receipts, and retained attempt metadata. It
+must also check for stale heartbeats, duplicate action owners, missing or
+mismatched receipts, repeated identical retries, validator timeouts, API rate
+limits, exhausted retry budgets, unattainable production yield, and unexpected
+evaluator activity. It must not infer completion from model prose or expose
+generated rows, prompts, responses, credentials, or held-out content.
+
+When the operator asks “how is it going?”, report the complete lifecycle in the
+following shape and recalculate every symbol from the current Trial 24 evidence.
+Historical success from another trial does not promote a Trial 24 stage to
+`✓`.
+
+Legend: `✓` live-proven in Trial 24, `△` implemented/tested but not yet
+live-proven in Trial 24, `✗` not reached in Trial 24, `○` intentionally
+disabled.
+
+```text
+AAR research and method proposal
+  ✓ literature and method authoring
+  ✓ method validation and proposal approval
+             │
+             ▼
+AutoData workspace
+  ✓ create/register fresh workspace
+  ✓ clarify_design — isolated typed Kimi coordinator
+      Outer Kimi waited without a model turn; exactly one coordinator receipt
+      completed action act_9c7ba155167041f91b0b8567.
+  ✓ author_grounding — legacy Kimi action
+      One malformed result was rejected with precise feedback; its corrected
+      result completed native action act_bcaedede669d1d7208c7b4c7.
+  ✗ approve_grounding — shared signed trusted approval
+      Native action act_fc37f9b17969aaae1145e96d failed closed with
+      delegated_approval_failed; no approval receipt was written.
+  ✗ author_pipeline — not reached
+             │
+             ▼
+Workspace finalization
+  ✗ post-pipeline reconciliation
+  ✗ authoring dry run and approve_baseline
+  ✗ approve_resources — conditional; not exposed
+  ✗ freeze workspace and create the meta execution
+             │
+             ▼
+Meta-optimization
+  ✗ baseline generation
+  ✗ analyze_results — legacy Kimi action for this trial
+  ✗ mutate_candidate — legacy Kimi action for this trial
+  ✗ complete the configured 3–10 iteration optimization loop
+  ✗ finalize and export a held-out-valid winning pipeline
+             │
+             ▼
+Production
+  ✗ create and run the production execution
+  ✗ generate 1,250 fresh tasks
+  ✗ retain exactly 1,000 accepted rows
+  ✗ publish the verified dataset handoff
+             │
+             ▼
+Gemma training
+  ✗ verified training-smoke path not reached
+  ✗ consume the real production export
+  ✗ perform one optimizer step
+  ✗ verify the consumption receipt and PEFT adapter
+             │
+             ▼
+Stop at training_smoke
+  ✗ not reached
+  ○ evaluator intentionally disabled
+```
+
+After the chart, report the active job IDs, exact current action or execution,
+elapsed time or measured progress when useful, latest retry/rate-limit health,
+and one concise concern statement. If a stage fails, mark that stage `✗`, keep
+all later stages `✗`, identify the typed failure and preserved evidence, and do
+not silently repair the active attempt.
 
 ## Model and execution roles
 
