@@ -1,17 +1,21 @@
 """Trusted reconciliation helpers for native AutoData lifecycle actions."""
 
 from .coordinator import (
+    ApprovalCoordinatorOutcome,
     AutoDataActionReconciler,
     AutoDataCoordinatorError,
     ExecutionAnalysisReconciler,
     ExecutionMutationReconciler,
     NativeAutoDataControl,
+    WorkspaceApprovalReconciler,
+    WorkspaceGroundingReconciler,
     WorkspacePipelineReconciler,
 )
 from .semantic_worker import (
     ActionContext,
     AnalysisContext,
     AnalysisOutcome,
+    GroundingContext,
     MalformedSemanticOutcome,
     MutationContext,
     MutationOutcome,
@@ -22,12 +26,14 @@ from .semantic_worker import (
 
 __all__ = [
     "ActionContext",
+    "ApprovalCoordinatorOutcome",
     "AnalysisContext",
     "AnalysisOutcome",
     "AutoDataActionReconciler",
     "AutoDataCoordinatorError",
     "ExecutionAnalysisReconciler",
     "ExecutionMutationReconciler",
+    "GroundingContext",
     "MalformedSemanticOutcome",
     "MutationContext",
     "MutationOutcome",
@@ -36,4 +42,6 @@ __all__ = [
     "SemanticOutcome",
     "SemanticWorker",
     "WorkspacePipelineReconciler",
+    "WorkspaceApprovalReconciler",
+    "WorkspaceGroundingReconciler",
 ]

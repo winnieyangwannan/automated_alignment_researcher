@@ -17,6 +17,7 @@ from aar.infrastructure.autodata_coordinator.coordinator import (
     ActionLease,
     NativeAction,
     NativeWorkspace,
+    WorkspaceGroundingReconciler,
     WorkspacePipelineReconciler,
 )
 from aar.infrastructure.autodata_coordinator.semantic_worker import (
@@ -163,17 +164,42 @@ def test_confirm_pipeline_with_exact_pinned_native_engine(tmp_path: Path) -> Non
             internal_root=tmp_path / "internal",
             idempotency_key="aar-pinned-author-pipeline",
         )
-        for expected, result in (
-            ("clarify_design", {"summary": "confirmed", "decisions": []}),
-            ("author_grounding", {"summary": "grounded", "decisions": []}),
-            (
-                "approve_grounding",
-                {"decision": "approve", "user_acknowledged": True},
-            ),
-        ):
-            action = engine.step()
-            assert action.kind == expected
-            _complete(store, action, result)
+        clarify = engine.step()
+        assert clarify.kind == "clarify_design"
+        _complete(store, clarify, {"summary": "confirmed", "decisions": []})
+        grounding = engine.step()
+        assert grounding.kind == "author_grounding"
+        grounding_before = {
+            path.relative_to(draft).as_posix(): path.read_bytes()
+            for path in draft.rglob("*")
+            if path.is_file() and ".autodata" not in path.parts
+        }
+        grounding_outcome = asyncio.run(
+            WorkspaceGroundingReconciler(
+                control=StoreControl(store),
+                worker=ConfirmWorker(),
+                team_dir=team,
+                action_timeout_seconds=5,
+                malformed_output_attempts=1,
+            ).coordinate_grounding(engine.workspace_id)
+        )
+        assert grounding_outcome.action_id == grounding.id
+        assert (
+            json.loads(grounding_outcome.receipt_path.read_text())["changed_paths"]
+            == []
+        )
+        assert grounding_before == {
+            path.relative_to(draft).as_posix(): path.read_bytes()
+            for path in draft.rglob("*")
+            if path.is_file() and ".autodata" not in path.parts
+        }
+        approval = engine.step()
+        assert approval.kind == "approve_grounding"
+        _complete(
+            store,
+            approval,
+            {"decision": "approve", "user_acknowledged": True},
+        )
         pipeline = engine.step()
         assert pipeline.kind == "author_pipeline"
         before = {

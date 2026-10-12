@@ -14,11 +14,14 @@ from aar.infrastructure.autodata_coordinator.coordinator import (
     AutoDataCoordinatorError,
     NativeAction,
     NativeWorkspace,
+    WorkspaceGroundingReconciler,
     WorkspacePipelineReconciler,
 )
 from aar.infrastructure.autodata_coordinator.semantic_worker import (
+    GroundingContext,
     PipelineContext,
     SemanticOutcome,
+    semantic_task,
 )
 
 WORKSPACE_ID = "ws_" + "1" * 32
@@ -377,3 +380,146 @@ def test_pipeline_reconciler_leaves_unknown_action_unchanged(tmp_path: Path) -> 
     )
 
     assert result is None and worker.calls == control.begin_calls == 0
+
+
+def _grounding_action(
+    root: Path, status: str = "pending", result=None, *, revision: int = 1
+) -> NativeAction:
+    spec = {
+        "schema": ACTION_SCHEMA,
+        "id": ACTION_ID,
+        "scope": {"kind": "workspace", "id": WORKSPACE_ID, "revision": revision},
+        "kind": "author_grounding",
+        "instructions": "Review the staged grounding against the approved design.",
+        "artifacts": [],
+        "editable_root": str(root),
+        "allowed_paths": ["grounding/**"],
+        "outputs": ["summary", "decisions"],
+    }
+    return NativeAction(ACTION_ID, "author_grounding", status, spec, result)
+
+
+class GroundingControl(Control):
+    def __init__(self, root: Path, *, revision: int = 1) -> None:
+        super().__init__(root)
+        self.revision = revision
+        self.action = _grounding_action(root, revision=revision)
+
+    def read_workspace(self, workspace_id: str) -> NativeWorkspace:
+        return NativeWorkspace(
+            workspace_id,
+            "active",
+            "grounding_pending",
+            self.revision,
+            (self.action,),
+        )
+
+    def begin_action(self, action_id: str) -> ActionLease:
+        self.begin_calls += 1
+        self.lease = TOKEN
+        self.action = _grounding_action(
+            Path(self.action.spec["editable_root"]),
+            "in_progress",
+            revision=self.revision,
+        )
+        return ActionLease(action_id, TOKEN, self.action.spec)
+
+    def complete_action(
+        self, action_id: str, *, lease_token: str, result: dict[str, Any]
+    ) -> None:
+        self.complete_calls += 1
+        assert action_id == ACTION_ID and lease_token == TOKEN
+        self.action = _grounding_action(
+            Path(self.action.spec["editable_root"]),
+            "completed",
+            dict(result),
+            revision=self.revision,
+        )
+        self.lease = None
+
+
+class GroundingWorker(Worker):
+    def __init__(self) -> None:
+        super().__init__()
+        self.contexts: list[GroundingContext] = []
+
+    async def perform(self, context: GroundingContext) -> SemanticOutcome:
+        self.calls += 1
+        self.contexts.append(context)
+        return SemanticOutcome(
+            context.action_id,
+            context.input_revision,
+            context.input_digest,
+            "confirm",
+            "The staged grounding satisfies the approved design.",
+            ("Keep the staged grounding byte-identical.",),
+            None,
+        )
+
+
+def _grounding_reconciler(
+    team: Path, control: GroundingControl, worker: GroundingWorker
+) -> WorkspaceGroundingReconciler:
+    return WorkspaceGroundingReconciler(
+        control=control,
+        worker=worker,
+        team_dir=team,
+        action_timeout_seconds=0.2,
+        malformed_output_attempts=3,
+    )
+
+
+def test_grounding_confirm_hides_lease_and_preserves_files(tmp_path: Path) -> None:
+    team, root = _fixture(tmp_path)
+    before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    control, worker = GroundingControl(root), GroundingWorker()
+
+    outcome = asyncio.run(
+        _grounding_reconciler(team, control, worker).coordinate_grounding(WORKSPACE_ID)
+    )
+
+    assert control.begin_calls == control.complete_calls == worker.calls == 1
+    assert not hasattr(worker.contexts[0], "lease")
+    assert "author_grounding" in semantic_task(worker.contexts[0])
+    assert before == {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    receipt = json.loads(outcome.receipt_path.read_text())
+    assert receipt["action_kind"] == "author_grounding"
+    assert receipt["changed_paths"] == []
+    assert TOKEN not in outcome.receipt_path.read_text()
+
+
+def test_grounding_change_during_review_fails_before_completion(tmp_path: Path) -> None:
+    team, root = _fixture(tmp_path)
+    control, worker = GroundingControl(root), GroundingWorker()
+
+    async def change(context: GroundingContext) -> SemanticOutcome:
+        (root / "grounding/manifest.json").write_text(
+            json.dumps({"schema": "autodata.grounding/v1", "tasks": ["changed"]})
+        )
+        return await GroundingWorker.perform(worker, context)
+
+    worker.perform = change  # type: ignore[method-assign]
+    with pytest.raises(AutoDataCoordinatorError) as raised:
+        asyncio.run(
+            _grounding_reconciler(team, control, worker).coordinate_grounding(
+                WORKSPACE_ID
+            )
+        )
+
+    assert raised.value.code == "grounding_changed_during_action"
+    assert control.complete_calls == 0
+
+
+def test_grounding_confirm_only_slice_rejects_later_revision(tmp_path: Path) -> None:
+    team, root = _fixture(tmp_path)
+    control, worker = GroundingControl(root, revision=4), GroundingWorker()
+
+    with pytest.raises(AutoDataCoordinatorError) as raised:
+        asyncio.run(
+            _grounding_reconciler(team, control, worker).coordinate_grounding(
+                WORKSPACE_ID
+            )
+        )
+
+    assert raised.value.code == "grounding_revision_not_allowlisted"
+    assert control.begin_calls == worker.calls == 0

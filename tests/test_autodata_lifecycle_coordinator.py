@@ -737,6 +737,18 @@ def test_later_native_state_preserves_immutable_clarify_receipt(
     reconciler = _reconciler(team, control, worker)
     outcome = asyncio.run(reconciler.coordinate_clarify_design(WORKSPACE_ID))
     original = outcome.receipt_path.read_bytes()
+    unrelated = outcome.receipt_path.with_name("act_" + "f" * 24 + ".json")
+    unrelated.write_text(
+        json.dumps(
+            {
+                "schema": "aar.autodata.coordinator-receipt/v1",
+                "workspace_id": WORKSPACE_ID,
+                "action_id": "act_" + "f" * 24,
+                "action_kind": "author_pipeline",
+            }
+        )
+    )
+    unrelated.chmod(0o600)
     control.phase = "grounding_pending"
     control.revision = 1
     control_file = tmp_path / "control.json"

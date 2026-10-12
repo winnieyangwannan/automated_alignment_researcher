@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 from argparse import Namespace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -1070,6 +1071,58 @@ def test_semantic_coordinator_configures_claude_worker(
     assert isinstance(observed["worker"], lifecycle_supervisor.ClaudeWorker)
 
 
+def test_semantic_coordinator_dispatches_initial_grounding_slice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = _semantic_coordinator_supervisor(tmp_path, monkeypatch)
+    team = tmp_path / "team"
+    monkeypatch.delenv("AAR_AUTODATA_CLARIFY_COORDINATOR", raising=False)
+    monkeypatch.setenv("AAR_AUTODATA_GROUNDING_COORDINATOR", "1")
+    monkeypatch.setenv("AAR_AUTODATA_SEMANTIC_WORKER", "claude")
+    monkeypatch.setenv("AAR_EXPERIMENT_RUN_ID", "run13")
+    monkeypatch.setenv("AAR_IDEA_UID_OVERRIDE", "run13-trial7-alpha-iteration-1")
+    monkeypatch.setenv("AAR_AGENT_BACKEND", "claude")
+    monkeypatch.setenv("AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE", "1")
+    monkeypatch.setenv("AAR_AUTODATA_LIFECYCLE_SUPERVISED", "1")
+    observed: dict[str, object] = {}
+
+    class Reconciler:
+        def __init__(self, **kwargs: object) -> None:
+            observed.update(kwargs)
+
+        async def reconcile_registered_grounding(self, path: Path):
+            observed["control_file"] = path
+            return type(
+                "Outcome",
+                (),
+                {
+                    "workspace_id": "ws_" + "1" * 32,
+                    "action_id": "act_" + "4" * 24,
+                    "worker_backend": "claude",
+                    "receipt_path": team / "receipt.json",
+                    "native_phase": "grounding_review",
+                    "native_revision": 2,
+                },
+            )()
+
+    monkeypatch.setattr(
+        lifecycle_supervisor.NativeAutoDataControl,
+        "from_environment",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor, "WorkspaceGroundingReconciler", Reconciler
+    )
+    monkeypatch.setattr(supervisor, "_snapshot", lambda *_args, **_kwargs: None)
+
+    result = supervisor._reconcile_semantic_action()
+
+    assert result is not None
+    assert result["action_kind"] == "author_grounding"
+    assert result["native_phase_observed"] == "grounding_review"
+    assert observed["control_file"] == supervisor.args.control_file
+
+
 def test_semantic_coordinator_dispatches_execution_analysis_slice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1396,6 +1449,80 @@ def test_long_idle_sleep_refreshes_supervisor_heartbeat(
 
     idle = [value for value in writes if value["state"] == "idle"]
     assert len(idle) >= 3
+
+
+def test_live_action_status_reports_owner_and_bounded_age(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace_id = "ws_" + "1" * 32
+    action_id = "act_" + "2" * 24
+    state = tmp_path / "state.db"
+    with sqlite3.connect(state) as connection:
+        connection.execute(
+            "CREATE TABLE actions("
+            "id TEXT,kind TEXT,status TEXT,scopeKind TEXT,scopeId TEXT,"
+            "createdAt TEXT,attempt INTEGER)"
+        )
+        connection.execute(
+            "INSERT INTO actions VALUES(?,?,?,?,?,?,?)",
+            (
+                action_id,
+                "author_grounding",
+                "pending",
+                "workspace",
+                workspace_id,
+                "2026-10-12T18:00:00Z",
+                0,
+            ),
+        )
+    control = tmp_path / "control.json"
+    control.write_text(
+        json.dumps(
+            {
+                "schema": "aar.autodata.lifecycle-control/v1",
+                "subjects": [
+                    {
+                        "kind": "workspace",
+                        "subject_id": workspace_id,
+                        "status": "registered",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    status = lifecycle_supervisor._registered_live_action_status(
+        state,
+        control,
+        now=datetime(2026, 10, 12, 18, 7, 17, tzinfo=timezone.utc),
+    )
+
+    assert status == [
+        {
+            "action_id": action_id,
+            "action_kind": "author_grounding",
+            "action_status": "pending",
+            "action_owner": "research_agent",
+            "subject_kind": "workspace",
+            "subject_id": workspace_id,
+            "attempt": 0,
+            "created_at": "2026-10-12T18:00:00Z",
+            "pending_age_seconds": 420,
+        }
+    ]
+
+    monkeypatch.setenv("AAR_AUTODATA_PIPELINE_COORDINATOR", "1")
+    with sqlite3.connect(state) as connection:
+        connection.execute(
+            "UPDATE actions SET kind='author_pipeline' WHERE id=?", (action_id,)
+        )
+    status = lifecycle_supervisor._registered_live_action_status(
+        state,
+        control,
+        now=datetime(2026, 10, 12, 18, 7, 17, tzinfo=timezone.utc),
+    )
+    assert status[0]["action_owner"] == "lifecycle_coordinator"
 
 
 def test_signal_handler_does_not_reenter_atomic_status_writer(

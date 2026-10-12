@@ -106,9 +106,11 @@ def test_trial5_through_trial7_enable_full_lifecycle_ownership() -> None:
     assert "AAR_AUTODATA_MUTATION_COORDINATOR" in runtime
     assert "AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR" in runtime
     assert 'if [ "${AAR_RUN13_TRIAL_ID}" = trial7 ]; then' in launcher
+    assert "export AAR_AUTODATA_GROUNDING_COORDINATOR=1" in launcher
     assert "export AAR_AUTODATA_PIPELINE_COORDINATOR=1" in launcher
     assert "author_pipeline coordinator enablement must come from" in launcher
     assert "AAR_AUTODATA_PIPELINE_COORDINATOR" in runtime
+    assert "AAR_AUTODATA_GROUNDING_COORDINATOR" in runtime
 
 
 def test_trial7_is_confirm_only_and_explicitly_allowlisted() -> None:

@@ -52,6 +52,7 @@ from aar.infrastructure.autodata_coordinator import (
     ExecutionAnalysisReconciler,
     ExecutionMutationReconciler,
     NativeAutoDataControl,
+    WorkspaceGroundingReconciler,
     WorkspacePipelineReconciler,
 )
 from aar.infrastructure.autodata_coordinator.coordinator import (
@@ -92,6 +93,16 @@ _PERMANENT_NATIVE_DIAGNOSTICS = {
     "workspace task-attempt budget exceeded": "native_workspace_task_attempt_budget_exceeded",
     "workspace revision budget exceeded": "native_workspace_revision_budget_exceeded",
 }
+_COORDINATOR_ACTION_FLAGS = {
+    "clarify_design": "AAR_AUTODATA_CLARIFY_COORDINATOR",
+    "author_grounding": "AAR_AUTODATA_GROUNDING_COORDINATOR",
+    "author_pipeline": "AAR_AUTODATA_PIPELINE_COORDINATOR",
+    "analyze_results": "AAR_AUTODATA_ANALYSIS_COORDINATOR",
+    "mutate_candidate": "AAR_AUTODATA_MUTATION_COORDINATOR",
+}
+_DELEGATED_APPROVAL_ACTIONS = frozenset(
+    {"approve_grounding", "approve_baseline", "approve_resources"}
+)
 
 _ResultT = TypeVar("_ResultT")
 
@@ -2511,6 +2522,87 @@ def next_subject(
     return None
 
 
+def _action_owner(action_kind: str) -> str:
+    """Classify ownership without changing or predicting native state."""
+    coordinator_flag = _COORDINATOR_ACTION_FLAGS.get(action_kind)
+    if coordinator_flag is not None and os.getenv(
+        coordinator_flag, ""
+    ).strip().lower() in {"1", "true", "yes", "on"}:
+        return "lifecycle_coordinator"
+    if action_kind in _DELEGATED_APPROVAL_ACTIONS:
+        return "delegated_approval"
+    if action_kind == "author_grounding":
+        return "research_agent"
+    return "unclassified"
+
+
+def _registered_live_action_status(
+    state: Path,
+    control_file: Path,
+    *,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Return content-safe telemetry for registered live native actions."""
+    registrations = {
+        (str(entry["kind"]), str(entry["subject_id"]))
+        for entry in _load_control(control_file)["subjects"]
+        if entry["status"] == "registered"
+    }
+    if not registrations or not state.is_file():
+        return []
+    with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
+        connection.row_factory = sqlite3.Row
+        if "actions" not in _table_names(connection):
+            return []
+        columns = {
+            str(value[1]) for value in connection.execute("PRAGMA table_info(actions)")
+        }
+        required = {"id", "kind", "status", "scopeKind", "scopeId"}
+        if not required.issubset(columns):
+            raise RuntimeError("native AutoData action telemetry schema is incomplete")
+        selected = ["id", "kind", "status", "scopeKind", "scopeId"]
+        for optional in ("createdAt", "attempt"):
+            if optional in columns:
+                selected.append(optional)
+        order = "createdAt,id" if "createdAt" in columns else "id"
+        rows = connection.execute(
+            f"SELECT {','.join(selected)} FROM actions "
+            "WHERE status IN ('pending','in_progress') "
+            f"ORDER BY {order}"
+        ).fetchall()
+    observed_at = now or datetime.now(timezone.utc)
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=timezone.utc)
+    actions: list[dict[str, Any]] = []
+    for row in rows:
+        subject = (str(row["scopeKind"]), str(row["scopeId"]))
+        if subject not in registrations:
+            continue
+        item: dict[str, Any] = {
+            "action_id": str(row["id"]),
+            "action_kind": str(row["kind"]),
+            "action_status": str(row["status"]),
+            "action_owner": _action_owner(str(row["kind"])),
+            "subject_kind": subject[0],
+            "subject_id": subject[1],
+        }
+        if "attempt" in row.keys() and row["attempt"] is not None:
+            item["attempt"] = int(row["attempt"])
+        if "createdAt" in row.keys() and row["createdAt"]:
+            created_raw = str(row["createdAt"])
+            item["created_at"] = created_raw
+            try:
+                created = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                age = max(0.0, (observed_at - created).total_seconds())
+                item["pending_age_seconds"] = int(age // 30) * 30
+            except ValueError:
+                pass
+        actions.append(item)
+    return actions
+
+
 class Supervisor:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
@@ -2688,6 +2780,9 @@ class Supervisor:
         clarify_enabled = os.getenv(
             "AAR_AUTODATA_CLARIFY_COORDINATOR", ""
         ).strip().lower()
+        grounding_enabled = os.getenv(
+            "AAR_AUTODATA_GROUNDING_COORDINATOR", ""
+        ).strip().lower()
         analysis_enabled = os.getenv(
             "AAR_AUTODATA_ANALYSIS_COORDINATOR", ""
         ).strip().lower()
@@ -2698,11 +2793,18 @@ class Supervisor:
             "AAR_AUTODATA_MUTATION_COORDINATOR", ""
         ).strip().lower()
         if not any(
-            (clarify_enabled, pipeline_enabled, analysis_enabled, mutation_enabled)
+            (
+                clarify_enabled,
+                grounding_enabled,
+                pipeline_enabled,
+                analysis_enabled,
+                mutation_enabled,
+            )
         ):
             return None
         for label, enabled in (
             ("clarify", clarify_enabled),
+            ("grounding", grounding_enabled),
             ("pipeline", pipeline_enabled),
             ("analysis", analysis_enabled),
             ("mutation", mutation_enabled),
@@ -2712,7 +2814,7 @@ class Supervisor:
                     "semantic_coordinator_flag_invalid",
                     f"{label} coordinator enablement flag is invalid",
                 )
-        if pipeline_enabled and (
+        if (pipeline_enabled or grounding_enabled) and (
             os.getenv("AAR_EXPERIMENT_RUN_ID") != "run13"
             or os.getenv("AAR_IDEA_UID_OVERRIDE")
             != "run13-trial7-alpha-iteration-1"
@@ -2722,7 +2824,8 @@ class Supervisor:
         ):
             raise AutoDataCoordinatorError(
                 "pipeline_coordinator_scope_invalid",
-                "author_pipeline coordinator is restricted to supervised Run 13 Trial 7",
+                "workspace authoring coordinators are restricted to supervised "
+                "Run 13 Trial 7",
             )
         team_raw = os.getenv("TEAM_DIR", "").strip()
         if not team_raw:
@@ -2774,6 +2877,12 @@ class Supervisor:
                 coordinator.reconcile_registered_pipeline(self.args.control_file)
             )
             action_kind = "author_pipeline"
+        if outcome is None and grounding_enabled:
+            coordinator = WorkspaceGroundingReconciler(**common)
+            outcome = asyncio.run(
+                coordinator.reconcile_registered_grounding(self.args.control_file)
+            )
+            action_kind = "author_grounding"
         if outcome is None and analysis_enabled:
             coordinator = ExecutionAnalysisReconciler(**common)
             outcome = asyncio.run(
@@ -3455,9 +3564,25 @@ class Supervisor:
                 )
                 return 2
             if subject is None:
+                live_actions = _registered_live_action_status(
+                    self.args.state, self.args.control_file
+                )
+                idle_fields: dict[str, Any] = {"state": "idle"}
+                if len(live_actions) == 1:
+                    idle_fields.update(
+                        idle_reason="waiting-for-action-owner",
+                        pending_action=live_actions[0],
+                    )
+                elif live_actions:
+                    idle_fields.update(
+                        idle_reason="multiple-live-actions",
+                        pending_actions=live_actions,
+                    )
+                else:
+                    idle_fields["idle_reason"] = "no-runnable-subject"
                 self._sleep_with_status_heartbeat(
                     self.args.poll_seconds,
-                    state="idle",
+                    **idle_fields,
                 )
                 continue
             try:

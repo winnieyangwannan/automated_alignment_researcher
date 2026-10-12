@@ -84,6 +84,7 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
             )
         )
         return {
+            "AAR_AUTODATA_GROUNDING_COORDINATOR": "1",
             "AAR_AUTODATA_PIPELINE_COORDINATOR": "1",
             "AAR_EXPERIMENT_RUN_ID": "run13",
             "AAR_IDEA_UID_OVERRIDE": "run13-trial7-alpha-iteration-1",
@@ -300,6 +301,8 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
             with patch.dict(os.environ, environment, clear=True):
                 trial7_agent = loop._create_agent("trial7")
         self.assertIn("exclusively owns", trial7_agent.system_prompt)
+        self.assertIn("`author_grounding`", trial7_agent.system_prompt)
+        self.assertIn("`author_pipeline`", trial7_agent.system_prompt)
         self.assertIn("background or detached", trial7_agent.system_prompt)
 
     def test_trial7_pipeline_flag_fails_closed_on_wrong_identity(self) -> None:
@@ -362,7 +365,35 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
                             "deny",
                         )
 
-    def test_trial7_pipeline_fence_leaves_other_actions_unchanged(self) -> None:
+        snapshot = types.SimpleNamespace(
+            id=workspace_id,
+            phase="grounding_pending",
+            actions=(
+                types.SimpleNamespace(
+                    id="act_" + "3" * 24,
+                    kind="author_grounding",
+                    status="pending",
+                ),
+            ),
+        )
+        native = types.SimpleNamespace(read_workspace=lambda _identity: snapshot)
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._trial7_environment(directory)
+            with (
+                patch.dict(os.environ, environment, clear=True),
+                patch(
+                    "aar.infrastructure.autodata_coordinator.NativeAutoDataControl.from_environment",
+                    return_value=native,
+                ),
+            ):
+                result = asyncio.run(
+                    agent_module._trial7_pipeline_tool_fence(
+                        {"tool_name": "Bash"}, None, None
+                    )
+                )
+        self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_trial7_pipeline_fence_leaves_approval_actions_unchanged(self) -> None:
         class Options:
             def __init__(self, **kwargs) -> None:
                 self.kwargs = kwargs
@@ -371,11 +402,11 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
         workspace_id = "ws_" + "1" * 32
         snapshot = types.SimpleNamespace(
             id=workspace_id,
-            phase="grounding_pending",
+            phase="grounding_review",
             actions=(
                 types.SimpleNamespace(
                     id="act_" + "2" * 24,
-                    kind="author_grounding",
+                    kind="approve_grounding",
                     status="pending",
                 ),
             ),

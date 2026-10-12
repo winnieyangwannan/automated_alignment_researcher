@@ -493,6 +493,27 @@ def _trial7_pipeline_action_is_coordinator_owned() -> bool:
     ]
     if len(live) > 1:
         raise PipelineOwnershipFenceError("multiple native actions are live")
+    grounding_enabled = os.getenv(
+        "AAR_AUTODATA_GROUNDING_COORDINATOR", ""
+    ).strip().lower() in _TRUTHY
+    grounding = [
+        action
+        for action in snapshot.actions
+        if action.kind == "author_grounding"
+        and action.status in {"pending", "in_progress", "completed"}
+    ]
+    if grounding_enabled and snapshot.phase == "grounding_pending":
+        if len(grounding) != 1 or (live and live[0].kind != "author_grounding"):
+            raise PipelineOwnershipFenceError(
+                "grounding phase does not expose one author_grounding action"
+            )
+        return True
+    if grounding_enabled and any(
+        action.status in {"pending", "in_progress"} for action in grounding
+    ):
+        raise PipelineOwnershipFenceError(
+            "live author_grounding action conflicts with native workspace phase"
+        )
     pipeline = [
         action
         for action in snapshot.actions
@@ -525,7 +546,7 @@ async def _trial7_pipeline_tool_fence(
         fenced = True
         reason = "Trial 7 pipeline ownership could not be verified; tool use denied"
     else:
-        reason = "Trial 7 author_pipeline is owned by the lifecycle coordinator"
+        reason = "Trial 7 native authoring action is owned by the lifecycle coordinator"
     if not fenced:
         return {}
     return {
@@ -1049,10 +1070,18 @@ class AutonomousAgentLoop:
 
         pipeline_hooks = _trial7_pipeline_hooks()
         if pipeline_hooks is not None:
+            coordinator_actions = ["author_pipeline"]
+            if os.getenv(
+                "AAR_AUTODATA_GROUNDING_COORDINATOR", ""
+            ).strip().lower() in _TRUTHY:
+                coordinator_actions.insert(0, "author_grounding")
+            ownership = " and ".join(
+                f"`{action}`" for action in coordinator_actions
+            )
             system_parts.append(
                 "The Run 13 Trial 7 lifecycle coordinator exclusively owns the "
-                "native author_pipeline action. Never begin, complete, or mutate "
-                "that action directly, and never launch a background or detached "
+                f"native {ownership} actions. Never begin, complete, or mutate "
+                "those actions directly, and never launch a background or detached "
                 "native lifecycle process."
             )
 
