@@ -85,7 +85,12 @@ else
   export AAR_START_EVAL_WORKER=1
 fi
 export AAR_CHAIN_SANITIZE_ENV=1 AAR_RUNTIME_ENV_DISABLE_FILE=1
-export AAR_RESEARCH_ENV_ISOLATION=1 AAR_HIDE_EVAL_CONFIG=1
+export AAR_HIDE_EVAL_CONFIG=1
+if [ "${AAR_RUN16_MODE:-full}" = canary ]; then
+  export AAR_RESEARCH_ENV_ISOLATION=0
+else
+  export AAR_RESEARCH_ENV_ISOLATION=1
+fi
 
 [ "${AAR_AGENT_BACKEND:?}" = claude ] || { echo "Run 16 requires Claude" >&2; exit 2; }
 [ "${AAR_AGENT_MODEL}" = claude-opus-4-8 ] || {
