@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: locally validated and budget-approved; not launched; commit/HPC validation remain
+- Status: preflight-complete; launch retry pending after proof-path repair
 - Created: 2026-10-11 19:33 PT
-- Last updated: 2026-10-11 19:45 PT
+- Last updated: 2026-10-11 19:50 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -71,8 +71,10 @@ bash experiments/dishonest_sycophancy_concealing/run_12/canary/canary_2_v2/submi
 ```
 
 The wrapper fails closed on branch, experiment ID, mode, seed, target-pair
-count, config identity, and fixed target deployment before delegating to the
-shared Run 12 submitter.
+count, config identity, retained canary-proof root, and fixed target deployment
+before delegating to the shared Run 12 submitter. The proof root is pinned to
+the retained, verifier-approved bundle
+`/checkpoint/ram/winnieyangwn/aar-runs/run12-adapter-target/20261011T221515Z-b6db78771f9c`.
 
 Local compilation, artifact-integrity validation, shell syntax, ShellCheck,
 fail-closed wrapper checks, and 198 relevant focused Python tests pass. The one

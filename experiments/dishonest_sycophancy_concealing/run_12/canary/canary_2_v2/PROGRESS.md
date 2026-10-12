@@ -173,3 +173,23 @@ accounting, and fail-closed launcher negative gates pass.
 - Jobs: none.
 - Decision: go for focused commit, exact-commit HPC synchronization, and HPC
   preflight; submission remains prohibited until those gates pass.
+
+<a id="canary2-v2-event-proof-path-repair"></a>
+
+### 🟡 19:50 PT — IN PROGRESS: stale proof path rejected before submission
+
+> [!IMPORTANT]
+> **No attempt or Slurm job was created.** The first wrapper invocation failed
+> before submission because the shared submitter's historical default canary
+> proof directory no longer exists.
+
+Read-only discovery found two retained Run 12 proof bundles under
+`/checkpoint/ram`. Both passed `verify_autodata_canary_proof.py` for generator
+`Kimi-K2.6` / `autodata_8-kimi26`, judge `gpt-5-6-luna`, and fixed target
+`winnieyangwn-r12-alpha-i1-c0dab4f7`. The v2 wrapper now pins the newer verified
+bundle, `20261011T221515Z-b6db78771f9c`, and rejects a conflicting override.
+
+- Attempt: not created.
+- Jobs: none.
+- Decision: commit and synchronize this targeted path repair, rerun wrapper
+  gates, then relaunch from the exact new commit.
