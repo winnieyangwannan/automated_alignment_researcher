@@ -296,6 +296,19 @@ def test_manifest_can_bind_a_fresh_trial6_target(tmp_path: Path) -> None:
     assert verified.manifest["target"]["trial_id"] == "trial6"
 
 
+def test_manifest_can_bind_a_fresh_trial7_target(tmp_path: Path) -> None:
+    helper = _load_helper()
+    manifest, *_ = _fixture(tmp_path)
+    payload = json.loads(manifest.read_text())
+    payload["target"]["trial_id"] = "trial7"
+    payload["target"]["idea_uid"] = "synthetic-trial7-idea"
+    manifest.write_text(json.dumps(payload))
+
+    verified = helper.verify_manifest(manifest, target_trial_id="trial7")
+
+    assert verified.manifest["target"]["trial_id"] == "trial7"
+
+
 def test_manifest_target_must_match_requested_trial(tmp_path: Path) -> None:
     helper = _load_helper()
     manifest, _, _, _, _ = _fixture(tmp_path)
@@ -341,6 +354,7 @@ def test_manifest_is_not_in_research_environment_allowlist() -> None:
     preserve = runtime.split("_AAR_PRESERVE=(", 1)[1].split("\n)", 1)[0]
     assert "AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST" not in preserve
     assert "AAR_AUTODATA_CLARIFY_COORDINATOR" in preserve
+    assert "AAR_AUTODATA_PIPELINE_COORDINATOR" in preserve
     assert "AAR_AUTODATA_MUTATION_COORDINATOR" in preserve
     assert "AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR" in preserve
     assert "AAR_AUTODATA_SEMANTIC_WORKER" in preserve

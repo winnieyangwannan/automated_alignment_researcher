@@ -208,6 +208,27 @@ submit_session() {
   local attempt_number="$1" names=() name csv job intent key comment status match
   export AAR_IDEA_UID_OVERRIDE="run13-${TRIAL_ID}-${SEED}-iteration-${next_iteration}"
   export AAR_RESUME_APPROVED_PROPOSAL=1
+  unset AAR_AUTODATA_CLARIFY_COORDINATOR AAR_AUTODATA_PIPELINE_COORDINATOR
+  unset AAR_AUTODATA_ANALYSIS_COORDINATOR AAR_AUTODATA_MUTATION_COORDINATOR
+  unset AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR
+  unset AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE AAR_AUTODATA_SEMANTIC_WORKER
+  case "${TRIAL_ID}" in
+    trial4)
+      export AAR_AUTODATA_CLARIFY_COORDINATOR=1
+      export AAR_AUTODATA_SEMANTIC_WORKER=claude
+      ;;
+    trial5|trial6|trial7)
+      export AAR_AUTODATA_CLARIFY_COORDINATOR=1
+      export AAR_AUTODATA_ANALYSIS_COORDINATOR=1
+      export AAR_AUTODATA_MUTATION_COORDINATOR=1
+      export AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR=1
+      export AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE=1
+      export AAR_AUTODATA_SEMANTIC_WORKER=claude
+      if [ "${TRIAL_ID}" = trial7 ]; then
+        export AAR_AUTODATA_PIPELINE_COORDINATOR=1
+      fi
+      ;;
+  esac
   for name in "${AAR_RESEARCH_CHAIN_ENV_ALLOWLIST[@]}"; do
     [[ -v "${name}" ]] && names+=("${name}")
   done

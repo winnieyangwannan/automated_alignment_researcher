@@ -92,12 +92,12 @@ def test_run13_documentation_records_trials_and_pin() -> None:
     assert "Direct root-launcher use is rejected" in (CANARY / "trial_3/README.md").read_text()
 
 
-def test_trial5_and_trial6_enable_full_lifecycle_ownership() -> None:
+def test_trial5_through_trial7_enable_full_lifecycle_ownership() -> None:
     launcher = (ROOT / "scripts/launch_team.sh").read_text()
     runtime = (ROOT / "scripts/aar_runtime_env.sh").read_text()
 
     owned_trials = launcher.split(
-        'if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(5|6)$ ]]; then', 1
+        'if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(5|6|7)$ ]]; then', 1
     )[1].split("fi", 1)[0]
     assert "export AAR_AUTODATA_ANALYSIS_COORDINATOR=1" in owned_trials
     assert "export AAR_AUTODATA_MUTATION_COORDINATOR=1" in owned_trials
@@ -105,3 +105,38 @@ def test_trial5_and_trial6_enable_full_lifecycle_ownership() -> None:
     assert "export AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE=1" in owned_trials
     assert "AAR_AUTODATA_MUTATION_COORDINATOR" in runtime
     assert "AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR" in runtime
+    assert 'if [ "${AAR_RUN13_TRIAL_ID}" = trial7 ]; then' in launcher
+    assert "export AAR_AUTODATA_PIPELINE_COORDINATOR=1" in launcher
+    assert "author_pipeline coordinator enablement must come from" in launcher
+    assert "AAR_AUTODATA_PIPELINE_COORDINATOR" in runtime
+
+
+def test_trial7_is_confirm_only_and_explicitly_allowlisted() -> None:
+    trial = CANARY / "trial_7"
+    run = yaml.safe_load((trial / "autodata_run.yaml").read_text())
+    wrapper = (trial / "submit_canary.sh").read_text()
+    launcher = (CANARY / "launch/launch.sh").read_text()
+    pipeline = (CANARY / "slurm/pipeline.sbatch").read_text()
+    controller = (CANARY / "slurm/chain_controller.sbatch").read_text()
+
+    assert run["run_id"] == "run13-canary-trial7"
+    assert run["bootstrap_canary"] == {"stop_after": "training_smoke"}
+    assert run["agent"]["backend"] == "claude"
+    assert run["agent"]["model"] == "claude-opus-4-8"
+    assert "trial4|trial5|trial6|trial7)" in launcher
+    assert "trial4|trial5|trial6|trial7)" in pipeline
+    assert "AAR_RUN13_LIFECYCLE_COORDINATOR_COMMIT" in wrapper
+    assert "confirm-only" in (trial / "README.md").read_text()
+    retry_envelope = controller.split('case "${TRIAL_ID}" in', 1)[1].split(
+        'for name in "${AAR_RESEARCH_CHAIN_ENV_ALLOWLIST[@]}"', 1
+    )[0]
+    for assignment in (
+        "export AAR_AUTODATA_CLARIFY_COORDINATOR=1",
+        "export AAR_AUTODATA_PIPELINE_COORDINATOR=1",
+        "export AAR_AUTODATA_ANALYSIS_COORDINATOR=1",
+        "export AAR_AUTODATA_MUTATION_COORDINATOR=1",
+        "export AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR=1",
+        "export AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE=1",
+        "export AAR_AUTODATA_SEMANTIC_WORKER=claude",
+    ):
+        assert assignment in retry_envelope

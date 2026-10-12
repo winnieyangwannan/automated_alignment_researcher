@@ -20,7 +20,7 @@ TRIAL_ID="${AAR_RUN13_TRIAL_ID:?missing Run 13 trial identity}"
 }
 ATTEMPT="${AAR_RUN_ATTEMPT_DIR:?missing attempt}"
 case "${TRIAL_ID}" in
-  trial4|trial5|trial6)
+  trial4|trial5|trial6|trial7)
     [ "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" = \
       "${ATTEMPT}/metadata/preautodata-recovery-manifest.json" ] || {
         echo "${TRIAL_ID} recovery manifest is not the attempt-local host snapshot" >&2
@@ -36,7 +36,7 @@ case "${TRIAL_ID}" in
     ;;
   *)
     [ -z "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ] || {
-      echo "pre-AutoData recovery is allowlisted only for Run 13 Trial 4/5/6" >&2
+      echo "pre-AutoData recovery is allowlisted only for Run 13 Trial 4/5/6/7" >&2
       exit 2
     }
     ;;

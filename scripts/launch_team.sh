@@ -41,6 +41,10 @@ if [ ! -d "${REPO}/aar" ]; then
 fi
 # shellcheck disable=SC1091
 source "${REPO}/scripts/aar_runtime_env.sh"
+if [ -n "${AAR_AUTODATA_PIPELINE_COORDINATOR:-}" ]; then
+  echo "[team] FATAL: author_pipeline coordinator enablement must come from the verified Trial 7 recovery path" >&2
+  exit 2
+fi
 PY="${HARNESS_PY}"
 if [ ! -x "${PY}" ]; then
   echo "[team] FATAL: Python is not executable at ${PY}; set HARNESS_PY" >&2
@@ -152,8 +156,8 @@ echo "[team] TEAM_DIR=${TEAM_DIR}  forum_scope=${AAR_FORUM_SCOPE:-per_chain}  fo
 # take the exact historical path when the opt-in variable is unset.
 if [ -n "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
   if [ "${AAR_EXPERIMENT_RUN_ID:-}" != run13 ] || \
-      [[ ! "${AAR_RUN13_TRIAL_ID:-}" =~ ^trial(4|5|6)$ ]] || [ "${SEEDS}" != alpha ]; then
-    echo "[team] FATAL: pre-AutoData recovery is allowlisted only for Run 13 Trial 4/5/6 alpha" >&2
+      [[ ! "${AAR_RUN13_TRIAL_ID:-}" =~ ^trial(4|5|6|7)$ ]] || [ "${SEEDS}" != alpha ]; then
+    echo "[team] FATAL: pre-AutoData recovery is allowlisted only for Run 13 Trial 4/5/6/7 alpha" >&2
     exit 2
   fi
   [ "${AAR_IDEA_UID_OVERRIDE:-}" = "run13-${AAR_RUN13_TRIAL_ID}-alpha-iteration-1" ] || {
@@ -186,11 +190,14 @@ if [ -n "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
   export AAR_RESUME_APPROVED_PROPOSAL=1
   export AAR_RESUME_EXPECTED_RUN_ID="${_recovery_run_id}"
   export AAR_AUTODATA_CLARIFY_COORDINATOR=1
-  if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(5|6)$ ]]; then
+  if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(5|6|7)$ ]]; then
     export AAR_AUTODATA_ANALYSIS_COORDINATOR=1
     export AAR_AUTODATA_MUTATION_COORDINATOR=1
     export AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR=1
     export AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE=1
+  fi
+  if [ "${AAR_RUN13_TRIAL_ID}" = trial7 ]; then
+    export AAR_AUTODATA_PIPELINE_COORDINATOR=1
   fi
   case "${AAR_AGENT_BACKEND:-}" in
     claude|kimi) export AAR_AUTODATA_SEMANTIC_WORKER="${AAR_AGENT_BACKEND}" ;;
