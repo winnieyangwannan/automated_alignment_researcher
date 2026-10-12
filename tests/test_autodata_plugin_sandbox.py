@@ -51,9 +51,11 @@ def test_sandbox_exposes_only_trusted_external_python_environment() -> None:
     assert 'trusted_harness_bin="$(realpath -e -- "$(dirname -- "${trusted_harness_py}")")"' in source
     assert 'trusted_harness_entry="${trusted_harness_bin}/$(basename -- "${trusted_harness_py}")"' in source
     assert '[ -f "${trusted_harness_root}/pyvenv.cfg" ]' in source
-    assert 'bind_visible_dir "${trusted_harness_root}" ro' in source
+    assert '--ro-bind "${trusted_harness_root}" "${trusted_harness_stage_root}/venv"' in source
+    assert '--ro-bind "${trusted_harness_stage_root}/venv" "${trusted_harness_root}"' in source
     assert 'trusted_harness_real="$(realpath -e -- "${trusted_harness_entry}")"' in source
-    assert 'bind_visible_dir "${trusted_harness_base_root}" ro' in source
+    assert '--ro-bind "${trusted_harness_base_root}" "${trusted_harness_stage_root}/base"' in source
+    assert '--ro-bind "${trusted_harness_stage_root}/base" "${trusted_harness_base_root}"' in source
     assert 'bind_visible_dir "${storage_home}"' not in source
 
 

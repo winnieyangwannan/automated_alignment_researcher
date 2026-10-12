@@ -29,6 +29,7 @@ trusted_harness_py="${AAR_TRUSTED_HARNESS_PY:-${HARNESS_PY:-}}"
 trusted_harness_entry=""
 trusted_harness_root=""
 trusted_harness_base_root=""
+trusted_harness_stage_root=""
 
 [ -x "${real_cli}" ] || fail "real Claude CLI is not executable"
 [ -d "${repo}" ] || fail "repository does not exist"
@@ -135,6 +136,23 @@ declare -a bwrap_args=(
 if [ -d /var/slurm-tmp ]; then
   bwrap_args+=(--tmpfs /var/slurm-tmp)
 fi
+# Bubblewrap applies mounts in argument order. Preserve the two approved Python
+# directories at private aliases before the home tmpfs hides their host paths;
+# the aliases become sources for the final read-only mounts below.
+if [ -n "${trusted_harness_root}" ]; then
+  trusted_harness_stage_root=/tmp/.aar-trusted-harness
+  bwrap_args+=(
+    --dir "${trusted_harness_stage_root}"
+    --dir "${trusted_harness_stage_root}/venv"
+    --ro-bind "${trusted_harness_root}" "${trusted_harness_stage_root}/venv"
+  )
+  if [ -n "${trusted_harness_base_root}" ]; then
+    bwrap_args+=(
+      --dir "${trusted_harness_stage_root}/base"
+      --ro-bind "${trusted_harness_base_root}" "${trusted_harness_stage_root}/base"
+    )
+  fi
+fi
 for hidden_root in "${hidden_roots[@]}"; do
   bwrap_args+=(--tmpfs "${hidden_root}")
 done
@@ -208,7 +226,10 @@ fi
 if [ -n "${trusted_harness_root}" ]; then
   case "${trusted_harness_root}" in
     "${repo}"|"${repo}"/*|"${runtime_root}"|"${runtime_root}"/*) ;;
-    *) bind_visible_dir "${trusted_harness_root}" ro ;;
+    *)
+      add_hidden_mountpoint "${trusted_harness_root}"
+      bwrap_args+=(--ro-bind "${trusted_harness_stage_root}/venv" "${trusted_harness_root}")
+      ;;
   esac
 fi
 # uv-managed virtual environments may point bin/python at a base interpreter
@@ -218,7 +239,10 @@ if [ -n "${trusted_harness_base_root}" ]; then
   case "${trusted_harness_base_root}" in
     "${trusted_harness_root}"|"${trusted_harness_root}"/*|\
     "${repo}"|"${repo}"/*|"${runtime_root}"|"${runtime_root}"/*) ;;
-    *) bind_visible_dir "${trusted_harness_base_root}" ro ;;
+    *)
+      add_hidden_mountpoint "${trusted_harness_base_root}"
+      bwrap_args+=(--ro-bind "${trusted_harness_stage_root}/base" "${trusted_harness_base_root}")
+      ;;
   esac
 fi
 
@@ -368,7 +392,7 @@ unset artifact_root artifact_team_eval_private resolved_team_dir secret_root
 unset claude_native_cache dotslash_cache
 unset research_tool_dir trusted_harness_py trusted_harness_entry trusted_harness_bin
 unset trusted_harness_root trusted_harness_real trusted_harness_base_bin
-unset trusted_harness_base_root
+unset trusted_harness_base_root trusted_harness_stage_root
 while IFS= read -r env_name; do
   upper_name="${env_name^^}"
   case "${upper_name}" in
