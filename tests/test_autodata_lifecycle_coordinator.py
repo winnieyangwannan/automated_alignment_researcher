@@ -1230,6 +1230,26 @@ def test_kimi_worker_is_one_turn_tool_free_and_hides_lifecycle(
     assert os.environ["AAR_AUTODATA_CAPABILITY"] == "secret"
 
 
+def test_kimi_worker_preserves_only_explicit_deployment_registry_locators(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed: dict[str, str] = {}
+    monkeypatch.setenv("SLURM_CLUSTER_NAME", "fair-cw-use2-1")
+    monkeypatch.setenv("V2_DEPLOYMENTS_ROOT", "/checkpoint/ram/shared/vllm_deployments_v2")
+    monkeypatch.setenv("AAR_AUTODATA_CAPABILITY", "secret")
+    monkeypatch.setattr(
+        "aar.infrastructure.autodata_coordinator.kimi_worker.KimiAgent.configure_serve_api_provider",
+        lambda env: observed.update(env),
+    )
+
+    environment = KimiWorker._environment(tmp_path)
+
+    assert observed["SLURM_CLUSTER_NAME"] == "fair-cw-use2-1"
+    assert observed["V2_DEPLOYMENTS_ROOT"] == "/checkpoint/ram/shared/vllm_deployments_v2"
+    assert environment["KIMI_CODE_HOME"] == str(tmp_path)
+    assert "AAR_AUTODATA_CAPABILITY" not in environment
+
+
 def test_kimi_worker_rejects_any_tool_call() -> None:
     class ToolCallingWorker(KimiWorker):
         async def _execute(self, _task: str) -> dict[str, Any]:
