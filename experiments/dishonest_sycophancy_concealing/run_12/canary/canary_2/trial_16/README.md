@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: staged; not launched
+- Status: stopped after failed pinned-skill activation gate
 - Created: 2026-10-11 22:28 PT
-- Last updated: 2026-10-11 22:28 PT
+- Last updated: 2026-10-11 22:54 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal

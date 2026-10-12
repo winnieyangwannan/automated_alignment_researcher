@@ -107,6 +107,183 @@ class KimiAgentTest(unittest.TestCase):
             self.assertNotIn("--continue", calls[0])
             self.assertIn("--continue", calls[1])
 
+    def test_autodata_skill_activation_is_verified_before_continuation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            skills = root / "skills"
+            (skills / "autodata").mkdir(parents=True)
+            (skills / "autodata" / "SKILL.md").write_text(
+                "---\nname: autodata\ndescription: test\n---\n"
+            )
+            capture = root / "calls.jsonl"
+            cli = root / "kimi"
+            cli.write_text(
+                f"#!{sys.executable}\n"
+                "import json, os, sys\n"
+                "from pathlib import Path\n"
+                "home = Path(os.environ['KIMI_CODE_HOME'])\n"
+                "counter = home / 'turns'\n"
+                "turn = int(counter.read_text()) + 1 if counter.exists() else 1\n"
+                "counter.write_text(str(turn))\n"
+                "with Path(os.environ['KIMI_TEST_CAPTURE']).open('a') as stream:\n"
+                "  stream.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                "if turn == 1:\n"
+                "  print(json.dumps({'role': 'assistant', 'tool_calls': [{"
+                "'id': 'skill-call', 'function': {'name': 'Skill', "
+                "'arguments': json.dumps({'skill': 'autodata'})}}]}))\n"
+                "  print(json.dumps({'role': 'tool', 'tool_call_id': 'skill-call', "
+                "'content': 'Skill \\\"autodata\\\" loaded inline. Follow its instructions.'}))\n"
+                "else:\n"
+                "  print(json.dumps({'role': 'assistant', 'tool_calls': [{"
+                "'id': 'finish-call', 'function': {'name': 'finish', "
+                "'arguments': '{}'}}]}))\n"
+            )
+            cli.chmod(0o755)
+
+            with patch.dict(
+                os.environ,
+                {
+                    "AAR_AUTODATA": "1",
+                    "KIMI_TEST_CAPTURE": str(capture),
+                },
+                clear=False,
+            ):
+                result = asyncio.run(
+                    KimiAgent(
+                        "test-agent",
+                        root,
+                        cli_path=str(cli),
+                        skill_dirs=[skills],
+                        completion_tool="finish",
+                        max_continuations=2,
+                    ).execute("complete the task")
+                )
+
+            self.assertTrue(result.success, result.error)
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            self.assertEqual(len(calls), 2)
+            self.assertNotIn("--continue", calls[0])
+            self.assertIn("--continue", calls[1])
+            first_prompt = calls[0][calls[0].index("--prompt") + 1]
+            self.assertIn('skill="autodata"', first_prompt)
+            self.assertEqual(result.output["tool_uses"][0]["tool"], "Skill")
+
+    def test_failed_autodata_skill_activation_never_reaches_normal_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            skills = root / "skills"
+            (skills / "autodata").mkdir(parents=True)
+            (skills / "autodata" / "SKILL.md").write_text(
+                "---\nname: autodata\ndescription: test\n---\n"
+            )
+            capture = root / "calls.jsonl"
+            cli = root / "kimi"
+            cli.write_text(
+                f"#!{sys.executable}\n"
+                "import json, os, sys\n"
+                "from pathlib import Path\n"
+                "with Path(os.environ['KIMI_TEST_CAPTURE']).open('a') as stream:\n"
+                "  stream.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                "print(json.dumps({'role': 'assistant', 'tool_calls': [{"
+                "'id': 'skill-call', 'function': {'name': 'Skill', "
+                "'arguments': json.dumps({'skill': 'autodata'})}}]}))\n"
+                "print(json.dumps({'role': 'tool', 'tool_call_id': 'skill-call', "
+                "'content': 'Skill \\\"autodata\\\" not found.'}))\n"
+            )
+            cli.chmod(0o755)
+
+            with patch.dict(
+                os.environ,
+                {
+                    "AAR_AUTODATA": "1",
+                    "KIMI_TEST_CAPTURE": str(capture),
+                },
+                clear=False,
+            ):
+                result = asyncio.run(
+                    KimiAgent(
+                        "test-agent",
+                        root,
+                        cli_path=str(cli),
+                        skill_dirs=[skills],
+                        completion_tool="finish",
+                        max_checkpoint_retries=1,
+                    ).execute("complete the task")
+                )
+
+            self.assertFalse(result.success)
+            self.assertEqual(
+                result.failure["error_code"],
+                "required_skill_activation_missing",
+            )
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(
+                all('skill="autodata"' in call[call.index("--prompt") + 1] for call in calls)
+            )
+
+    def test_skill_activation_does_not_advance_lifecycle_milestones(self) -> None:
+        agent = KimiAgent(
+            "test-agent",
+            Path.cwd(),
+            cli_path="/bin/true",
+            completion_tool="share_finding",
+        )
+        output = {
+            "tool_uses": [
+                {"tool": "Skill", "input": {"skill": "autodata"}},
+            ]
+        }
+
+        self.assertIn("get_literature", agent._continuation_prompt(output))
+        self.assertEqual(agent._continuation_tool(output), "get_literature")
+
+    def test_ordinary_tool_before_skill_success_does_not_open_gate(self) -> None:
+        agent = KimiAgent("test-agent", Path.cwd(), cli_path="/bin/true")
+        output = {
+            "raw_messages": [
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "read-call",
+                            "function": {
+                                "name": "Read",
+                                "arguments": json.dumps({"path": "/tmp/input"}),
+                            },
+                        },
+                        {
+                            "id": "skill-call",
+                            "function": {
+                                "name": "Skill",
+                                "arguments": json.dumps({"skill": "autodata"}),
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "skill-call",
+                    "content": (
+                        'Skill "autodata" loaded inline. Follow its instructions.'
+                    ),
+                },
+            ]
+        }
+
+        self.assertFalse(agent._skill_activation_succeeded(output, "autodata"))
+
+    def test_autodata_skill_checkpoint_schema_is_exact(self) -> None:
+        agent = KimiAgent("test-agent", Path.cwd(), cli_path="/bin/true")
+
+        self.assertEqual(
+            agent._checkpoint_argument_schema(
+                "Skill",
+                prompt='Call Skill exactly once with skill="autodata".',
+            ),
+            {"skill": {"type": "string", "const": "autodata"}},
+        )
+
     def test_turn_timeout_terminates_cli_process_group(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

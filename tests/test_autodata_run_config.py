@@ -46,6 +46,7 @@ TRIAL16_RUN = (
     / "trial_16"
     / "autodata_run.yaml"
 )
+TRIAL17_RUN = TRIAL16_RUN.parent.parent / "trial_17" / "autodata_run.yaml"
 RUN17 = (
     ROOT
     / "experiments/dishonest_sycophancy_concealing/run_17/config/run.yaml"
@@ -230,11 +231,20 @@ def test_canary2_run_yaml_selects_and_enforces_its_shared_profile() -> None:
         )
 
 
-def test_trial16_preserves_v2_lifecycle_contract(tmp_path: Path) -> None:
-    output = tmp_path / "trial16-compiled"
+@pytest.mark.parametrize(
+    ("run_path", "run_id"),
+    [
+        (TRIAL16_RUN, "run12-canary2-trial16"),
+        (TRIAL17_RUN, "run12-canary2-trial17"),
+    ],
+)
+def test_trial16_and_trial17_preserve_v2_lifecycle_contract(
+    tmp_path: Path, run_path: Path, run_id: str
+) -> None:
+    output = tmp_path / f"{run_id}-compiled"
     resolved = compile_run_config(
         profile_path=PROFILE,
-        run_path=TRIAL16_RUN,
+        run_path=run_path,
         target_binding_path=_base_binding(tmp_path),
         chain="alpha",
         repo=ROOT,
@@ -242,7 +252,7 @@ def test_trial16_preserves_v2_lifecycle_contract(tmp_path: Path) -> None:
     )
     runtime = (output / "autodata-runtime.env").read_text()
 
-    assert resolved["run"]["run_id"] == "run12-canary2-trial16"
+    assert resolved["run"]["run_id"] == run_id
     assert resolved["run"]["meta_optimization"] == {
         "maximum_iterations": 10,
         "minimum_iterations": 3,

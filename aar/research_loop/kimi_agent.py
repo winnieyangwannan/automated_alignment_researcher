@@ -649,8 +649,19 @@ class KimiAgent:
                         command.extend(["--model", self.model])
                     for skill_dir in self.skill_dirs:
                         command.extend(["--skills-dir", str(skill_dir)])
+                    required_initial_skill = self._required_initial_skill(output)
                     if continuation_count:
                         command.append("--continue")
+                    if required_initial_skill is not None:
+                        current_prompt = (
+                            f"{prompt}\n\nBefore performing any task action, call the "
+                            "native Skill tool exactly once now with "
+                            f"skill={json.dumps(required_initial_skill)}. After it "
+                            "reports that the skill loaded inline, end this turn "
+                            "without calling another tool or emitting prose."
+                        )
+                        required_tool = "Skill"
+                    elif continuation_count:
                         current_prompt = self._continuation_prompt(output)
                         required_tool = self._continuation_tool(
                             output, prompt=current_prompt
@@ -670,7 +681,8 @@ class KimiAgent:
                         continue
                     checkpoint_tool = (
                         required_tool
-                        if self.force_checkpoint_tools
+                        if required_initial_skill is not None
+                        or self.force_checkpoint_tools
                         or (
                             continuation_count == 0
                             and self.force_completion_tool_first_turn
@@ -730,6 +742,38 @@ class KimiAgent:
                             ),
                             retryable=retryable,
                         )
+                    if (
+                        required_initial_skill is not None
+                        and not self._skill_activation_succeeded(
+                            output, required_initial_skill
+                        )
+                    ):
+                        if checkpoint_retry_count >= self.max_checkpoint_retries:
+                            raise FailureFeedbackError(
+                                build_failure_feedback(
+                                    RuntimeError(
+                                        "required AutoData skill activation missing"
+                                    ),
+                                    error_code="required_skill_activation_missing",
+                                    stage="research_session",
+                                    retryable=self.continuation_exhaustion_retryable,
+                                    disposition="advance_session",
+                                    public_summary=(
+                                        "Kimi repeatedly failed to load the required "
+                                        f"{required_initial_skill} skill before "
+                                        "AutoData work"
+                                    ),
+                                )
+                            )
+                        checkpoint_retry_count += 1
+                        continuation_count += 1
+                        print(
+                            "[Kimi] required skill activation did not succeed; "
+                            f"retrying {required_initial_skill} "
+                            f"({checkpoint_retry_count}/"
+                            f"{self.max_checkpoint_retries})"
+                        )
+                        continue
                     action_result_state = (
                         self._autodata_consume_current_action_result(output)
                     )
@@ -1051,6 +1095,53 @@ class KimiAgent:
     def _tool_name(item: dict[str, Any]) -> str:
         return str(item.get("tool", "")).rsplit("__", 1)[-1]
 
+    def _required_initial_skill(self, output: dict[str, Any]) -> str | None:
+        if not self.skill_dirs or not self._autodata_enabled():
+            return None
+        skill = "autodata"
+        return None if self._skill_activation_succeeded(output, skill) else skill
+
+    @staticmethod
+    def _skill_activation_succeeded(
+        output: dict[str, Any], skill: str
+    ) -> bool:
+        call_ids: set[str] = set()
+        ordinary_tool_seen = False
+        for event in output.get("raw_messages", []):
+            if not isinstance(event, dict):
+                continue
+            if event.get("role") == "assistant":
+                for call in event.get("tool_calls") or []:
+                    if not isinstance(call, dict):
+                        continue
+                    function = call.get("function") or {}
+                    if not isinstance(function, dict):
+                        continue
+                    if str(function.get("name", "")).rsplit("__", 1)[-1] != "Skill":
+                        ordinary_tool_seen = True
+                        continue
+                    arguments = function.get("arguments") or {}
+                    if isinstance(arguments, str):
+                        try:
+                            arguments = json.loads(arguments)
+                        except json.JSONDecodeError:
+                            continue
+                    if not isinstance(arguments, dict) or arguments.get("skill") != skill:
+                        ordinary_tool_seen = True
+                        continue
+                    call_id = call.get("id")
+                    if isinstance(call_id, str) and call_id:
+                        call_ids.add(call_id)
+            elif event.get("role") == "tool" and event.get("tool_call_id") in call_ids:
+                content = event.get("content")
+                if (
+                    not ordinary_tool_seen
+                    and isinstance(content, str)
+                    and f'Skill "{skill}" loaded inline.' in content
+                ):
+                    return True
+        return False
+
     @classmethod
     def _submitted_proposal_in_output(cls, output: dict[str, Any]) -> bool:
         return any(
@@ -1189,7 +1280,11 @@ class KimiAgent:
                 f"printing them, and call {self.completion_tool}."
             )
 
-        uses = output["tool_uses"]
+        uses = [
+            item
+            for item in output["tool_uses"]
+            if self._tool_name(item) != "Skill"
+        ]
         names = [self._tool_name(item) for item in uses]
         inputs = [item.get("input") or {} for item in uses]
         method_path = self._candidate_method_path()
@@ -1766,6 +1861,15 @@ class KimiAgent:
                 "run_id": {"type": "string", "const": run_id},
                 "results_writeup": {"type": "string", "minLength": 80},
             }
+        if required_tool == "Skill":
+            match = re.search(r'\bskill=("(?:\\.|[^"\\])*")', prompt)
+            if match is None:
+                return {}
+            try:
+                skill = json.loads(match.group(1))
+            except json.JSONDecodeError:
+                return {}
+            return {"skill": {"type": "string", "const": skill}}
         field = "command" if required_tool == "Bash" else "path"
         if required_tool not in {"Bash", "Read", "Write"}:
             return {}
