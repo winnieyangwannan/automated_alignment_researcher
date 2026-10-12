@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: prepared; not launched
+- Status: stopped before first native action; launch identity was not forwarded
 - Created: 2026-10-12 12:24 PT
-- Last updated: 2026-10-12 12:24 PT
+- Last updated: 2026-10-12 12:36 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
