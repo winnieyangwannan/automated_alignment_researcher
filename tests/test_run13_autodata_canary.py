@@ -113,6 +113,38 @@ def test_trial5_through_trial8_enable_full_lifecycle_ownership() -> None:
     assert "AAR_AUTODATA_GROUNDING_COORDINATOR" in runtime
 
 
+def test_run13_coordinator_contract_survives_sanitized_chain_export() -> None:
+    runtime = (ROOT / "scripts/aar_runtime_env.sh").read_text()
+    preserve = set(
+        runtime.split("_AAR_PRESERVE=(", 1)[1].split("\n)", 1)[0].split()
+    )
+
+    required = {
+        "TEAM_DIR",
+        "AAR_EXPERIMENT_RUN_ID",
+        "AAR_RUN13_TRIAL_ID",
+        "AAR_IDEA_UID_OVERRIDE",
+        "AAR_AGENT_BACKEND",
+        "AAR_AUTODATA_SEMANTIC_WORKER",
+        "AAR_AUTODATA_LIFECYCLE_SUPERVISED",
+        "AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE",
+        "AAR_AUTODATA_CLARIFY_COORDINATOR",
+        "AAR_AUTODATA_GROUNDING_COORDINATOR",
+        "AAR_AUTODATA_PIPELINE_COORDINATOR",
+        "AAR_AUTODATA_ANALYSIS_COORDINATOR",
+        "AAR_AUTODATA_MUTATION_COORDINATOR",
+        "AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR",
+        "AAR_AUTODATA_PLUGIN_ROOT",
+        "AAR_AUTODATA_WRAPPER_PYTHON",
+        "AAR_AUTODATA_STATE",
+        "AAR_AUTODATA_ARTIFACTS",
+        "AAR_AUTODATA_WORKSPACES",
+        "AAR_AUTODATA_STOP_AFTER",
+        "AAR_AUTODATA_PRODUCTION_ROWS",
+    }
+    assert required <= preserve
+
+
 def test_trial7_and_trial8_are_confirm_only_and_explicitly_allowlisted() -> None:
     trial = CANARY / "trial_8"
     run = yaml.safe_load((trial / "autodata_run.yaml").read_text())
