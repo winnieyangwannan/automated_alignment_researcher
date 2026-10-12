@@ -1287,6 +1287,10 @@ def test_completed_meta_transition_recovers_without_duplicate_production(
         lambda *_: {
             "winner_candidate_id": "cand-one",
             "winner_tree_digest": "sha256:" + "b" * 64,
+            "test_evaluation": {
+                "candidate_id": "cand-one",
+                "constraints": {"valid": True},
+            },
         },
     )
     monkeypatch.setattr(
@@ -1361,6 +1365,264 @@ def test_completed_meta_transition_recovers_without_duplicate_production(
     subjects = lifecycle_supervisor._load_control(control)["subjects"]
     assert sum(entry["subject_id"] == production_id for entry in subjects) == 1
     assert (run_root / "supervised-transition-intent.json").is_file()
+
+
+@pytest.mark.parametrize(
+    "test_evaluation",
+    [
+        None,
+        {"candidate_id": "different", "constraints": {"valid": True}},
+        {"candidate_id": "cand-one"},
+        {"candidate_id": "cand-one", "constraints": {"valid": False}},
+    ],
+)
+def test_completed_meta_transition_rejects_invalid_final_test_evidence_before_export(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    test_evaluation: object,
+) -> None:
+    meta_id = "exe_" + "2" * 32
+    export_calls: list[str] = []
+    native_calls: list[str] = []
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_native_subject",
+        lambda *_: {
+            "status": "completed",
+            "phase": "completed",
+            "winnerCandidateId": "cand-one",
+            "executionJson": json.dumps({"mode": "meta_optimize"}),
+        },
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_run_binding",
+        lambda *_: ({}, {"study_id": "study-one"}, tmp_path),
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_execution_finalization",
+        lambda *_: {
+            "winner_candidate_id": "cand-one",
+            "winner_tree_digest": "sha256:" + "b" * 64,
+            "test_evaluation": test_evaluation,
+        },
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_export_winner_idempotently",
+        lambda *_, **__: export_calls.append("export"),
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor,
+        "_native_cli",
+        lambda *_, **__: native_calls.append("native"),
+    )
+    args = Namespace(
+        state=tmp_path / "state.db", control_file=tmp_path / "control.json"
+    )
+
+    with pytest.raises(RuntimeError, match="lacks valid winner test evidence"):
+        lifecycle_supervisor.reconcile_completed_meta_execution(args, meta_id)
+
+    assert export_calls == []
+    assert native_calls == []
+
+
+def _production_attainability_fixture(
+    tmp_path: Path,
+    results: list[tuple[str, str, bool, str | None]],
+    *,
+    required_rows: int = 3,
+    source_count: int = 5,
+) -> tuple[Path, Path, str]:
+    state = tmp_path / "state.db"
+    artifacts = tmp_path / "artifacts"
+    pipeline = tmp_path / "pipeline"
+    (artifacts / "objects" / "sha256").mkdir(parents=True)
+    (pipeline / "grounding").mkdir(parents=True)
+    source_ids = [f"source-{index}" for index in range(source_count)]
+    manifest = pipeline / "grounding" / "production.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "autodata.grounding/v1",
+                "tasks": [{"id": task_id} for task_id in source_ids],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_digest = "sha256:" + hashlib.sha256(manifest.read_bytes()).hexdigest()
+    execution_id = "exe_production"
+    spec = {
+        "mode": "production",
+        "grounding": {
+            "manifest_path": "grounding/production.json",
+            "digest": manifest_digest,
+        },
+        "finalization": {"minimum_generated_items": required_rows},
+    }
+    with sqlite3.connect(state) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE executions (
+              id TEXT PRIMARY KEY, executionJson TEXT, pipelineRoot TEXT
+            );
+            CREATE TABLE events (
+              scopeKind TEXT, scopeId TEXT, kind TEXT, payloadJson TEXT
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO executions VALUES (?,?,?)",
+            (execution_id, json.dumps(spec), str(pipeline)),
+        )
+        for task_id, phase, accepted, reason_code in results:
+            task_result = {
+                "task_id": task_id,
+                "outcome": "succeeded",
+                "generated_items": ([{"row": task_id}] if accepted else []),
+                "reason_code": reason_code,
+            }
+            encoded = json.dumps(task_result, sort_keys=True).encode()
+            digest = hashlib.sha256(encoded).hexdigest()
+            artifact = artifacts / "objects" / "sha256" / digest[:2] / digest[2:]
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_bytes(encoded)
+            connection.execute(
+                "INSERT INTO events VALUES (?,?,?,?)",
+                (
+                    "execution",
+                    execution_id,
+                    "task_attempt.completed",
+                    json.dumps(
+                        {
+                            "task_id": task_id,
+                            "phase": phase,
+                            "artifact": {
+                                "digest": f"sha256:{digest}",
+                                "size": len(encoded),
+                            },
+                        }
+                    ),
+                ),
+            )
+    return state, artifacts, execution_id
+
+
+@pytest.mark.parametrize(
+    ("results", "required_rows", "expected_maximum", "attainable"),
+    [
+        # Healthy: one accepted, one first-pass empty but retryable, and three
+        # unfinished/in-flight source tasks.
+        (
+            [
+                ("source-0", "final-full-corpus", True, None),
+                ("source-1", "final-full-corpus", False, "target_not_challenging"),
+            ],
+            4,
+            5,
+            True,
+        ),
+        # Boundary equality must continue after two sources have exhausted
+        # their one native retry.
+        (
+            [
+                ("source-0", "final-full-corpus", True, None),
+                ("source-1", "final-full-corpus-retry-2", False, "judge_rejected"),
+                ("source-2", "final-full-corpus-retry-2", False, "judge_rejected"),
+            ],
+            3,
+            3,
+            True,
+        ),
+        # Once three distinct source IDs have provably exhausted retry, at most
+        # two rows remain possible regardless of provider/native attempt count.
+        (
+            [
+                ("source-0", "final-full-corpus-retry-2", False, "judge_rejected"),
+                ("source-1", "final-full-corpus-retry-2", False, "judge_rejected"),
+                ("source-2", "final-full-corpus-retry-2", False, "judge_rejected"),
+            ],
+            3,
+            2,
+            False,
+        ),
+    ],
+)
+def test_production_acceptance_attainability_is_conservative_per_source(
+    tmp_path: Path,
+    results: list[tuple[str, str, bool, str | None]],
+    required_rows: int,
+    expected_maximum: int,
+    attainable: bool,
+) -> None:
+    state, artifacts, execution_id = _production_attainability_fixture(
+        tmp_path, results, required_rows=required_rows
+    )
+
+    status = lifecycle_supervisor._production_acceptance_attainability(
+        state, artifacts, execution_id
+    )
+
+    assert status["maximum_possible_rows"] == expected_maximum
+    assert status["attainable"] is attainable
+    if attainable:
+        lifecycle_supervisor._require_production_acceptance_attainability(
+            state, artifacts, execution_id
+        )
+    else:
+        with pytest.raises(
+            lifecycle_supervisor.NativeStepFailure,
+            match="accepted-row requirement is unattainable",
+        ):
+            lifecycle_supervisor._require_production_acceptance_attainability(
+                state, artifacts, execution_id
+            )
+
+
+def test_production_first_empty_result_remains_retry_eligible(
+    tmp_path: Path,
+) -> None:
+    state, artifacts, execution_id = _production_attainability_fixture(
+        tmp_path,
+        [("source-0", "final-full-corpus", False, "target_not_challenging")],
+        required_rows=5,
+    )
+
+    status = lifecycle_supervisor._production_acceptance_attainability(
+        state, artifacts, execution_id
+    )
+
+    assert status["retry_eligible_or_unfinished_tasks"] == 5
+    assert status["maximum_possible_rows"] == 5
+    assert status["attainable"] is True
+
+
+def test_production_in_flight_source_remains_attainable(tmp_path: Path) -> None:
+    state, artifacts, execution_id = _production_attainability_fixture(
+        tmp_path, [], required_rows=5
+    )
+    with sqlite3.connect(state) as connection:
+        connection.execute(
+            "INSERT INTO events VALUES (?,?,?,?)",
+            (
+                "execution",
+                execution_id,
+                "task_attempt.submitted",
+                json.dumps(
+                    {"task_id": "source-0", "phase": "final-full-corpus"}
+                ),
+            ),
+        )
+
+    status = lifecycle_supervisor._production_acceptance_attainability(
+        state, artifacts, execution_id
+    )
+
+    assert status["retry_eligible_or_unfinished_tasks"] == 5
+    assert status["maximum_possible_rows"] == 5
+    assert status["attainable"] is True
 
 
 @pytest.mark.parametrize(
@@ -1813,6 +2075,7 @@ def test_next_subject_accepts_explicit_long_production_controller_timeout(
 
     assert subject is not None
     assert subject.timeout_seconds == controller_timeout
+    assert subject.production is True
 
 
 def test_unregistered_active_subject_is_never_selected(tmp_path: Path) -> None:

@@ -1,0 +1,92 @@
+{
+  "schema": "autodata.pipeline/v1",
+  "name": "aar-honesty-sycophancy-uncertainty-sft-v2",
+  "version": "2.0.0",
+  "required_framework": "==1.0.0",
+  "commands": {
+    "task": {
+      "argv": [
+        "python3",
+        "recipe/task.py",
+        "--input",
+        "{input}",
+        "--output",
+        "{output}"
+      ],
+      "input_mode": "file",
+      "input_path": ".autodata/input.json",
+      "output_path": ".autodata/task-result.json",
+      "timeout_seconds": 2100
+    }
+  },
+  "output_schemas": {
+    "task_result": "schemas/task-result.schema.json"
+  },
+  "mutable_paths": ["recipe/generation_strategy.json"],
+  "protected_paths": [
+    "autodata.pipeline.json",
+    "autodata.workspace.json",
+    "grounding/**",
+    "framework.lock.json",
+    "objective.json",
+    "comparator.json",
+    "schemas/**",
+    "recipe/judge_rubric.json",
+    "recipe/task.py",
+    "recipe/check.py",
+    "recipe/request.json",
+    "training-data-contract.json"
+  ],
+  "checks": [
+    {
+      "argv": ["python3", "recipe/check.py"],
+      "timeout_seconds": 30
+    }
+  ],
+  "presentation": {
+    "primary_metric": "quality_challenge_utility",
+    "metric_cards": [
+      {
+        "key": "quality_challenge_utility",
+        "label": "Balanced quality/challenge utility",
+        "format": "percent",
+        "role": "outcome"
+      },
+      {
+        "key": "quality",
+        "label": "Axis-conditioned teacher quality",
+        "format": "percent",
+        "role": "evidence"
+      },
+      {
+        "key": "challenge",
+        "label": "Target-model challenge",
+        "format": "percent",
+        "role": "evidence"
+      },
+      {
+        "key": "valid",
+        "label": "Schema-valid acceptance",
+        "format": "percent",
+        "role": "evidence"
+      }
+    ],
+    "stage_labels": {
+      "baseline-visible": "Visible tuning generation",
+      "validation-hidden": "Hidden validation generation",
+      "final-full-corpus": "Production-quality full-corpus rerun"
+    }
+  },
+  "comparator": {
+    "metric": "quality_challenge_utility",
+    "direction": "maximize",
+    "minimum_meaningful_delta": 0.01,
+    "objective_path": "objective.json",
+    "comparator_path": "comparator.json",
+    "constraints": {
+      "valid": { "minimum": 0.75 },
+      "quality": { "minimum": 0.75 },
+      "challenge": { "minimum": 0.5 }
+    }
+  }
+}

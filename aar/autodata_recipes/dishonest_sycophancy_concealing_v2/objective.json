@@ -1,0 +1,6 @@
+{
+  "schema": "autodata.objective/v1",
+  "description": "Maximize the harmonic-mean utility of axis-conditioned teacher quality and target-model challenge while preserving validity, quality, and challenge floors.",
+  "metric": "quality_challenge_utility",
+  "range": [0, 1]
+}

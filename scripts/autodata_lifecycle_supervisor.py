@@ -457,6 +457,7 @@ class Subject:
     phase: str
     timeout_seconds: int | None
     stall_seconds: int
+    production: bool = False
 
 
 def _empty_control() -> dict[str, Any]:
@@ -855,6 +856,179 @@ def _execution_finalization(state: Path, execution_id: str) -> dict[str, Any]:
     return value
 
 
+def _require_meta_final_test_evidence(
+    finalization: Mapping[str, Any], *, winner_id: str
+) -> None:
+    """Require held-out evidence that independently clears the valid floor."""
+
+    test_evaluation = finalization.get("test_evaluation")
+    constraints = (
+        test_evaluation.get("constraints")
+        if isinstance(test_evaluation, dict)
+        else None
+    )
+    if (
+        not isinstance(test_evaluation, dict)
+        or test_evaluation.get("candidate_id") != winner_id
+        or not isinstance(constraints, dict)
+        or constraints.get("valid") is not True
+    ):
+        raise RuntimeError(
+            "completed meta execution lacks valid winner test evidence"
+        )
+
+
+def _artifact_json(
+    artifacts: Path, reference: Any, *, label: str
+) -> dict[str, Any]:
+    """Read one native JSON artifact only after verifying its content digest."""
+
+    if not isinstance(reference, dict):
+        raise RuntimeError(f"{label} reference is invalid")
+    digest = reference.get("digest")
+    size = reference.get("size")
+    if (
+        not isinstance(digest, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+        or isinstance(size, bool)
+        or not isinstance(size, int)
+        or size < 0
+    ):
+        raise RuntimeError(f"{label} reference is invalid")
+    hexadecimal = digest.removeprefix("sha256:")
+    root = artifacts.resolve(strict=True)
+    path = root / "objects" / "sha256" / hexadecimal[:2] / hexadecimal[2:]
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError(f"{label} object is unavailable")
+    payload = path.read_bytes()
+    if len(payload) != size or hashlib.sha256(payload).hexdigest() != hexadecimal:
+        raise RuntimeError(f"{label} object failed integrity validation")
+    try:
+        value = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"{label} is not valid JSON") from error
+    if not isinstance(value, dict):
+        raise RuntimeError(f"{label} must contain one JSON object")
+    return value
+
+
+def _production_acceptance_attainability(
+    state: Path, artifacts: Path, execution_id: str
+) -> dict[str, int | bool]:
+    """Compute a conservative, source-task-level production yield ceiling."""
+
+    row = _native_subject(state, "execution", execution_id)
+    try:
+        spec = json.loads(str(row.get("executionJson")))
+    except json.JSONDecodeError as error:
+        raise RuntimeError("production execution manifest is invalid") from error
+    if not isinstance(spec, dict) or spec.get("mode") != "production":
+        raise RuntimeError("accepted-row attainability requires production mode")
+    pipeline_root = Path(str(row.get("pipelineRoot") or "")).resolve(strict=True)
+    source_task_ids = set(
+        bound_grounding_task_ids(
+            pipeline_root,
+            spec.get("grounding"),
+            "production acceptance grounding",
+        )
+    )
+    finalization = spec.get("finalization")
+    required_rows = (
+        finalization.get("minimum_generated_items")
+        if isinstance(finalization, dict)
+        else None
+    )
+    if (
+        isinstance(required_rows, bool)
+        or not isinstance(required_rows, int)
+        or required_rows < 1
+    ):
+        raise RuntimeError("production accepted-row requirement is invalid")
+
+    with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as connection:
+        if "events" not in _table_names(connection):
+            raise RuntimeError("native state has no production task-result evidence")
+        rows = connection.execute(
+            "SELECT payloadJson FROM events WHERE scopeKind='execution' "
+            "AND scopeId=? AND kind='task_attempt.completed'",
+            (execution_id,),
+        ).fetchall()
+
+    results_by_task: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for (raw_payload,) in rows:
+        try:
+            event = json.loads(str(raw_payload))
+        except json.JSONDecodeError as error:
+            raise RuntimeError("production task-result event is invalid") from error
+        task_id = event.get("task_id") if isinstance(event, dict) else None
+        phase = event.get("phase") if isinstance(event, dict) else None
+        if (
+            not isinstance(task_id, str)
+            or task_id not in source_task_ids
+            or not isinstance(phase, str)
+            or not phase
+        ):
+            raise RuntimeError("production task-result event has invalid lineage")
+        result = _artifact_json(
+            artifacts,
+            event.get("artifact"),
+            label="production task result",
+        )
+        generated_items = result.get("generated_items")
+        if result.get("task_id") != task_id or not isinstance(generated_items, list):
+            raise RuntimeError("production task result has invalid lineage")
+        results_by_task.setdefault(task_id, []).append((phase, result))
+
+    accepted: set[str] = set()
+    exhausted: set[str] = set()
+    for task_id, task_results in results_by_task.items():
+        if any(
+            result.get("outcome") == "succeeded" and bool(result["generated_items"])
+            for _, result in task_results
+        ):
+            accepted.add(task_id)
+            continue
+        # Native production permits one full-corpus retry. A first empty result
+        # therefore remains attainable. Exhaustion is proven only after that
+        # retry, or for the contract-exhausted result that native deliberately
+        # excludes from its retry set.
+        if any(
+            phase == "final-full-corpus-retry-2"
+            or result.get("reason_code") == "judge_contract_exhausted"
+            for phase, result in task_results
+        ):
+            exhausted.add(task_id)
+
+    retry_eligible_or_unfinished = source_task_ids - accepted - exhausted
+    maximum_possible_rows = len(accepted) + len(retry_eligible_or_unfinished)
+    return {
+        "required_rows": required_rows,
+        "source_task_count": len(source_task_ids),
+        "accepted_rows": len(accepted),
+        "retry_eligible_or_unfinished_tasks": len(retry_eligible_or_unfinished),
+        "exhausted_tasks": len(exhausted),
+        "maximum_possible_rows": maximum_possible_rows,
+        "attainable": maximum_possible_rows >= required_rows,
+    }
+
+
+def _require_production_acceptance_attainability(
+    state: Path, artifacts: Path, execution_id: str
+) -> dict[str, int | bool]:
+    status = _production_acceptance_attainability(state, artifacts, execution_id)
+    if status["attainable"] is not True:
+        raise NativeStepFailure(
+            "production accepted-row requirement is unattainable "
+            f"(accepted={status['accepted_rows']}, "
+            "retry-eligible-or-unfinished="
+            f"{status['retry_eligible_or_unfinished_tasks']}, "
+            f"required={status['required_rows']})",
+            error_code="production_required_rows_unattainable",
+            attempts=1,
+        )
+    return status
+
+
 def _run_binding(
     state: Path, control_file: Path, meta_execution_id: str
 ) -> tuple[dict[str, Any], dict[str, Any], Path]:
@@ -1143,6 +1317,7 @@ def reconcile_completed_meta_execution(
         or not winner_digest.startswith("sha256:")
     ):
         raise RuntimeError("completed meta execution has invalid winner evidence")
+    _require_meta_final_test_evidence(finalization, winner_id=winner_id)
     settings = _trusted_execution_settings(
         campaign_policy=args.campaign_policy,
         training_data_contract=args.training_data_contract,
@@ -2313,6 +2488,7 @@ def next_subject(
                 str(row["phase"]),
                 timeout if stage_timeout_policy == "enforce" else None,
                 PRODUCTION_STALL_SECONDS if production else META_STALL_SECONDS,
+                production,
             )
     return None
 
@@ -2659,6 +2835,10 @@ class Supervisor:
         return None
 
     def _step(self, subject: Subject) -> None:
+        if subject.production:
+            _require_production_acceptance_attainability(
+                self.args.state, self.args.artifacts, subject.subject_id
+            )
         command = [
             str(self.args.python),
             "-m",
@@ -2694,6 +2874,7 @@ class Supervisor:
         next_snapshot = started + self.args.snapshot_interval_seconds
         timed_out = False
         stalled = False
+        unattainable: NativeStepFailure | None = None
         progress_signature = self._progress_signature(subject)
         last_progress = started
         while self.current.poll() is None and not self.stop_requested:
@@ -2716,6 +2897,19 @@ class Supervisor:
                 timed_out = True
                 self._terminate_current_process_group()
                 break
+            if subject.production:
+                try:
+                    _require_production_acceptance_attainability(
+                        self.args.state, self.args.artifacts, subject.subject_id
+                    )
+                except NativeStepFailure as error:
+                    unattainable = error
+                    self._terminate_current_process_group()
+                    break
+                except Exception:
+                    self._terminate_current_process_group()
+                    self.current = None
+                    raise
             current_signature = self._progress_signature(subject)
             if current_signature != progress_signature:
                 progress_signature = current_signature
@@ -2734,6 +2928,18 @@ class Supervisor:
         if return_code is None:
             raise RuntimeError("native AutoData step remained active after bounded cleanup")
         self.current = None
+        if unattainable is not None:
+            self._snapshot(
+                f"step:{subject.kind}:{subject.subject_id}:unattainable"
+            )
+            self._write_status(
+                state="running",
+                last_subject_kind=subject.kind,
+                last_subject_id=subject.subject_id,
+                last_phase=subject.phase,
+                last_outcome="unattainable",
+            )
+            raise unattainable
         outcome = (
             "timeout"
             if timed_out
