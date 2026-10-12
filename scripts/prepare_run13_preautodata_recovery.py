@@ -212,7 +212,7 @@ def verify_manifest(
         raise RecoveryImportError("recovery manifest artifacts must be an array")
     if source.get("experiment_run_id") != "run13" or source.get("trial_id") != "trial3":
         raise RecoveryImportError("recovery source must be Run 13 Trial 3")
-    if re.fullmatch(r"trial[4-9][0-9]*", target_trial_id) is None:
+    if re.fullmatch(r"trial(?:[4-9]|[1-9][0-9]+)", target_trial_id) is None:
         raise RecoveryImportError("recovery target trial identity is invalid")
     if (
         target.get("experiment_run_id") != "run13"

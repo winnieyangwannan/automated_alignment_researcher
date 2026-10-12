@@ -309,6 +309,19 @@ def test_manifest_can_bind_a_fresh_trial7_target(tmp_path: Path) -> None:
     assert verified.manifest["target"]["trial_id"] == "trial7"
 
 
+def test_manifest_can_bind_a_fresh_trial10_target(tmp_path: Path) -> None:
+    helper = _load_helper()
+    manifest, *_ = _fixture(tmp_path)
+    payload = json.loads(manifest.read_text())
+    payload["target"]["trial_id"] = "trial10"
+    payload["target"]["idea_uid"] = "synthetic-trial10-idea"
+    manifest.write_text(json.dumps(payload))
+
+    verified = helper.verify_manifest(manifest, target_trial_id="trial10")
+
+    assert verified.manifest["target"]["trial_id"] == "trial10"
+
+
 def test_manifest_target_must_match_requested_trial(tmp_path: Path) -> None:
     helper = _load_helper()
     manifest, _, _, _, _ = _fixture(tmp_path)
