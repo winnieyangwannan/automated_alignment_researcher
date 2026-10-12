@@ -19,6 +19,28 @@ TRIAL_ID="${AAR_RUN13_TRIAL_ID:?missing Run 13 trial identity}"
   echo "invalid Run 13 trial identity" >&2; exit 2;
 }
 ATTEMPT="${AAR_RUN_ATTEMPT_DIR:?missing attempt}"
+case "${TRIAL_ID}" in
+  trial4)
+    [ "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" = \
+      "${ATTEMPT}/metadata/preautodata-recovery-manifest.json" ] || {
+        echo "Trial 4 recovery manifest is not the attempt-local host snapshot" >&2
+        exit 2
+      }
+    if [ ! -f "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}" ] || \
+        [ -L "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}" ] || \
+        [ "$(stat -c '%u' -- "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}")" != "$(id -u)" ] || \
+        [ "$(stat -c '%a' -- "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}")" != 400 ]; then
+      echo "Trial 4 recovery manifest snapshot failed its host-only contract" >&2
+      exit 2
+    fi
+    ;;
+  *)
+    [ -z "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ] || {
+      echo "pre-AutoData recovery is allowlisted only for Run 13 Trial 4" >&2
+      exit 2
+    }
+    ;;
+esac
 EXPECTED_COMMIT="${AAR_BASELINE_GIT_COMMIT:?missing source commit}"
 SOURCE_SNAPSHOT="${AAR_SOURCE_SNAPSHOT:?missing immutable source snapshot}"
 TRUSTED_HARNESS_PY="${AAR_TRUSTED_HARNESS_PY:?missing trusted harness Python}"

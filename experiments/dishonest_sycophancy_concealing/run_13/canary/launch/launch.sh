@@ -32,6 +32,38 @@ if [[ ! "${trial_relative}" =~ ^trial_([1-9][0-9]*)/autodata_run\.yaml$ ]]; then
 fi
 TRIAL_NUMBER="${BASH_REMATCH[1]}"
 TRIAL_ID="trial${TRIAL_NUMBER}"
+RECOVERY_MANIFEST_EXTERNAL=""
+case "${TRIAL_ID}" in
+  trial4)
+    : "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:?Trial 4 requires an external pre-AutoData recovery manifest}"
+    if [ ! -f "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}" ] || \
+        [ -L "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}" ]; then
+      echo "Trial 4 recovery manifest must be a regular non-symlink file" >&2
+      exit 2
+    fi
+    RECOVERY_MANIFEST_EXTERNAL="$(realpath -e -- "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}")"
+    case "${RECOVERY_MANIFEST_EXTERNAL}" in
+      "${REPO}"/*)
+        echo "Trial 4 recovery manifest must remain outside the source checkout" >&2
+        exit 2
+        ;;
+    esac
+    if [ "$(stat -c '%u' -- "${RECOVERY_MANIFEST_EXTERNAL}")" != "$(id -u)" ] || \
+        [ "$(stat -c '%a' -- "${RECOVERY_MANIFEST_EXTERNAL}")" != 600 ]; then
+      echo "Trial 4 recovery manifest must be owned by this user with mode 0600" >&2
+      exit 2
+    fi
+    PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" \
+      "${REPO}/scripts/prepare_run13_preautodata_recovery.py" verify \
+      --manifest "${RECOVERY_MANIFEST_EXTERNAL}" >/dev/null
+    ;;
+  *)
+    [ -z "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ] || {
+      echo "pre-AutoData recovery is allowlisted only for Run 13 Trial 4" >&2
+      exit 2
+    }
+    ;;
+esac
 [ "$(git -C "${REPO}" branch --show-current)" = autodata ] || { echo "Run 13 requires branch autodata" >&2; exit 2; }
 if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; then
   echo "tracked worktree is dirty" >&2
@@ -178,6 +210,19 @@ mkdir -p "${attempt}/"{metadata,logs,secrets,chains,runtime}
 mkdir -p "${checkpoint_root}/chains"
 chmod 700 "${attempt}" "${attempt}/"{metadata,logs,secrets,chains}
 chmod 700 "${checkpoint_root}" "${checkpoint_root}/chains"
+if [ "${TRIAL_ID}" = trial4 ]; then
+  RECOVERY_MANIFEST_SNAPSHOT="${attempt}/metadata/preautodata-recovery-manifest.json"
+  install -m 400 -- "${RECOVERY_MANIFEST_EXTERNAL}" "${RECOVERY_MANIFEST_SNAPSHOT}"
+  [ "$(sha256sum "${RECOVERY_MANIFEST_EXTERNAL}" | awk '{print $1}')" = \
+    "$(sha256sum "${RECOVERY_MANIFEST_SNAPSHOT}" | awk '{print $1}')" ] || {
+      echo "Trial 4 recovery manifest snapshot drifted" >&2
+      exit 2
+    }
+  PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" \
+      "${REPO}/scripts/prepare_run13_preautodata_recovery.py" verify \
+      --manifest "${RECOVERY_MANIFEST_SNAPSHOT}" --snapshot >/dev/null
+  export AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST="${RECOVERY_MANIFEST_SNAPSHOT}"
+fi
 [ "$(git -C "${REPO}" rev-parse HEAD)" = "${commit}" ] || {
   echo "AAR source changed during launch preflight" >&2; exit 2;
 }
@@ -406,10 +451,15 @@ job="$(sbatch --parsable --job-name="${EXPERIMENT_RUN_ID}-${TRIAL_ID}-autodata-l
 base_reused=false
 [ -z "${REUSE_BASE_DEPLOYMENT}" ] || base_reused=true
 source_snapshots_sha256="sha256:$(sha256sum "${attempt}/metadata/source-snapshots.json" | awk '{print $1}')"
-printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nsource_snapshot_root=%s\nautodata_commit=%s\nautodata_snapshot_root=%s\nsource_snapshots_sha256=%s\nexperiment_run_id=%s\ntrial_id=%s\nrun_config_id=%s\nmode=%s\nstop_after=%s\nproduction_required_rows=%s\nresearch_backend=%s\nresearch_model=%s\nresearch_effort=%s\nresearcher_deployment=%s\nautodata_generator_model=%s\nautodata_generator_protocol=%s\nautodata_generator_deployment=%s\nautodata_profile=%s\nautodata_concurrency=%s\nautodata_model_request_attempts=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \
+recovery_manifest_sha256=none
+if [ "${TRIAL_ID}" = trial4 ]; then
+  recovery_manifest_sha256="sha256:$(sha256sum "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}" | awk '{print $1}')"
+fi
+printf 'launch_job_id=%s\nattempt_dir=%s\ncheckpoint_root=%s\ngit_commit=%s\nsource_snapshot_root=%s\nautodata_commit=%s\nautodata_snapshot_root=%s\nsource_snapshots_sha256=%s\nrecovery_manifest_sha256=%s\nexperiment_run_id=%s\ntrial_id=%s\nrun_config_id=%s\nmode=%s\nstop_after=%s\nproduction_required_rows=%s\nresearch_backend=%s\nresearch_model=%s\nresearch_effort=%s\nresearcher_deployment=%s\nautodata_generator_model=%s\nautodata_generator_protocol=%s\nautodata_generator_deployment=%s\nautodata_profile=%s\nautodata_concurrency=%s\nautodata_model_request_attempts=%s\nchains=%s\ntarget_pairs_per_chain=%s\nseeds=%s\nbase_deployments=%s\nbase_deployment_reused=%s\n' \
   "${job}" "${attempt}" "${checkpoint_root}" "${commit}" \
   "${SOURCE_REPO}" "${REQUIRED_AUTODATA_SHA}" "${SOURCE_AUTODATA}" \
-  "${source_snapshots_sha256}" "${EXPERIMENT_RUN_ID}" "${TRIAL_ID}" \
+  "${source_snapshots_sha256}" "${recovery_manifest_sha256}" \
+  "${EXPERIMENT_RUN_ID}" "${TRIAL_ID}" \
   "$(jq -r '.run_id' <<<"${config_json}")" "${RUN_MODE}" \
   "${AAR_AUTODATA_STOP_AFTER:-score-result}" "${AAR_AUTODATA_PRODUCTION_ROWS}" \
   "${AGENT_BACKEND}" "${AGENT_MODEL:-Kimi-K2.6}" "${AGENT_EFFORT:-default}" \
