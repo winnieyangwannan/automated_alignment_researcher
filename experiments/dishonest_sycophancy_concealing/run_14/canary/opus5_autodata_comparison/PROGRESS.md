@@ -38,3 +38,35 @@ held-out scores.
 - Evidence: repository configuration and focused parity test only.
 - Decision: no-go pending runtime enablement, preflight, confirmation, source
   synchronization, and separate launch authorization.
+
+<a id="run14-opus5-comparison-launch-path-validated"></a>
+
+### ✅ 23:55 PT — PASS: source launch path validated
+
+> [!TIP]
+> **SOURCE READY; NOT LAUNCHED.** The complete Run 14 host and Slurm path now
+> enforces the Opus 5 configuration, isolated Run 14 identities, immutable
+> source snapshots, external recovery/proof contracts, and the training-smoke
+> stop boundary.
+
+```text
+✓ Run 14 operator wrapper
+✓ Host configuration, source, recovery, and provider-proof checks
+✓ Attempt-local source and configuration snapshots
+✓ Run 14 scheduled pipeline and chain controller
+✓ Shared recovery and coordinator allowlists
+✓ Exact Claude CLI Opus 5 identifier present locally
+○ External Opus 5 provider/target proof
+○ External Run 14 recovery manifest
+○ Explicit model-role and source-revision confirmation
+○ Endpoint and MCP preflight
+○ Infrastructure bootstrap
+○ AutoData lifecycle
+○ Training smoke
+```
+
+- Attempt: none.
+- Jobs: none.
+- Model calls: none.
+- Decision: no-go until external prerequisites, explicit confirmation, source
+  synchronization, and separate launch authorization are complete.

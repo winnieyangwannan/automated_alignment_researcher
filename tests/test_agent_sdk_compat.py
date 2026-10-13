@@ -328,6 +328,33 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
                 ["Bash", "Write", "Edit"],
             )
 
+    def test_run14_opus5_reuses_the_reviewed_authoring_fence(self) -> None:
+        class Options:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+        agent_module = _load_agent_module(Options)
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._trial7_environment(directory)
+            environment.pop("AAR_RUN13_TRIAL_ID")
+            environment.update(
+                {
+                    "AAR_EXPERIMENT_RUN_ID": "run14",
+                    "AAR_RUN14_TRIAL_ID": "trial14",
+                    "AAR_RUN14_CANARY_ID": "opus5-autodata-comparison",
+                    "AAR_IDEA_UID_OVERRIDE": (
+                        "run14-trial14-alpha-iteration-1"
+                    ),
+                }
+            )
+            with patch.dict(os.environ, environment, clear=True):
+                hooks = agent_module._trial7_pipeline_hooks()
+
+        self.assertEqual(
+            [matcher.matcher for matcher in hooks["PreToolUse"]],
+            ["Bash", "Write", "Edit"],
+        )
+
     def test_trial11_adds_exclusive_delegated_approval_fence(self) -> None:
         class Options:
             def __init__(self, **kwargs) -> None:

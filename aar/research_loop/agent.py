@@ -376,7 +376,7 @@ _AUTODATA_WORKSPACE_ID = re.compile(r"^ws_[0-9a-f]{32}$")
 
 
 class PipelineOwnershipFenceError(RuntimeError):
-    """The trusted Run 13 authoring ownership boundary cannot be established."""
+    """The trusted authoring ownership boundary cannot be established."""
 
 
 def _trial7_pipeline_fence_enabled() -> bool:
@@ -388,15 +388,38 @@ def _trial7_pipeline_fence_enabled() -> bool:
         raise PipelineOwnershipFenceError(
             "AAR_AUTODATA_PIPELINE_COORDINATOR has an invalid value"
         )
-    trial_id = os.getenv("AAR_RUN13_TRIAL_ID", "").strip().lower()
-    mismatches = (
-        []
-        if trial_id in {"trial7", "trial8", "trial9", "trial10", "trial11"}
-        else ["AAR_RUN13_TRIAL_ID"]
-    )
+    experiment_id = os.getenv("AAR_EXPERIMENT_RUN_ID", "").strip().lower()
+    mismatches: list[str] = []
+    if experiment_id == "run13":
+        trial_id = os.getenv("AAR_RUN13_TRIAL_ID", "").strip().lower()
+        if trial_id not in {
+            "trial7",
+            "trial8",
+            "trial9",
+            "trial10",
+            "trial11",
+            "trial12",
+            "trial13",
+            "trial14",
+        }:
+            mismatches.append("AAR_RUN13_TRIAL_ID")
+        expected_uid = f"run13-{trial_id}-alpha-iteration-1"
+    elif experiment_id == "run14":
+        trial_id = os.getenv("AAR_RUN14_TRIAL_ID", "").strip().lower()
+        if trial_id != "trial14":
+            mismatches.append("AAR_RUN14_TRIAL_ID")
+        if (
+            os.getenv("AAR_RUN14_CANARY_ID", "").strip().lower()
+            != "opus5-autodata-comparison"
+        ):
+            mismatches.append("AAR_RUN14_CANARY_ID")
+        expected_uid = "run14-trial14-alpha-iteration-1"
+    else:
+        trial_id = ""
+        expected_uid = ""
+        mismatches.append("AAR_EXPERIMENT_RUN_ID")
     required = {
-        "AAR_EXPERIMENT_RUN_ID": "run13",
-        "AAR_IDEA_UID_OVERRIDE": f"run13-{trial_id}-alpha-iteration-1",
+        "AAR_IDEA_UID_OVERRIDE": expected_uid,
         "AAR_AGENT_BACKEND": "claude",
         "AAR_AUTODATA_SEMANTIC_WORKER": "claude",
     }
@@ -412,7 +435,7 @@ def _trial7_pipeline_fence_enabled() -> bool:
             mismatches.append(name)
     if mismatches:
         raise PipelineOwnershipFenceError(
-            "Run 13 authoring coordinator identity is incomplete: "
+            "authoring coordinator identity is incomplete: "
             + ", ".join(sorted(mismatches))
         )
     return True
@@ -550,9 +573,9 @@ async def _trial7_pipeline_tool_fence(
         fenced = _trial7_pipeline_action_is_coordinator_owned()
     except Exception:
         fenced = True
-        reason = "Run 13 authoring ownership could not be verified; tool use denied"
+        reason = "authoring ownership could not be verified; tool use denied"
     else:
-        reason = "Run 13 native authoring action is owned by the lifecycle coordinator"
+        reason = "native authoring action is owned by the lifecycle coordinator"
     if not fenced:
         return {}
     return {
@@ -578,10 +601,10 @@ async def _run13_approval_tool_fence(
     if not enabled:
         return {}
     if enabled not in _TRUTHY:
-        reason = "Run 13 approval coordinator enablement is invalid; tool use denied"
+        reason = "approval coordinator enablement is invalid; tool use denied"
     else:
         reason = (
-            "Run 13 delegated approvals are owned by the trusted lifecycle "
+            "delegated approvals are owned by the trusted lifecycle "
             "coordinator"
         )
     return {

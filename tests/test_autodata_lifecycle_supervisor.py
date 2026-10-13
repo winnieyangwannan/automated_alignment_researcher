@@ -1246,6 +1246,48 @@ def test_semantic_coordinator_dispatches_workspace_pipeline_slice(
     assert observed["control_file"] == supervisor.args.control_file
 
 
+def test_pipeline_coordinator_accepts_run14_opus5_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = _semantic_coordinator_supervisor(tmp_path, monkeypatch)
+    monkeypatch.delenv("AAR_AUTODATA_CLARIFY_COORDINATOR", raising=False)
+    environment = {
+        "AAR_AUTODATA_PIPELINE_COORDINATOR": "1",
+        "AAR_AUTODATA_SEMANTIC_WORKER": "claude",
+        "AAR_EXPERIMENT_RUN_ID": "run14",
+        "AAR_RUN14_TRIAL_ID": "trial14",
+        "AAR_RUN14_CANARY_ID": "opus5-autodata-comparison",
+        "AAR_IDEA_UID_OVERRIDE": "run14-trial14-alpha-iteration-1",
+        "AAR_AGENT_BACKEND": "claude",
+        "AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE": "1",
+        "AAR_AUTODATA_LIFECYCLE_SUPERVISED": "1",
+    }
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    observed: dict[str, object] = {}
+
+    class Reconciler:
+        def __init__(self, **kwargs: object) -> None:
+            observed.update(kwargs)
+
+        async def reconcile_registered_pipeline(self, path: Path) -> None:
+            observed["control_file"] = path
+            return None
+
+    monkeypatch.setattr(
+        lifecycle_supervisor.NativeAutoDataControl,
+        "from_environment",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        lifecycle_supervisor, "WorkspacePipelineReconciler", Reconciler
+    )
+
+    assert supervisor._reconcile_semantic_action() is None
+    assert isinstance(observed["worker"], lifecycle_supervisor.ClaudeWorker)
+    assert observed["control_file"] == supervisor.args.control_file
+
+
 def test_pipeline_coordinator_rejects_unapproved_trial_scope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

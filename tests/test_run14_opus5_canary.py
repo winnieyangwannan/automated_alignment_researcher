@@ -21,6 +21,18 @@ REFERENCE_PROFILE = (
 CANDIDATE_PROFILE = (
     ROOT / "configs/autodata/target_aware_model_api_claude_opus_5_c8_v1.yaml"
 )
+GATE_LAUNCHER = CANDIDATE_DIR / "launch/launch.sh"
+SHARED_LAUNCHER = (
+    ROOT / "experiments/dishonest_sycophancy_concealing/run_14/canary/launch/launch.sh"
+)
+PIPELINE = (
+    ROOT
+    / "experiments/dishonest_sycophancy_concealing/run_14/canary/slurm/pipeline.sbatch"
+)
+CONTROLLER = (
+    ROOT
+    / "experiments/dishonest_sycophancy_concealing/run_14/canary/slurm/chain_controller.sbatch"
+)
 
 
 def _load(path: Path) -> dict:
@@ -85,7 +97,7 @@ def test_opus5_model_role_contract() -> None:
     assert profile["providers"]["target"]["model"] == "gemma-4-31B-it"
 
 
-def test_run14_readmes_have_required_sections_and_no_fake_launch_command() -> None:
+def test_run14_readmes_have_required_sections() -> None:
     readmes = [
         ROOT / "experiments/dishonest_sycophancy_concealing/run_14/README.md",
         ROOT / "experiments/dishonest_sycophancy_concealing/run_14/canary/README.md",
@@ -97,6 +109,61 @@ def test_run14_readmes_have_required_sections_and_no_fake_launch_command() -> No
         text = readme.read_text(encoding="utf-8")
         headings = {line for line in text.splitlines() if line.startswith("## ")}
         assert required <= headings
-        assert "not launchable" in text.lower()
 
-    assert not (CANDIDATE_DIR / "launch").exists()
+
+def test_run14_has_a_thin_executable_gate_launcher() -> None:
+    launcher = GATE_LAUNCHER.read_text(encoding="utf-8")
+
+    assert GATE_LAUNCHER.stat().st_mode & 0o111
+    assert "AAR_RUN14_LIFECYCLE_COORDINATOR_COMMIT" in launcher
+    assert "AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST" in launcher
+    assert 'AAR_RUN14_CANARY_CONFIG="${GATE_DIR}/config/run.yaml"' in launcher
+    assert 'exec "${CANARY_DIR}/launch/launch.sh" "$@"' in launcher
+
+
+def test_run14_shared_launcher_enforces_opus5_contract() -> None:
+    launcher = SHARED_LAUNCHER.read_text(encoding="utf-8")
+
+    assert SHARED_LAUNCHER.stat().st_mode & 0o111
+    assert "run14-canary-opus5-autodata-comparison" in launcher
+    assert "target_aware_model_api_claude_opus_5_c8_v1.yaml" in launcher
+    assert '[ "${AGENT_MODEL}" = claude-opus-5 ]' in launcher
+    assert '[ "${RESEARCHER_DEPLOYMENT}" = meta-claude-cli-opus-5 ]' in launcher
+    assert '[ "${GENERATOR_MODEL}" = claude-5-opus ]' in launcher
+    assert (
+        '[ "${GENERATOR_DEPLOYMENT}" = meta-model-api-claude-5-opus ]'
+        in launcher
+    )
+    assert "--target-experiment-run-id run14" in launcher
+    assert "prepare_run14_preautodata_recovery.py" not in launcher
+    assert "claude-opus-4-8" not in launcher
+    assert "claude-4-8-opus" not in launcher
+
+
+def test_run14_slurm_payloads_are_isolated_and_fail_closed() -> None:
+    pipeline = PIPELINE.read_text(encoding="utf-8")
+    controller = CONTROLLER.read_text(encoding="utf-8")
+    combined = pipeline + controller
+
+    assert '[ "${AAR_EXPERIMENT_RUN_ID:?missing experiment identity}" = run14 ]' in combined
+    assert "AAR_RUN14_CANARY_ID" in pipeline
+    assert "AAR_RUN14_CANARY_ID" in controller
+    assert "opus5-autodata-comparison" in pipeline
+    assert "opus5-autodata-comparison" in controller
+    assert "AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST" in pipeline
+    assert "run14-${TRIAL_ID}-${seed}-iteration-1" in pipeline
+    assert "run14-${TRIAL_ID}-${SEED}-iteration-${next_iteration}" in controller
+    assert "claude-opus-5" in pipeline
+    assert "run_14/canary/slurm/chain_controller.sbatch" in pipeline
+    assert "run13" not in combined.lower()
+
+
+def test_shared_recovery_path_explicitly_allowlists_run14() -> None:
+    launch_team = (ROOT / "scripts/launch_team.sh").read_text(encoding="utf-8")
+    runtime = (ROOT / "scripts/aar_runtime_env.sh").read_text(encoding="utf-8")
+
+    assert "AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST" in launch_team
+    assert "AAR_RUN14_TRIAL_ID" in launch_team
+    assert "AAR_RUN14_CANARY_ID" in launch_team
+    assert '--target-experiment-run-id "${_recovery_target_run}"' in launch_team
+    assert "AAR_RUN14_TRIAL_ID AAR_RUN14_CANARY_ID" in runtime

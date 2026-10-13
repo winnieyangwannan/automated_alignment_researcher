@@ -24,9 +24,10 @@ mutable-challenge AutoData loop.
 
 1. **Configuration parity — prepared.** Machine-readable tests allow only the
    requested model substitutions and necessary Run 14 identity/path changes.
-2. **Runtime enablement — pending.** Add a reviewed Run 14 launcher, scheduled
-   payloads, recovery target, lifecycle fences, and focused tests without
-   weakening Run 13 guards.
+2. **Runtime enablement — implemented and locally validated.** Run 14 owns its
+   launcher and scheduled payloads; shared recovery and coordinator code has a
+   narrow Run 14 allowlist covered by focused tests without weakening Run 13
+   guards.
 3. **Model preflight and confirmation — pending.** Validate the exact Opus 5
    CLI and Model API identities, then present the complete model-role mapping
    for explicit user confirmation.

@@ -162,18 +162,44 @@ echo "[team] TEAM_ID=${TEAM_ID}"
 echo "[team] axis=${SUITE}  model=${MODEL} (${TARGET_MODEL})"
 echo "[team] TEAM_DIR=${TEAM_DIR}  forum_scope=${AAR_FORUM_SCOPE:-per_chain}  forum=${FORUM}"
 
-# Allowlisted Run 13 recovery trials may import a reviewed pre-AutoData proposal. The helper
-# verifies the host-only manifest, recreates native proposal/method receipts in
-# this fresh team, and imports no AutoData or downstream state.  Ordinary teams
-# take the exact historical path when the opt-in variable is unset.
+# Allowlisted comparison runs may import the reviewed Run 13 pre-AutoData
+# proposal. The helper verifies the host-only manifest, recreates native
+# proposal/method receipts in this fresh team, and imports no AutoData or
+# downstream state. Ordinary teams take the historical path when neither
+# opt-in variable is set.
+if [ -n "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ] && \
+    [ -n "${AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
+  echo "[team] FATAL: multiple pre-AutoData recovery manifests are forbidden" >&2
+  exit 2
+fi
+_recovery_manifest=""
+_recovery_target_run=""
+_recovery_trial_id=""
 if [ -n "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
   if [ "${AAR_EXPERIMENT_RUN_ID:-}" != run13 ] || \
-      [[ ! "${AAR_RUN13_TRIAL_ID:-}" =~ ^trial(4|5|6|7|8|9|10|11|12|13|14)$ ]] || [ "${SEEDS}" != alpha ]; then
-    echo "[team] FATAL: pre-AutoData recovery is allowlisted only for Run 13 Trials 4 through 14 alpha" >&2
+      [[ ! "${AAR_RUN13_TRIAL_ID:-}" =~ ^trial(4|5|6|7|8|9|10|11|12|13|14)$ ]] || \
+      [ "${SEEDS}" != alpha ]; then
+    echo "[team] FATAL: Run 13 recovery is restricted to Trials 4 through 14 alpha" >&2
     exit 2
   fi
-  [ "${AAR_IDEA_UID_OVERRIDE:-}" = "run13-${AAR_RUN13_TRIAL_ID}-alpha-iteration-1" ] || {
-    echo "[team] FATAL: recovery requires the fresh ${AAR_RUN13_TRIAL_ID} idea UID" >&2
+  _recovery_manifest="${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}"
+  _recovery_target_run=run13
+  _recovery_trial_id="${AAR_RUN13_TRIAL_ID}"
+elif [ -n "${AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
+  if [ "${AAR_EXPERIMENT_RUN_ID:-}" != run14 ] || \
+      [ "${AAR_RUN14_TRIAL_ID:-}" != trial14 ] || \
+      [ "${AAR_RUN14_CANARY_ID:-}" != opus5-autodata-comparison ] || \
+      [ "${SEEDS}" != alpha ]; then
+    echo "[team] FATAL: Run 14 recovery is restricted to the Opus 5 alpha canary" >&2
+    exit 2
+  fi
+  _recovery_manifest="${AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST}"
+  _recovery_target_run=run14
+  _recovery_trial_id="${AAR_RUN14_TRIAL_ID}"
+fi
+if [ -n "${_recovery_manifest}" ]; then
+  [ "${AAR_IDEA_UID_OVERRIDE:-}" = "${_recovery_target_run}-${_recovery_trial_id}-alpha-iteration-1" ] || {
+    echo "[team] FATAL: recovery requires the fresh ${_recovery_target_run} ${_recovery_trial_id} idea UID" >&2
     exit 2
   }
   _recovery_attempt="${AAR_RUN_ATTEMPT_DIR:?recovery requires the attempt directory}"
@@ -182,7 +208,7 @@ if [ -n "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
   _recovery_json="$(
     PYTHONPATH="${REPO}" "${AAR_TRUSTED_HARNESS_PY:-${PY}}" \
       "${REPO}/scripts/prepare_run13_preautodata_recovery.py" prepare \
-      --manifest "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}" \
+      --manifest "${_recovery_manifest}" \
       --team-dir "${TEAM_DIR}" \
       --attempt-dir "${_recovery_attempt}" \
       --receipt "${_recovery_receipt}" \
@@ -190,7 +216,8 @@ if [ -n "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
       --python "${AAR_TRUSTED_HARNESS_PY:-${PY}}" \
       --chain-id "${_recovery_chain_id}" \
       --idea-uid "${AAR_IDEA_UID_OVERRIDE}" \
-      --target-trial-id "${AAR_RUN13_TRIAL_ID}"
+      --target-experiment-run-id "${_recovery_target_run}" \
+      --target-trial-id "${_recovery_trial_id}"
   )" || {
     echo "[team] FATAL: reviewed pre-AutoData recovery import failed" >&2
     exit 2
@@ -202,17 +229,30 @@ if [ -n "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
   export AAR_RESUME_APPROVED_PROPOSAL=1
   export AAR_RESUME_EXPECTED_RUN_ID="${_recovery_run_id}"
   export AAR_AUTODATA_CLARIFY_COORDINATOR=1
-  if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(5|6|7|8|9|10|11|12|13|14)$ ]]; then
+  if [ "${_recovery_target_run}" = run13 ]; then
+    # Preserve the reviewed Run 13 contract literally as well as behaviorally.
+    if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(5|6|7|8|9|10|11|12|13|14)$ ]]; then
+      export AAR_AUTODATA_ANALYSIS_COORDINATOR=1
+      export AAR_AUTODATA_MUTATION_COORDINATOR=1
+      export AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR=1
+      export AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE=1
+    fi
+    if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(7|8|9|10|11|12|13|14)$ ]]; then
+      export AAR_AUTODATA_GROUNDING_COORDINATOR=1
+      export AAR_AUTODATA_PIPELINE_COORDINATOR=1
+    fi
+    if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(10|11|12|13|14)$ ]]; then
+      export AAR_AUTODATA_APPROVAL_COORDINATOR=1
+    fi
+  else
+    # Run 14 is allowlisted only for Trial 14, so every reviewed coordinator
+    # boundary from the matching Run 13 trial applies.
     export AAR_AUTODATA_ANALYSIS_COORDINATOR=1
     export AAR_AUTODATA_MUTATION_COORDINATOR=1
     export AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR=1
     export AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE=1
-  fi
-  if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(7|8|9|10|11|12|13|14)$ ]]; then
     export AAR_AUTODATA_GROUNDING_COORDINATOR=1
     export AAR_AUTODATA_PIPELINE_COORDINATOR=1
-  fi
-  if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(10|11|12|13|14)$ ]]; then
     export AAR_AUTODATA_APPROVAL_COORDINATOR=1
   fi
   case "${AAR_AGENT_BACKEND:-}" in
@@ -221,8 +261,10 @@ if [ -n "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
   esac
   # The operator manifest and its path are never part of the research child.
   unset AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST
+  unset AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST
   echo "[team] verified pre-AutoData proposal import; fresh AutoData bootstrap is pending"
 fi
+unset _recovery_manifest _recovery_target_run _recovery_trial_id
 
 # --- HELD-OUT ISOLATION (enforced before ANY AAR starts). Baselines leave the held-out benchmarks'
 # data/scores in research scratch (_*baseline/); the AAR runs as THIS user with shell access, so it

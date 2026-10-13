@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import one reviewed pre-AutoData proposal into a fresh Run 13 team.
+"""Import one reviewed Run 13 proposal into an allowlisted fresh team.
 
 The source manifest is operator-owned and never belongs in the research source
 snapshot.  This helper runs in the trusted launcher before any research child
@@ -184,7 +184,11 @@ def _under(path: Path, root: Path) -> bool:
 
 
 def verify_manifest(
-    path: Path, *, snapshot: bool = False, target_trial_id: str = "trial4"
+    path: Path,
+    *,
+    snapshot: bool = False,
+    target_experiment_run_id: str = "run13",
+    target_trial_id: str = "trial4",
 ) -> VerifiedSource:
     path = _require_private_manifest(path, snapshot=snapshot)
     raw = _read_regular_bytes(path, maximum=_MAX_JSON_BYTES)
@@ -212,14 +216,21 @@ def verify_manifest(
         raise RecoveryImportError("recovery manifest artifacts must be an array")
     if source.get("experiment_run_id") != "run13" or source.get("trial_id") != "trial3":
         raise RecoveryImportError("recovery source must be Run 13 Trial 3")
-    if re.fullmatch(r"trial(?:[4-9]|[1-9][0-9]+)", target_trial_id) is None:
+    run13_target = target_experiment_run_id == "run13" and re.fullmatch(
+        r"trial(?:[4-9]|[1-9][0-9]+)", target_trial_id
+    ) is not None
+    run14_target = (
+        target_experiment_run_id == "run14" and target_trial_id == "trial14"
+    )
+    if not (run13_target or run14_target):
         raise RecoveryImportError("recovery target trial identity is invalid")
     if (
-        target.get("experiment_run_id") != "run13"
+        target.get("experiment_run_id") != target_experiment_run_id
         or target.get("trial_id") != target_trial_id
     ):
         raise RecoveryImportError(
-            f"recovery target must be Run 13 {target_trial_id}"
+            "recovery target must be "
+            f"{target_experiment_run_id} {target_trial_id}"
         )
     if source.get("chain") != "alpha" or target.get("chain") != "alpha":
         raise RecoveryImportError("recovery is restricted to the alpha chain")
@@ -247,7 +258,8 @@ def verify_manifest(
     target_uid = _safe_component(target.get("idea_uid"), "target idea UID")
     if target_trial_id not in target_uid or target_uid == source_idea_uid:
         raise RecoveryImportError(
-            f"target idea UID is not fresh for {target_trial_id}"
+            "target idea UID is not fresh for "
+            f"{target_experiment_run_id} {target_trial_id}"
         )
     code_hash = source.get("method_code_hash")
     if not isinstance(code_hash, str) or _BARE_SHA256.fullmatch(code_hash) is None:
@@ -528,11 +540,13 @@ def prepare_import(
     python: Path,
     chain_id: str,
     idea_uid: str,
+    target_experiment_run_id: str = "run13",
     target_trial_id: str = "trial4",
 ) -> dict[str, Any]:
     source = verify_manifest(
         manifest_path,
         snapshot=True,
+        target_experiment_run_id=target_experiment_run_id,
         target_trial_id=target_trial_id,
     )
     idea_name = str(source.manifest["source"]["idea_name"])
@@ -714,6 +728,9 @@ def _parser() -> argparse.ArgumentParser:
     verify = subparsers.add_parser("verify")
     verify.add_argument("--manifest", type=Path, required=True)
     verify.add_argument("--snapshot", action="store_true")
+    verify.add_argument(
+        "--target-experiment-run-id", choices=("run13", "run14"), default="run13"
+    )
     verify.add_argument("--target-trial-id", default="trial4")
 
     prepare = subparsers.add_parser("prepare")
@@ -725,6 +742,9 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--python", type=Path, required=True)
     prepare.add_argument("--chain-id", required=True)
     prepare.add_argument("--idea-uid", required=True)
+    prepare.add_argument(
+        "--target-experiment-run-id", choices=("run13", "run14"), default="run13"
+    )
     prepare.add_argument("--target-trial-id", default="trial4")
     return parser
 
@@ -737,6 +757,7 @@ def main() -> None:
             source = verify_manifest(
                 args.manifest,
                 snapshot=args.snapshot,
+                target_experiment_run_id=args.target_experiment_run_id,
                 target_trial_id=args.target_trial_id,
             )
             result = {
@@ -755,6 +776,7 @@ def main() -> None:
                 python=args.python,
                 chain_id=args.chain_id,
                 idea_uid=args.idea_uid,
+                target_experiment_run_id=args.target_experiment_run_id,
                 target_trial_id=args.target_trial_id,
             )
     except (OSError, RecoveryImportError, subprocess.SubprocessError) as error:

@@ -322,6 +322,38 @@ def test_manifest_can_bind_a_fresh_trial10_target(tmp_path: Path) -> None:
     assert verified.manifest["target"]["trial_id"] == "trial10"
 
 
+def test_manifest_can_bind_the_run14_opus5_target(tmp_path: Path) -> None:
+    helper = _load_helper()
+    manifest, *_ = _fixture(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["target"]["experiment_run_id"] = "run14"
+    payload["target"]["trial_id"] = "trial14"
+    payload["target"]["idea_uid"] = "run14-trial14-alpha-iteration-1"
+    _write_json(manifest, payload)
+    os.chmod(manifest, 0o600)
+
+    verified = helper.verify_manifest(
+        manifest,
+        target_experiment_run_id="run14",
+        target_trial_id="trial14",
+    )
+
+    assert verified.manifest["target"]["experiment_run_id"] == "run14"
+    assert verified.manifest["target"]["trial_id"] == "trial14"
+
+
+def test_run14_recovery_rejects_another_trial(tmp_path: Path) -> None:
+    helper = _load_helper()
+    manifest, *_ = _fixture(tmp_path)
+
+    with pytest.raises(helper.RecoveryImportError, match="identity is invalid"):
+        helper.verify_manifest(
+            manifest,
+            target_experiment_run_id="run14",
+            target_trial_id="trial15",
+        )
+
+
 def test_manifest_target_must_match_requested_trial(tmp_path: Path) -> None:
     helper = _load_helper()
     manifest, _, _, _, _ = _fixture(tmp_path)
@@ -366,6 +398,9 @@ def test_manifest_is_not_in_research_environment_allowlist() -> None:
     runtime = (REPO / "scripts" / "aar_runtime_env.sh").read_text()
     preserve = runtime.split("_AAR_PRESERVE=(", 1)[1].split("\n)", 1)[0]
     assert "AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST" not in preserve
+    assert "AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST" not in preserve
+    assert "AAR_RUN14_TRIAL_ID" in preserve
+    assert "AAR_RUN14_CANARY_ID" in preserve
     assert "AAR_AUTODATA_CLARIFY_COORDINATOR" in preserve
     assert "AAR_AUTODATA_PIPELINE_COORDINATOR" in preserve
     assert "AAR_AUTODATA_MUTATION_COORDINATOR" in preserve

@@ -50,3 +50,56 @@ held-out scores.
 - Attempt: none.
 - Decision: no-go until runtime enablement, preflight, and explicit role
   confirmation are complete.
+
+<a id="run14-event-opus5-launch-path-validated"></a>
+
+### ✅ 23:55 PT — PASS: source launch path validated
+
+> [!TIP]
+> **SOURCE READY; NOT LAUNCHED.** Run 14 now has a thin operator wrapper,
+> source-pinning host launcher, scheduled pipeline, and chain controller. The
+> shared recovery and authoring coordinators explicitly allow only the exact
+> Run 14 Opus 5 identity while retaining existing Run 13 behavior.
+
+```text
+✓ Declarative configuration parity
+✓ Run 14 recovery-manifest validation path
+✓ Run 14 host launcher and immutable source snapshots
+✓ Run 14 Slurm pipeline and chain controller
+✓ Claude tool-ownership and lifecycle-supervisor allowlists
+✓ Exact Claude CLI model identity present locally
+○ External Opus 5 provider/target proof
+○ External Run 14 recovery manifest
+○ Explicit model-role and source-revision confirmation
+○ Canary submission
+○ Meta-optimization
+○ Production
+○ Training smoke
+```
+
+- Jobs: none.
+- Attempt: none.
+- Model calls: none.
+- Decision: source implementation passes focused validation; remain no-go until
+  the external proof/manifest are prepared and the exact launch mapping and
+  source revision are explicitly confirmed.
+
+<a id="run14-event-hpc-sync-deferred"></a>
+
+### 🔴 23:58 PT — STOP: HPC worktree synchronization deferred
+
+> [!WARNING]
+> The matching HPC `autodata` worktree is an active execution checkout. It was
+> not advanced while jobs were using it.
+
+- Request: synchronize the committed Run 14 launch package from
+  `/home/winnieyangwn/aar-worktrees/autodata` to
+  `/storage/home/winnieyangwn/aar-worktrees/autodata` on `fair-cw-use2-1`.
+- Branch: `autodata` in both worktrees.
+- Devserver pre-change HEAD: `655e2ee011deee369163a6b46a09c8f97ba5852b`.
+- HPC pre-transfer HEAD: `9fefddeb81367b3f5a8c63ad5c2717322422e9cd`.
+- Intended transfer: exact commit through a unique temporary `refs/aar-sync/`
+  ref over direct Git-over-SSH, followed by collision checks and `--ff-only`.
+- HPC-local untracked state preserved: `.aar-method-contract.json`.
+- Result: no transfer attempted because active Slurm jobs reference the HPC
+  worktree directly. Re-run the synchronization preflight after it is idle.

@@ -2834,6 +2834,18 @@ class Supervisor:
             and os.getenv("AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE") == "1"
             and os.getenv("AAR_AUTODATA_LIFECYCLE_SUPERVISED") == "1"
         )
+        run14_claude_authoring = (
+            os.getenv("AAR_EXPERIMENT_RUN_ID") == "run14"
+            and os.getenv("AAR_RUN14_TRIAL_ID") == "trial14"
+            and os.getenv("AAR_RUN14_CANARY_ID")
+            == "opus5-autodata-comparison"
+            and os.getenv("AAR_IDEA_UID_OVERRIDE")
+            == "run14-trial14-alpha-iteration-1"
+            and os.getenv("AAR_AGENT_BACKEND") == "claude"
+            and os.getenv("AAR_AUTODATA_SEMANTIC_WORKER") == "claude"
+            and os.getenv("AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE") == "1"
+            and os.getenv("AAR_AUTODATA_LIFECYCLE_SUPERVISED") == "1"
+        )
         run12_kimi_authoring = (
             os.getenv("AAR_EXPERIMENT_RUN_ID") == "run12"
             and os.getenv("AAR_IDEA_UID_OVERRIDE") == "run12-alpha-iteration-1"
@@ -2842,7 +2854,9 @@ class Supervisor:
             and os.getenv("AAR_AUTODATA_LIFECYCLE_SUPERVISED") == "1"
         )
         if (pipeline_enabled or grounding_enabled) and not (
-            run13_claude_authoring or run12_kimi_authoring
+            run13_claude_authoring
+            or run14_claude_authoring
+            or run12_kimi_authoring
         ):
             raise AutoDataCoordinatorError(
                 "pipeline_coordinator_scope_invalid",

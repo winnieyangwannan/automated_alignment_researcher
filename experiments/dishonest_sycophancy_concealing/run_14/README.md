@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: prepared; not launchable; not launched
+- Status: source launch path implemented and validated; not launched
 - Created: 2026-10-12 23:46 PT
-- Last updated: 2026-10-12 23:46 PT
+- Last updated: 2026-10-12 23:55 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -30,11 +30,11 @@ one-step Gemma training smoke before stopping. Run 14 preserves those settings
 and the same `dishonest_sycophancy_concealing_v2` recipe so model version is the
 only scientific treatment.
 
-The existing Run 13 launcher, scheduled payloads, recovery helper, lifecycle
-coordinator fences, and shared team launcher are fail-closed to the Run 13
-identity and Opus 4.8. They must be extended and reviewed before this Run 14
-configuration can be launched. This setup deliberately does not bypass those
-guards.
+Run 14 owns a source-pinning host launcher, scheduled pipeline, and chain
+controller derived from the reviewed Run 13 Trial 14 engine. Shared recovery,
+research-environment, Claude tool-fence, and lifecycle-supervisor code now has
+an explicit fail-closed Run 14 allowlist branch. Run 13 behavior remains
+unchanged.
 
 ## Model and execution roles
 
@@ -62,18 +62,27 @@ before any launch, as required by the experiment-organization contract.
 
 Recorded: 2026-10-12 23:46 PT
 
-Run 14 is intentionally not launchable yet. There is no operator command until
-the Run 13-specific recovery and lifecycle fences have a reviewed Run 14 path,
-the Opus 5 researcher identifier has passed the exact Claude CLI preflight, and
-the resulting launcher is covered by focused contract tests.
+From the synchronized HPC `autodata` worktree, provide the reviewed source
+commit and external prerequisites, then run:
 
-The future entrypoint belongs at:
-
-```text
-experiments/dishonest_sycophancy_concealing/run_14/canary/opus5_autodata_comparison/launch/launch.sh
+```bash
+AAR_RUN14_LIFECYCLE_COORDINATOR_COMMIT=<reviewed-run14-commit> \
+AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST=<external-mode-600-run14-manifest> \
+AAR_RUN14_CANARY_ROOT=<reviewed-opus5-provider-and-target-proof-root> \
+AAR_RUN14_REUSE_BASE_DEPLOYMENT=<verified-gemma-deployment> \
+AAR_RUN14_SECRET_ENV=<mode-600-secret-path> \
+  experiments/dishonest_sycophancy_concealing/run_14/canary/opus5_autodata_comparison/launch/launch.sh
 ```
 
-Creating this documentation and configuration is not launch authorization.
+The recovery manifest must identify target `run14` / `trial14` / `alpha` and
+idea UID `run14-trial14-alpha-iteration-1`. The provider proof must identify
+generator model `claude-5-opus`, deployment
+`meta-model-api-claude-5-opus`, judge `gpt-5-6-luna`, and the selected Gemma
+target deployment. The launcher validates and snapshots both inputs before
+submitting anything.
+
+This command is not launch authorization. Reconfirm the complete model-role
+mapping and exact source revision immediately before use.
 
 ## Pass criteria
 
@@ -113,8 +122,13 @@ run_14/
 ├── PROGRESS.md
 └── canary/
     ├── README.md
+    ├── launch/launch.sh
+    ├── slurm/
+    │   ├── chain_controller.sbatch
+    │   └── pipeline.sbatch
     └── opus5_autodata_comparison/
         ├── config/run.yaml
+        ├── launch/launch.sh
         ├── README.md
         └── PROGRESS.md
 ```

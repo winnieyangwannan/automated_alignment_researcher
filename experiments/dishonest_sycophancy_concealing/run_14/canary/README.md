@@ -1,8 +1,8 @@
 # Run 14 canaries
 
-- Status: Opus 5 comparison prepared; not launchable; not launched
+- Status: Opus 5 source launch path validated; not launched
 - Created: 2026-10-12 23:46 PT
-- Last updated: 2026-10-12 23:46 PT
+- Last updated: 2026-10-12 23:55 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -19,9 +19,11 @@ changed to Opus 5.
 
 Recorded: 2026-10-12 23:46 PT
 
-No canary is launchable yet. Use the gate-specific README for the missing
-runtime prerequisites. A documented future command will not itself authorize a
-launch.
+The runnable entrypoint is
+`opus5_autodata_comparison/launch/launch.sh`. Use the gate-specific README for
+the exact prerequisite variables and command. The documented command does not
+itself authorize a launch; model roles and the source revision must be
+explicitly reconfirmed first.
 
 ## Pass criteria
 

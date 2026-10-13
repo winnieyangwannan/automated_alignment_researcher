@@ -1,8 +1,8 @@
 # Run 14 Opus 5 AutoData comparison
 
-- Status: prepared; not launchable; not launched
+- Status: source launch path implemented and validated; not launched
 - Created: 2026-10-12 23:46 PT
-- Last updated: 2026-10-12 23:46 PT
+- Last updated: 2026-10-12 23:55 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -35,20 +35,31 @@ experimental treatments.
 
 Recorded: 2026-10-12 23:46 PT
 
-This component is intentionally not launchable yet. The current Run 13
-entrypoint and scheduled payloads hard-code the Run 13 identity, Trial 14
-recovery scope, and Opus 4.8 model checks. A Run 14 launcher must extend those
-fences explicitly and pass focused tests before this section gains an operator
-command.
+From the synchronized HPC `autodata` worktree:
+
+```bash
+AAR_RUN14_LIFECYCLE_COORDINATOR_COMMIT=<reviewed-run14-commit> \
+AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST=<external-mode-600-run14-manifest> \
+AAR_RUN14_CANARY_ROOT=<reviewed-opus5-provider-and-target-proof-root> \
+AAR_RUN14_REUSE_BASE_DEPLOYMENT=<verified-gemma-deployment> \
+AAR_RUN14_SECRET_ENV=<mode-600-secret-path> \
+  experiments/dishonest_sycophancy_concealing/run_14/canary/opus5_autodata_comparison/launch/launch.sh
+```
+
+The launcher fails closed unless the checkout is clean on branch `autodata`,
+the reviewed commit is an ancestor, the external recovery manifest is an
+owner-only regular file targeted to Run 14 Trial 14, the provider proof matches
+the Opus 5 generator and chosen Gemma deployment, the pinned AutoData checkout
+is exact and clean, and all resolved role identities and budgets match the
+declarative configuration.
 
 Required pre-launch order:
 
-1. Implement and review the Run 14-specific runtime path without weakening Run
-   13's guards.
-2. Run the exact Claude CLI and Model API Opus 5 preflights.
+1. Review and commit this Run 14 runtime path.
+2. Prepare the external Run 14 recovery manifest and Opus 5 provider proof.
 3. Present the complete model-role map and resolved configuration revision for
    explicit user confirmation.
-4. Synchronize the confirmed source commit to the matching HPC `autodata`
+4. Synchronize that exact confirmed commit to the matching HPC `autodata`
    worktree through direct Git-over-SSH.
 5. Launch only after separate authorization.
 
@@ -57,7 +68,7 @@ Required pre-launch order:
 Recorded: 2026-10-12 23:46 PT
 
 1. Prove declarative parity with the Run 13 Trial 14 reference.
-2. Add fail-closed Run 14 runtime enablement and immutable attempt metadata.
+2. Use the fail-closed Run 14 runtime path and immutable attempt metadata.
 3. Execute one `alpha` chain from the reviewed pre-AutoData boundary through a
    fresh AutoData workspace, ten native meta iterations, production, and one
    real-GPU training step.
