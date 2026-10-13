@@ -1345,6 +1345,38 @@ def test_clarify_task_forbids_inventing_workspace_fields() -> None:
     assert "use decision='confirm'" in task
 
 
+@pytest.mark.parametrize("context_type", [GroundingContext, PipelineContext])
+def test_confirm_only_workspace_tasks_show_exact_top_level_shape(
+    context_type: type[GroundingContext] | type[PipelineContext],
+) -> None:
+    context = context_type(
+        ACTION_ID,
+        WORKSPACE_ID,
+        1,
+        "sha256:" + "a" * 64,
+        "Review the staged files.",
+        ("grounding/**",) if context_type is GroundingContext else ("**",),
+        ("summary", "decisions"),
+        _workspace(),
+    )
+
+    task = semantic_task(context)
+    shape = json.loads(task.split("RESPONSE SHAPE:\n", 1)[1].split("\n\nACTION:", 1)[0])
+
+    assert set(shape) == {
+        "action_id",
+        "input_revision",
+        "input_digest",
+        "decision",
+        "summary",
+        "decisions",
+        "updated_workspace",
+    }
+    assert shape["decision"] == "confirm"
+    assert shape["updated_workspace"] is None
+    assert "decision is one top-level string" in task
+
+
 def test_kimi_worker_returns_typed_outcomes_for_shared_actions() -> None:
     class TypedWorker(KimiWorker):
         async def _execute(self, task: str) -> dict[str, Any]:

@@ -56,3 +56,37 @@ changing coordinator behavior or execution settings.
   successful native `clarify_design` completion and authoritative receipt as
   the first live proof; then continue unchanged through the remaining shared
   semantic-action boundaries.
+
+<a id="trial27-event-terminal"></a>
+
+### 🔴 18:17 PT — FAIL / STOP: grounding response omitted top-level `decision`
+
+Trial 27 live-proved the shared `clarify_design` path: isolated Kimi returned a
+valid bound outcome, AutoData completed the action, and the authoritative
+native state advanced to `author_grounding`.
+
+The next shared semantic action failed closed with
+`semantic_worker_output_invalid`. A bounded reproduction against Trial 27's
+exact saved `author_grounding` input identified the response-shape defect:
+Kimi placed the decision inside `decisions` instead of returning the required
+top-level `decision` string. The coordinator rejected all three malformed
+attempts and did not complete the native action.
+
+```text
+✓ clarify_design completed through the shared Kimi coordinator
+✓ AutoData advanced authoritatively to author_grounding
+✗ author_grounding exhausted three invalid semantic-worker responses
+✗ required top-level decision was absent; decision text was nested in decisions
+○ approve_grounding, author_pipeline, meta-optimization, production, and training not reached
+```
+
+- Source commit: `ae1b31da83a4`.
+- Attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261013T010342Z-ae1b31da83a4`.
+- Jobs: launch `1863403`; research `1863490`; controller `1863491`.
+- Research runtime: 5 minutes 33 seconds; terminal at 18:17 PT.
+- Safety: failure was before downstream approvals, generation, production, or
+  training. Native state and retained evidence remain authoritative.
+- Conclusion: keep the typed coordinator and parser unchanged. Make only the
+  grounding/pipeline prompt's required top-level response shape explicit, then
+  rerun with the identical execution envelope.

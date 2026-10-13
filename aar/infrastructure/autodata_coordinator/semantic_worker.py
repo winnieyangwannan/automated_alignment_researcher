@@ -128,6 +128,15 @@ def semantic_task(context: WorkerContext) -> str:
             "required_outputs": list(context.required_outputs),
             "grounding_review": context.workspace,
         }
+        response_shape = {
+            "action_id": context.action_id,
+            "input_revision": context.input_revision,
+            "input_digest": context.input_digest,
+            "decision": "confirm",
+            "summary": "<write a non-empty review summary>",
+            "decisions": ["<write review decisions here>"],
+            "updated_workspace": None,
+        }
         return (
             "Perform exactly this native AutoData author_grounding semantic task. "
             "You have no tools and must not perform lifecycle control, lease handling, "
@@ -136,8 +145,13 @@ def semantic_task(context: WorkerContext) -> str:
             "unchanged action_id, input_revision, and input_digest; a non-empty "
             "summary; decisions as an array; decision='confirm'; and "
             "updated_workspace=null. This first slice is confirm-only: do not propose "
-            "or claim any file edit. Return only the JSON object, with no Markdown "
-            "fence or surrounding prose.\n\nACTION:\n"
+            "or claim any file edit. Use exactly the top-level structure below, "
+            "replacing only summary and decisions with your review. In particular, "
+            "decision is one top-level string, not a field inside decisions. Return "
+            "only the JSON object, with no Markdown fence or surrounding prose."
+            "\n\nRESPONSE SHAPE:\n"
+            + json.dumps(response_shape, sort_keys=True, indent=2)
+            + "\n\nACTION:\n"
             + json.dumps(payload, sort_keys=True, indent=2)
         )
 
@@ -152,6 +166,15 @@ def semantic_task(context: WorkerContext) -> str:
             "required_outputs": list(context.required_outputs),
             "pipeline_review": context.workspace,
         }
+        response_shape = {
+            "action_id": context.action_id,
+            "input_revision": context.input_revision,
+            "input_digest": context.input_digest,
+            "decision": "confirm",
+            "summary": "<write a non-empty review summary>",
+            "decisions": ["<write review decisions here>"],
+            "updated_workspace": None,
+        }
         return (
             "Perform exactly this native AutoData author_pipeline semantic task. "
             "You have no tools and must not perform lifecycle control, lease handling, "
@@ -160,8 +183,13 @@ def semantic_task(context: WorkerContext) -> str:
             "unchanged action_id, input_revision, and input_digest; a non-empty "
             "summary; decisions as an array; decision='confirm'; and "
             "updated_workspace=null. This first slice is confirm-only: do not propose "
-            "or claim any file edit. Return only the JSON object, with no "
-            "Markdown fence or surrounding prose.\n\nACTION:\n"
+            "or claim any file edit. Use exactly the top-level structure below, "
+            "replacing only summary and decisions with your review. In particular, "
+            "decision is one top-level string, not a field inside decisions. Return "
+            "only the JSON object, with no Markdown fence or surrounding prose."
+            "\n\nRESPONSE SHAPE:\n"
+            + json.dumps(response_shape, sort_keys=True, indent=2)
+            + "\n\nACTION:\n"
             + json.dumps(payload, sort_keys=True, indent=2)
         )
 

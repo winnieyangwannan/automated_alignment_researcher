@@ -55,6 +55,7 @@ TRIAL21_RUN = TRIAL16_RUN.parent.parent / "trial_21" / "autodata_run.yaml"
 TRIAL22_RUN = TRIAL16_RUN.parent.parent / "trial_22" / "autodata_run.yaml"
 TRIAL26_RUN = TRIAL16_RUN.parent.parent / "trial_26" / "autodata_run.yaml"
 TRIAL27_RUN = TRIAL16_RUN.parent.parent / "trial_27" / "autodata_run.yaml"
+TRIAL28_RUN = TRIAL16_RUN.parent.parent / "trial_28" / "autodata_run.yaml"
 RUN17 = (
     ROOT
     / "experiments/dishonest_sycophancy_concealing/run_17/config/run.yaml"
@@ -374,6 +375,21 @@ def test_trial27_preserves_trial26_runtime_envelope() -> None:
     ):
         assert setting in trial26_wrapper
         assert setting in trial27_wrapper
+
+
+def test_trial28_preserves_trial27_runtime_envelope() -> None:
+    trial27 = load_run_config(TRIAL27_RUN)
+    trial28 = load_run_config(TRIAL28_RUN)
+    trial27_run_id = trial27.pop("run_id")
+    trial28_run_id = trial28.pop("run_id")
+
+    assert trial27_run_id == "run12-canary2-trial27"
+    assert trial28_run_id == "run12-canary2-trial28"
+    assert trial28 == trial27
+
+    trial27_wrapper = (TRIAL27_RUN.parent / "submit_canary.sh").read_text()
+    trial28_wrapper = (TRIAL28_RUN.parent / "submit_canary.sh").read_text()
+    assert trial28_wrapper.replace("Trial 28", "Trial 27") == trial27_wrapper
 
 
 def test_run17_compiles_claude_researcher_and_model_api_generator(
