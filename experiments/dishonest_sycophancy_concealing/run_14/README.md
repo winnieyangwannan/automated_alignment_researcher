@@ -84,6 +84,20 @@ submitting anything.
 This command is not launch authorization. Reconfirm the complete model-role
 mapping and exact source revision immediately before use.
 
+Create the retained Opus 5/Gemma/Luna provider proof in two phases before the
+main launch:
+
+```bash
+AAR_RUN14_REUSE_BASE_DEPLOYMENT=<verified-gemma-deployment> \
+AAR_RUN14_SECRET_ENV=<mode-600-secret-path> \
+  experiments/dishonest_sycophancy_concealing/run_14/canary/opus5_autodata_comparison/launch/prepare_proof.sh preflight
+
+# After the preflight job passes:
+AAR_RUN14_REUSE_BASE_DEPLOYMENT=<verified-gemma-deployment> \
+AAR_RUN14_SECRET_ENV=<mode-600-secret-path> \
+  experiments/dishonest_sycophancy_concealing/run_14/canary/opus5_autodata_comparison/launch/prepare_proof.sh canary <proof-root>
+```
+
 ## Pass criteria
 
 - The resolved Run 14 configuration differs from Run 13 Trial 14 only in run
@@ -129,6 +143,7 @@ run_14/
     └── opus5_autodata_comparison/
         ├── config/run.yaml
         ├── launch/launch.sh
+        ├── launch/prepare_proof.sh
         ├── README.md
         └── PROGRESS.md
 ```

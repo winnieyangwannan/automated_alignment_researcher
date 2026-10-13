@@ -5,7 +5,7 @@ umask 077
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd -- "${SCRIPT_DIR}/../../../../.." && pwd)"
 EXPERIMENT_RUN_ID="${AAR_EXPERIMENT_RUN_ID:-run12}"
-case "${EXPERIMENT_RUN_ID}" in run12|run17) ;; *) echo "unsupported run ID" >&2; exit 2;; esac
+case "${EXPERIMENT_RUN_ID}" in run12|run14|run17) ;; *) echo "unsupported run ID" >&2; exit 2;; esac
 ACTION="${1:-preflight}"
 AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/storage/home/${USER:?}/autodata_pipelines}"
 BROKER_PYTHON="${AAR_AUTODATA_BROKER_PYTHON:-/storage/home/${USER}/envs/autodata-broker-py312/bin/python}"

@@ -22,6 +22,7 @@ CANDIDATE_PROFILE = (
     ROOT / "configs/autodata/target_aware_model_api_claude_opus_5_c8_v1.yaml"
 )
 GATE_LAUNCHER = CANDIDATE_DIR / "launch/launch.sh"
+PROOF_LAUNCHER = CANDIDATE_DIR / "launch/prepare_proof.sh"
 SHARED_LAUNCHER = (
     ROOT / "experiments/dishonest_sycophancy_concealing/run_14/canary/launch/launch.sh"
 )
@@ -119,6 +120,21 @@ def test_run14_has_a_thin_executable_gate_launcher() -> None:
     assert "AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST" in launcher
     assert 'AAR_RUN14_CANARY_CONFIG="${GATE_DIR}/config/run.yaml"' in launcher
     assert 'exec "${CANARY_DIR}/launch/launch.sh" "$@"' in launcher
+
+
+def test_run14_has_an_exact_provider_proof_launcher() -> None:
+    launcher = PROOF_LAUNCHER.read_text(encoding="utf-8")
+    shared = (
+        ROOT
+        / "experiments/dishonest_sycophancy_concealing/run_12/canary/canary_1/submit_target_canary.sh"
+    ).read_text(encoding="utf-8")
+
+    assert PROOF_LAUNCHER.stat().st_mode & 0o111
+    assert "AAR_EXPERIMENT_RUN_ID=run14" in launcher
+    assert "target_aware_model_api_claude_opus_5_c8_v1.yaml" in launcher
+    assert "f53bc2136905461ffdbba0a203a12e351e184aaf" in launcher
+    assert "AAR_RUN14_REUSE_BASE_DEPLOYMENT" in launcher
+    assert 'run12|run14|run17' in shared
 
 
 def test_run14_shared_launcher_enforces_opus5_contract() -> None:

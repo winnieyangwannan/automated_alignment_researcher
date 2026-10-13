@@ -103,3 +103,26 @@ held-out scores.
 - HPC-local untracked state preserved: `.aar-method-contract.json`.
 - Result: no transfer attempted because active Slurm jobs reference the HPC
   worktree directly. Re-run the synchronization preflight after it is idle.
+
+## 2026-10-13
+
+<a id="run14-event-launch-authorized"></a>
+
+### 🔎 00:04 PT — OBSERVATION: launch authorized and preflight resumed
+
+> [!IMPORTANT]
+> The user authorized launch and monitoring after the complete role mapping was
+> restated: Claude Opus 5 researcher/monitor, Claude Opus 5 AutoData semantic
+> optimizer and generator/challenger, GPT-5.6 Luna row judge, and Gemma 4 31B
+> IT target/training base.
+
+- The canonical HPC `autodata` checkout remains active and will not be
+  advanced under running jobs.
+- Plan: transfer the exact committed source to an isolated clean HPC checkout
+  on branch `autodata`, create its ARM64 environment on a GPU node, and launch
+  from that source-pinned checkout.
+- Healthy reusable target: `winnieyangwn-r12-alpha-i1-c0dab4f7`; gateway
+  registration and direct `serve.sh test` passed.
+- Added a narrow Run 14 provider-proof wrapper for the exact Opus 5/Gemma/Luna
+  configuration. Focused proof and Run 14 tests: `16 passed`.
+- No Run 14 job or model call had been submitted at this checkpoint.
