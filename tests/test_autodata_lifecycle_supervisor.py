@@ -1232,7 +1232,9 @@ def test_semantic_coordinator_dispatches_workspace_pipeline_slice(
         "from_environment",
         lambda *_args, **_kwargs: object(),
     )
-    monkeypatch.setattr(lifecycle_supervisor, "WorkspacePipelineReconciler", Reconciler)
+    monkeypatch.setattr(
+        lifecycle_supervisor, "WorkspacePipelineReconciler", Reconciler
+    )
     monkeypatch.setattr(
         supervisor, "_snapshot", lambda reason: observed.update(reason=reason)
     )
@@ -1256,6 +1258,76 @@ def test_pipeline_coordinator_rejects_unapproved_trial_scope(
     monkeypatch.setenv("AAR_AGENT_BACKEND", "claude")
     monkeypatch.setenv("AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE", "1")
     monkeypatch.setenv("AAR_AUTODATA_LIFECYCLE_SUPERVISED", "1")
+
+    with pytest.raises(lifecycle_supervisor.AutoDataCoordinatorError) as raised:
+        supervisor._reconcile_semantic_action()
+
+    assert raised.value.code == "pipeline_coordinator_scope_invalid"
+
+
+def test_pipeline_coordinator_accepts_supervised_run12_kimi_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = _semantic_coordinator_supervisor(tmp_path, monkeypatch)
+    monkeypatch.delenv("AAR_AUTODATA_CLARIFY_COORDINATOR", raising=False)
+    monkeypatch.setenv("AAR_AUTODATA_PIPELINE_COORDINATOR", "1")
+    monkeypatch.setenv("AAR_AUTODATA_SEMANTIC_WORKER", "kimi")
+    monkeypatch.setenv("AAR_EXPERIMENT_RUN_ID", "run12")
+    monkeypatch.setenv("AAR_IDEA_UID_OVERRIDE", "run12-alpha-iteration-1")
+    monkeypatch.setenv("AAR_AGENT_BACKEND", "kimi")
+    monkeypatch.setenv("AAR_AUTODATA_LIFECYCLE_SUPERVISED", "1")
+    monkeypatch.delenv("AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE", raising=False)
+    observed: dict[str, object] = {}
+
+    class Reconciler:
+        def __init__(self, **kwargs: object) -> None:
+            observed.update(kwargs)
+
+        async def reconcile_registered_pipeline(self, path: Path) -> None:
+            observed["control_file"] = path
+            return None
+
+    monkeypatch.setattr(
+        lifecycle_supervisor.NativeAutoDataControl,
+        "from_environment",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(lifecycle_supervisor, "WorkspacePipelineReconciler", Reconciler)
+
+    assert supervisor._reconcile_semantic_action() is None
+    assert isinstance(observed["worker"], lifecycle_supervisor.KimiWorker)
+    assert observed["control_file"] == supervisor.args.control_file
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("AAR_EXPERIMENT_RUN_ID", "run17"),
+        ("AAR_IDEA_UID_OVERRIDE", "run12-beta-iteration-1"),
+        ("AAR_AGENT_BACKEND", "claude"),
+        ("AAR_AUTODATA_SEMANTIC_WORKER", "claude"),
+        ("AAR_AUTODATA_LIFECYCLE_SUPERVISED", "0"),
+    ],
+)
+def test_pipeline_coordinator_rejects_incomplete_run12_kimi_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+) -> None:
+    supervisor = _semantic_coordinator_supervisor(tmp_path, monkeypatch)
+    monkeypatch.delenv("AAR_AUTODATA_CLARIFY_COORDINATOR", raising=False)
+    environment = {
+        "AAR_AUTODATA_PIPELINE_COORDINATOR": "1",
+        "AAR_AUTODATA_SEMANTIC_WORKER": "kimi",
+        "AAR_EXPERIMENT_RUN_ID": "run12",
+        "AAR_IDEA_UID_OVERRIDE": "run12-alpha-iteration-1",
+        "AAR_AGENT_BACKEND": "kimi",
+        "AAR_AUTODATA_LIFECYCLE_SUPERVISED": "1",
+    }
+    environment[name] = value
+    for key, configured in environment.items():
+        monkeypatch.setenv(key, configured)
 
     with pytest.raises(lifecycle_supervisor.AutoDataCoordinatorError) as raised:
         supervisor._reconcile_semantic_action()

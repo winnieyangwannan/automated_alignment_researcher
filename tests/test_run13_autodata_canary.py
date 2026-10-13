@@ -108,7 +108,7 @@ def test_trial5_through_trial12_enable_full_lifecycle_ownership() -> None:
     assert 'if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(7|8|9|10|11|12)$ ]]; then' in launcher
     assert "export AAR_AUTODATA_GROUNDING_COORDINATOR=1" in launcher
     assert "export AAR_AUTODATA_PIPELINE_COORDINATOR=1" in launcher
-    assert "author_pipeline coordinator enablement must come from" in launcher
+    assert "complete Run 12 Kimi shared-action scope" in launcher
     assert "AAR_AUTODATA_PIPELINE_COORDINATOR" in runtime
     assert "AAR_AUTODATA_GROUNDING_COORDINATOR" in runtime
 

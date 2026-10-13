@@ -2817,7 +2817,7 @@ class KimiAgentTest(unittest.TestCase):
                 ):
                     with self.assertRaisesRegex(
                         RuntimeError,
-                        "shared clarify coordinator action reached",
+                        "shared semantic action coordinator action reached",
                     ):
                         agent._continuation_prompt(output)
 
@@ -4056,6 +4056,37 @@ a.output.write_text(json.dumps({'schema': 'autodata.grounding/v1', 'tasks': [{'i
                 KimiAgent._clarify_is_coordinator_owned(
                     {"kind": "clarify_design"}
                 )
+            )
+
+    def test_shared_semantic_coordinator_ownership_maps_every_action(self) -> None:
+        mapping = {
+            "clarify_design": "AAR_AUTODATA_CLARIFY_COORDINATOR",
+            "author_grounding": "AAR_AUTODATA_GROUNDING_COORDINATOR",
+            "author_pipeline": "AAR_AUTODATA_PIPELINE_COORDINATOR",
+            "analyze_results": "AAR_AUTODATA_ANALYSIS_COORDINATOR",
+            "mutate_candidate": "AAR_AUTODATA_MUTATION_COORDINATOR",
+        }
+        for kind, flag in mapping.items():
+            with self.subTest(kind=kind), patch.dict(
+                os.environ, {flag: "1"}, clear=True
+            ):
+                self.assertTrue(
+                    KimiAgent._semantic_action_is_coordinator_owned({"kind": kind})
+                )
+                self.assertIsNone(
+                    KimiAgent._autodata_consume_action_result(
+                        {
+                            "id": "act_" + "2" * 24,
+                            "kind": kind,
+                            "status": "in_progress",
+                        }
+                    )
+                )
+        with patch.dict(
+            os.environ, {"AAR_AUTODATA_MUTATION_COORDINATOR": "sometimes"}, clear=True
+        ), self.assertRaisesRegex(RuntimeError, "must be a boolean"):
+            KimiAgent._semantic_action_is_coordinator_owned(
+                {"kind": "mutate_candidate"}
             )
 
     def test_shared_clarify_coordinator_never_reenters_outer_kimi(self) -> None:

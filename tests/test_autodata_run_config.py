@@ -52,6 +52,7 @@ TRIAL19_RUN = TRIAL16_RUN.parent.parent / "trial_19" / "autodata_run.yaml"
 TRIAL20_RUN = TRIAL16_RUN.parent.parent / "trial_20" / "autodata_run.yaml"
 TRIAL21_RUN = TRIAL16_RUN.parent.parent / "trial_21" / "autodata_run.yaml"
 TRIAL22_RUN = TRIAL16_RUN.parent.parent / "trial_22" / "autodata_run.yaml"
+TRIAL26_RUN = TRIAL16_RUN.parent.parent / "trial_26" / "autodata_run.yaml"
 RUN17 = (
     ROOT
     / "experiments/dishonest_sycophancy_concealing/run_17/config/run.yaml"
@@ -314,6 +315,30 @@ def test_trial22_preserves_only_coordinated_clarify() -> None:
     assert "unset AAR_AUTODATA_MUTATION_COORDINATOR" in wrapper
     assert "unset AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR" in wrapper
     assert "unset AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE" in wrapper
+
+
+def test_trial26_enables_shared_kimi_semantic_actions() -> None:
+    wrapper = (TRIAL26_RUN.parent / "submit_canary.sh").read_text()
+    team_launcher = (ROOT / "scripts/launch_team.sh").read_text()
+    runtime = (ROOT / "scripts/aar_runtime_env.sh").read_text()
+    run = load_run_config(TRIAL26_RUN)
+
+    assert run["run_id"] == "run12-canary2-trial26"
+    for variable in (
+        "CLARIFY",
+        "GROUNDING",
+        "PIPELINE",
+        "ANALYSIS",
+        "MUTATION",
+        "APPROVAL",
+    ):
+        assert f"export AAR_AUTODATA_{variable}_COORDINATOR=1" in wrapper
+    assert "export AAR_AUTODATA_SEMANTIC_WORKER=kimi" in wrapper
+    assert "export AAR_AUTODATA_HOST_WAIT_SECONDS=28800" in wrapper
+    assert "AAR_AUTODATA_HOST_WAIT_SECONDS" in runtime
+    assert "unset AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR" in wrapper
+    assert "unset AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE" in wrapper
+    assert "complete Run 12 Kimi shared-action scope" in team_launcher
 
 
 def test_run17_compiles_claude_researcher_and_model_api_generator(

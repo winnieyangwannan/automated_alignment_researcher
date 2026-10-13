@@ -504,8 +504,8 @@ class KimiAgent:
         autodata_idle_deadline: float | None = None
         approval_wait_action_id: str | None = None
         approval_wait_deadline: float | None = None
-        clarify_wait_action_id: str | None = None
-        clarify_wait_deadline: float | None = None
+        semantic_wait_action_id: str | None = None
+        semantic_wait_deadline: float | None = None
 
         with tempfile.TemporaryDirectory(prefix="aar-kimi-") as temp_dir:
             overlay_home = Path(temp_dir)
@@ -648,7 +648,7 @@ class KimiAgent:
                             )
                             continue
                         autodata_idle_deadline = None
-                        if self._clarify_is_coordinator_owned(action):
+                        if self._semantic_action_is_coordinator_owned(action):
                             self._require_fresh_autodata_supervisor_status()
                             timeout = float(
                                 os.getenv("AAR_AUTODATA_HOST_WAIT_SECONDS", "10800")
@@ -657,29 +657,29 @@ class KimiAgent:
                                 raise RuntimeError(
                                     "AAR_AUTODATA_HOST_WAIT_SECONDS must be positive"
                                 )
-                            if clarify_wait_action_id != action["id"]:
-                                clarify_wait_action_id = str(action["id"])
-                                clarify_wait_deadline = time.monotonic() + timeout
-                            assert clarify_wait_deadline is not None
-                            if time.monotonic() >= clarify_wait_deadline:
+                            if semantic_wait_action_id != action["id"]:
+                                semantic_wait_action_id = str(action["id"])
+                                semantic_wait_deadline = time.monotonic() + timeout
+                            assert semantic_wait_deadline is not None
+                            if time.monotonic() >= semantic_wait_deadline:
                                 raise _retain_process_failure(
                                     error=TimeoutError(
-                                        "clarify coordinator timed out"
+                                        "semantic action coordinator timed out"
                                     ),
-                                    error_code="clarify_coordinator_timeout",
+                                    error_code="semantic_coordinator_timeout",
                                     stage="autodata_action",
                                     public_summary=(
-                                        "shared clarify coordinator timed out"
+                                        "shared semantic action coordinator timed out"
                                     ),
                                 )
                             print(
                                 "[Kimi] waiting without a model turn for shared "
-                                f"clarify coordinator: {action['id']}"
+                                f"{action['kind']} coordinator: {action['id']}"
                             )
                             await asyncio.sleep(2)
                             continue
-                        clarify_wait_action_id = None
-                        clarify_wait_deadline = None
+                        semantic_wait_action_id = None
+                        semantic_wait_deadline = None
                         if self._approval_is_coordinator_owned(action):
                             self._require_fresh_autodata_supervisor_status()
                             timeout = float(
@@ -1501,12 +1501,12 @@ class KimiAgent:
                         "it through Bash and do not emit prose."
                     )
                 if action is not None:
+                    if self._semantic_action_is_coordinator_owned(action):
+                        raise RuntimeError(
+                            "shared semantic action coordinator action reached the "
+                            "Kimi model continuation path"
+                        )
                     if action["kind"] == "clarify_design":
-                        if self._clarify_is_coordinator_owned(action):
-                            raise RuntimeError(
-                                "shared clarify coordinator action reached the Kimi "
-                                "model continuation path"
-                            )
                         self._autodata_prepare_editable_paths(action)
                         action_spec = json.dumps(
                             action.get("spec"), sort_keys=True
@@ -2357,6 +2357,8 @@ class KimiAgent:
     ) -> str | None:
         """Consume a ready leased result and distinguish new repair feedback."""
 
+        if cls._semantic_action_is_coordinator_owned(action):
+            return None
         if action.get("status") != "in_progress" or action.get("kind") in {
             "clarify_design",
             "approve_grounding",
@@ -3416,16 +3418,25 @@ class KimiAgent:
 
     @staticmethod
     def _clarify_is_coordinator_owned(action: dict[str, Any]) -> bool:
-        enabled = os.getenv(
-            "AAR_AUTODATA_CLARIFY_COORDINATOR", ""
-        ).strip().lower()
-        if enabled and enabled not in {"1", "true", "yes", "on"}:
-            raise RuntimeError(
-                "AAR_AUTODATA_CLARIFY_COORDINATOR must be a boolean"
-            )
-        return enabled in {"1", "true", "yes", "on"} and action.get("kind") == (
-            "clarify_design"
+        return action.get("kind") == "clarify_design" and (
+            KimiAgent._semantic_action_is_coordinator_owned(action)
         )
+
+    @staticmethod
+    def _semantic_action_is_coordinator_owned(action: dict[str, Any]) -> bool:
+        flag = {
+            "clarify_design": "AAR_AUTODATA_CLARIFY_COORDINATOR",
+            "author_grounding": "AAR_AUTODATA_GROUNDING_COORDINATOR",
+            "author_pipeline": "AAR_AUTODATA_PIPELINE_COORDINATOR",
+            "analyze_results": "AAR_AUTODATA_ANALYSIS_COORDINATOR",
+            "mutate_candidate": "AAR_AUTODATA_MUTATION_COORDINATOR",
+        }.get(action.get("kind"))
+        if flag is None:
+            return False
+        enabled = os.getenv(flag, "").strip().lower()
+        if enabled and enabled not in {"1", "true", "yes", "on"}:
+            raise RuntimeError(f"{flag} must be a boolean")
+        return enabled in {"1", "true", "yes", "on"}
 
     def _owns_approved_run(self, output: dict[str, Any]) -> bool:
         """Return whether this session may advance the current durable proposal."""

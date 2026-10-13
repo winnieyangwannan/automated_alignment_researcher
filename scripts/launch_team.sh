@@ -42,8 +42,20 @@ fi
 # shellcheck disable=SC1091
 source "${REPO}/scripts/aar_runtime_env.sh"
 if [ -n "${AAR_AUTODATA_PIPELINE_COORDINATOR:-}" ]; then
-  echo "[team] FATAL: author_pipeline coordinator enablement must come from the verified Trial 7 recovery path" >&2
-  exit 2
+  if [ "${AAR_EXPERIMENT_RUN_ID:-}" != run12 ] || \
+      [ "${AAR_AGENT_BACKEND:-}" != kimi ] || \
+      [ "${AAR_AUTODATA_SEMANTIC_WORKER:-}" != kimi ] || \
+      [ "${AAR_AUTODATA_PROFILE:-}" != target-aware-local-v1 ] || \
+      [ "${AAR_AUTODATA_STOP_AFTER:-}" != training_smoke ] || \
+      [ "${AAR_AUTODATA_CLARIFY_COORDINATOR:-}" != 1 ] || \
+      [ "${AAR_AUTODATA_GROUNDING_COORDINATOR:-}" != 1 ] || \
+      [ "${AAR_AUTODATA_PIPELINE_COORDINATOR:-}" != 1 ] || \
+      [ "${AAR_AUTODATA_ANALYSIS_COORDINATOR:-}" != 1 ] || \
+      [ "${AAR_AUTODATA_MUTATION_COORDINATOR:-}" != 1 ] || \
+      [ "${AAR_AUTODATA_APPROVAL_COORDINATOR:-}" != 1 ]; then
+    echo "[team] FATAL: inherited authoring coordination is restricted to the complete Run 12 Kimi shared-action scope" >&2
+    exit 2
+  fi
 fi
 PY="${HARNESS_PY}"
 if [ ! -x "${PY}" ]; then

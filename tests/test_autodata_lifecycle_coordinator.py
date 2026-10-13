@@ -30,9 +30,11 @@ from aar.infrastructure.autodata_coordinator.semantic_worker import (
     ActionContext,
     AnalysisContext,
     AnalysisOutcome,
+    GroundingContext,
     MalformedSemanticOutcome,
     MutationContext,
     MutationOutcome,
+    PipelineContext,
     SemanticOutcome,
 )
 
@@ -1280,6 +1282,90 @@ def test_kimi_worker_rejects_any_tool_call() -> None:
 
     with pytest.raises(MalformedSemanticOutcome, match="forbidden tool"):
         asyncio.run(ToolCallingWorker().perform(context))
+
+
+def test_kimi_worker_returns_typed_outcomes_for_shared_actions() -> None:
+    class TypedWorker(KimiWorker):
+        async def _execute(self, task: str) -> dict[str, Any]:
+            payload = json.loads(task.split("ACTION:\n", 1)[1])
+            if "current_document" in payload:
+                updated = {**payload["current_document"], "temperature": 0.4}
+                result = {
+                    "action_id": payload["action_id"],
+                    "input_revision": payload["input_revision"],
+                    "input_digest": payload["input_digest"],
+                    "summary": "Changed one bounded generation setting.",
+                    "updated_document": updated,
+                }
+            elif "evidence" in payload:
+                result = {
+                    "action_id": payload["action_id"],
+                    "input_revision": payload["input_revision"],
+                    "input_digest": payload["input_digest"],
+                    "proposal": "Increase challenge with one bounded change.",
+                    "dashboard_summary": {
+                        "headline": "Challenge is below target",
+                        "summary": "Visible evidence supports a scoped change.",
+                        "next_step": "Mutate and rerun the candidate.",
+                    },
+                }
+            else:
+                result = {
+                    "action_id": payload["action_id"],
+                    "input_revision": payload["input_revision"],
+                    "input_digest": payload["input_digest"],
+                    "decision": "confirm",
+                    "summary": "Reviewed staged files.",
+                    "decisions": ["The staged files satisfy the action."],
+                    "updated_workspace": None,
+                }
+            return {"text_outputs": [json.dumps(result)], "tool_uses": []}
+
+    worker = TypedWorker()
+    common = {
+        "action_id": ACTION_ID,
+        "workspace_id": WORKSPACE_ID,
+        "input_revision": 1,
+        "input_digest": "sha256:" + "a" * 64,
+        "instructions": "Review the staged files.",
+        "allowed_paths": ("grounding/**",),
+        "required_outputs": ("summary", "decisions"),
+        "workspace": _workspace(),
+    }
+    grounding = asyncio.run(worker.perform(GroundingContext(**common)))
+    pipeline = asyncio.run(worker.perform(PipelineContext(**common)))
+    analysis = asyncio.run(
+        worker.perform(
+            AnalysisContext(
+                ANALYSIS_ACTION_ID,
+                EXECUTION_ID,
+                1,
+                "sha256:" + "b" * 64,
+                "Analyze visible evidence.",
+                ("proposal", "dashboard_summary"),
+                ({"metrics": {"challenge": 0.0, "valid": 0.0}},),
+            )
+        )
+    )
+    mutation = asyncio.run(
+        worker.perform(
+            MutationContext(
+                MUTATION_ACTION_ID,
+                EXECUTION_ID,
+                1,
+                "sha256:" + "c" * 64,
+                "Make one scoped change.",
+                "recipe/generation_strategy.json",
+                _strategy(),
+            )
+        )
+    )
+
+    assert isinstance(grounding, SemanticOutcome)
+    assert isinstance(pipeline, SemanticOutcome)
+    assert isinstance(analysis, AnalysisOutcome)
+    assert isinstance(mutation, MutationOutcome)
+    assert mutation.updated_document["temperature"] == 0.4
 
 
 def test_real_native_workspace_confirm_and_receipt(tmp_path: Path) -> None:
