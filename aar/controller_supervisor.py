@@ -301,13 +301,23 @@ class Supervisor:
         self.state_path = self.metadata / "controller_supervisor.json"
         self.events_path = self.metadata / "controller_supervisor_events.jsonl"
         self.state = self._load_state()
-        repository = self.resume_script.parents[4]
+        self.repository = self.resume_script.parents[4]
         self.source_head = subprocess.run(
-            ["git", "-C", str(repository), "rev-parse", "HEAD"],
+            ["git", "-C", str(self.repository), "rev-parse", "HEAD"],
             check=True,
             capture_output=True,
             text=True,
         ).stdout.strip()
+
+    def _current_source_head(self) -> str | None:
+        completed = subprocess.run(
+            ["git", "-C", str(self.repository), "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        head = completed.stdout.strip()
+        return head if completed.returncode == 0 and head else None
 
     def _load_state(self) -> dict[str, object]:
         value = _read_json(self.state_path)
@@ -435,6 +445,19 @@ class Supervisor:
         )
 
     def run_once(self) -> bool:
+        current_source_head = self._current_source_head()
+        if current_source_head != self.source_head:
+            self.state["stop_reason"] = "supervisor_source_changed"
+            self._event(
+                "-",
+                "halt",
+                reason="supervisor_source_changed",
+                expected_source_head=self.source_head,
+                current_source_head=current_source_head or "unavailable",
+            )
+            self._save()
+            return True
+
         controllers, evaluators = read_latest_jobs(self.attempt, self.seeds)
         all_terminal = True
         chains = self.state["chains"]

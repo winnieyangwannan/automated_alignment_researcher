@@ -3,10 +3,12 @@ from __future__ import annotations
 import fcntl
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 
 from aar.controller_supervisor import (
     ChainSnapshot,
     JobStatus,
+    Supervisor,
     decide_recovery,
     main,
     orchestration_incident_matches_source,
@@ -182,6 +184,26 @@ def test_missing_incident_marker_keeps_persisted_halt(tmp_path: Path) -> None:
 
     assert not reopen_source_blocked_chain(state, tmp_path, "new-head")
     assert state["status"] == "halted"
+
+
+def test_supervisor_stops_before_recovery_when_source_changes() -> None:
+    supervisor = object.__new__(Supervisor)
+    supervisor.source_head = "expected-head"
+    supervisor.state = {}
+    supervisor._current_source_head = Mock(return_value="new-head")
+    supervisor._event = Mock()
+    supervisor._save = Mock()
+
+    assert supervisor.run_once()
+    assert supervisor.state["stop_reason"] == "supervisor_source_changed"
+    supervisor._event.assert_called_once_with(
+        "-",
+        "halt",
+        reason="supervisor_source_changed",
+        expected_source_head="expected-head",
+        current_source_head="new-head",
+    )
+    supervisor._save.assert_called_once_with()
 
 
 def test_duplicate_supervisor_lock_fails_closed(
