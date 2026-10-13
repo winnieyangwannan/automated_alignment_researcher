@@ -1,0 +1,47 @@
+schema: aar.autodata.runtime-profile/v2
+name: target-aware-model-api-claude-opus-5-c8-v1
+target:
+  enabled: true
+  binding_policy: previous-promoted-incumbent
+  update_after_promotion: true
+  require_checkpoint_hash: true
+  require_completion_probe: true
+  require_challenge_provenance: true
+broker:
+  runner: local-bwrap
+  environment: oci-runner-firecracker-large
+  image: docker.io/library/python@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
+  expected_image_id: df18428df8a0f9189c84e7424d214b4c50092af1f9dca5842a00c41c39bda316
+  max_cpus: 2
+  max_memory_mb: 2048
+execution:
+  concurrency_per_chain: 8
+  model_request_max_attempts: 5
+  lifecycle_supervised: true
+  reuse_policy: digest-verified
+providers:
+  generator:
+    protocol: model_api_responses
+    url: https://api.meta.ai/v1/responses
+    host_header: ""
+    model: claude-5-opus
+    max_input_tokens: 196608
+    max_output_tokens: 65536
+    timeout_seconds: 90
+    input_usd_per_million: "1"
+    output_usd_per_million: "4"
+  judge:
+    url: https://api.meta.ai/v1/responses
+    model: gpt-5-6-luna
+    max_input_tokens: 1000000
+    max_output_tokens: 65536
+    timeout_seconds: 90
+    input_usd_per_million: "1"
+    output_usd_per_million: "4"
+  target:
+    model: gemma-4-31B-it
+    max_input_tokens: 196608
+    max_output_tokens: 65536
+    timeout_seconds: 90
+    input_usd_per_million: "0"
+    output_usd_per_million: "0"
