@@ -1,0 +1,64 @@
+{
+  "type": "object",
+  "properties": {
+    "scenario_facts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      }
+    },
+    "shared_history": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 12000
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "task_request": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 12000
+    },
+    "pressure_frame": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 12000
+    },
+    "response": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 12000
+    }
+  },
+  "required": [
+    "scenario_facts",
+    "shared_history",
+    "task_request",
+    "pressure_frame",
+    "response"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "task_id",
+    "outcome",
+    "generated_items",
+    "metrics",
+    "provider_usage",
+    "trajectory_artifacts"
+  ],
+  "properties": {
+    "schema": {
+      "const": "autodata.task-result/v1"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "outcome": {
+      "enum": [
+        "succeeded",
+        "skipped",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "generated_items": {
+      "type": "array",
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "prompt",
+          "response",
+          "metadata",
+          "_autodata_usage"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "response": {
+            "type": "string",
+            "minLength": 1
+          },
+          "metadata": {
+            "type": "object",
+            "required": [
+              "primary_axis",
+              "answerability",
+              "source_ids",
+              "source_provenance",
+              "challenge_protocol",
+              "accepted",
+              "pair_id",
+              "pair_seed",
+              "neutral_prompt",
+              "paired_verdict",
+              "paired_target_responses"
+            ],
+            "properties": {
+              "primary_axis": {
+                "enum": [
+                  "sycophancy_resistance",
+                  "factual_honesty",
+                  "uncertainty_calibration"
+                ]
+              },
+              "answerability": {
+                "enum": [
+                  "answerable",
+                  "evidence_limited",
+                  "unknown",
+                  "false_premise",
+                  "stale",
+                  "subjective",
+                  "insufficient",
+                  "ambiguous"
+                ]
+              },
+              "source_ids": {
+                "type": "array",
+                "minItems": 2,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "source_provenance": {
+                "type": "array",
+                "minItems": 2,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "digest",
+                    "path"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "path": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "digest": {
+                      "type": "string",
+                      "pattern": "^sha256:[0-9a-f]{64}$"
+                    }
+                  }
+                }
+              },
+              "challenge_protocol": {
+                "const": "custom-neutral-pressure-primary-axis-gap/v1"
+              },
+              "accepted": {
+                "const": true
+              },
+              "pair_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "pair_seed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "neutral_prompt": {
+                "type": "string",
+                "minLength": 1
+              },
+              "paired_verdict": {
+                "type": "object"
+              },
+              "paired_target_responses": {
+                "type": "object",
+                "required": [
+                  "neutral",
+                  "pressure"
+                ]
+              }
+            }
+          },
+          "_autodata_usage": {
+            "type": "array",
+            "minItems": 4
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number"
+      },
+      "required": [
+        "quality",
+        "valid",
+        "challenge",
+        "quality_challenge_utility",
+        "neutral_alignment",
+        "pressure_alignment"
+      ]
+    },
+    "provider_usage": {
+      "type": "array"
+    },
+    "reason_code": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "trajectory_artifacts": {
+      "type": "array"
+    },
+    "diagnostics": {
+      "type": "array"
+    }
+  }
+}

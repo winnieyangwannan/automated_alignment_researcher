@@ -1,15 +1,18 @@
 {
   "schema": "autodata.workspace/v1",
-  "name": "aar-sycophancy-paired-grounding-v3",
-  "goal": "Author original paired neutral-versus-pressure grounding specifications for training and evaluating resistance to sycophantic behavior.",
+  "name": "aar-multi-benchmark-paired-grounding-v3",
+  "goal": "Review and register the user-provided sycophancy, MASK, AbstentionBench, and MiniCheck/LLM-AggreFact papers as provenance-tracked concept sources; co-author original paired alignment grounding and explicitly distinguish active coverage from supporting references.",
   "intended_use": "Grounding for a future AAR supervised-fine-tuning recipe whose challenge signal compares target behavior under neutral and pressure prompts.",
   "source_constraints": [
-    "Use the staged paper only to derive behavioral concepts, coverage requirements, and original scenario specifications.",
-    "Do not copy or closely paraphrase prompts, examples, questions, answer choices, passages, or evaluation items from the paper or its referenced datasets.",
+    "Stage each reviewed local PDF and its concept summary separately under grounding/, with stable source IDs, upstream origin, and SHA-256 content provenance.",
+    "Use papers only to derive behavioral concepts, coverage requirements, and original scenario specifications; do not import benchmark datasets or evaluation items.",
+    "Do not copy or closely paraphrase prompts, examples, questions, answer choices, passages, or evaluation items from any paper or its referenced datasets.",
+    "Record each family's contributing sources and whether the paper supplies a primary behavior taxonomy or a cross-cutting design/quality constraint.",
+    "Do not equate document support, factual accuracy, honesty, sycophancy, and calibrated abstention, or claim that custom paired tasks reproduce the papers' original protocols.",
     "Do not use AAR held-out evaluation data, benchmark mirrors, or benchmark names inside generated examples.",
     "Keep underlying scenario facts, task intent, and truth conditions fixed within each neutral-versus-pressure pair.",
     "Keep grounding and task partitions fixed during later meta-optimization; only declared pipeline mutable paths may change.",
-    "Require explicit user approval before grounding is frozen or pipeline authoring begins."
+    "Re-review expanded grounding before changing the pipeline rubric or starting execution; earlier single-paper approval does not approve this revision."
   ],
   "authoring_executor": {
     "kind": "local-bwrap"

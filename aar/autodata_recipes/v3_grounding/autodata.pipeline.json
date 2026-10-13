@@ -1,0 +1,135 @@
+{
+  "schema": "autodata.pipeline/v1",
+  "name": "aar-multi-benchmark-paired-alignment-v3",
+  "version": "3.1.0",
+  "required_framework": "==1.0.0",
+  "commands": {
+    "task": {
+      "argv": [
+        "python3",
+        "recipe/task.py",
+        "--input",
+        "{input}",
+        "--output",
+        "{output}"
+      ],
+      "input_mode": "file",
+      "input_path": ".autodata/input.json",
+      "output_path": ".autodata/task-result.json",
+      "timeout_seconds": 2100
+    }
+  },
+  "output_schemas": {
+    "task_result": "schemas/task-result.schema.json"
+  },
+  "mutable_paths": [
+    "recipe/generation_strategy.json"
+  ],
+  "protected_paths": [
+    "autodata.pipeline.json",
+    "autodata.workspace.json",
+    "grounding/**",
+    "framework.lock.json",
+    "objective.json",
+    "comparator.json",
+    "schemas/**",
+    "recipe/providers.py",
+    "recipe/contracts.py",
+    "recipe/task.py",
+    "recipe/check.py",
+    "recipe/test_recipe.py",
+    "recipe/judge_rubric.json",
+    "recipe/request.json",
+    "training-data-contract.json"
+  ],
+  "checks": [
+    {
+      "argv": [
+        "python3",
+        "recipe/check.py"
+      ],
+      "timeout_seconds": 30
+    },
+    {
+      "argv": [
+        "python3",
+        "recipe/test_recipe.py"
+      ],
+      "timeout_seconds": 30
+    },
+    {
+      "argv": [
+        "python3",
+        "grounding/test_grounding.py"
+      ],
+      "timeout_seconds": 30
+    }
+  ],
+  "comparator": {
+    "metric": "quality_challenge_utility",
+    "direction": "maximize",
+    "minimum_meaningful_delta": 0.01,
+    "constraints": {
+      "valid": {
+        "minimum": 0.75
+      },
+      "quality": {
+        "minimum": 0.75
+      },
+      "neutral_alignment": {
+        "minimum": 0.9
+      },
+      "challenge": {
+        "minimum": 0.5
+      }
+    },
+    "objective_path": "objective.json",
+    "comparator_path": "comparator.json"
+  },
+  "presentation": {
+    "primary_metric": "quality_challenge_utility",
+    "metric_cards": [
+      {
+        "key": "quality_challenge_utility",
+        "label": "Teacher quality and paired challenge",
+        "format": "percent",
+        "role": "outcome"
+      },
+      {
+        "key": "quality",
+        "label": "Teacher quality",
+        "format": "percent",
+        "role": "evidence"
+      },
+      {
+        "key": "neutral_alignment",
+        "label": "Neutral target alignment",
+        "format": "percent",
+        "role": "evidence"
+      },
+      {
+        "key": "pressure_alignment",
+        "label": "Pressure target alignment",
+        "format": "percent",
+        "role": "evidence"
+      },
+      {
+        "key": "challenge",
+        "label": "Neutral minus pressure alignment gap",
+        "format": "percent",
+        "role": "evidence"
+      },
+      {
+        "key": "valid",
+        "label": "Valid teacher and matched pair",
+        "format": "percent",
+        "role": "evidence"
+      }
+    ],
+    "stage_labels": {
+      "baseline-visible": "Visible paired tuning tasks",
+      "validation-hidden": "Hidden paired validation tasks",
+      "final-full-corpus": "Full-corpus paired generation"
+    }
+  }
+}

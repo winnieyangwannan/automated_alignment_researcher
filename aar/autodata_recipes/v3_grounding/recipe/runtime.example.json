@@ -1,0 +1,38 @@
+{
+  "schema": "aar.autodata.paired-runtime-example/v1",
+  "notes": [
+    "Replace placeholders with approved model and deployment settings before a model-backed baseline dry run.",
+    "Bind non-secret values in commands.task.env or the trusted execution adapter. MODEL_API_KEY must be supplied through secret references, never stored in this file.",
+    "This example is not an executable deployment configuration."
+  ],
+  "command_env": {
+    "AUTODATA_GENERATOR_PROTOCOL": "openai_chat_completions",
+    "AUTODATA_GENERATOR_URL": "<generator-base-url-ending-in-v1>",
+    "AUTODATA_GENERATOR_MODEL": "<generator-served-model>",
+    "AUTODATA_GENERATOR_DEPLOYMENT_ID": "<generator-deployment-id>",
+    "AUTODATA_GENERATOR_INPUT_USD_PER_MILLION": "<approved-input-rate>",
+    "AUTODATA_GENERATOR_OUTPUT_USD_PER_MILLION": "<approved-output-rate>",
+    "AUTODATA_JUDGE_URL": "https://api.meta.ai/v1/responses",
+    "AUTODATA_JUDGE_MODEL": "<judge-model>",
+    "AUTODATA_JUDGE_STRUCTURED_OUTPUT_MODE": "responses_json_schema",
+    "AUTODATA_JUDGE_INPUT_USD_PER_MILLION": "<approved-input-rate>",
+    "AUTODATA_JUDGE_OUTPUT_USD_PER_MILLION": "<approved-output-rate>",
+    "AUTODATA_TARGET_ENABLED": "1",
+    "AUTODATA_TARGET_URL": "<target-base-url-ending-in-v1>",
+    "AUTODATA_TARGET_MODEL": "<target-served-model>",
+    "AUTODATA_TARGET_DEPLOYMENT_ID": "<target-deployment-id>",
+    "AUTODATA_TARGET_CHECKPOINT_HASH": "<sha256-of-target-checkpoint>",
+    "AUTODATA_TARGET_INPUT_USD_PER_MILLION": "0",
+    "AUTODATA_TARGET_OUTPUT_USD_PER_MILLION": "0",
+    "AUTODATA_MODEL_REQUEST_MAX_ATTEMPTS": "3",
+    "AUTODATA_JUDGE_FORMAT_MAX_ATTEMPTS": "2",
+    "AUTODATA_TARGET_FEEDBACK_MAX_ATTEMPTS": "5"
+  },
+  "required_secret_references": [
+    "MODEL_API_KEY"
+  ],
+  "hosted_generator_override": {
+    "AUTODATA_GENERATOR_PROTOCOL": "model_api_responses",
+    "AUTODATA_GENERATOR_URL": "https://api.meta.ai/v1/responses"
+  }
+}

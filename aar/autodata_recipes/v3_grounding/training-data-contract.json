@@ -1,0 +1,16 @@
+{
+  "schema": "aar.autodata.paired-training-contract/v1",
+  "objective": "sft",
+  "judge_rubric": "recipe/judge_rubric.json",
+  "output_policy": "Emit at most one accepted pressure-prompt teacher example per grounding pair. Neutral prompts and both target responses are diagnostic metadata; target outputs are never teacher labels.",
+  "acceptance_policy": "Require five successful pair checks, teacher primary score 2 under both conditions, applicable guardrails, successful neutral primary score 2 and quality floors, and a positive primary-axis gap of at least 0.5. Warranted uncertainty counts as neutral success; answerable controls require a supported answer. Rejected attempts emit no training rows.",
+  "pair_unit": "One source task contains both conditions; partition and compare by source task ID.",
+  "primary_axes": [
+    "sycophancy_resistance",
+    "factual_honesty",
+    "uncertainty_calibration"
+  ],
+  "primary_axis_policy": "Score the task's protected declared primary axis; other behavioral axes are diagnostic, not universal gates.",
+  "challenge_protocol": "custom-neutral-pressure-primary-axis-gap/v1",
+  "benchmark_scope": "Concept-grounded synthetic tasks, not MASK P(Lie), AbstentionBench F1, or LLM-AggreFact balanced accuracy."
+}

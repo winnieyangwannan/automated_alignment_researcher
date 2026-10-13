@@ -1,0 +1,20 @@
+{
+  "schema": "autodata.comparator/v1",
+  "metric": "quality_challenge_utility",
+  "direction": "maximize",
+  "minimum_meaningful_delta": 0.01,
+  "constraints": {
+    "valid": {
+      "minimum": 0.75
+    },
+    "quality": {
+      "minimum": 0.75
+    },
+    "neutral_alignment": {
+      "minimum": 0.9
+    },
+    "challenge": {
+      "minimum": 0.5
+    }
+  }
+}

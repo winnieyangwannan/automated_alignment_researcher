@@ -1,0 +1,110 @@
+{
+  "schema": "aar.autodata.source-registry/v1",
+  "review_date": "2026-10-13 PT",
+  "sources": [
+    {
+      "id": "sharma-et-al-sycophancy-paper",
+      "kind": "paper",
+      "title": "Towards Understanding Sycophancy in Language Models",
+      "path": "grounding/sources/syco_eval.pdf",
+      "digest": "sha256:ee764bd30119f2146f2e130a099d6d313fca6c70ab07b17b7fdbde456d96be36",
+      "origin_uri": "https://arxiv.org/abs/2310.13548",
+      "license": null,
+      "notes": "User-provided papers/syco_eval.pdf; ICLR 2024, local arXiv v4 dated 2025-05-10. Reviewed concepts from Sections 3–4; no evaluation items imported. Upstream license not established; concept provenance only.",
+      "derived_from": [],
+      "concept_guidance": "Keep evidence-based assessments stable under ownership, user beliefs, unsupported challenge, and pressure to mimic a mistaken attribution."
+    },
+    {
+      "id": "sycophancy-concept-summary-v3",
+      "kind": "concept_summary",
+      "title": "Provenance-tracked concept summary: Towards Understanding Sycophancy in Language Models",
+      "path": "grounding/sources/syco_eval_concept_summary.md",
+      "digest": "sha256:287a23097d384b15d95950c0d26ce6446d70382d1ee02a457419c374d5f4e2c4",
+      "origin_uri": null,
+      "license": null,
+      "notes": "Project-authored abstraction of the staged PDF by the visible host agent; local extraction with PyPDF 6.19.0. Includes translation rules, exclusions, and protocol limitations.",
+      "derived_from": [
+        "sharma-et-al-sycophancy-paper"
+      ],
+      "concept_guidance": "Keep evidence-based assessments stable under ownership, user beliefs, unsupported challenge, and pressure to mimic a mistaken attribution."
+    },
+    {
+      "id": "ren-et-al-mask-paper",
+      "kind": "paper",
+      "title": "The MASK Benchmark: Disentangling Honesty From Accuracy in AI Systems",
+      "path": "grounding/sources/mask.pdf",
+      "digest": "sha256:38afe4bbff086bf9906b7135f84e9c1a1c94d7c3538f671f24a9caa13a2e289a",
+      "origin_uri": "https://arxiv.org/abs/2503.03750",
+      "license": null,
+      "notes": "User-provided papers/MASK.pdf; local arXiv v3 dated 2026-01-05. Reviewed Sections 3–4. Commission, not omission; the custom paired gap is not MASK P(Lie). Upstream license not established; concept provenance only.",
+      "derived_from": [],
+      "concept_guidance": "Use verifiable facts and plausible consequence-bearing pressure for explicit false statements. Do not add evidence that updates beliefs; distinguish factual error from intentional lying."
+    },
+    {
+      "id": "mask-concept-summary-v3",
+      "kind": "concept_summary",
+      "title": "Provenance-tracked concept summary: The MASK Benchmark: Disentangling Honesty From Accuracy in AI Systems",
+      "path": "grounding/sources/mask_concept_summary.md",
+      "digest": "sha256:e0e1fbbdc94000d76e620a68b233292638eb2a2d896c77baf257fcb4ad6d4272",
+      "origin_uri": null,
+      "license": null,
+      "notes": "Project-authored abstraction of the staged PDF by the visible host agent; local extraction with PyPDF 6.19.0. Includes translation rules, exclusions, and protocol limitations.",
+      "derived_from": [
+        "ren-et-al-mask-paper"
+      ],
+      "concept_guidance": "Use verifiable facts and plausible consequence-bearing pressure for explicit false statements. Do not add evidence that updates beliefs; distinguish factual error from intentional lying."
+    },
+    {
+      "id": "kirichenko-et-al-abstentionbench-paper",
+      "kind": "paper",
+      "title": "AbstentionBench: Reasoning LLMs Fail on Unanswerable Questions",
+      "path": "grounding/sources/abstentionbench.pdf",
+      "digest": "sha256:be0c4810189c73bb78d4f1301f900c9796bb601573e365d7e48ba332a0f306b6",
+      "origin_uri": "https://arxiv.org/abs/2506.09038",
+      "license": null,
+      "notes": "User-provided papers/abstenBench.pdf; local arXiv v1 dated 2025-06-10. Reviewed Sections 2–3. Six nonexclusive scenarios and answerable controls; no constituent data imported. Upstream license not established; concept provenance only.",
+      "derived_from": [],
+      "concept_guidance": "Calibrate to the evidence: clarify, correct premises, express limitations, or answer when warranted. Include answerable controls and keep missing information unchanged within each pair."
+    },
+    {
+      "id": "abstentionbench-concept-summary-v3",
+      "kind": "concept_summary",
+      "title": "Provenance-tracked concept summary: AbstentionBench: Reasoning LLMs Fail on Unanswerable Questions",
+      "path": "grounding/sources/abstentionbench_concept_summary.md",
+      "digest": "sha256:1e1f82b6d585a77ff190e8071e110b27d613f10f4ef2c487e4153da0cbaf01e0",
+      "origin_uri": null,
+      "license": null,
+      "notes": "Project-authored abstraction of the staged PDF by the visible host agent; local extraction with PyPDF 6.19.0. Includes translation rules, exclusions, and protocol limitations.",
+      "derived_from": [
+        "kirichenko-et-al-abstentionbench-paper"
+      ],
+      "concept_guidance": "Calibrate to the evidence: clarify, correct premises, express limitations, or answer when warranted. Include answerable controls and keep missing information unchanged within each pair."
+    },
+    {
+      "id": "tang-et-al-minicheck-paper",
+      "kind": "paper",
+      "title": "MiniCheck: Efficient Fact-Checking of LLMs on Grounding Documents",
+      "path": "grounding/sources/minicheck_llm_aggrefact.pdf",
+      "digest": "sha256:f63a76e127c1bceaae4bf0f8985bc15c44596b34d746424b37f91e34f0dacc14",
+      "origin_uri": "https://github.com/Liyan06/MiniCheck",
+      "license": null,
+      "notes": "User-provided papers/LLM-AggreFact.pdf; EMNLP 2024, pages 8818–8847. LLM-AggreFact is the benchmark introduced by this paper. Reviewed Sections 1–4; no datasets/model installed. Upstream license not established; concept provenance only.",
+      "derived_from": [],
+      "concept_guidance": "Check every atomic claim against shared documents, including joint multi-sentence support. Unsupported is not necessarily false. Never ablate evidence between neutral and pressure conditions."
+    },
+    {
+      "id": "minicheck-concept-summary-v3",
+      "kind": "concept_summary",
+      "title": "Provenance-tracked concept summary: MiniCheck: Efficient Fact-Checking of LLMs on Grounding Documents",
+      "path": "grounding/sources/minicheck_llm_aggrefact_concept_summary.md",
+      "digest": "sha256:5349a3c6f6b0ef0e509f5180e361c8ec8fc243b8186cd17a753309ab75b48498",
+      "origin_uri": null,
+      "license": null,
+      "notes": "Project-authored abstraction of the staged PDF by the visible host agent; local extraction with PyPDF 6.19.0. Includes translation rules, exclusions, and protocol limitations.",
+      "derived_from": [
+        "tang-et-al-minicheck-paper"
+      ],
+      "concept_guidance": "Check every atomic claim against shared documents, including joint multi-sentence support. Unsupported is not necessarily false. Never ablate evidence between neutral and pressure conditions."
+    }
+  ]
+}

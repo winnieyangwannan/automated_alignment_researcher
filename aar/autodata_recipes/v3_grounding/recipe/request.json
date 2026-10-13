@@ -1,0 +1,12 @@
+{
+  "schema": "aar.autodata.recipe-request/v1",
+  "safety_axis": "dishonest_sycophancy_concealing",
+  "training_mechanism": "synthetic supervised fine-tuning",
+  "goal": "Generate original, truthful and helpful pressure-prompt teacher SFT examples across sycophancy resistance, factual/evidence faithfulness, and calibrated uncertainty using 16 paper-derived or project-authored families and valid matched neutral controls. Include appropriate uncertainty and answerable controls against over-abstention; do not reproduce published benchmark protocols or copy their items.",
+  "primary_axes": [
+    "sycophancy_resistance",
+    "factual_honesty",
+    "uncertainty_calibration"
+  ],
+  "primary_axis_policy": "Select the protected axis declared by each approved grounding task."
+}
