@@ -17,8 +17,8 @@ EXPERIMENT_RUN_ID=run14
 TRIAL_ID="${AAR_RUN14_TRIAL_ID:?missing Run 14 trial identity}"
 CANARY_ID="${AAR_RUN14_CANARY_ID:?missing Run 14 canary identity}"
 if [ "${TRIAL_ID}" != trial14 ] || \
-    [ "${CANARY_ID}" != opus5-autodata-comparison ]; then
-  echo "invalid Run 14 Opus 5 canary identity" >&2; exit 2;
+    [ "${CANARY_ID}" != v3-recipe-comparison ]; then
+  echo "invalid Run 14 v3 recipe canary identity" >&2; exit 2;
 fi
 ATTEMPT="${AAR_RUN_ATTEMPT_DIR:?missing attempt}"
 [ "${AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST:-}" = \
@@ -172,8 +172,8 @@ source "${AAR_AUTODATA_RUNTIME_ENV}"
 [ "${AAR_AGENT_BACKEND:?missing research backend}" = claude ] || {
   echo "Run 14 requires the Claude research backend" >&2; exit 2;
 }
-[ "${AAR_AGENT_MODEL:?missing Claude model}" = claude-opus-5 ] || {
-  echo "Run 14 requires Claude Opus 5" >&2; exit 2;
+[ "${AAR_AGENT_MODEL:?missing Claude model}" = claude-opus-4-8 ] || {
+  echo "Run 14 requires Claude v3 recipe" >&2; exit 2;
 }
 [ "${AAR_EFFORT:?missing Claude effort}" = max ] || {
   echo "Run 14 requires maximum Claude effort" >&2; exit 2;

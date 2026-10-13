@@ -1,131 +1,130 @@
-# Run 14: Opus 5 AutoData comparison
+# Run 14: v3 versus v2 recipe comparison
 
 **Experiment code branch:** `autodata`
 
-- Status: source launch path implemented and validated; not launched
-- Created: 2026-10-12 23:46 PT
-- Last updated: 2026-10-12 23:55 PT
+- Status: configured; recipe identity requires clarification; not launched
+- Created: 2026-10-13 00:42 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
 
-Determine whether Claude Opus 5 performs better than Claude Opus 4.8 on the
-same mutable-challenge AutoData data-generation loop used by Run 13 Canary
-Trial 14.
-
-The intentional treatment is limited to two model roles: the AAR researcher
-and delegated monitor use Opus 5, and the AutoData semantic optimizer plus
-per-task generator/challenger use Opus 5. All other configuration remains
-identical to the Run 13 Trial 14 reference.
+Compare whether the new v3 recipe with stronger grounding generates more
+challenging, valid training data than the v2 recipe in Run 13 Canary Trial 14.
+Keep every run-level model, budget, concurrency, partition, meta-iteration,
+production and training setting identical.
 
 ## Context
 
-The comparison reference is
-`experiments/dishonest_sycophancy_concealing/run_13/canary/trial_14` at setup
-source commit `cf801547196f52a92a139434e52cc0377e02ceaa`.
+Reference:
+`experiments/dishonest_sycophancy_concealing/run_13/canary/trial_14/autodata_run.yaml`
+at setup source commit `e17ab31781fc67edfaa8d19b160296340378cd13`.
 
-Run 13 Trial 14 tests a typed mutable `challenge_strategy`, exactly ten meta
-iterations, 1,250 fresh production tasks, 1,000 accepted rows, and a verified
-one-step Gemma training smoke before stopping. Run 14 preserves those settings
-and the same `dishonest_sycophancy_concealing_v2` recipe so model version is the
-only scientific treatment.
+This Run 14 replaces the deleted, unlaunched Opus 5 comparison package with a
+recipe comparison using Opus 4.8 throughout. The only YAML changes will be the
+isolated Run 14 identity and the exact recipe directory requested by the user:
+`aar/autodata_recipes/dishonest_sycophancy_concealing`.
 
-Run 14 owns a source-pinning host launcher, scheduled pipeline, and chain
-controller derived from the reviewed Run 13 Trial 14 engine. Shared recovery,
-research-environment, Claude tool-fence, and lifecycle-supervisor code now has
-an explicit fail-closed Run 14 allowlist branch. Run 13 behavior remains
-unchanged.
+**Recipe identity caveat:** this requested directory currently contains the
+older synthetic recipe (`aar.autodata.grounding-coverage/v2`), not the new
+paper-grounded v3 work. That work is in `aar/autodata_recipes/v3_grounding`.
+The YAML honors the explicit requested path pending the user's clarification;
+do not label the resulting data as v3 or claim a v3-versus-v2 comparison until
+the recipe content or path is resolved.
+
+The alternative `v3_grounding` recipe is not currently launch compatible:
+its rubric schema is `aar.autodata.paired-judge-rubric/v1`, which the AAR
+compiler rejects; its manifest builder lacks the host-required `--count`
+argument; and its own `grounding/pipeline_revision_plan.md` says the expanded
+16-family grounding requires pipeline/scoring changes before execution.
+These recipe changes are outside this run-configuration setup.
+
+One `alpha` chain; one structural target pair; exactly ten meta iterations;
+64 tuning, 32 validation and 32 test tasks; AutoData concurrency eight; five
+provider attempts; three full-corpus finalization passes; 1,250 production
+tasks; 1,000 accepted rows; stop after verified `training_smoke`. All time and
+cost limits remain those of Trial 14.
 
 ## Model and execution roles
 
-- AAR researcher and delegated monitor: Claude Opus 5, model
-  `claude-opus-5`, logical deployment `meta-claude-cli-opus-5`, through the
-  Meta Claude CLI with maximum effort.
-- AutoData semantic optimizer and per-task generator/challenger: Claude Opus
-  5, provider model `claude-5-opus`, logical deployment
-  `meta-model-api-claude-5-opus`, through Model API Responses at
-  `https://api.meta.ai/v1/responses`.
-- AutoData row judge: `gpt-5-6-luna` through Model API Responses, unchanged.
-- Target probe and training base: Gemma 4 31B IT, fixed base before training,
-  unchanged.
-- Evaluator inference and evaluator judge: not used; evaluation is disabled at
-  the `training_smoke` stop boundary.
-- Trusted orchestration, lifecycle transitions, approvals, budgets, receipts,
-  comparison logic, and protected paths: deterministic host code with AutoData
-  revision `f53bc2136905461ffdbba0a203a12e351e184aaf`, unchanged.
+- Researcher and delegated proposal/approval monitor: Claude Opus 4.8,
+  `claude-opus-4-8`, deployment `meta-claude-cli-opus-4-8`, Meta Claude CLI,
+  maximum effort.
+- AutoData semantic optimizer and generator/teacher/challenger: Claude Opus 4.8,
+  `claude-4-8-opus`, deployment `meta-model-api-claude-4-8-opus`, Model API
+  Responses.
+- Row judge: `gpt-5-6-luna`, Model API Responses; no separate deployment ID.
+- Target probe: `gemma-4-31B-it`, fixed base, Serve API v2 through Chat
+  Completions. The logical deployment and checkpoint hash must be supplied and
+  verified before launch; no new deployment is selected during setup.
+- Training base: Gemma 4 31B IT at
+  `/checkpoint/ram/shared/models/google/gemma-4-31B-it`, local GPU training,
+  fixed base plus a new PEFT adapter; one verified optimizer step.
+- Evaluator inference and evaluator judge: not used at the `training_smoke`
+  boundary; no evaluator or held-out AAR score is part of this comparison.
+- Orchestration, broker, lifecycle approvals, receipts, isolation and comparator:
+  deterministic trusted code; AutoData revision
+  `f53bc2136905461ffdbba0a203a12e351e184aaf`. The monitor reviews approval
+  evidence; host code validates and signs the approved lifecycle transition.
 
-The Model API catalog available during setup listed `claude-5-opus`; no model
-inference call was made. These role assignments must be explicitly reconfirmed
-before any launch, as required by the experiment-organization contract.
+All model roles match Run 13 Trial 14. No model calls have been made for Run 14.
 
 ## Launch
 
-Recorded: 2026-10-12 23:46 PT
+Before submission, confirm the complete model-role mapping and exact source
+revision, as required by the `organize-aar-experiment` skill. Verify the
+selected recipe's host compatibility and obtain the reviewed external
+recovery manifest and compatible Opus 4.8/Gemma/Luna provider proof.
 
-From the synchronized HPC `autodata` worktree, provide the reviewed source
-commit and external prerequisites, then run:
+From the synchronized HPC `autodata` worktree:
 
 ```bash
+source .venv/bin/activate
+export PYTHONPATH="$PWD"
+export AAR_BENCHMARK_DOCS="$PWD/benchmark_docs"
+export BENCHMARK_DOCS_DIR="$PWD/benchmark_docs"
 AAR_RUN14_LIFECYCLE_COORDINATOR_COMMIT=<reviewed-run14-commit> \
 AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST=<external-mode-600-run14-manifest> \
-AAR_RUN14_CANARY_ROOT=<reviewed-opus5-provider-and-target-proof-root> \
+AAR_RUN14_CANARY_ROOT=<verified-opus48-gemma-luna-proof-root> \
 AAR_RUN14_REUSE_BASE_DEPLOYMENT=<verified-gemma-deployment> \
 AAR_RUN14_SECRET_ENV=<mode-600-secret-path> \
-  experiments/dishonest_sycophancy_concealing/run_14/canary/opus5_autodata_comparison/launch/launch.sh
+  experiments/dishonest_sycophancy_concealing/run_14/canary/v3_recipe_comparison/launch/launch.sh
 ```
 
-The recovery manifest must identify target `run14` / `trial14` / `alpha` and
-idea UID `run14-trial14-alpha-iteration-1`. The provider proof must identify
-generator model `claude-5-opus`, deployment
-`meta-model-api-claude-5-opus`, judge `gpt-5-6-luna`, and the selected Gemma
-target deployment. The launcher validates and snapshots both inputs before
-submitting anything.
+The manifest must bind `run14` / `trial14` / `alpha` and idea UID
+`run14-trial14-alpha-iteration-1`. It imports only the reviewed pre-AutoData
+proposal. Create a fresh AutoData workspace, meta execution and production
+export; preserve the original Trial 14 attempt and artifacts.
 
-This command is not launch authorization. Reconfirm the complete model-role
-mapping and exact source revision immediately before use.
-
-Create the retained Opus 5/Gemma/Luna provider proof in two phases before the
-main launch:
-
-```bash
-AAR_RUN14_REUSE_BASE_DEPLOYMENT=<verified-gemma-deployment> \
-AAR_RUN14_SECRET_ENV=<mode-600-secret-path> \
-  experiments/dishonest_sycophancy_concealing/run_14/canary/opus5_autodata_comparison/launch/prepare_proof.sh preflight
-
-# After the preflight job passes:
-AAR_RUN14_REUSE_BASE_DEPLOYMENT=<verified-gemma-deployment> \
-AAR_RUN14_SECRET_ENV=<mode-600-secret-path> \
-  experiments/dishonest_sycophancy_concealing/run_14/canary/opus5_autodata_comparison/launch/prepare_proof.sh canary <proof-root>
-```
+If a matching provider proof does not exist, the gate's
+`launch/prepare_proof.sh preflight`, followed after a pass by
+`launch/prepare_proof.sh canary <proof-root>`, uses the unchanged Opus 4.8 runtime
+profile. These commands submit jobs and require separate launch authorization
+and model-role confirmation.
 
 ## Pass criteria
 
-- The resolved Run 14 configuration differs from Run 13 Trial 14 only in run
-  identity, runtime-profile reference, researcher model/deployment, and AutoData
-  generator model/deployment.
-- Native meta-optimization completes all ten configured iterations and records
-  every candidate decision.
-- Final test evidence satisfies AutoData quality, challenge, and validity
-  constraints without hidden-evidence leakage.
-- Production exports exactly 1,000 independently accepted rows from 1,250
-  fresh tasks with authenticated provenance.
-- AAR consumes the export and produces a verified one-optimizer-step Gemma
-  training receipt and loadable PEFT adapter.
-- No evaluator job launches.
-- The retained comparison reports like-for-like Opus 5 versus Opus 4.8 outcome
-  and process metrics; the canary score is not treated as a scientific result.
+- YAML leaf differences from Trial 14 are exactly `run_id` and `recipe_root`.
+- All ten configured native meta iterations produce retained candidate decisions.
+- Final test evidence meets the selected recipe's protected quality, challenge
+  and validity gates; retain the metric and rubric identities.
+- Production exports exactly 1,000 accepted rows from the 1,250 requested fresh
+  tasks with authenticated provenance.
+- AAR consumes the export, completes one Gemma optimizer step and verifies its
+  consumption receipt and PEFT adapter.
+- No evaluator launches and no hidden item-level evidence leaks.
+
+Failure to reach production is a diagnostic outcome. Record it without
+claiming lifecycle success or training results.
 
 ## Stop criteria
 
-Stop before submission if model-role confirmation is absent; if the resolved
-parity check has any unreviewed difference; if Opus 5 model identity or access
-is unverified; or if any Run 13-only fence would be bypassed rather than
-explicitly extended.
-
-During execution, stop on any identity, immutable-artifact, budget, approval,
-provenance, export, or training-contract violation; protected-file mutation;
-preserved-component drift during pressure rewrites; hidden-evidence leakage;
-or evaluator launch.
+Stop before submission on unresolved recipe identity, missing model
+confirmation, non-recipe YAML drift,
+recipe/host incompatibility, uncommitted recipe dependencies, incompatible
+provider proof, or a recovery identity mismatch. During execution, stop on
+protected-file mutation, factual/teacher drift during pressure-only rewrites,
+identity, budget, approval, provenance, export or training-contract violations,
+hidden item leakage, or evaluator launch.
 
 ## Directory layout
 
@@ -137,48 +136,51 @@ run_14/
 └── canary/
     ├── README.md
     ├── launch/launch.sh
-    ├── slurm/
-    │   ├── chain_controller.sbatch
-    │   └── pipeline.sbatch
-    └── opus5_autodata_comparison/
+    ├── slurm/pipeline.sbatch
+    ├── slurm/chain_controller.sbatch
+    └── v3_recipe_comparison/
+        ├── README.md
+        ├── PROGRESS.md
         ├── config/run.yaml
         ├── launch/launch.sh
         ├── launch/prepare_proof.sh
-        ├── README.md
-        └── PROGRESS.md
+        └── launch/verify_config.py
 ```
 
-The shared Opus 5 runtime profile is
-`configs/autodata/target_aware_model_api_claude_opus_5_c8_v1.yaml`.
+## Comparison record
 
-## Configuration and invariants
+Retain candidate strategy diffs and per-iteration aggregate teacher quality,
+challenge, validity, utility and accepted-row yield. Record first-attempt and
+finalization outcomes, feedback conversion rates, rejection reasons, time,
+model calls and cost. Join them to the source commit, resolved configuration,
+source hashes, split/task seeds, rubric/comparator identity and target binding.
 
-- One `alpha` chain and one structural target pair.
-- Stop after verified `training_smoke`; evaluator disabled.
-- Exactly ten meta iterations with 64 tuning, 32 validation, and 32 test
-  tasks.
-- AutoData concurrency `8`, provider attempts `5`, and finalization passes `3`.
-- Mutable recipe file limited to `recipe/generation_strategy.json`.
-- Production requests 1,250 fresh tasks and requires 1,000 accepted rows.
-- Gemma 4 31B IT target/training base, GPT-5.6 Luna row judge, recipe, pinned
-  AutoData source, budgets, storage policy, and all non-model fields remain
-  unchanged from Run 13 Trial 14.
+Use the actual Trial 14 v2 attempt as the comparator; do not substitute an
+older Trial 13 outcome. Report any absent completed v2 reference explicitly.
+Keep internal hidden-validation/test item details private.
 
-## Monitoring and recovery
+If v3 changes the challenge definition, rubric, task family coverage, or target
+call count, disclose those recipe changes. Raw v2 and v3 challenge/utility
+numbers then measure different quantities; use common target-failure and
+accepted-row definitions for a scientific ranking, or report the native
+results as diagnostic evidence. A recipe-wide comparison does not isolate
+source quality from other recipe changes.
 
-No attempt or job exists. Append future state transitions to the canary's
-`PROGRESS.md` in PT, retaining attempt paths, exact job IDs, model identities,
-configuration hashes, and held-out-safe evidence paths.
+## Validation and deployment state
 
-The intended comparison records each candidate strategy diff; per-iteration
-quality, challenge, validity, and utility; pressure-rewrite conversion and
-diversity; preserved-component hashes; and final test evidence relative to the
-Run 13 Trial 14 Opus 4.8 reference.
+The requested-path YAML passed strict loading, runtime compilation and artifact
+validation, and native recipe staging with 128 generated partition tasks.
+The existing Run 14 contracts and selected shared-fence/configuration checks
+passed: 14 tests. Shell syntax, ShellCheck error checks, and focused Ruff checks
+passed. No inference was performed.
 
-## Isolation and provenance
+The focused setup is local to the devserver. HPC synchronization is deferred
+because active training jobs use the execution checkout directly; see
+[the operational record](PROGRESS.md#run14-config-validated).
 
-Runtime evidence belongs under the configured `/checkpoint/ram/{user}` root,
-not in Git. Do not record credentials, raw hidden examples, evaluator-private
-traces, or partial held-out scores in research-readable files. Any future
-attempt must snapshot the exact source commit, resolved configuration and
-hashes, AutoData revision, model identities, seeds, receipts, and proof paths.
+Offline operator check (from the repository root):
+
+```bash
+PYTHONPATH="$PWD" .venv/bin/python \
+  experiments/dishonest_sycophancy_concealing/run_14/canary/v3_recipe_comparison/launch/verify_config.py
+```

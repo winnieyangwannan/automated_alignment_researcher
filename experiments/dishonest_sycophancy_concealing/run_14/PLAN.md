@@ -1,46 +1,27 @@
 # Run 14 plan
 
-Created: 2026-10-12 23:46 PT
+Recorded: 2026-10-13 00:42 PT. Status: planned; no jobs submitted.
 
-Time standard: Pacific Time (`America/Los_Angeles`)
+1. `config/run.yaml` uses the exact requested recipe path. Resolve the recorded
+   recipe-identity caveat before interpreting an attempt as a v3 comparison.
+2. Verify that only `run_id` and `recipe_root` differ, and validate through the
+   strict AAR YAML loader and runtime-profile resolver.
+3. Compile offline runtime artifacts and check recipe/host contracts. Report
+   incompatible boundaries before launch; do not modify the in-progress v3
+   recipe as part of run configuration.
+4. Commit this focused setup on `autodata` and synchronize through direct
+   Git-over-SSH after verifying the matching HPC worktree and preserving its
+   local state. Do not advance a checkout used by an active attempt.
+5. After separate launch authorization and explicit model-role confirmation,
+   verify external recovery/provider prerequisites and create a fresh attempt.
+6. Run all ten meta iterations; retain aggregate candidate outcomes and source
+   identities. Finalize, produce 1,000 accepted rows, verify one Gemma training
+   step, and stop at `training_smoke`.
+7. Compare against actual Trial 14 v2 evidence using the definitions and
+   limitations in `README.md`. Never count infrastructure failure as a
+   scientific challenge result.
 
-## Objective
-
-Run a controlled Opus 5 versus Opus 4.8 comparison on the Run 13 Trial 14
-mutable-challenge AutoData loop.
-
-## Invariants
-
-1. Change only the AAR researcher/monitor and AutoData generator/optimizer from
-   Opus 4.8 to Opus 5, apart from required Run 14 identity and profile paths.
-2. Preserve the recipe, target model, row judge, task counts, production
-   contract, meta-optimization schedule, concurrency, retry policy, budgets,
-   training-smoke boundary, storage policy, and evaluator-disabled behavior.
-3. Keep the Run 13 Trial 14 result immutable as the Opus 4.8 reference.
-4. Fail closed on unreviewed configuration drift, ambiguous model identity,
-   missing proof, or isolation/provenance failure.
-
-## Ordered gates
-
-1. **Configuration parity — prepared.** Machine-readable tests allow only the
-   requested model substitutions and necessary Run 14 identity/path changes.
-2. **Runtime enablement — implemented and locally validated.** Run 14 owns its
-   launcher and scheduled payloads; shared recovery and coordinator code has a
-   narrow Run 14 allowlist covered by focused tests without weakening Run 13
-   guards.
-3. **Model preflight and confirmation — pending.** Validate the exact Opus 5
-   CLI and Model API identities, then present the complete model-role mapping
-   for explicit user confirmation.
-4. **One-chain lifecycle canary — pending authorization.** Run through the
-   verified production handoff and real-GPU one-step training receipt, then
-   stop before evaluation.
-5. **Comparison analysis — pending pass.** Compare process and final-test
-   evidence with Run 13 Trial 14 without exposing hidden item-level evidence.
-
-## Decision contract
-
-A pass proves that the Opus 5 configuration completed the bounded lifecycle
-under the same AutoData protocol. It does not by itself prove statistically
-significant scientific superiority. Any conclusion that Opus 5 performs better
-must identify the matched metrics, effect size, and limitations of a single
-canary.
+The ordered lifecycle is workspace registration → grounded pipeline approval →
+meta-optimization → final test → production → training smoke. Preserve all
+existing attempts and results. No larger topology or scored evaluation is
+requested.

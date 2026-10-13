@@ -1,5 +1,5 @@
 #!/bin/bash
-# Create or complete the exact Run 14 Opus 5/Gemma/Luna provider proof.
+# Create or complete the exact Run 14 v3 recipe/Gemma/Luna provider proof.
 set -euo pipefail
 umask 077
 
@@ -10,7 +10,7 @@ SHARED_CANARY="${REPO}/experiments/dishonest_sycophancy_concealing/run_12/canary
 
 export AAR_EXPERIMENT_RUN_ID=run14
 export AAR_RUN12_AUTODATA_CANARY_CONFIG="${GATE_DIR}/config/run.yaml"
-export AAR_RUN12_AUTODATA_PROFILE_CONFIG="${REPO}/configs/autodata/target_aware_model_api_claude_opus_5_c8_v1.yaml"
+export AAR_RUN12_AUTODATA_PROFILE_CONFIG="${REPO}/configs/autodata/target_aware_model_api_claude_opus_4_8_c8_v1.yaml"
 export AAR_AUTODATA_CHECKOUT="${AAR_AUTODATA_CHECKOUT:-/checkpoint/ram/${USER:?}/source-worktrees/autodata-f53bc21}"
 export AAR_RUN12_TARGET_KIND=base
 export AAR_RUN12_TARGET_DEPLOYMENT_ID="${AAR_RUN14_REUSE_BASE_DEPLOYMENT:-winnieyangwn-r12-alpha-i1-c0dab4f7}"

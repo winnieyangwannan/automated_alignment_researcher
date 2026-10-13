@@ -410,7 +410,7 @@ def _trial7_pipeline_fence_enabled() -> bool:
             mismatches.append("AAR_RUN14_TRIAL_ID")
         if (
             os.getenv("AAR_RUN14_CANARY_ID", "").strip().lower()
-            != "opus5-autodata-comparison"
+            != "v3-recipe-comparison"
         ):
             mismatches.append("AAR_RUN14_CANARY_ID")
         expected_uid = "run14-trial14-alpha-iteration-1"

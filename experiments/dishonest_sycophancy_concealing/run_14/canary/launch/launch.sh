@@ -9,6 +9,8 @@ umask 077
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 RUN14_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
 REPO="$(cd -- "${RUN14_DIR}/../../../.." && pwd -P)"
+PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" \
+  "${RUN14_DIR}/v3_recipe_comparison/launch/verify_config.py" >/dev/null
 [ "${AAR_EXPERIMENT_RUN_ID:-run14}" = run14 ] || {
   echo "Run 14 launcher rejects an overridden experiment ID" >&2; exit 2;
 }
@@ -23,14 +25,14 @@ SV="/storage/home/${USER}/ram_common-gemma/vllm_tools/serve_api_v2"
 BASE_CHECKPOINT=/checkpoint/ram/shared/models/google/gemma-4-31B-it
 # Preserves provider provenance and enforces atomic, terminal budget handling.
 REQUIRED_AUTODATA_SHA=f53bc2136905461ffdbba0a203a12e351e184aaf
-: "${AAR_RUN14_CANARY_CONFIG:?launch through the validated Run 14 Opus 5 wrapper}"
+: "${AAR_RUN14_CANARY_CONFIG:?launch through the validated Run 14 v3 recipe wrapper}"
 RUN_CONFIG="$(realpath -e -- "${AAR_RUN14_CANARY_CONFIG}")"
-EXPECTED_RUN_CONFIG="$(realpath -e -- "${RUN14_DIR}/opus5_autodata_comparison/config/run.yaml")"
+EXPECTED_RUN_CONFIG="$(realpath -e -- "${RUN14_DIR}/v3_recipe_comparison/config/run.yaml")"
 [ "${RUN_CONFIG}" = "${EXPECTED_RUN_CONFIG}" ] || {
-  echo "Run 14 accepts only the Opus 5 AutoData comparison config" >&2
+  echo "Run 14 accepts only the v3 recipe AutoData comparison config" >&2
   exit 2
 }
-CANARY_ID=opus5-autodata-comparison
+CANARY_ID=v3-recipe-comparison
 TRIAL_ID=trial14
 : "${AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST:?set the external mode-600 Run 14 recovery manifest}"
 if [ ! -f "${AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST}" ] || \
@@ -64,10 +66,10 @@ SUBMITTED_COMMIT="$(git -C "${REPO}" rev-parse HEAD)"
 SHARED_HARNESS_PY="${REPO}/.venv/bin/python"
 PROFILE_CONFIG="$(env PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m \
   aar.autodata_run_config resolve-profile --repo "${REPO}" --run "${RUN_CONFIG}" \
-  --fallback-profile "${REPO}/configs/autodata/target_aware_model_api_claude_opus_5_c8_v1.yaml")"
+  --fallback-profile "${REPO}/configs/autodata/target_aware_model_api_claude_opus_4_8_c8_v1.yaml")"
 config_json="$(PYTHONPATH="${REPO}" "${REPO}/.venv/bin/python" -m aar.autodata_run_config inspect \
   --profile "${PROFILE_CONFIG}" --run "${RUN_CONFIG}")"
-[ "$(jq -r '.run_id' <<<"${config_json}")" = "run14-canary-opus5-autodata-comparison" ] || {
+[ "$(jq -r '.run_id' <<<"${config_json}")" = "run14-canary-v3-recipe-comparison" ] || {
   echo "Run 14 config identity does not match ${CANARY_ID}" >&2; exit 2;
 }
 [ "$(jq -r '.target_enabled' <<<"${config_json}")" = true ] || {
@@ -91,12 +93,12 @@ AGENT_BACKEND="$(jq -r '.agent_backend' <<<"${config_json}")"
 AGENT_MODEL="$(jq -r '.agent_model // empty' <<<"${config_json}")"
 AGENT_EFFORT="$(jq -r '.agent_effort // empty' <<<"${config_json}")"
 [ "${AGENT_BACKEND}" = claude ] || { echo "Run 14 requires the Claude agent backend" >&2; exit 2; }
-[ "${AGENT_MODEL}" = claude-opus-5 ] || { echo "Run 14 requires Claude Opus 5" >&2; exit 2; }
+[ "${AGENT_MODEL}" = claude-opus-4-8 ] || { echo "Run 14 requires Claude Opus 4.8" >&2; exit 2; }
 [ "${AGENT_EFFORT}" = max ] || { echo "Run 14 requires maximum Claude effort" >&2; exit 2; }
-[ "${RESEARCHER_DEPLOYMENT}" = meta-claude-cli-opus-5 ] || { echo "Run 14 researcher deployment drifted" >&2; exit 2; }
-[ "${GENERATOR_MODEL}" = claude-5-opus ] || { echo "Run 14 generator model drifted" >&2; exit 2; }
+[ "${RESEARCHER_DEPLOYMENT}" = meta-claude-cli-opus-4-8 ] || { echo "Run 14 researcher deployment drifted" >&2; exit 2; }
+[ "${GENERATOR_MODEL}" = claude-4-8-opus ] || { echo "Run 14 generator model drifted" >&2; exit 2; }
 [ "${GENERATOR_PROTOCOL}" = model_api_responses ] || { echo "Run 14 generator protocol drifted" >&2; exit 2; }
-[ "${GENERATOR_DEPLOYMENT}" = meta-model-api-claude-5-opus ] || { echo "Run 14 generator deployment drifted" >&2; exit 2; }
+[ "${GENERATOR_DEPLOYMENT}" = meta-model-api-claude-4-8-opus ] || { echo "Run 14 generator deployment drifted" >&2; exit 2; }
 [ "${JUDGE_MODEL}" = gpt-5-6-luna ] || { echo "Run 14 judge model drifted" >&2; exit 2; }
 [ "$(jq -r '.target_model' <<<"${config_json}")" = gemma-4-31B-it ] || { echo "Run 14 target model drifted" >&2; exit 2; }
 [ "$(jq -r '.concurrency_per_chain' <<<"${config_json}")" = 8 ] || { echo "Run 14 concurrency must be 8" >&2; exit 2; }
@@ -312,7 +314,7 @@ case "${AGENT_BACKEND}" in
       --workspace "${SOURCE_REPO}" --output "${attempt}/metadata/kimi_mcp_preflight.json"
     ;;
   claude)
-    [ "${AGENT_MODEL}" = claude-opus-5 ] || { echo "Run 14 requires Claude Opus 5" >&2; exit 2; }
+    [ "${AGENT_MODEL}" = claude-opus-4-8 ] || { echo "Run 14 requires Claude Opus 4.8" >&2; exit 2; }
     [ "${AGENT_EFFORT}" = max ] || { echo "Run 14 requires maximum Claude effort" >&2; exit 2; }
     export AAR_WEB_MODE=meta_secure
     CLAUDE_CLI_PATH="${CLAUDE_CLI_PATH:-$(command -v claude || true)}"
@@ -333,7 +335,7 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps({
     "schema": "aar.claude-research-preflight/v1",
     "status": "passed",
     "research_backend": "claude",
-    "research_model": "claude-opus-5",
+    "research_model": "claude-opus-4-8",
     "research_effort": "max",
     "claude_cli_path": sys.argv[2],
     "claude_cli_executable": True,

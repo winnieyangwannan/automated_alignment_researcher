@@ -328,7 +328,7 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
                 ["Bash", "Write", "Edit"],
             )
 
-    def test_run14_opus5_reuses_the_reviewed_authoring_fence(self) -> None:
+    def test_run14_recipe_comparison_reuses_the_reviewed_authoring_fence(self) -> None:
         class Options:
             def __init__(self, **kwargs) -> None:
                 self.kwargs = kwargs
@@ -341,7 +341,7 @@ class AgentSdkCompatibilityTest(unittest.TestCase):
                 {
                     "AAR_EXPERIMENT_RUN_ID": "run14",
                     "AAR_RUN14_TRIAL_ID": "trial14",
-                    "AAR_RUN14_CANARY_ID": "opus5-autodata-comparison",
+                    "AAR_RUN14_CANARY_ID": "v3-recipe-comparison",
                     "AAR_IDEA_UID_OVERRIDE": (
                         "run14-trial14-alpha-iteration-1"
                     ),

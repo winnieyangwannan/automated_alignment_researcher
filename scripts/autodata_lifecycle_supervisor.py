@@ -2838,7 +2838,7 @@ class Supervisor:
             os.getenv("AAR_EXPERIMENT_RUN_ID") == "run14"
             and os.getenv("AAR_RUN14_TRIAL_ID") == "trial14"
             and os.getenv("AAR_RUN14_CANARY_ID")
-            == "opus5-autodata-comparison"
+            == "v3-recipe-comparison"
             and os.getenv("AAR_IDEA_UID_OVERRIDE")
             == "run14-trial14-alpha-iteration-1"
             and os.getenv("AAR_AGENT_BACKEND") == "claude"

@@ -17,8 +17,8 @@ EXPERIMENT_RUN_ID=run14
 TRIAL_ID="${AAR_RUN14_TRIAL_ID:?missing Run 14 trial identity}"
 CANARY_ID="${AAR_RUN14_CANARY_ID:?missing Run 14 canary identity}"
 if [ "${TRIAL_ID}" != trial14 ] || \
-    [ "${CANARY_ID}" != opus5-autodata-comparison ]; then
-  echo "invalid Run 14 Opus 5 canary identity" >&2; exit 2;
+    [ "${CANARY_ID}" != v3-recipe-comparison ]; then
+  echo "invalid Run 14 v3 recipe canary identity" >&2; exit 2;
 fi
 # Reapply the trusted runtime selection before the controller captures PY; the
 # controller is long-lived and resubmits research jobs after the launcher exits.

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Submit the Run 14 Opus 5 mutable-challenge AutoData comparison.
+# Submit the Run 14 v3 recipe mutable-challenge AutoData comparison.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"

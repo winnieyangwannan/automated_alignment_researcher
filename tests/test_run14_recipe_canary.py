@@ -12,14 +12,14 @@ REFERENCE_RUN = (
 )
 CANDIDATE_DIR = (
     ROOT
-    / "experiments/dishonest_sycophancy_concealing/run_14/canary/opus5_autodata_comparison"
+    / "experiments/dishonest_sycophancy_concealing/run_14/canary/v3_recipe_comparison"
 )
 CANDIDATE_RUN = CANDIDATE_DIR / "config/run.yaml"
 REFERENCE_PROFILE = (
     ROOT / "configs/autodata/target_aware_model_api_claude_opus_4_8_c8_v1.yaml"
 )
 CANDIDATE_PROFILE = (
-    ROOT / "configs/autodata/target_aware_model_api_claude_opus_5_c8_v1.yaml"
+    ROOT / "configs/autodata/target_aware_model_api_claude_opus_4_8_c8_v1.yaml"
 )
 GATE_LAUNCHER = CANDIDATE_DIR / "launch/launch.sh"
 PROOF_LAUNCHER = CANDIDATE_DIR / "launch/prepare_proof.sh"
@@ -61,39 +61,29 @@ def _leaf_differences(reference: object, candidate: object, path: str = "") -> s
     return {path} if reference != candidate else set()
 
 
-def test_run14_changes_only_models_and_isolated_identity() -> None:
+def test_run14_changes_only_recipe_and_isolated_identity() -> None:
     assert _leaf_differences(_load(REFERENCE_RUN), _load(CANDIDATE_RUN)) == {
-        "agent.model",
-        "deployments.generator",
-        "deployments.researcher",
         "run_id",
-        "runtime_profile",
+        "recipe_root",
     }
 
 
-def test_opus5_profile_changes_only_profile_and_generator_model() -> None:
-    assert _leaf_differences(_load(REFERENCE_PROFILE), _load(CANDIDATE_PROFILE)) == {
-        "name",
-        "providers.generator.model",
-    }
-
-
-def test_opus5_model_role_contract() -> None:
+def test_run14_preserves_trial14_model_roles() -> None:
     run = _load(CANDIDATE_RUN)
     profile = _load(CANDIDATE_PROFILE)
 
     assert run["agent"] == {
         "backend": "claude",
-        "model": "claude-opus-5",
+        "model": "claude-opus-4-8",
         "effort": "max",
         "turn_timeout_seconds": 1800,
     }
     assert run["deployments"] == {
-        "researcher": "meta-claude-cli-opus-5",
-        "generator": "meta-model-api-claude-5-opus",
+        "researcher": "meta-claude-cli-opus-4-8",
+        "generator": "meta-model-api-claude-4-8-opus",
     }
     assert profile["providers"]["generator"]["protocol"] == "model_api_responses"
-    assert profile["providers"]["generator"]["model"] == "claude-5-opus"
+    assert profile["providers"]["generator"]["model"] == "claude-4-8-opus"
     assert profile["providers"]["judge"]["model"] == "gpt-5-6-luna"
     assert profile["providers"]["target"]["model"] == "gemma-4-31B-it"
 
@@ -131,29 +121,28 @@ def test_run14_has_an_exact_provider_proof_launcher() -> None:
 
     assert PROOF_LAUNCHER.stat().st_mode & 0o111
     assert "AAR_EXPERIMENT_RUN_ID=run14" in launcher
-    assert "target_aware_model_api_claude_opus_5_c8_v1.yaml" in launcher
+    assert "target_aware_model_api_claude_opus_4_8_c8_v1.yaml" in launcher
     assert "f53bc2136905461ffdbba0a203a12e351e184aaf" in launcher
     assert "AAR_RUN14_REUSE_BASE_DEPLOYMENT" in launcher
     assert 'run12|run14|run17' in shared
 
 
-def test_run14_shared_launcher_enforces_opus5_contract() -> None:
+def test_run14_shared_launcher_enforces_trial14_model_contract() -> None:
     launcher = SHARED_LAUNCHER.read_text(encoding="utf-8")
 
     assert SHARED_LAUNCHER.stat().st_mode & 0o111
-    assert "run14-canary-opus5-autodata-comparison" in launcher
-    assert "target_aware_model_api_claude_opus_5_c8_v1.yaml" in launcher
-    assert '[ "${AGENT_MODEL}" = claude-opus-5 ]' in launcher
-    assert '[ "${RESEARCHER_DEPLOYMENT}" = meta-claude-cli-opus-5 ]' in launcher
-    assert '[ "${GENERATOR_MODEL}" = claude-5-opus ]' in launcher
+    assert "run14-canary-v3-recipe-comparison" in launcher
+    assert "target_aware_model_api_claude_opus_4_8_c8_v1.yaml" in launcher
+    assert '[ "${AGENT_MODEL}" = claude-opus-4-8 ]' in launcher
+    assert '[ "${RESEARCHER_DEPLOYMENT}" = meta-claude-cli-opus-4-8 ]' in launcher
+    assert '[ "${GENERATOR_MODEL}" = claude-4-8-opus ]' in launcher
     assert (
-        '[ "${GENERATOR_DEPLOYMENT}" = meta-model-api-claude-5-opus ]'
+        '[ "${GENERATOR_DEPLOYMENT}" = meta-model-api-claude-4-8-opus ]'
         in launcher
     )
     assert "--target-experiment-run-id run14" in launcher
     assert "prepare_run14_preautodata_recovery.py" not in launcher
-    assert "claude-opus-4-8" not in launcher
-    assert "claude-4-8-opus" not in launcher
+    assert "v3_recipe_comparison/launch/verify_config.py" in launcher
 
 
 def test_run14_slurm_payloads_are_isolated_and_fail_closed() -> None:
@@ -164,12 +153,12 @@ def test_run14_slurm_payloads_are_isolated_and_fail_closed() -> None:
     assert '[ "${AAR_EXPERIMENT_RUN_ID:?missing experiment identity}" = run14 ]' in combined
     assert "AAR_RUN14_CANARY_ID" in pipeline
     assert "AAR_RUN14_CANARY_ID" in controller
-    assert "opus5-autodata-comparison" in pipeline
-    assert "opus5-autodata-comparison" in controller
+    assert "v3-recipe-comparison" in pipeline
+    assert "v3-recipe-comparison" in controller
     assert "AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST" in pipeline
     assert "run14-${TRIAL_ID}-${seed}-iteration-1" in pipeline
     assert "run14-${TRIAL_ID}-${SEED}-iteration-${next_iteration}" in controller
-    assert "claude-opus-5" in pipeline
+    assert "claude-opus-4-8" in pipeline
     assert "run_14/canary/slurm/chain_controller.sbatch" in pipeline
     assert "run13" not in combined.lower()
 

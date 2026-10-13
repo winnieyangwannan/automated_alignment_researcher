@@ -188,9 +188,9 @@ if [ -n "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
 elif [ -n "${AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
   if [ "${AAR_EXPERIMENT_RUN_ID:-}" != run14 ] || \
       [ "${AAR_RUN14_TRIAL_ID:-}" != trial14 ] || \
-      [ "${AAR_RUN14_CANARY_ID:-}" != opus5-autodata-comparison ] || \
+      [ "${AAR_RUN14_CANARY_ID:-}" != v3-recipe-comparison ] || \
       [ "${SEEDS}" != alpha ]; then
-    echo "[team] FATAL: Run 14 recovery is restricted to the Opus 5 alpha canary" >&2
+    echo "[team] FATAL: Run 14 recovery is restricted to the v3 recipe alpha canary" >&2
     exit 2
   fi
   _recovery_manifest="${AAR_RUN14_PREAUTODATA_RECOVERY_MANIFEST}"

@@ -1,14 +1,14 @@
 schema: aar.autodata.run-config/v1
-run_id: run14-canary-opus5-autodata-comparison
-runtime_profile: configs/autodata/target_aware_model_api_claude_opus_5_c8_v1.yaml
+run_id: run14-canary-v3-recipe-comparison
+runtime_profile: configs/autodata/target_aware_model_api_claude_opus_4_8_c8_v1.yaml
 chains:
   - alpha
 target_pairs_per_chain: 1
 bootstrap_canary:
   stop_after: training_smoke
 deployments:
-  researcher: meta-claude-cli-opus-5
-  generator: meta-model-api-claude-5-opus
+  researcher: meta-claude-cli-opus-4-8
+  generator: meta-model-api-claude-4-8-opus
 budget:
   max_cost_usd: "65000"
 authoring:
@@ -39,10 +39,10 @@ evaluation:
   max_truncation_rate: 0.20
 agent:
   backend: claude
-  model: claude-opus-5
+  model: claude-opus-4-8
   effort: max
   turn_timeout_seconds: 1800
-recipe_root: aar/autodata_recipes/dishonest_sycophancy_concealing_v2
+recipe_root: aar/autodata_recipes/dishonest_sycophancy_concealing
 training_contract:
   objective: sft
   judge_rubric: recipe/judge_rubric.json

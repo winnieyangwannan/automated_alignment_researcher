@@ -1246,7 +1246,7 @@ def test_semantic_coordinator_dispatches_workspace_pipeline_slice(
     assert observed["control_file"] == supervisor.args.control_file
 
 
-def test_pipeline_coordinator_accepts_run14_opus5_scope(
+def test_pipeline_coordinator_accepts_run14_recipe_comparison_scope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     supervisor = _semantic_coordinator_supervisor(tmp_path, monkeypatch)
@@ -1256,7 +1256,7 @@ def test_pipeline_coordinator_accepts_run14_opus5_scope(
         "AAR_AUTODATA_SEMANTIC_WORKER": "claude",
         "AAR_EXPERIMENT_RUN_ID": "run14",
         "AAR_RUN14_TRIAL_ID": "trial14",
-        "AAR_RUN14_CANARY_ID": "opus5-autodata-comparison",
+        "AAR_RUN14_CANARY_ID": "v3-recipe-comparison",
         "AAR_IDEA_UID_OVERRIDE": "run14-trial14-alpha-iteration-1",
         "AAR_AGENT_BACKEND": "claude",
         "AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE": "1",
