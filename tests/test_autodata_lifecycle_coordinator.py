@@ -36,6 +36,7 @@ from aar.infrastructure.autodata_coordinator.semantic_worker import (
     MutationOutcome,
     PipelineContext,
     SemanticOutcome,
+    semantic_task,
 )
 
 
@@ -682,6 +683,46 @@ def test_update_candidate_is_host_validated_and_applied(tmp_path: Path) -> None:
     assert stage["candidate_digest"].startswith("sha256:")
 
 
+def test_clarify_rejects_invented_top_level_fields_then_confirms(
+    tmp_path: Path,
+) -> None:
+    class StrictControl(FakeControl):
+        def validate_workspace(self, candidate: dict[str, Any]) -> dict[str, Any]:
+            if set(candidate) != set(_workspace()):
+                raise AutoDataCoordinatorError(
+                    "candidate_workspace_invalid", "candidate fails native schema"
+                )
+            return super().validate_workspace(candidate)
+
+    team, draft = _fixture(tmp_path)
+    control = StrictControl(draft)
+    invalid = _workspace()
+    invalid["intent"] = None
+    invalid["success_criteria"] = None
+    worker = FakeWorker(
+        "kimi",
+        [
+            SemanticOutcome(
+                ACTION_ID,
+                0,
+                _json_digest(_workspace()),
+                "update",
+                "Invented unsupported design fields.",
+                (),
+                invalid,
+            )
+        ],
+    )
+
+    asyncio.run(
+        _reconciler(team, control, worker).coordinate_clarify_design(WORKSPACE_ID)
+    )
+
+    assert worker.calls == 2
+    assert control.begin_calls == control.complete_calls == 1
+    assert json.loads((draft / "autodata.workspace.json").read_text()) == _workspace()
+
+
 def test_worker_workspace_mutation_cannot_change_trusted_input(tmp_path: Path) -> None:
     team, draft = _fixture(tmp_path)
     control = FakeControl(draft)
@@ -1282,6 +1323,26 @@ def test_kimi_worker_rejects_any_tool_call() -> None:
 
     with pytest.raises(MalformedSemanticOutcome, match="forbidden tool"):
         asyncio.run(ToolCallingWorker().perform(context))
+
+
+def test_clarify_task_forbids_inventing_workspace_fields() -> None:
+    context = ActionContext(
+        ACTION_ID,
+        WORKSPACE_ID,
+        0,
+        "sha256:" + "a" * 64,
+        "Confirm the already-approved design intent.",
+        ("autodata.workspace.json",),
+        ("summary", "decisions"),
+        _workspace(),
+    )
+
+    task = semantic_task(context)
+
+    assert "Do not add top-level fields that are absent from it" in task
+    assert "preserve its top-level key set and field types" in task
+    assert "goal, intended_use, and source_constraints as present" in task
+    assert "use decision='confirm'" in task
 
 
 def test_kimi_worker_returns_typed_outcomes_for_shared_actions() -> None:

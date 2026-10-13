@@ -54,6 +54,7 @@ TRIAL20_RUN = TRIAL16_RUN.parent.parent / "trial_20" / "autodata_run.yaml"
 TRIAL21_RUN = TRIAL16_RUN.parent.parent / "trial_21" / "autodata_run.yaml"
 TRIAL22_RUN = TRIAL16_RUN.parent.parent / "trial_22" / "autodata_run.yaml"
 TRIAL26_RUN = TRIAL16_RUN.parent.parent / "trial_26" / "autodata_run.yaml"
+TRIAL27_RUN = TRIAL16_RUN.parent.parent / "trial_27" / "autodata_run.yaml"
 RUN17 = (
     ROOT
     / "experiments/dishonest_sycophancy_concealing/run_17/config/run.yaml"
@@ -344,6 +345,35 @@ def test_trial26_enables_shared_kimi_semantic_actions() -> None:
     assert "unset AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR" in wrapper
     assert "unset AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE" in wrapper
     assert "complete Run 12 Kimi shared-action scope" in team_launcher
+
+
+def test_trial27_preserves_trial26_runtime_envelope() -> None:
+    trial26 = load_run_config(TRIAL26_RUN)
+    trial27 = load_run_config(TRIAL27_RUN)
+    trial26_run_id = trial26.pop("run_id")
+    trial27_run_id = trial27.pop("run_id")
+
+    assert trial26_run_id == "run12-canary2-trial26"
+    assert trial27_run_id == "run12-canary2-trial27"
+    assert trial27 == trial26
+
+    trial26_wrapper = (TRIAL26_RUN.parent / "submit_canary.sh").read_text()
+    trial27_wrapper = (TRIAL27_RUN.parent / "submit_canary.sh").read_text()
+    assert trial27_wrapper.replace("Trial 27", "Trial 26") == trial26_wrapper
+    for setting in (
+        "AAR_AUTODATA_CLARIFY_COORDINATOR=1",
+        "AAR_AUTODATA_GROUNDING_COORDINATOR=1",
+        "AAR_AUTODATA_PIPELINE_COORDINATOR=1",
+        "AAR_AUTODATA_APPROVAL_COORDINATOR=1",
+        "AAR_AUTODATA_ANALYSIS_COORDINATOR=1",
+        "AAR_AUTODATA_MUTATION_COORDINATOR=1",
+        "AAR_AUTODATA_SEMANTIC_WORKER=kimi",
+        "AAR_AUTODATA_HOST_WAIT_SECONDS=28800",
+        "unset AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR",
+        "unset AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE",
+    ):
+        assert setting in trial26_wrapper
+        assert setting in trial27_wrapper
 
 
 def test_run17_compiles_claude_researcher_and_model_api_generator(

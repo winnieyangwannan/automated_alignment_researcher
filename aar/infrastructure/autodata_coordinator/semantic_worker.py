@@ -221,7 +221,12 @@ def semantic_task(context: WorkerContext) -> str:
     }
     return (
         "Review exactly this AutoData clarify_design input. You have no tools and "
-        "must not perform lifecycle control or filesystem work. Return one JSON "
+        "must not perform lifecycle control or filesystem work. The supplied "
+        "workspace already passed the native schema. Do not add top-level fields "
+        "that are absent from it; for an update, preserve its top-level key set "
+        "and field types. Treat design intent represented by goal, "
+        "intended_use, and source_constraints as present; use decision='confirm' "
+        "when those fields already make the design complete. Return one JSON "
         "object with the unchanged action_id, input_revision, and input_digest; "
         "decision ('confirm' or 'update'); non-empty summary; decisions (array); "
         "and updated_workspace. For confirm, updated_workspace must be null. For "
