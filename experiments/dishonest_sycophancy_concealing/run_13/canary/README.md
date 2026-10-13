@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: Trial 12 preserved as a pre-meta capacity failure; Trial 13 prepared
+- Status: Trial 13 preserved as a post-meta validity failure; Trial 14 prepared
 - Created: 2026-10-11 21:42 PT
-- Last updated: 2026-10-12 17:18 PT
+- Last updated: 2026-10-12 22:06 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -85,8 +85,8 @@ reimplementing it inside AAR. That part is correct.
 Recorded: 2026-10-11 22:13 PT
 
 New attempts must launch through a numbered trial wrapper. The current entrypoint
-is [`trial_13/submit_canary.sh`](trial_13/submit_canary.sh), which selects the exact
-Trial 13 config and delegates to the shared root launcher and Slurm engine. The
+is [`trial_14/submit_canary.sh`](trial_14/submit_canary.sh), which selects the exact
+Trial 14 config and delegates to the shared root launcher and Slurm engine. The
 root launcher rejects direct calls and any config outside an in-tree
 `trial_N/autodata_run.yaml`. It does not invoke the Run 12 launcher.
 

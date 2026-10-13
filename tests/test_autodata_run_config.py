@@ -65,6 +65,7 @@ RUN13_TRIAL13 = (
     ROOT
     / "experiments/dishonest_sycophancy_concealing/run_13/canary/trial_13/autodata_run.yaml"
 )
+RUN13_TRIAL14 = RUN13_TRIAL13.parent.parent / "trial_14" / "autodata_run.yaml"
 
 
 def _base_binding(tmp_path: Path, *, chain: str = "alpha") -> Path:
@@ -503,6 +504,39 @@ def test_run13_trial13_covers_ten_iteration_three_pass_capacity(
 
     assert settings["meta"]["maximum_iterations"] == 10
     assert settings["finalization_model_rounds_per_task"] == 5
+    assert settings["required_campaign_round_reservations"] == 21630
+    assert settings["required_campaign_cost_usd"] == "64523.1552"
+
+
+def test_run13_trial14_runs_exactly_ten_iterations_with_sufficient_capacity(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "run13-trial14-compiled"
+    resolved = compile_run_config(
+        profile_path=RUN17_PROFILE.parent
+        / "target_aware_model_api_claude_opus_4_8_c8_v1.yaml",
+        run_path=RUN13_TRIAL14,
+        target_binding_path=_base_binding(tmp_path),
+        chain="alpha",
+        repo=ROOT,
+        output_dir=output,
+    )
+    settings = operator_execution_settings(
+        resolved,
+        campaign_policy=json.loads((output / "campaign-policy.json").read_text()),
+        training_data_contract=json.loads(
+            (output / "autodata-training-data-contract.json").read_text()
+        ),
+    )
+
+    assert settings["meta"] == {
+        "maximum_iterations": 10,
+        "minimum_iterations": 10,
+        "early_stop_patience": 10,
+        "tuning_tasks": 64,
+        "validation_tasks": 32,
+        "test_tasks": 32,
+    }
     assert settings["required_campaign_round_reservations"] == 21630
     assert settings["required_campaign_cost_usd"] == "64523.1552"
 

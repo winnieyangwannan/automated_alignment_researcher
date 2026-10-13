@@ -34,7 +34,7 @@ TRIAL_NUMBER="${BASH_REMATCH[1]}"
 TRIAL_ID="trial${TRIAL_NUMBER}"
 RECOVERY_MANIFEST_EXTERNAL=""
 case "${TRIAL_ID}" in
-  trial4|trial5|trial6|trial7|trial8|trial9|trial10|trial11|trial12|trial13)
+  trial4|trial5|trial6|trial7|trial8|trial9|trial10|trial11|trial12|trial13|trial14)
     : "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:?${TRIAL_ID} requires an external pre-AutoData recovery manifest}"
     if [ ! -f "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}" ] || \
         [ -L "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST}" ]; then
@@ -60,7 +60,7 @@ case "${TRIAL_ID}" in
     ;;
   *)
     [ -z "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ] || {
-      echo "pre-AutoData recovery is allowlisted only for Run 13 Trials 4 through 13" >&2
+      echo "pre-AutoData recovery is allowlisted only for Run 13 Trials 4 through 14" >&2
       exit 2
     }
     ;;
@@ -211,7 +211,7 @@ mkdir -p "${attempt}/"{metadata,logs,secrets,chains,runtime}
 mkdir -p "${checkpoint_root}/chains"
 chmod 700 "${attempt}" "${attempt}/"{metadata,logs,secrets,chains}
 chmod 700 "${checkpoint_root}" "${checkpoint_root}/chains"
-if [[ "${TRIAL_ID}" =~ ^trial(4|5|6|7|8|9|10|11|12|13)$ ]]; then
+if [[ "${TRIAL_ID}" =~ ^trial(4|5|6|7|8|9|10|11|12|13|14)$ ]]; then
   RECOVERY_MANIFEST_SNAPSHOT="${attempt}/metadata/preautodata-recovery-manifest.json"
   install -m 400 -- "${RECOVERY_MANIFEST_EXTERNAL}" "${RECOVERY_MANIFEST_SNAPSHOT}"
   [ "$(sha256sum "${RECOVERY_MANIFEST_EXTERNAL}" | awk '{print $1}')" = \

@@ -1,0 +1,48 @@
+schema: aar.autodata.run-config/v1
+run_id: run13-canary-trial14
+runtime_profile: configs/autodata/target_aware_model_api_claude_opus_4_8_c8_v1.yaml
+chains:
+  - alpha
+target_pairs_per_chain: 1
+bootstrap_canary:
+  stop_after: training_smoke
+deployments:
+  researcher: meta-claude-cli-opus-4-8
+  generator: meta-model-api-claude-4-8-opus
+budget:
+  max_cost_usd: "65000"
+authoring:
+  max_wall_seconds: 604800
+stage_timing:
+  mode: observe_only
+  native_schema_wall_seconds: 604800
+generation:
+  target_feedback_max_attempts: 5
+  judge_format_max_attempts: 2
+  judge_structured_output_mode: responses_json_schema
+meta_optimization:
+  maximum_iterations: 10
+  minimum_iterations: 10
+  early_stop_patience: 10
+  tuning_tasks: 64
+  validation_tasks: 32
+  test_tasks: 32
+production:
+  required_rows: 1000
+  initial_tasks: 1250
+  minimum_successful_task_fraction: 0.95
+storage:
+  root: /checkpoint/ram/{user}
+  keep_checkpoints: false
+evaluation:
+  memory: max
+  max_truncation_rate: 0.20
+agent:
+  backend: claude
+  model: claude-opus-4-8
+  effort: max
+  turn_timeout_seconds: 1800
+recipe_root: aar/autodata_recipes/dishonest_sycophancy_concealing_v2
+training_contract:
+  objective: sft
+  judge_rubric: recipe/judge_rubric.json

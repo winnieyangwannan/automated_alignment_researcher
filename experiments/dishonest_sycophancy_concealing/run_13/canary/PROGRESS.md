@@ -282,3 +282,38 @@ fresh detached AutoData snapshot, then launch Trial 12.
 
 Validate and synchronize the focused commit, prepare a fresh external recovery
 manifest, then launch Trial 13.
+
+<a id="run13-event-trial14-prepared"></a>
+
+### 🛠️ 22:06 PT — FIX: Trial 14 mutable challenge comparison prepared
+
+> [!IMPORTANT]
+> Trial 14 replaces protected fixed pressure sentences with a typed mutable
+> challenge instruction while keeping `task.py` and `check.py` protected.
+
+```text
+✓ Trial 13 reached and completed native meta-optimization
+✗ Trial 13 final test challenge and validity constraints
+△ Mutable challenge strategy implemented and locally tested
+○ Trial 14 ten-iteration meta-optimization
+○ Production generation and export
+○ Gemma training smoke
+○ Evaluator — disabled
+```
+
+- The mutable instruction guides both initial pressure generation and
+  context-specific pressure-frame rewrites.
+- Trusted code preserves facts, task request, and teacher answer during each
+  rewrite and records their hashes.
+- Trial 14 sets minimum and maximum meta iterations to `10`, with patience
+  `10`, so three unchanged candidates cannot end this diagnostic early.
+- The monitor will compare per-iteration strategy diffs, quality, challenge,
+  validity, and balanced utility; pressure-rewrite conversion and diversity;
+  and final evidence against Trial 13.
+- Models, concurrency, provider retry limits, AutoData pin, and
+  `training_smoke` boundary remain unchanged.
+
+#### ⏭️ Next step
+
+Validate and synchronize the focused commits, prepare a fresh external Trial 14
+recovery manifest, and launch through `trial_14/submit_canary.sh`.

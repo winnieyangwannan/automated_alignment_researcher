@@ -1,9 +1,41 @@
 import subprocess
 from pathlib import Path
 
+from aar.autodata_run_config import load_run_config
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN = ROOT / "experiments" / "dishonest_sycophancy_concealing" / "run_13"
+
+
+def test_trial14_runs_ten_iterations_with_full_coordinator_wiring() -> None:
+    canary = RUN / "canary"
+    trial = canary / "trial_14"
+    config = load_run_config(trial / "autodata_run.yaml")
+
+    assert config["run_id"] == "run13-canary-trial14"
+    assert config["meta_optimization"] == {
+        "maximum_iterations": 10,
+        "minimum_iterations": 10,
+        "early_stop_patience": 10,
+        "tuning_tasks": 64,
+        "validation_tasks": 32,
+        "test_tasks": 32,
+    }
+    assert config["agent"] == {
+        "backend": "claude",
+        "model": "claude-opus-4-8",
+        "effort": "max",
+        "turn_timeout_seconds": 1800,
+    }
+    for path in (
+        trial / "submit_canary.sh",
+        canary / "launch" / "launch.sh",
+        canary / "slurm" / "pipeline.sbatch",
+        canary / "slurm" / "chain_controller.sbatch",
+    ):
+        subprocess.run(["bash", "-n", str(path)], check=True)
+        assert "trial14" in path.read_text()
 
 
 def test_run_13_submitter_is_isolated_and_selects_claude_opus_48() -> None:
