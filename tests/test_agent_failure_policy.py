@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from aar.failure_feedback import FailureFeedbackError, build_failure_feedback
 from aar.research_loop.agent import AutonomousAgentLoop, BaseAgent
@@ -157,6 +158,77 @@ def test_run_bound_candidate_failure_advances_without_operation_retry(
     assert result["failed_sessions"] == 1
     assert result["successful_sessions"] == 1
     assert result["stop_reason"] == "max_iterations"
+
+
+def test_stale_internal_kimi_resume_handoff_is_discarded(
+    tmp_path: Path,
+) -> None:
+    loop = _loop(
+        tmp_path,
+        FailureFeedbackError(
+            build_failure_feedback(
+                RuntimeError("unused"),
+                error_code="required_completion_missing",
+                stage="research_session",
+                disposition="advance_session",
+                public_summary="continuation budget exhausted",
+            )
+        ),
+    )
+    loop.backend = "kimi"
+    loop._next_resume_run_id = "candidate-run-1"
+    agent = Mock()
+    agent._approved_run_id.return_value = None
+
+    with patch.dict(
+        "os.environ",
+        {"AAR_RESUME_EXPECTED_RUN_ID": "operator-run"},
+        clear=False,
+    ):
+        assert loop._validated_resume_run_id(agent) is None
+        assert os.environ["AAR_RESUME_EXPECTED_RUN_ID"] == "operator-run"
+
+    assert loop._next_resume_run_id is None
+
+
+def test_bound_internal_kimi_resume_handoff_is_preserved(
+    tmp_path: Path,
+) -> None:
+    loop = _loop(
+        tmp_path,
+        FailureFeedbackError(
+            build_failure_feedback(
+                RuntimeError("unused"),
+                error_code="required_completion_missing",
+                stage="research_session",
+                disposition="advance_session",
+                public_summary="continuation budget exhausted",
+            )
+        ),
+    )
+    loop.backend = "kimi"
+    loop._next_resume_run_id = "candidate-run-1"
+    observed_expected_run_ids: list[str | None] = []
+    agent = Mock()
+
+    def approved_run_id() -> str:
+        observed_expected_run_ids.append(
+            os.environ.get("AAR_RESUME_EXPECTED_RUN_ID")
+        )
+        return "candidate-run-1"
+
+    agent._approved_run_id.side_effect = approved_run_id
+    with patch.dict("os.environ", {}, clear=False):
+        prior_expected = os.environ.pop("AAR_RESUME_EXPECTED_RUN_ID", None)
+        try:
+            assert loop._validated_resume_run_id(agent) == "candidate-run-1"
+            assert "AAR_RESUME_EXPECTED_RUN_ID" not in os.environ
+        finally:
+            if prior_expected is not None:
+                os.environ["AAR_RESUME_EXPECTED_RUN_ID"] = prior_expected
+
+    assert observed_expected_run_ids == ["candidate-run-1"]
+    assert loop._next_resume_run_id == "candidate-run-1"
 
 
 def test_malformed_failure_feedback_fails_closed_without_leaking(

@@ -1630,6 +1630,38 @@ class AutonomousAgentLoop:
                 result_ids.add(value["run_id"])
         return len(score_ids & result_ids)
 
+    def _validated_resume_run_id(self, agent: Any) -> str | None:
+        """Return only an internal Kimi handoff still bound to durable state."""
+        resume_run_id = getattr(self, "_next_resume_run_id", None)
+        if not isinstance(resume_run_id, str):
+            return None
+        if getattr(self, "backend", "claude") != "kimi":
+            return resume_run_id
+
+        approved_run_id = getattr(agent, "_approved_run_id", None)
+        if not callable(approved_run_id):
+            return None
+        prior_expected = os.environ.get("AAR_RESUME_EXPECTED_RUN_ID")
+        os.environ["AAR_RESUME_EXPECTED_RUN_ID"] = resume_run_id
+        try:
+            bound_run_id = approved_run_id()
+        finally:
+            if prior_expected is None:
+                os.environ.pop("AAR_RESUME_EXPECTED_RUN_ID", None)
+            else:
+                os.environ["AAR_RESUME_EXPECTED_RUN_ID"] = prior_expected
+        if bound_run_id != resume_run_id:
+            # A fresh session may have replaced or invalidated the proposal marker
+            # after producing failure feedback that referenced the old run. Do not
+            # turn that stale diagnostic run_id into an approved-proposal recovery.
+            self._next_resume_run_id = None
+            print(
+                "[Loop] Discarding stale approved-proposal resume handoff; "
+                "continuing from durable lifecycle state"
+            )
+            return None
+        return resume_run_id
+
     async def _run_session(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         # Chain identity in the session id: parallel chains that start in the SAME
@@ -1691,7 +1723,7 @@ class AutonomousAgentLoop:
 
             try:
                 agent = self._create_agent(session_id, message_callback=message_callback)
-                resume_run_id = getattr(self, "_next_resume_run_id", None)
+                resume_run_id = self._validated_resume_run_id(agent)
                 prior_resume = os.environ.get("AAR_RESUME_APPROVED_PROPOSAL")
                 prior_expected = os.environ.get("AAR_RESUME_EXPECTED_RUN_ID")
                 if isinstance(resume_run_id, str):
