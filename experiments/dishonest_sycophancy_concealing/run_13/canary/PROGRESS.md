@@ -253,3 +253,32 @@ Validate and synchronize the focused recovery commit, then launch only through
 
 Validate both focused commits, synchronize exact revisions to HPC, create a
 fresh detached AutoData snapshot, then launch Trial 12.
+
+<a id="run13-event-trial12-capacity-failure"></a>
+
+### 🔴 17:16 PT — FAIL: Trial 12 stopped at trusted capacity validation
+
+- Attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run13-trial12-bootstrap-canary/20261013T000233Z-73dec0d16a77`.
+- Trial 12 live-proved the complete workspace-authoring and approval path,
+  authoring dry run, baseline approval, freeze, and default meta execution.
+- Frozen-workspace reconciliation then failed closed before meta baseline
+  generation: `$62,000` was below the exact `$64,523.1552` requirement for the
+  configured ten-iteration, three-pass envelope.
+- The prior regression fixture covered only three meta iterations and therefore
+  undercounted the live configuration by 896 reservations.
+
+<a id="run13-event-trial13-prepared"></a>
+
+### 🛠️ 17:18 PT — FIX: Trial 13 capacity-corrected rerun prepared
+
+- Trial 13 changes only the campaign ceiling to `$65,000`.
+- A config-specific regression test now compiles the actual Trial 13 envelope
+  and requires 21,630 reservations and `$64,523.1552` capacity.
+- Models, concurrency, retry counts, lifecycle ownership, recipe, AutoData pin,
+  and `training_smoke` boundary are unchanged.
+
+#### ⏭️ Next step
+
+Validate and synchronize the focused commit, prepare a fresh external recovery
+manifest, then launch Trial 13.

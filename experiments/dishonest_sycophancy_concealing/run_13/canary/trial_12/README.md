@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: prepared; not launched
+- Status: failed closed before meta baseline generation
 - Created: 2026-10-12 16:53 PT
-- Last updated: 2026-10-12 16:53 PT
+- Last updated: 2026-10-12 17:18 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -72,8 +72,8 @@ The recovery manifest restores only the reviewed AAR proposal boundary. Trial
 - AutoData revision: `f53bc2136905461ffdbba0a203a12e351e184aaf`, a focused
   child of the reviewed `51c18fdb0eaa69d8ad66a1805e9c08a507c5fbb1` pin.
 - Generation concurrency: `8`; per-request attempts: `5`.
-- Campaign ceiling: `$62,000`, the rounded-up fail-closed reservation required
-  for three worst-case corpus passes; it is not an expected-spend estimate.
+- Campaign ceiling: `$62,000`; live reconciliation showed this was below the
+  exact `$64,523.1552` ten-iteration bound. Trial 13 corrects it to `$65,000`.
 
 ## Monitoring goal and status template
 

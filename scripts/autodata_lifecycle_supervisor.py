@@ -2824,6 +2824,7 @@ class Supervisor:
                 "trial10",
                 "trial11",
                 "trial12",
+                "trial13",
             }
             and os.getenv("AAR_IDEA_UID_OVERRIDE")
             == f"run13-{trial_id}-alpha-iteration-1"

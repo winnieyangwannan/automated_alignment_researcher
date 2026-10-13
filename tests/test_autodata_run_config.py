@@ -21,6 +21,7 @@ from aar.autodata_run_config import (
     resolve_runtime_profile_path,
     validate_compiled_config,
 )
+from aar.infrastructure.autodata_execution_contract import operator_execution_settings
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +57,10 @@ TRIAL26_RUN = TRIAL16_RUN.parent.parent / "trial_26" / "autodata_run.yaml"
 RUN17 = (
     ROOT
     / "experiments/dishonest_sycophancy_concealing/run_17/config/run.yaml"
+)
+RUN13_TRIAL13 = (
+    ROOT
+    / "experiments/dishonest_sycophancy_concealing/run_13/canary/trial_13/autodata_run.yaml"
 )
 
 
@@ -375,6 +380,33 @@ def test_run17_compiles_claude_researcher_and_model_api_generator(
     assert "export AAR_EFFORT=max\n" in runtime
     assert "export AAR_AGENT_TURN_TIMEOUT_SECONDS=1800\n" in runtime
     assert "AAR_KIMI_TURN_TIMEOUT_SECONDS" not in runtime
+
+
+def test_run13_trial13_covers_ten_iteration_three_pass_capacity(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "run13-trial13-compiled"
+    resolved = compile_run_config(
+        profile_path=RUN17_PROFILE.parent
+        / "target_aware_model_api_claude_opus_4_8_c8_v1.yaml",
+        run_path=RUN13_TRIAL13,
+        target_binding_path=_base_binding(tmp_path),
+        chain="alpha",
+        repo=ROOT,
+        output_dir=output,
+    )
+    settings = operator_execution_settings(
+        resolved,
+        campaign_policy=json.loads((output / "campaign-policy.json").read_text()),
+        training_data_contract=json.loads(
+            (output / "autodata-training-data-contract.json").read_text()
+        ),
+    )
+
+    assert settings["meta"]["maximum_iterations"] == 10
+    assert settings["finalization_model_rounds_per_task"] == 5
+    assert settings["required_campaign_round_reservations"] == 21630
+    assert settings["required_campaign_cost_usd"] == "64523.1552"
 
 
 def test_model_api_generator_profile_rejects_non_responses_endpoint(

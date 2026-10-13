@@ -2,9 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: Trial 11 preserved as a meta-finalization failure; Trial 12 prepared
+- Status: Trial 12 preserved as a pre-meta capacity failure; Trial 13 prepared
 - Created: 2026-10-11 21:42 PT
-- Last updated: 2026-10-12 16:53 PT
+- Last updated: 2026-10-12 17:18 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -85,14 +85,14 @@ reimplementing it inside AAR. That part is correct.
 Recorded: 2026-10-11 22:13 PT
 
 New attempts must launch through a numbered trial wrapper. The current entrypoint
-is [`trial_3/submit_canary.sh`](trial_3/submit_canary.sh), which selects the exact
-Trial 3 config and delegates to the shared root launcher and Slurm engine. The
+is [`trial_13/submit_canary.sh`](trial_13/submit_canary.sh), which selects the exact
+Trial 13 config and delegates to the shared root launcher and Slurm engine. The
 root launcher rejects direct calls and any config outside an in-tree
 `trial_N/autodata_run.yaml`. It does not invoke the Run 12 launcher.
 
 The engine fails closed unless the selected configuration resolves to one
 `alpha` chain, Claude Opus 4.8, GPT-5.6 Luna, Gemma 4 31B IT, task concurrency
-8, three model-request attempts, and `stop_after: training_smoke`. The reviewed
+8, five model-request attempts, and `stop_after: training_smoke`. The reviewed
 Run 13-only prerequisite proof is
 `/checkpoint/ram/winnieyangwn/aar-runs/run13-adapter-target/20261012T060131Z-67ab7629e12e-isolated`.
 It is one-time integration evidence and need not be repeated unless a used
