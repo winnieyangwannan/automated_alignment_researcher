@@ -331,3 +331,15 @@ recovery manifest, and launch through `trial_14/submit_canary.sh`.
   verifying and snapshotting the manifest.
 - No AutoData state, model task, production export, training receipt, adapter,
   evaluator, score, or finding was created.
+
+<a id="run13-event-trial14-launch2-team-allowlist-failure"></a>
+
+### 🔴 23:02 PT — STOP: Trial 14 second submission rejected before chain creation
+
+- Launcher job `1865385` failed closed because `scripts/launch_team.sh` still
+  limited reviewed pre-AutoData recovery to Trials 4 through 13.
+- Attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run13-trial14-bootstrap-canary/20261013T060125Z-2c86b8dc421f`.
+- The corrected recovery manifest digest was present in submission metadata.
+- No chain, model call, AutoData workspace, evaluator, score, production export,
+  training receipt, or adapter was created.

@@ -40,6 +40,14 @@ def test_trial14_runs_ten_iterations_with_full_coordinator_wiring() -> None:
     assert "trial13|trial14)" in launch
     assert launch.count("^trial(4|5|6|7|8|9|10|11|12|13|14)$") == 2
 
+    team_launcher = (ROOT / "scripts" / "launch_team.sh").read_text()
+    assert "^trial(4|5|6|7|8|9|10|11|12|13|14)$" in team_launcher
+    assert "^trial(5|6|7|8|9|10|11|12|13|14)$" in team_launcher
+    assert "^trial(7|8|9|10|11|12|13|14)$" in team_launcher
+    assert "^trial(10|11|12|13|14)$" in team_launcher
+    supervisor = (ROOT / "scripts" / "autodata_lifecycle_supervisor.py").read_text()
+    assert '"trial14"' in supervisor
+
 
 def test_run_13_submitter_is_isolated_and_selects_claude_opus_48() -> None:
     submitter = (RUN / "submit_run_13.sh").read_text()

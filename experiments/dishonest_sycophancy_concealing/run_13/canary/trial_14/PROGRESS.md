@@ -43,3 +43,21 @@ Append-only operational record. All timestamps use Pacific Time (`PT`).
 - Corrective action: extend the metadata-hash allowlist to Trial 14, add a
   regression assertion covering all three launcher allowlist sites, and submit
   a fresh immutable attempt.
+
+<a id="run13-trial14-launch2-team-allowlist-failure"></a>
+
+### 🔴 23:02 PT — STOP: second submission rejected by team recovery allowlist
+
+> [!CAUTION]
+> Launcher job `1865385` stopped before chain creation because the shared team
+> launcher still limited pre-AutoData recovery to Trials 4 through 13.
+
+- Attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run13-trial14-bootstrap-canary/20261013T060125Z-2c86b8dc421f`.
+- The corrected submission metadata recorded recovery manifest digest
+  `sha256:2ff96d05599ef9ada2d19f5561b6a80c0bbd57b17d43587e0551264d7685b2e0`.
+- No chain, model call, AutoData workspace, evaluator, score, production export,
+  training receipt, or adapter was created.
+- Corrective action: extend the shared team and supervisor Trial 14 allowlists,
+  test every recovery/coordinator enablement boundary, and submit a fresh
+  immutable attempt.

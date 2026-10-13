@@ -168,8 +168,8 @@ echo "[team] TEAM_DIR=${TEAM_DIR}  forum_scope=${AAR_FORUM_SCOPE:-per_chain}  fo
 # take the exact historical path when the opt-in variable is unset.
 if [ -n "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
   if [ "${AAR_EXPERIMENT_RUN_ID:-}" != run13 ] || \
-      [[ ! "${AAR_RUN13_TRIAL_ID:-}" =~ ^trial(4|5|6|7|8|9|10|11|12|13)$ ]] || [ "${SEEDS}" != alpha ]; then
-    echo "[team] FATAL: pre-AutoData recovery is allowlisted only for Run 13 Trials 4 through 13 alpha" >&2
+      [[ ! "${AAR_RUN13_TRIAL_ID:-}" =~ ^trial(4|5|6|7|8|9|10|11|12|13|14)$ ]] || [ "${SEEDS}" != alpha ]; then
+    echo "[team] FATAL: pre-AutoData recovery is allowlisted only for Run 13 Trials 4 through 14 alpha" >&2
     exit 2
   fi
   [ "${AAR_IDEA_UID_OVERRIDE:-}" = "run13-${AAR_RUN13_TRIAL_ID}-alpha-iteration-1" ] || {
@@ -202,17 +202,17 @@ if [ -n "${AAR_RUN13_PREAUTODATA_RECOVERY_MANIFEST:-}" ]; then
   export AAR_RESUME_APPROVED_PROPOSAL=1
   export AAR_RESUME_EXPECTED_RUN_ID="${_recovery_run_id}"
   export AAR_AUTODATA_CLARIFY_COORDINATOR=1
-  if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(5|6|7|8|9|10|11|12|13)$ ]]; then
+  if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(5|6|7|8|9|10|11|12|13|14)$ ]]; then
     export AAR_AUTODATA_ANALYSIS_COORDINATOR=1
     export AAR_AUTODATA_MUTATION_COORDINATOR=1
     export AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR=1
     export AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE=1
   fi
-  if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(7|8|9|10|11|12|13)$ ]]; then
+  if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(7|8|9|10|11|12|13|14)$ ]]; then
     export AAR_AUTODATA_GROUNDING_COORDINATOR=1
     export AAR_AUTODATA_PIPELINE_COORDINATOR=1
   fi
-  if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(10|11|12|13)$ ]]; then
+  if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(10|11|12|13|14)$ ]]; then
     export AAR_AUTODATA_APPROVAL_COORDINATOR=1
   fi
   case "${AAR_AGENT_BACKEND:-}" in

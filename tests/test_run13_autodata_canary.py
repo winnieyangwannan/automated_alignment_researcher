@@ -92,12 +92,12 @@ def test_run13_documentation_records_trials_and_pin() -> None:
     assert "Direct root-launcher use is rejected" in (CANARY / "trial_3/README.md").read_text()
 
 
-def test_trial5_through_trial13_enable_full_lifecycle_ownership() -> None:
+def test_trial5_through_trial14_enable_full_lifecycle_ownership() -> None:
     launcher = (ROOT / "scripts/launch_team.sh").read_text()
     runtime = (ROOT / "scripts/aar_runtime_env.sh").read_text()
 
     owned_trials = launcher.split(
-        'if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(5|6|7|8|9|10|11|12|13)$ ]]; then', 1
+        'if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(5|6|7|8|9|10|11|12|13|14)$ ]]; then', 1
     )[1].split("fi", 1)[0]
     assert "export AAR_AUTODATA_ANALYSIS_COORDINATOR=1" in owned_trials
     assert "export AAR_AUTODATA_MUTATION_COORDINATOR=1" in owned_trials
@@ -105,7 +105,7 @@ def test_trial5_through_trial13_enable_full_lifecycle_ownership() -> None:
     assert "export AAR_AUTODATA_COORDINATOR_OWNS_LIFECYCLE=1" in owned_trials
     assert "AAR_AUTODATA_MUTATION_COORDINATOR" in runtime
     assert "AAR_AUTODATA_TRAINING_SMOKE_COORDINATOR" in runtime
-    assert 'if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(7|8|9|10|11|12|13)$ ]]; then' in launcher
+    assert 'if [[ "${AAR_RUN13_TRIAL_ID}" =~ ^trial(7|8|9|10|11|12|13|14)$ ]]; then' in launcher
     assert "export AAR_AUTODATA_GROUNDING_COORDINATOR=1" in launcher
     assert "export AAR_AUTODATA_PIPELINE_COORDINATOR=1" in launcher
     assert "complete Run 12 Kimi shared-action scope" in launcher
@@ -158,8 +158,12 @@ def test_trial13_is_approval_owned_and_explicitly_allowlisted() -> None:
     assert run["bootstrap_canary"] == {"stop_after": "training_smoke"}
     assert run["agent"]["backend"] == "claude"
     assert run["agent"]["model"] == "claude-opus-4-8"
-    assert "trial4|trial5|trial6|trial7|trial8|trial9|trial10|trial11|trial12|trial13)" in launcher
-    assert "trial4|trial5|trial6|trial7|trial8|trial9|trial10|trial11|trial12|trial13)" in pipeline
+    allowlist = (
+        "trial4|trial5|trial6|trial7|trial8|trial9|trial10|trial11|trial12|"
+        "trial13|trial14)"
+    )
+    assert allowlist in launcher
+    assert allowlist in pipeline
     assert "AAR_RUN13_LIFECYCLE_COORDINATOR_COMMIT" in wrapper
     assert "three full-corpus passes" in (trial / "README.md").read_text()
     retry_envelope = controller.split('case "${TRIAL_ID}" in', 1)[1].split(
