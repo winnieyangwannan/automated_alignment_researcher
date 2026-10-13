@@ -2,8 +2,9 @@
 
 **Experiment code branch:** `autodata`
 
-- Status: staged; not launched
+- Status: failed closed; terminal
 - Created: 2026-10-12 21:00 PT
+- Last updated: 2026-10-12 21:58 PT
 - Time standard: Pacific Time (`America/Los_Angeles`)
 
 ## Goal
@@ -22,6 +23,11 @@ shows the complete JSON response shape and explicitly states that `decision`
 is a top-level string. It does not weaken validation, alter the typed outcome,
 or change coordinator ownership.
 
+Trial 28 subsequently passed authoring and workspace freeze, then failed before
+meta baseline because its copied `$44,448` cap was below the trusted
+`$64,523.1552` requirement for `21,630` worst-case reservations. Its retained
+attempt is terminal.
+
 A bounded live probe against Trial 27's exact saved grounding action passed:
 Kimi returned the bound action ID, revision, and digest; a top-level
 `decision='confirm'`; non-empty `summary` and `decisions`; and
@@ -29,11 +35,8 @@ Kimi returned the bound action ID, revision, and digest; a top-level
 
 ## Launch
 
-After focused tests, commit, and exact-commit HPC synchronization:
-
-```bash
-bash experiments/dishonest_sycophancy_concealing/run_12/canary/canary_2/trial_28/submit_canary.sh
-```
+Do not relaunch Trial 28. Its source cap is intentionally retained for
+provenance. Use Trial 29, which derives the cap automatically.
 
 ## Preserved execution envelope
 
@@ -64,24 +67,26 @@ Legend: `✓` live-proven in Trial 28, `△` implemented/tested but not live-pro
 
 ```text
 AAR research and method proposal
-  ○ literature/method recovery
-  ○ method validation and proposal approval
+  ✓ literature/method recovery
+  ✓ method validation and proposal approval
              │
              ▼
 AutoData workspace
-  △ clarify_design — live-proven in Trial 27; pending fresh Trial 28 proof
-  △ author_grounding — targeted top-level response-shape correction
-  ○ approve_grounding — shared signed trusted approval
-  △ author_pipeline — same targeted response-shape correction
+  ✓ clarify_design — shared typed coordinator
+  ✓ author_grounding — shared typed coordinator
+  ✓ approve_grounding — shared signed trusted approval
+  ✓ author_pipeline — shared typed coordinator
              │
              ▼
 Workspace finalization
-  ○ authoring dry run, approve baseline, and freeze
+  ✓ authoring dry run, approve baseline, and freeze
+  ✗ trusted campaign-cap validation
              │
              ▼
 Meta-optimization
-  △ analyze_results — shared typed coordinator with Kimi
-  △ mutate_candidate — shared typed coordinator with Kimi
+  ○ baseline generation
+  ○ analyze_results — shared typed coordinator with Kimi
+  ○ mutate_candidate — shared typed coordinator with Kimi
   ○ held-out-valid winner and export
              │
              ▼

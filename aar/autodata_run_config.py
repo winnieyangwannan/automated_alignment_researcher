@@ -103,6 +103,12 @@ def _decimal(value: Any, label: str) -> str:
     return text
 
 
+def _cost_cap(value: Any, label: str) -> str:
+    if value == "auto":
+        return "auto"
+    return _decimal(value, label)
+
+
 def _fraction(value: Any, label: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{label} must be numeric")
@@ -646,7 +652,7 @@ def load_run_config(path: Path) -> dict[str, Any]:
             ),
         },
         "budget": {
-            "max_cost_usd": _decimal(budget["max_cost_usd"], "budget.max_cost_usd")
+            "max_cost_usd": _cost_cap(budget["max_cost_usd"], "budget.max_cost_usd")
         },
         "authoring": authoring,
         "generation": generation,
@@ -928,10 +934,27 @@ def compile_run_config(
     target_environment = target_environment_from_manifest(target_binding_path)
     solve_environment = _solve_environment(profile, run, target_environment)
     rubric_path, rubric_identity = _judge_rubric_identity(repo, run)
+    configured_cap = run["budget"]["max_cost_usd"]
+    if configured_cap == "auto":
+        from aar.infrastructure.autodata_execution_contract import (
+            campaign_capacity_requirements,
+        )
+
+        capacity = campaign_capacity_requirements(
+            run=run,
+            profile=profile,
+            required_solve_env=solve_environment,
+            repo_root=repo,
+        )
+        configured_cap = capacity["required_campaign_cost_usd"]
+        run = {
+            **run,
+            "budget": {**run["budget"], "max_cost_usd": configured_cap},
+        }
     policy = {
         "schema": "autodata.broker-campaign-policy/v1",
         "campaign_id": f"{run['run_id']}-{chain}",
-        "max_cost_usd": run["budget"]["max_cost_usd"],
+        "max_cost_usd": configured_cap,
         "runner": profile["broker"]["runner"],
         "environment": profile["broker"]["environment"],
         "image": profile["broker"]["image"],

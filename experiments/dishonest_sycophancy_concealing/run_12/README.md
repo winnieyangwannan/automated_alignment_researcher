@@ -18,6 +18,12 @@ New full launches compile two strict YAML sources:
 chain's campaign policy, training-data contract, shell runtime environment, and
 resolved configuration snapshot. Unknown YAML keys, target-disabled settings,
 cross-chain bindings, or changes to compiled artifacts fail before generation.
+New runs should set `budget.max_cost_usd: auto`. Trusted compilation derives
+the exact worst-case ceiling from the validated authoring, meta-optimization,
+production, retry, provider-token, and provider-price settings, then writes
+only the resulting numeric value to resolved/runtime artifacts. Explicit
+numeric caps remain supported for historical reproducibility and deliberate
+operator ceilings, and still fail closed when insufficient.
 Canary 2 Trial 2 supplies its separate
 `canary/canary_2/trial_2/autodata_run.yaml`, where
 `bootstrap_canary.stop_after: training_smoke`,

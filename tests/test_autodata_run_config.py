@@ -56,6 +56,7 @@ TRIAL22_RUN = TRIAL16_RUN.parent.parent / "trial_22" / "autodata_run.yaml"
 TRIAL26_RUN = TRIAL16_RUN.parent.parent / "trial_26" / "autodata_run.yaml"
 TRIAL27_RUN = TRIAL16_RUN.parent.parent / "trial_27" / "autodata_run.yaml"
 TRIAL28_RUN = TRIAL16_RUN.parent.parent / "trial_28" / "autodata_run.yaml"
+TRIAL29_RUN = TRIAL16_RUN.parent.parent / "trial_29" / "autodata_run.yaml"
 RUN17 = (
     ROOT
     / "experiments/dishonest_sycophancy_concealing/run_17/config/run.yaml"
@@ -108,6 +109,7 @@ def test_run12_yaml_compiles_every_runtime_artifact(tmp_path: Path) -> None:
     assert resolved["target"]["challenge_provenance_required"] is True
     assert resolved["target"]["provider_order"] == ["generator", "target", "judge"]
     assert policy["runner"] == "local-bwrap"
+    assert policy["max_cost_usd"] == "299"
     assert policy["required_solve_env"]["AUTODATA_TARGET_ENABLED"] == "1"
     assert (
         policy["required_solve_env"]["AUTODATA_GENERATOR_PROTOCOL"]
@@ -392,6 +394,58 @@ def test_trial28_preserves_trial27_runtime_envelope() -> None:
     assert trial28_wrapper.replace("Trial 28", "Trial 27") == trial27_wrapper
 
 
+def test_trial29_derives_exact_campaign_cap_during_compilation(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "trial29-compiled"
+    resolved = compile_run_config(
+        profile_path=PROFILE,
+        run_path=TRIAL29_RUN,
+        target_binding_path=_base_binding(tmp_path),
+        chain="alpha",
+        repo=ROOT,
+        output_dir=output,
+    )
+    policy = json.loads((output / "campaign-policy.json").read_text())
+    contract = json.loads((output / "autodata-training-data-contract.json").read_text())
+    settings = operator_execution_settings(
+        resolved,
+        campaign_policy=policy,
+        training_data_contract=contract,
+    )
+
+    assert load_run_config(TRIAL29_RUN)["budget"]["max_cost_usd"] == "auto"
+    assert resolved["run"]["budget"]["max_cost_usd"] == "64523.1552"
+    assert policy["max_cost_usd"] == "64523.1552"
+    assert settings["required_campaign_round_reservations"] == 21630
+    assert settings["required_campaign_cost_usd"] == "64523.1552"
+
+
+def test_trial29_preserves_trial28_envelope_except_automatic_cap() -> None:
+    trial28 = load_run_config(TRIAL28_RUN)
+    trial29 = load_run_config(TRIAL29_RUN)
+
+    assert trial28.pop("run_id") == "run12-canary2-trial28"
+    assert trial29.pop("run_id") == "run12-canary2-trial29"
+    assert trial28["budget"].pop("max_cost_usd") == "44448"
+    assert trial29["budget"].pop("max_cost_usd") == "auto"
+    assert trial29 == trial28
+
+    trial28_wrapper = (TRIAL28_RUN.parent / "submit_canary.sh").read_text()
+    trial29_wrapper = (TRIAL29_RUN.parent / "submit_canary.sh").read_text()
+    assert trial29_wrapper.replace("Trial 29", "Trial 28") == trial28_wrapper
+
+
+def test_run_config_rejects_unknown_symbolic_campaign_cap(tmp_path: Path) -> None:
+    run = yaml.safe_load(TRIAL29_RUN.read_text())
+    run["budget"]["max_cost_usd"] = "automatic"
+    path = tmp_path / "invalid-symbolic-cap.yaml"
+    path.write_text(yaml.safe_dump(run), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be a decimal string"):
+        load_run_config(path)
+
+
 def test_run17_compiles_claude_researcher_and_model_api_generator(
     tmp_path: Path,
 ) -> None:
@@ -413,9 +467,7 @@ def test_run17_compiles_claude_researcher_and_model_api_generator(
         "generator": "meta-model-api-claude-4-8-opus",
     }
     assert environment["AUTODATA_GENERATOR_PROTOCOL"] == "model_api_responses"
-    assert environment["AUTODATA_GENERATOR_URL"] == (
-        "https://api.meta.ai/v1/responses"
-    )
+    assert environment["AUTODATA_GENERATOR_URL"] == ("https://api.meta.ai/v1/responses")
     assert environment["AUTODATA_GENERATOR_HOST_HEADER"] == ""
     assert environment["AUTODATA_GENERATOR_MODEL"] == "claude-4-8-opus"
     assert environment["AUTODATA_GENERATOR_DEPLOYMENT_ID"] == (

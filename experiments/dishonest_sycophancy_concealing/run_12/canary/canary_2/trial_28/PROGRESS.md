@@ -53,3 +53,38 @@ returned a valid, correctly bound confirm outcome.
   first new live gate is authoritative `author_grounding` completion; then
   continue unchanged through `author_pipeline`, `analyze_results`, and
   `mutate_candidate`.
+
+<a id="trial28-event-campaign-cap"></a>
+
+### 🔴 21:10 PT — FAIL: stale campaign cap blocked meta execution
+
+> [!CAUTION]
+> **Trial 28 is terminal.** Trusted validation rejected the configured
+> `$44,448` cap because this execution requires exactly `$64,523.1552` for
+> `21,630` worst-case semantic-round reservations. No meta-optimization or
+> production task ran after rejection; the ceiling is a fail-closed reservation
+> bound rather than recorded spend.
+
+```text
+✓ AAR proposal and workspace registration
+✓ clarify_design, author_grounding, and author_pipeline
+✓ grounding and baseline approvals
+✓ authoring dry run and workspace freeze
+✗ Canonical meta-execution construction — insufficient campaign cap
+○ Meta baseline generation
+○ Meta-optimization
+○ Production
+○ Training smoke
+```
+
+- Source commit: `01baf53ec44be3388fcf3207bc170976c155f2b3`.
+- Attempt: `/checkpoint/ram/winnieyangwn/aar-runs/run12-bootstrap-canary/20261013T040229Z-01baf53ec44b`.
+- Jobs: launch `1864598` completed; research `1864602` failed; controller
+  `1864603` failed.
+- Exact failure: `campaign max_cost_usd is insufficient: requires at least
+  64523.1552 for 21630 worst-case model-call reservations including authoring
+  and finalization feedback`.
+- Later evidence: no meta baseline, production execution, dataset export,
+  training receipt, evaluator score, or research finding was created.
+- Decision: replace copied numeric caps in future configs with trusted
+  compile-time automatic derivation; preserve Trial 28 unchanged.
