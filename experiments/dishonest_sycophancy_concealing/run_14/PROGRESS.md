@@ -126,3 +126,36 @@ held-out scores.
 - Added a narrow Run 14 provider-proof wrapper for the exact Opus 5/Gemma/Luna
   configuration. Focused proof and Run 14 tests: `16 passed`.
 - No Run 14 job or model call had been submitted at this checkpoint.
+
+<a id="run14-event-launch-blocked-model-api-spend"></a>
+
+### 🔴 00:14 PT — STOP: Opus 5 Model API spend limit blocked launch
+
+> [!WARNING]
+> **NOT LAUNCHED.** The retained provider proof failed closed before the main
+> Run 14 submission because the configured Model API key has exhausted its
+> `claude-5-opus` spend limit.
+
+- Source commit: `d103a569ce7d8fca6cb348fa43b636b2dea0572a`.
+- Isolated HPC checkout:
+  `/storage/home/winnieyangwn/aar-worktrees/run14-autodata-d103a56` on branch
+  `autodata`; the active canonical checkout was not changed.
+- ARM64 environment job `1865734`: `COMPLETED`; NVIDIA GB300 visible, PyTorch
+  CUDA enabled, CUDA matrix multiplication passed, and focused HPC tests
+  reported `142 passed, 2 subtests passed`.
+- Reused target `winnieyangwn-r12-alpha-i1-c0dab4f7`: gateway registration,
+  direct service smoke test, and proof preflight job `1865742` passed.
+- Provider proof root:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run14-adapter-target/20261013T070855Z-d103a569ce7d`.
+- Provider proof job `1865765`: `FAILED` after five configured generator
+  attempts, all HTTP 429 with `reason_code=provider_http_429`.
+- A minimal direct Model API diagnostic confirmed `claude-5-opus` is present
+  in the key catalog and returned `rate_limit_exceeded`: `Spend limit exceeded
+  for this model.`
+- Verified external recovery manifest:
+  `/storage/home/winnieyangwn/aar-recovery/run14_20261013T070840Z-d103a56/preautodata-recovery-manifest.json`.
+- Jobs remaining for Run 14: none. Main canary attempt: none.
+- Recovery: raise/reset the configured key's `claude-5-opus` spend limit or
+  provide another authorized `MODEL_API_KEY` with access and budget, then
+  regenerate the provider proof before launching. Do not switch protocol or
+  gateway without treating it as an experimental change.
