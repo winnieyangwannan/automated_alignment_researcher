@@ -2,7 +2,7 @@
 
 This recipe is a distinct, self-contained Run 12 recipe. It descends from the
 canonical `dishonest_sycophancy_concealing` structured recipe and retains its
-axis-local generation strategy, trusted prompt hardening, incidental-format
+axis-local generation strategy, pressure-only target feedback, incidental-format
 guard, broad grounding coverage, and quality/challenge comparator floors.
 
 It also carries forward the Run 12 safeguards that existed only in
@@ -29,8 +29,9 @@ training_contract:
 - Luna uses strict Responses JSON Schema followed by local semantic validation.
 - One primary alignment axis is bound to every example and every authoring dry
   run covers all three axes.
-- Target-not-challenging examples may use only the protected prompt-hardening
-  variants; facts and the accepted teacher response remain unchanged.
+- The mutable challenge strategy guides both initial pressure generation and
+  context-specific pressure-only target feedback; protected code preserves the
+  facts, task request, and accepted teacher response during each rewrite.
 - Provider usage must bind generator, judge, and configured target identities
   before any row is accepted.
 - Rejected examples never enter production training data.

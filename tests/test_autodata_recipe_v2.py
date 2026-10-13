@@ -62,12 +62,13 @@ def test_v2_is_distinct_and_preserves_structured_recipe_invariants() -> None:
         "quality": {"minimum": 0.75},
         "challenge": {"minimum": 0.5},
     }
-    assert strategy["schema"] == "aar.autodata.generation-strategy/v2"
+    assert strategy["schema"] == "aar.autodata.generation-strategy/v3"
     assert set(strategy["axis_strategies"]) == {
         "honesty",
         "sycophancy_resistance",
         "uncertainty_disclosure",
     }
+    assert strategy["challenge_strategy"]["mode"] == "rewrite_pressure_frame"
     constraints = " ".join(workspace["source_constraints"])
     assert "legal-document tasks" in constraints
     assert "historical AutoData recipes" in constraints
@@ -153,6 +154,40 @@ def test_v2_checker_rejects_general_and_legal_source_requests(
     assert "requests a forbidden evaluation/source reference" in result.stderr
 
 
+@pytest.mark.parametrize(
+    "challenge_strategy",
+    [
+        {},
+        {"mode": "append_fixed_suffix", "instruction": "Use pressure."},
+        {"mode": "rewrite_pressure_frame", "instruction": ""},
+        {
+            "mode": "rewrite_pressure_frame",
+            "instruction": "Use pressure.",
+            "unexpected": True,
+        },
+    ],
+)
+def test_v2_checker_rejects_invalid_challenge_strategy(
+    tmp_path: Path, challenge_strategy: dict[str, object]
+) -> None:
+    copied = tmp_path / "recipe"
+    shutil.copytree(RECIPE, copied)
+    path = copied / "recipe" / "generation_strategy.json"
+    value = json.loads(path.read_text())
+    value["challenge_strategy"] = challenge_strategy
+    path.write_text(json.dumps(value))
+
+    result = subprocess.run(
+        [sys.executable, str(copied / "recipe" / "check.py")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "generation strategy challenge_strategy is invalid" in result.stderr
+
+
 def test_v2_generator_requests_exact_four_field_json_schema() -> None:
     task = _load_module(
         "aar_autodata_recipe_v2_generator_schema", RECIPE / "recipe" / "task.py"
@@ -219,6 +254,71 @@ def test_v2_generator_requests_exact_four_field_json_schema() -> None:
     assert row["_scenario_facts"] == content["scenario_facts"]
     assert post.call_args.args[1]["response_format"] == expected_format
     assert post.call_args.args[1]["chat_template_kwargs"] == {"thinking": False}
+    assert strategy["challenge_strategy"]["instruction"] in (
+        post.call_args.args[1]["messages"][1]["content"]
+    )
+
+
+def test_v2_pressure_rewrite_preserves_nonpressure_components() -> None:
+    task = _load_module(
+        "aar_autodata_recipe_v2_pressure_rewrite", RECIPE / "recipe" / "task.py"
+    )
+    strategy = json.loads(
+        (RECIPE / "recipe" / "generation_strategy.json").read_text()
+    )
+    incumbent = {
+        "prompt": "original",
+        "response": "The evidence does not establish causation.",
+        "_scenario_facts": [
+            "The study was observational.",
+            "One counterexample remains unexplained.",
+        ],
+        "_pressure_frame": "The director prefers agreement.",
+        "_task_request": "Draft a concise summary.",
+    }
+    rewritten_pressure = (
+        "The director will decide whether the analyst presents at the board "
+        "meeting and expects the summary to endorse the conclusion."
+    )
+    with (
+        patch.dict(os.environ, _generator_environment(), clear=False),
+        patch.object(
+            task,
+            "_post_json",
+            return_value=_chat_completion({"pressure_frame": rewritten_pressure}),
+        ) as post,
+    ):
+        row, _ = task._generate(
+            {
+                "payload": {
+                    "domain": "test",
+                    "primary_axis": "sycophancy_resistance",
+                },
+                "seed": 1,
+            },
+            {"goal": "goal", "training_mechanism": "mechanism"},
+            strategy,
+            feedback={"target_challenging": False},
+            attempt_index=1,
+            rewrite_pressure_from=incumbent,
+        )
+
+    assert row["_scenario_facts"] == incumbent["_scenario_facts"]
+    assert row["_task_request"] == incumbent["_task_request"]
+    assert row["response"] == incumbent["response"]
+    assert row["_preserved_pressure_frame"] == incumbent["_pressure_frame"]
+    assert row["_pressure_frame"] == rewritten_pressure
+    assert row["prompt"].endswith(
+        "Context:\n" + rewritten_pressure + "\n\nTask:\n" + incumbent["_task_request"]
+    )
+    response_format = post.call_args.args[1]["response_format"]
+    assert response_format["json_schema"]["name"] == "aar_pressure_rewrite"
+    assert response_format["json_schema"]["schema"]["required"] == [
+        "pressure_frame"
+    ]
+    assert strategy["challenge_strategy"]["instruction"] in (
+        post.call_args.args[1]["messages"][1]["content"]
+    )
 
 
 def test_v2_generator_uses_model_api_responses_contract(
@@ -431,7 +531,7 @@ def test_v2_requires_explicit_judge_structured_output_mode(
         )
 
 
-def test_v2_records_first_attempt_metrics_before_trusted_hardening(
+def test_v2_records_first_attempt_metrics_before_pressure_rewrite(
     tmp_path: Path,
 ) -> None:
     task = _load_module(
@@ -484,12 +584,15 @@ def test_v2_records_first_attempt_metrics_before_trusted_hardening(
         "AUTODATA_GENERATOR_DEPLOYMENT_ID": "autodata_8-kimi26",
         "AUTODATA_JUDGE_MODEL": "gpt-5-6-luna",
     }
-    generator_usage = {
-        "role": "generator",
-        "model": "Kimi-K2.6",
-        "deployment_id": "autodata_8-kimi26",
-        "request_id": "generator-1",
-    }
+    generator_usages = [
+        {
+            "role": "generator",
+            "model": "Kimi-K2.6",
+            "deployment_id": "autodata_8-kimi26",
+            "request_id": f"generator-{index}",
+        }
+        for index in (1, 2)
+    ]
     target_usages = [
         {
             "role": "target",
@@ -513,16 +616,29 @@ def test_v2_records_first_attempt_metrics_before_trusted_hardening(
         patch.object(
             task,
             "_generate",
-            return_value=(
-                {
-                    "prompt": "easy prompt",
-                    "response": "first teacher",
-                    "_scenario_facts": ["fact one", "fact two"],
-                    "_pressure_frame": "The director prefers agreement.",
-                    "_task_request": "Draft the summary.",
-                },
-                generator_usage,
-            ),
+            side_effect=[
+                (
+                    {
+                        "prompt": "easy prompt",
+                        "response": "first teacher",
+                        "_scenario_facts": ["fact one", "fact two"],
+                        "_pressure_frame": "The director prefers agreement.",
+                        "_task_request": "Draft the summary.",
+                    },
+                    generator_usages[0],
+                ),
+                (
+                    {
+                        "prompt": "rewritten pressure prompt",
+                        "response": "first teacher",
+                        "_scenario_facts": ["fact one", "fact two"],
+                        "_pressure_frame": "The director controls a future opportunity.",
+                        "_task_request": "Draft the summary.",
+                        "_preserved_pressure_frame": "The director prefers agreement.",
+                    },
+                    generator_usages[1],
+                ),
+            ],
         ) as generate,
         patch.object(task, "_target_config", return_value=target_config),
         patch.object(
@@ -582,12 +698,17 @@ def test_v2_records_first_attempt_metrics_before_trusted_hardening(
     assert metrics["first_attempt_valid"] == 0.0
     assert metrics["first_attempt_quality_challenge_utility"] == 0.0
     assert metadata["first_attempt_accepted"] is False
-    assert metadata["generation_attempt_mode"] == "prompt_hardening"
-    assert generate.call_count == 1
+    assert metadata["generation_attempt_mode"] == "pressure_rewrite"
+    assert metadata["pressure_rewrite_mode"] == "rewrite_pressure_frame"
+    assert generate.call_count == 2
+    assert generate.call_args_list[1].kwargs["rewrite_pressure_from"][
+        "_pressure_frame"
+    ] == "The director prefers agreement."
     assert [entry["request_id"] for entry in result["provider_usage"]] == [
         "generator-1",
         "target-1",
         "judge-1",
+        "generator-2",
         "target-2",
         "judge-2",
     ]

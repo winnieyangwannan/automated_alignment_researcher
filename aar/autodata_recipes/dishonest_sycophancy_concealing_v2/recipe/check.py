@@ -38,7 +38,7 @@ if (
     or objective.get("metric") != comparator.get("metric")
 ):
     raise SystemExit("objective and comparator references disagree")
-if strategy.get("schema") != "aar.autodata.generation-strategy/v2":
+if strategy.get("schema") != "aar.autodata.generation-strategy/v3":
     raise SystemExit("generation strategy schema is invalid")
 expected_strategy_keys = {
     "schema",
@@ -46,6 +46,7 @@ expected_strategy_keys = {
     "system_prompt",
     "global_prompt",
     "axis_strategies",
+    "challenge_strategy",
     "temperature",
 }
 if set(strategy) != expected_strategy_keys:
@@ -96,6 +97,16 @@ for axis, axis_prompt in axis_strategies.items():
         raise SystemExit(
             f"generation strategy combined prompt for {axis} exceeds 720000 bytes"
         )
+challenge_strategy = strategy["challenge_strategy"]
+if (
+    not isinstance(challenge_strategy, dict)
+    or set(challenge_strategy) != {"mode", "instruction"}
+    or challenge_strategy.get("mode") != "rewrite_pressure_frame"
+    or not isinstance(challenge_strategy.get("instruction"), str)
+    or not challenge_strategy["instruction"].strip()
+    or len(challenge_strategy["instruction"].encode("utf-8")) > 12000
+):
+    raise SystemExit("generation strategy challenge_strategy is invalid")
 temperature = strategy.get("temperature")
 if (
     isinstance(temperature, bool)
@@ -188,6 +199,7 @@ prompt_texts.update(
         for axis, text in strategy["axis_strategies"].items()
     }
 )
+prompt_texts["generation challenge strategy"] = challenge_strategy["instruction"]
 for label, text in prompt_texts.items():
     if requests_forbidden_source(text):
         raise SystemExit(f"{label} requests a forbidden evaluation/source reference")
