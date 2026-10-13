@@ -317,3 +317,17 @@ manifest, then launch Trial 13.
 
 Validate and synchronize the focused commits, prepare a fresh external Trial 14
 recovery manifest, and launch through `trial_14/submit_canary.sh`.
+
+<a id="run13-event-trial14-launch1-cancelled"></a>
+
+### 🔴 22:12 PT — STOP: Trial 14 first submission cancelled before children
+
+- Launcher job `1865035` was cancelled with an empty pipeline log before any
+  chain or evaluator child was created.
+- The attempt is retained at
+  `/checkpoint/ram/winnieyangwn/aar-runs/run13-trial14-bootstrap-canary/20261013T051112Z-af7ad83c19b6`.
+- Cause: one metadata-only Trial allowlist still ended at Trial 13, so the
+  submission record wrote `recovery_manifest_sha256=none` despite correctly
+  verifying and snapshotting the manifest.
+- No AutoData state, model task, production export, training receipt, adapter,
+  evaluator, score, or finding was created.

@@ -36,6 +36,9 @@ def test_trial14_runs_ten_iterations_with_full_coordinator_wiring() -> None:
     ):
         subprocess.run(["bash", "-n", str(path)], check=True)
         assert "trial14" in path.read_text()
+    launch = (canary / "launch" / "launch.sh").read_text()
+    assert "trial13|trial14)" in launch
+    assert launch.count("^trial(4|5|6|7|8|9|10|11|12|13|14)$") == 2
 
 
 def test_run_13_submitter_is_isolated_and_selects_claude_opus_48() -> None:

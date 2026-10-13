@@ -24,3 +24,22 @@ Append-only operational record. All timestamps use Pacific Time (`PT`).
 - Meta iterations: exactly `10`.
 - Jobs: none.
 - Attempt: none.
+
+<a id="run13-trial14-launch1-cancelled"></a>
+
+### 🔴 22:12 PT — STOP: first submission cancelled before child creation
+
+> [!CAUTION]
+> Launcher job `1865035` was cancelled while its pipeline log was still empty
+> and before any chain or evaluator child was created. The attempt is retained.
+
+- Attempt:
+  `/checkpoint/ram/winnieyangwn/aar-runs/run13-trial14-bootstrap-canary/20261013T051112Z-af7ad83c19b6`.
+- The recovery manifest was correctly verified and snapshotted, but a second
+  launcher metadata allowlist still ended at Trial 13, causing
+  `recovery_manifest_sha256=none` in `submission.txt`.
+- No AutoData workspace, model task, production export, training receipt,
+  adapter, evaluator, score, or finding was created.
+- Corrective action: extend the metadata-hash allowlist to Trial 14, add a
+  regression assertion covering all three launcher allowlist sites, and submit
+  a fresh immutable attempt.
